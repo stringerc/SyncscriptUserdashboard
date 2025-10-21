@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Search, Lock, MessageSquare, Bell, Moon, Sun, PanelRightOpen, PanelRightClose } from 'lucide-react';
 import { AnimatedAvatar } from './AnimatedAvatar';
-import syncScriptLogo from 'figma:asset/32f9c29c68f7ed10b9efd8ff6ac4135b7a2a4290.png';
+import syncScriptLogo from '../assets/syncscript-main-logo.png';
 
 interface DashboardHeaderProps {
   isAIInsightsOpen: boolean;

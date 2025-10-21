@@ -1,5 +1,5 @@
 import { LayoutDashboard, Target, Calendar, Bot, Zap, Users, TrendingUp, Gamepad2, Link2, Building2, FileText, Menu, Settings } from 'lucide-react';
-import logoImage from 'figma:asset/914d5787f554946c037cbfbb2cf65fcc0de06278.png';
+import logoImage from '../assets/syncscript-logo.png';
 
 export function Sidebar() {
   return (
