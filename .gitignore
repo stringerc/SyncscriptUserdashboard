@@ -1,1 +1,266 @@
+node_modules/
+dist/
+build/
+.env
+.env.local
+.env.*.local
+.env.vercel*.pull
+.DS_Store
+*.log
+
+# Lighthouse CI local runs (see lighthouserc.cjs, npm run lighthouse:ci)
+.lighthouseci/
+
+# Regenerated skill/MCP discovery audits (see scripts/skill-source-audit.sh)
+reports/skill-audit/
 .vercel
+
+# User-local symlink to ~/.cursor/rules-global (do not commit absolute paths — run scripts/link-global-cursor-brain.sh)
+.cursor/rules/00-universal-cursor-brain.mdc
+
+# Audit cleanup trash (recoverable dead code)
+.trash-audit-cleanup/
+
+# Backup folders and misc exports
+OAUTH_BACKUP_*/
+dashboard/
+figma-dashboard/
+figma-make-latest/
+/landing/
+/landing-page-fix/
+mission-control/
+sentinel/
+resonance-runtime-*/
+syncscript-dashboard/
+syncscript-unified/
+syncscript-web/
+syncscript-exact-figma*/
+syncscript-figma-fresh/
+dashboard-exact-figma-make/
+figma-make-pages/
+landing-exact-figma-make*/
+tasks-goals-exact-figma-make/
+tasks-goals-figma-make/
+temp-check/
+client/
+server/
+docs/
+logs/
+client.log
+server.log
+src/DISCORD_COMPLETE_SETUP_SCRIPT.md
+src/DISCORD_SUCCESS_NEXT_STEPS.md
+src/YOUR_DISCORD_CREDENTIALS.md
+src/components/pages/OAuthTestPage.tsx
+src/DISCORD_VERIFICATION_CHECKLIST.md
+src/DISCORD_DEEP_ANALYSIS_FIX.md
+src/DISCORD_FIX_REDIRECT_URI_ERROR.md
+src/DISCORD_OAUTH2_CODE_GRANT_FIX.md
+src/VERCEL_DEPLOYMENT_GUIDE.md
+src/DEPLOY_TO_VERCEL.md
+src/DOWNLOAD_AND_DEPLOY_CHECKLIST.md
+src/PRODUCTION_DEPLOYMENT_COMPLETE.md
+src/DOCUMENTATION_INDEX.md
+src/components/DiscordSetupGuide.tsx
+src/vercel.json
+
+# Agent workspace files (AGENTS.md memory system)
+# MEMORY.md is tracked in git (session continuity); edit freely — avoid secrets.
+# Raw daily logs stay local. Recovered/reconstructed history is NOT local-only —
+# it goes in integrations/research/ (tracked + agent-readable), because memory/ is
+# excluded from both git and .cursorignore. See rule 19 (memory durability).
+memory/
+AGENT_ASCENSION_STATE.md
+JOURNAL.md
+JOURNAL.md.*
+
+# Scratch / research / audit docs (not source code)
+CURSOR-CLARITY.md
+REASONING.md
+CALENDAR_EVENT_CLICK_AUDIT.md
+LANDING_PAGE_RESPONSIVE_AUDIT.md
+MONT-FORT-FRONTEND-RESEARCH.md
+REFERRAL_PROGRAM_SUMMARY.md
+REVENUE_SUMMARY.txt
+SYNCSCRIPT_ARCHITECTURE.md
+SYNCSCRIPT_MASTERGUIDE.md
+SYNCSCRIPT_VISUAL_ARCHITECTURE.md
+
+# Test / scratch HTML and JS files
+test-*.html
+test-*.js
+
+# Temp directories (root only — do not ignore `src/lib` app sources)
+/lib/
+/social/
+scripts/*
+!scripts/engram-public-supabase-url.mjs
+!scripts/bringup-hermes-tunnel-supabase.sh
+!scripts/verify-hermes-edge-live.mjs
+!scripts/verify-engram-edge-live.mjs
+!scripts/verify-prod-build.mjs
+!scripts/verify-edge-productivity-http.mjs
+!scripts/verify-release-battery.mjs
+!scripts/report-external-tooling-versions.mjs
+!scripts/push-nexus-e2e-secrets-to-github.mjs
+!scripts/guard-ci-script-refs.mjs
+!scripts/verify-agent-runner-live.mjs
+!scripts/smoke-agent-run-e2e.mjs
+!scripts/smoke-agent-live-screencast.mjs
+!scripts/check-bundle-size.mjs
+!scripts/free-tcp-port.mjs
+!scripts/run-verify-console-errors.mjs
+!scripts/verify-nexus-tools-live.ts
+!scripts/guard-app-ai-react-imports.mjs
+!scripts/skill-source-audit.sh
+# Proxy ownership fix (2026-08-04): tracked because losing these recreates the
+# IDE ConnectionRefused outage.
+!scripts/start-free-claude-code-proxy.sh
+!scripts/fcc-proxy-defaults.sh
+!scripts/verify-fcc-proxy-persistence.sh
+# IDE wiring, tracked as of 2026-08-04. Previously left machine-local, which meant the
+# fix to the false-passing Devin smoke test would not have survived a clone. They write
+# only ANTHROPIC_BASE_URL and a local placeholder token into IDE settings — no credentials.
+!scripts/apply-ide-claude-proxy-settings.sh
+!scripts/apply-devin-claude-proxy-settings.sh
+!scripts/verify-devin-claude-compat.sh
+!scripts/verify-cursor-claude-compat.sh
+!scripts/verify-antigravity-claude-compat.sh
+# MEMORY.md is verified by this guard and release:gate depends on it.
+!scripts/verify-memory-claims.mjs
+# The consciousness/cortex research surface has no other type gate: build is bare
+# `vite build` (esbuild strips types without checking) and lint covers two paths.
+!scripts/guard-cortex-typecheck.mjs
+!scripts/verify-cortex-and-memory.mjs
+!scripts/update-cortex-memory-gate.mjs
+!scripts/verify-cortex-chat.mjs
+!scripts/test-cortex-chat-in-depth.mjs
+# Distinguishes a real answer from an HTTP 200 carrying no content. The substring-based
+# check it replaced reported success while the proxy streamed only an error, so losing
+# this file restores a gate that lies.
+!scripts/verify-fcc-proxy-stream.mjs
+
+# Large optional clone (run integrations/setup-engram.sh)
+integrations/engram_translator/
+
+# Cloud API private keys (OCI, etc.) — never commit
+*.pem
+
+# Local OCI tenant identifiers + paths (never commit)
+deploy/oracle/env.local
+deploy/oracle/instance-launch.env
+deploy/oracle/.temp-ssh/
+.env.production.pull
+
+# --- Local / large trees / secrets (working-tree hygiene; MEMORY § Knowledge vs disk) ---
+.aider.*
+.cursor/mcp.json
+.cursor/aicontext-personalContext.prev.txt
+.openclaw/
+
+.tmp/
+.tmp-*/
+.tmp_*
+.tmp-sbsql
+.tmp-playwright/
+.tmp-gemini-home/
+.tmp-vite-plugin-*.md
+.tmp-missing-import-targets*.txt
+.tmp-public-links-wip-backup*.ts
+.tmp-*.tsx
+
+playwright-artifacts-*/
+nexus_crash_recovery_probe/
+nexus_exec_probe/
+nexus_verify_live/
+evidence/
+evidence-runner/
+dev-dist/
+
+# Local experiments / other products (not the Vite web app)
+nature-cortana-platform/
+ios/
+
+# Cortana companion local logs / secrets (never ship)
+cortana-resonance-log.jsonl
+.cortana-bridge.token
+/tmp/cortana-*.log
+/tmp/cortana-*.pid
+
+# Stray non-Vite static duplicates (canonical app shell: repo-root index.html + Vite public/)
+/public/index.html
+/public/app.js
+/public/styles.css
+
+# Legacy junk at src root (not Vite entrypoints)
+src/app.js
+src/server.js
+src/app.css
+
+# Duplicate / conflicting stubs — real routing lives in App.tsx + hooks/useAgentRuns.ts
+src/DashboardApp.tsx
+src/contexts/AgentRunContext.tsx
+
+# Local probe screenshots at repo root (Playwright / manual)
+/tmp-*.png
+/tmp_*.png
+vercel_deploy_log*.txt
+
+# Root-level QA screenshots / HTML dumps (never ship)
+/*.png
+/syncscript-rendered.html
+/test-results/
+/tmp-*.mjs
+/tmp-*.json
+/tmp-calendar*
+/tmp-cortana-download-refs/
+/tmp-email-qa.mjs
+/tmp-live-*.mjs
+/tmp-live-*.json
+/tmp-prod-*.mjs
+/tmp-terminal-*.txt
+/tmp-workstream-*.mjs
+/tmp-tiktok-oembed.json
+/tmp-batch5-*.mjs
+/workstream-*.png
+/workstream-*.json
+/workstream-*.mjs
+/workstream-checklist-live.mjs
+/state-*.png
+/ex052-*.png
+/ex052-*.json
+
+# Local-only planning / audit markdown at repo root (canonical research: integrations/research/)
+/PHASE_2A_*.md
+/PHASE_2B_*.md
+/PHASE_2_TO_2A_*.md
+/EX015*.md
+/EX053*.md
+/AI_FRONTIER*.md
+/COUNCIL_MEMBER_CHECKLIST.md
+/IMPLEMENTATION_MASTER_PLAN.md
+/OWNERSHIP_RACI.md
+/RELEASE_GATES.md
+/RISKS_AND_DECISIONS.md
+/STABILIZATION_CHECKLIST.md
+# SYNCSCRIPT_AGENT_MAP.md is now tracked — contract test reads it in CI
+/TRACEABILITY_LIVE.md
+/VISUAL_ARCHITECTURE.md
+/gemini-qa-report.md
+
+# Local app bundles / scratch trees
+/main/
+/server.js
+/skills/
+/upre_app/
+/reports/
+# Agent-writable plant metrics + dream drafts (not cursorignored; reports/ is)
+.cache/
+/tmp-cortana-ref-*.jpg
+
+# Local VS Code / Cursor workspace settings (machine-specific)
+.vscode/
+
+# One-off executor script (not Vite bundle)
+src/executor/home-executor-runner.js
+!scripts/concierge-playbook-worker.mjs
