@@ -437,11 +437,16 @@ export function useVoiceStream(options: UseVoiceStreamOptions = {}) {
       if (match) return match;
     }
 
-    // Prioritize the most natural-sounding voices per platform
+    // Prioritize high-fidelity neural and natural voices per platform (avoid robotic legacy synthesizers like Samantha)
     const preferred = [
-      'Microsoft Jenny', 'Microsoft Aria',          // Windows neural voices
-      'Samantha', 'Karen',                           // macOS
-      'Google UK English Female', 'Google US English', // Chrome
+      'Google US English', 'Google UK English Female', 'Google UK English Male', // Chrome neural cloud voices (natural, human inflection)
+      'Microsoft Jenny Online (Natural)', 'Microsoft Aria Online (Natural)',   // Edge/Windows natural neural voices
+      'Microsoft Jenny', 'Microsoft Aria',
+      'Ava (Premium)', 'Ava (Enhanced)', 'Ava',                               // macOS Siri / premium neural voices
+      'Allison (Enhanced)', 'Allison',
+      'Zoe (Enhanced)', 'Zoe',
+      'Daniel', 'Karen',                                                       // macOS crisp natural voices
+      'Samantha',                                                              // Legacy macOS fallback
     ];
 
     for (const name of preferred) {
@@ -671,31 +676,29 @@ export function useVoiceStream(options: UseVoiceStreamOptions = {}) {
     const voicePreset = resolveVoice();
     const speed = request.config?.speed || 1.0;
 
-    // --- Cartesia Sonic 3.5 ultra-low latency neural synthesis (Primary Engine) ---
-    if (voicePreset !== NEXUS_LANDING_KOKORO_VOICE_ID) {
-      try {
-        console.info(`[TTS] Synthesizing with Cartesia Sonic 3.5 (voice: ${voicePreset}, speed: ${speed})…`);
-        const cartesiaBlob = await fetchCartesiaTtsAudio(request.text, {
-          voiceId: voicePreset,
-          speed,
-        });
-        if (speechEpochRef.current !== currentEpoch || fetchAbort.signal.aborted) {
-          console.info('[TTS Mutex] Discarded superseded Cartesia synthesis');
-          return;
-        }
-        if (cartesiaBlob) {
-          console.info(`[TTS] ✅ Cartesia Sonic 3.5 — ${cartesiaBlob.size} bytes`);
-          reportTtsRum({
-            outcome: 'ok',
-            path: 'cartesia',
-            voicePreset,
-            durationMs: typeof performance !== 'undefined' ? performance.now() - rumStart : 0,
-          });
-          return playAudioBlob(cartesiaBlob);
-        }
-      } catch (cErr) {
-        console.warn('[TTS] Cartesia synthesis error — falling back to Kokoro/proxy', cErr);
+    // --- Cartesia Sonic 3.5 ultra-low latency neural synthesis (Primary Engine for all voices) ---
+    try {
+      console.info(`[TTS] Synthesizing with Cartesia Sonic 3.5 (voice: ${voicePreset}, speed: ${speed})…`);
+      const cartesiaBlob = await fetchCartesiaTtsAudio(request.text, {
+        voiceId: voicePreset,
+        speed,
+      });
+      if (speechEpochRef.current !== currentEpoch || fetchAbort.signal.aborted) {
+        console.info('[TTS Mutex] Discarded superseded Cartesia synthesis');
+        return;
       }
+      if (cartesiaBlob) {
+        console.info(`[TTS] ✅ Cartesia Sonic 3.5 — ${cartesiaBlob.size} bytes`);
+        reportTtsRum({
+          outcome: 'ok',
+          path: 'cartesia',
+          voicePreset,
+          durationMs: typeof performance !== 'undefined' ? performance.now() - rumStart : 0,
+        });
+        return playAudioBlob(cartesiaBlob);
+      }
+    } catch (cErr) {
+      console.warn('[TTS] Cartesia synthesis error — falling back to Kokoro/proxy', cErr);
     }
 
     if (speechEpochRef.current !== currentEpoch || fetchAbort.signal.aborted) return;

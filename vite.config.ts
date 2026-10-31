@@ -2926,6 +2926,32 @@ function switchTab(tabName) {
                   };
                 }
 
+                // 5b. Email Management & High-Leverage Inbox Triage (22,000+ Backlog Resolution)
+                if (/email|emails|inbox|gmail|outlook|mail|22,?000|unread.*mail|filter.*out/i.test(textLower)) {
+                  return {
+                    text: `### 📬 High-Leverage Inbox Triage Strategy (Clearing 22,000+ Emails)
+
+Clearing 22,000 emails is an immediate cognitive relief! Rather than clicking through page-by-page, here is our 4-step execution strategy to wipe out 85%+ of the backlog in under 5 minutes:
+
+1. **Purge Automated Newsletters & Promotions (Target: ~14,000 emails)**
+   - **Search Query:** \`category:promotions older_than:6m\` OR \`category:updates unsubscribe\`
+   - **Execution:** Check the top-left select box $\\to$ Click **"Select all conversations that match this search"** $\\to$ Click **Delete**.
+
+2. **Bulk-Archive Stale Transactional Receipts (Target: ~5,000 emails)**
+   - **Search Query:** \`from:(Uber OR Lyft OR DoorDash OR Grubhub OR Instacart OR PayPal OR Amazon OR alerts) older_than:6m\`
+   - **Execution:** Bulk select and hit **Archive** (keeps financial history searchable without cluttering your inbox).
+
+3. **Reclaim Disk Storage from Heavy Attachments (Target: ~5GB+ space)**
+   - **Search Query:** \`has:attachment larger:10M older_than:1y\`
+   - Review and purge large outdated video/PDF attachments.
+
+4. **Preserving Critical Correspondence**
+   - All starred items (\`is:starred\`) and messages from VIP contacts remain untouched.
+
+Would you like me to generate a tailored automation script or guide you through executing this directly in your email client?`
+                  };
+                }
+
                 // 6. Conversational Greetings & Social Inquiries
                 if (/^(hello|hi|hey|good morning|good afternoon|good evening|howdy)\b/i.test(textLower)) {
                   return {

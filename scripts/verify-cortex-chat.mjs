@@ -117,6 +117,12 @@ async function testConversationalVariety() {
     statusReply.includes('Operating at peak efficiency') && statusReply.includes('How are you'),
     'Status inquiry receives natural conversational Cortana response'
   );
+
+  const emailReply = await sendQuery('can we go ahead through my email and try to filter out the emails that we can go ahead and get rid of since I have so many emails I think I have about 22,000 of them');
+  assert(
+    emailReply.includes('Inbox Triage Strategy') && emailReply.includes('category:promotions'),
+    'Email decluttering query receives detailed, high-leverage inbox triage plan'
+  );
 }
 
 // 2. Test Tool Call Intent Parsing & Veto Contract

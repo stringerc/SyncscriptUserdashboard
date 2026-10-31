@@ -404,7 +404,7 @@ export function getToolMeta(tool: string, args: Record<string, any> = {}): { ico
  */
 export function sanitizeForSpeech(text: string): string {
   if (!text) return '';
-  return text
+  let speech = text
     // Replace raw local URLs with natural spoken equivalents
     .replace(/https?:\/\/(?:127\.0\.0\.1|localhost)(?::\d+)?(?:\/[^\s)]*)?/gi, 'our local dashboard')
     // Replace common web URLs
@@ -421,6 +421,8 @@ export function sanitizeForSpeech(text: string): string {
     .replace(/`([^`]+)`/g, '$1')
     // Clean markdown links [Title](url) -> Title
     .replace(/\[(.*?)\]\(.*?\)/g, '$1')
+    // Remove emojis that sound awkward when vocalized
+    .replace(/[\u{1F300}-\u{1F9FF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}]/gu, '')
     // Remove markdown formatting symbols
     .replace(/[#*_~]/g, '')
     // Remove bullet points at line starts
@@ -430,6 +432,19 @@ export function sanitizeForSpeech(text: string): string {
     // Clean extra whitespace
     .replace(/\s+/g, ' ')
     .trim();
+
+  // If text is very long (over 400 chars), speak the primary executive takeaway so voice feels natural and conversational
+  if (speech.length > 400) {
+    const sentences = speech.match(/[^.!?]+[.!?]+/g) || [];
+    if (sentences.length >= 2) {
+      const summary = sentences.slice(0, 2).join(' ');
+      if (summary.length >= 60) {
+        return `${summary} I've outlined the complete step-by-step queries on your screen.`;
+      }
+    }
+  }
+
+  return speech;
 }
 
 /**
@@ -1667,9 +1682,13 @@ export default function CortexDemo() {
     }
 
     // ── Conversational Intent Grounding for Natural Affirmations ──
-    // e.g. "yes", "do it", "sure", "sounds good", "go ahead", "go ahead and do it for me", "can you do that for me"
-    const isAffirmation = /\b(go ahead|do it|do that|do it for me|take care of it|proceed|run it|fix it|clean it up|clean them up|close them|close the tabs|offload them|offload tabs|offload the tabs|please do|go for it|sounds good|yes please|yes do that|execute that|make it happen)\b/i.test(userContent) ||
-      /^(yes|yeah|sure|do it|sounds good|go ahead|close them|close tabs|close open tabs|close duplicate tabs|dedupe|deduplicate|do that|fix it|run it|proceed)[!.?]*$/i.test(userContent.trim());
+    // e.g. "yes", "do it", "sure", "sounds good", "go ahead", "clean them up", "option 1"
+    // Disallow hijacking if query contains specific topics (e.g. emails, calendar, git) or is a long sentence
+    const hasSpecificTopic = /\b(email|emails|inbox|gmail|outlook|mail|calendar|git|repo|code|file|project|schedule|task)\b/i.test(userContent);
+    const isAffirmation = !hasSpecificTopic && (
+      /^(yes|yeah|sure|yep|yup|do it|sounds good|go ahead|proceed|clean them up|clean it up|take care of it|fix it|run it|option 1|please do)[!.?]*$/i.test(userContent.trim()) ||
+      (/^((yes|sure|okay|ok|please),?\s+)?(go ahead|do it|do that|do it for me|take care of it|proceed|run it|fix it|clean it up|clean them up|close them|close the tabs|offload them|offload tabs|make it happen)[!.?]*$/i.test(userContent.trim()))
+    );
 
     if (isAffirmation && proactiveInsight) {
       if (proactiveInsight.action === 'tabs_dedupe' || proactiveInsight.action === 'system_cleanup') {
@@ -1762,8 +1781,10 @@ export default function CortexDemo() {
     // ── Anaphoric Reference Resolution (Contextual Intent Grounding) ──
     const lastAssistantText = [...recentContext].reverse().find(m => m.role === 'assistant')?.content || '';
     const lastToolRecord = [...(messagesRef.current || [])].reverse().find(m => m.role === 'tool' && m.meta?.toolExecution)?.meta?.toolExecution;
-    const isActionDirective = /\b(go ahead|do it|do that|do it for me|take care of it|proceed|run it|fix it|clean it up|clean them up|close them|close the tabs|offload them|offload tabs|offload the tabs|please do|go for it|sounds good|yes please|yes do that|execute that|make it happen|implement that|implement it|implement the breakdown|implement this|feels right|that feels right|that works|let'?s do (it|that|this)|option\s+[123]|the first (one|option)|the second (one|option)|two commits|split it|bundle (them|it|the first))\b/i.test(userContent) ||
-      /^(yes|yeah|sure|do it|ok|okay|yep|yup|perfect|great|approved|confirmed)[!.?]*$/i.test(userContent.trim());
+    const isActionDirective = !hasSpecificTopic && (
+      /^(yes|yeah|sure|do it|ok|okay|yep|yup|perfect|great|approved|confirmed|sounds good|go ahead|proceed|take care of it|clean it up|clean them up|option\s+[123])[!.?]*$/i.test(userContent.trim()) ||
+      (/^((yes|sure|okay|ok|please),?\s+)?(go ahead|do it|do that|do it for me|take care of it|proceed|run it|fix it|clean it up|clean them up|close them|close the tabs|offload them|offload tabs|offload the tabs|please do|go for it|sounds good|yes please|yes do that|execute that|make it happen|implement that|implement it|implement the breakdown|implement this|feels right|that feels right|that works|let'?s do (it|that|this)|option\s+[123]|the first (one|option)|the second (one|option)|two commits|split it|bundle (them|it|the first))[!.?]*$/i.test(userContent.trim()))
+    );
 
     let effectiveUserContent = userContent;
     if (isActionDirective && lastAssistantText) {
