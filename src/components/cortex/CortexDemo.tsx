@@ -1402,37 +1402,37 @@ export default function CortexDemo() {
       const text = result.text?.trim();
       if (!text) return;
 
-      // Check if AI is currently speaking or just stopped speaking (< 1200ms room reverberation buffer)
-      const isWithinSpeechEchoWindow = isSpeakingRef.current || (Date.now() - lastSpeechEndTimeRef.current < 1200);
+      // Smart Half-Duplex Auto-Muting Gate & Reverberation Buffer (1000ms):
+      // Drop all microphone input while AI is vocalizing or within acoustic reverb tail.
+      const now = Date.now();
+      const inReverbWindow = (now - lastSpeechEndTimeRef.current) < 1000;
+      const isAiSpeaking = voiceStream.isSpeaking || isSpeakingRef.current;
 
-      if (isWithinSpeechEchoWindow) {
-        const { isEcho, matchRatio } = isAcousticEcho(
-          text,
-          activeAiUtteranceRef.current,
-          recentAiSpeechHistoryRef.current
-        );
+      if (isAiSpeaking || inReverbWindow) {
+        // Check for intentional explicit barge-in commands ('stop', 'wait', 'quiet', 'cancel')
+        const transTokens = tokenizeText(text);
+        const INTERRUPT_COMMANDS = new Set(['stop', 'wait', 'hold', 'pause', 'quiet', 'shut', 'hush', 'cancel']);
+        const isExplicitInterrupt = transTokens.some(t => INTERRUPT_COMMANDS.has(t));
 
-        if (isEcho) {
-          console.log(`[Cortex Efference Copy] Suppressed self-echo (${Math.round(matchRatio * 100)}% match): "${text}"`);
-          // Clear any pending debounce so the echo isn't dispatched
-          if (speechDebounceTimerRef.current) {
-            clearTimeout(speechDebounceTimerRef.current);
-            speechDebounceTimerRef.current = null;
-          }
-          pendingSpeechRef.current = '';
-          setEchoSuppressedNotice(true);
-          setTimeout(() => setEchoSuppressedNotice(false), 2000);
-          return;
-        }
-
-        // If it's NOT self-echo and AI is speaking, this is a genuine user barge-in!
-        if (isSpeakingRef.current) {
-          console.log('[Cortex Voice] Genuine user barge-in detected! Halting AI speech.');
+        if (isExplicitInterrupt && isAiSpeaking) {
+          console.log('[Cortex Voice] Explicit user interrupt command detected. Halting speech.');
           voiceStream.stopSpeaking();
           activeAiUtteranceRef.current = '';
           setInterruptedNotice(true);
           setTimeout(() => setInterruptedNotice(false), 2500);
+          return;
         }
+
+        // Drop speaker audio bleed to guarantee zero self-hearing / feedback loop
+        console.log(`[Cortex Half-Duplex Gate] Suppressed speaker audio bleed (${isAiSpeaking ? 'vocalizing' : 'reverb tail'}): "${text}"`);
+        if (speechDebounceTimerRef.current) {
+          clearTimeout(speechDebounceTimerRef.current);
+          speechDebounceTimerRef.current = null;
+        }
+        pendingSpeechRef.current = '';
+        setEchoSuppressedNotice(true);
+        setTimeout(() => setEchoSuppressedNotice(false), 2000);
+        return;
       }
 
       pendingSpeechRef.current = text;
@@ -1494,6 +1494,17 @@ export default function CortexDemo() {
       }
     }
   }, [isVoiceActive, voiceStream]);
+
+  // Global Escape key listener to interrupt AI speech immediately
+  useEffect(() => {
+    const handleGlobalKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && voiceStream.isSpeaking) {
+        voiceStream.stopSpeaking();
+      }
+    };
+    window.addEventListener('keydown', handleGlobalKeyDown);
+    return () => window.removeEventListener('keydown', handleGlobalKeyDown);
+  }, [voiceStream.isSpeaking, voiceStream]);
 
   // ── Initialize ────────────────────────────────────────────────
   useEffect(() => {
@@ -2118,33 +2129,10 @@ If a tool is required, output your brief intention and the tool_call block. When
           }
 
           // Approved by Volition Governor!
+          // Silent Tool Feedback: Emit the crisp ascending audio haptic chime on step 1,
+          // keeping intermediate sensorimotor steps silent so voices never collide.
           if (stepIndex === 1) {
             playVolitionChime();
-            const bridgingPhrase = getBridgingPhrase(currentToolCall.tool, currentToolCall.args);
-            if (isVoiceActiveRef.current && bridgingPhrase) {
-              voiceStream.speak({
-                text: bridgingPhrase,
-                config: {
-                  model: 'cartesia',
-                  voice: selectedVoiceRef.current,
-                  speed: 1.05,
-                },
-              });
-            }
-          } else if (stepIndex > 1 && isVoiceActiveRef.current) {
-            const stepBackchannel = stepIndex === 2 
-              ? 'Evaluating next sensorimotor step...'
-              : stepIndex === 3 
-                ? 'Synthesizing visual canvas...'
-                : 'Finalizing cognitive synthesis...';
-            voiceStream.speak({
-              text: stepBackchannel,
-              config: {
-                model: 'cartesia',
-                voice: selectedVoiceRef.current,
-                speed: 1.1,
-              },
-            });
           }
 
           // Update Stream of Consciousness & Shared Attention Beacon
@@ -2812,6 +2800,10 @@ CRITICAL INSTRUCTION: Continue directly from the exact point where you stopped. 
 
       if (cleanSpeech) {
         activeAiUtteranceRef.current = cleanSpeech;
+        recentAiSpeechHistoryRef.current = [
+          cleanSpeech,
+          ...recentAiSpeechHistoryRef.current.slice(0, 4)
+        ];
         voiceStream.speak({
           text: cleanSpeech,
           config: {
@@ -3108,8 +3100,14 @@ CRITICAL INSTRUCTION: Continue directly from the exact point where you stopped. 
           {/* Full-duplex voice mode toggle */}
           <button
             id="cortex-voice-toggle-btn"
-            onClick={toggleVoiceMode}
-            title={isVoiceActive ? 'Voice active (full-duplex with barge-in). Click to disable.' : 'Click to enable voice conversation with instant barge-in'}
+            onClick={() => {
+              if (voiceStream.isSpeaking) {
+                voiceStream.stopSpeaking();
+              } else {
+                toggleVoiceMode();
+              }
+            }}
+            title={isVoiceActive ? (voiceStream.isSpeaking ? 'AI speaking (mic muted). Click to interrupt.' : 'Voice active (smart half-duplex). Click to turn off.') : 'Click to enable voice conversation'}
             style={{
               padding: '2px 8px', borderRadius: 4, fontSize: 10, fontWeight: 600, cursor: 'pointer',
               display: 'flex', alignItems: 'center', gap: 5,
@@ -3130,7 +3128,7 @@ CRITICAL INSTRUCTION: Continue directly from the exact point where you stopped. 
             <span>{isVoiceActive ? (voiceStream.isSpeaking ? '🔊' : '🎙️') : '🎙️'}</span>
             <span>
               {isVoiceActive
-                ? (voiceStream.isSpeaking ? 'AI VOCALIZING' : 'LISTENING...')
+                ? (voiceStream.isSpeaking ? 'AI VOCALIZING (MUTED)' : 'LISTENING...')
                 : 'VOICE OFF'}
             </span>
           </button>
@@ -5465,6 +5463,11 @@ CRITICAL INSTRUCTION: Continue directly from the exact point where you stopped. 
           onKeyDown={(e) => {
             e.stopPropagation();
             if (e.nativeEvent) e.nativeEvent.stopImmediatePropagation();
+            if (e.key === 'Escape' && voiceStream.isSpeaking) {
+              e.preventDefault();
+              voiceStream.stopSpeaking();
+              return;
+            }
             if (e.key === 'Enter' && !e.shiftKey) {
               e.preventDefault();
               sendMessage();
@@ -5475,7 +5478,9 @@ CRITICAL INSTRUCTION: Continue directly from the exact point where you stopped. 
             if (e.nativeEvent) e.nativeEvent.stopImmediatePropagation();
           }}
           placeholder={
-            voiceStream.interimText
+            voiceStream.isSpeaking
+              ? '🔊 AI Vocalizing (mic muted to prevent echo — click Interrupt to stop)...'
+              : voiceStream.interimText
               ? `Listening: "${voiceStream.interimText}"...`
               : isOffline
               ? 'Ask Cortex (offline)'
@@ -5488,7 +5493,7 @@ CRITICAL INSTRUCTION: Continue directly from the exact point where you stopped. 
           style={{
             flex: 1, padding: '10px 14px', borderRadius: 8, fontSize: 14,
             background: C.surface,
-            border: `1px solid ${voiceStream.interimText ? C.green : isSending ? C.cortex + '66' : C.border}`,
+            border: `1px solid ${voiceStream.isSpeaking ? C.cortex : voiceStream.interimText ? C.green : isSending ? C.cortex + '66' : C.border}`,
             color: C.text,
             outline: 'none', fontFamily: 'inherit',
             transition: 'border-color 0.2s',
@@ -5498,18 +5503,33 @@ CRITICAL INSTRUCTION: Continue directly from the exact point where you stopped. 
           id="cortex-mic-btn"
           type="button"
           onClick={toggleVoiceMode}
-          title={isVoiceActive ? 'Voice active (full-duplex). Click to turn off.' : 'Click to enable voice conversation'}
+          title={isVoiceActive ? 'Voice active (smart half-duplex). Click to turn off.' : 'Click to enable voice conversation'}
           style={{
             padding: '10px 14px', borderRadius: 8, fontSize: 14, cursor: 'pointer',
-            background: isVoiceActive ? 'rgba(0, 204, 255, 0.15)' : C.surface,
+            background: isVoiceActive ? (voiceStream.isSpeaking ? 'rgba(0, 204, 255, 0.25)' : 'rgba(0, 204, 255, 0.15)') : C.surface,
             border: `1px solid ${isVoiceActive ? C.cortex : C.border}`,
             color: isVoiceActive ? C.cortex : C.dim,
             transition: 'all 0.2s',
           }}
         >
-          {isVoiceActive ? '🎙️' : '🎤'}
+          {isVoiceActive ? (voiceStream.isSpeaking ? '🔊' : '🎙️') : '🎤'}
         </button>
-        {isSending ? (
+        {voiceStream.isSpeaking ? (
+          <button
+            id="cortex-interrupt-speech-btn"
+            type="button"
+            onClick={() => voiceStream.stopSpeaking()}
+            title="Click to interrupt AI vocalization immediately"
+            style={{
+              padding: '10px 16px', borderRadius: 8, fontSize: 13, cursor: 'pointer',
+              background: 'rgba(239, 68, 68, 0.15)', border: `1px solid ${C.red}66`, color: C.red,
+              fontWeight: 500, display: 'flex', alignItems: 'center', gap: 6,
+            }}
+          >
+            <span style={{ width: 8, height: 8, background: C.red, borderRadius: 2 }} />
+            Interrupt
+          </button>
+        ) : isSending ? (
           <button
             id="cortex-stop-btn"
             type="button"

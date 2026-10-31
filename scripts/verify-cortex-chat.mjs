@@ -75,6 +75,50 @@ async function testDevChatEndpoint() {
   });
 }
 
+// 1b. Test Conversational Variety & Non-repetitive Responses
+async function testConversationalVariety() {
+  console.log('\n--- 1b. Testing Conversational Variety & Voice Conciseness ---');
+  const sendQuery = (text) => new Promise((resolve) => {
+    const payload = JSON.stringify({ messages: [{ role: 'user', content: text }] });
+    const req = http.request(
+      'http://127.0.0.1:5173/api/ai/nexus-guest',
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Content-Length': Buffer.byteLength(payload),
+        },
+        timeout: 5000,
+      },
+      (res) => {
+        let data = '';
+        res.on('data', chunk => data += chunk);
+        res.on('end', () => {
+          const tokens = [...data.matchAll(/data:\s*({.*})/g)]
+            .map(m => { try { return JSON.parse(m[1]).token || ''; } catch { return ''; } })
+            .join('');
+          resolve(tokens);
+        });
+      }
+    );
+    req.on('error', () => resolve(''));
+    req.write(payload);
+    req.end();
+  });
+
+  const helloReply = await sendQuery('hello cortex');
+  assert(
+    helloReply.includes('Hello!') && !helloReply.includes('recurrent coalition ignited'),
+    'Greeting receives natural conversational answer without repetitive technical preamble'
+  );
+
+  const statusReply = await sendQuery('how are you today?');
+  assert(
+    statusReply.includes('Operating at peak efficiency') && statusReply.includes('How are you'),
+    'Status inquiry receives natural conversational Cortana response'
+  );
+}
+
 // 2. Test Tool Call Intent Parsing & Veto Contract
 function testToolCallAndVetoContract() {
   console.log('\n--- 2. Testing Tool Call Contract & Libet Conscious Veto ---');
@@ -134,6 +178,7 @@ function testAnaphoricGrounding() {
 
 async function main() {
   await testDevChatEndpoint();
+  await testConversationalVariety();
   testToolCallAndVetoContract();
   testAnaphoricGrounding();
 
