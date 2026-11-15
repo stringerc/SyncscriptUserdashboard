@@ -9,7 +9,7 @@ import {
 import type { CortexArtifact } from '../../lib/cortex-artifacts';
 
 const ArtifactRenderer = lazy(() => import('./artifacts/ArtifactRenderer'));
-import { useCortexChatMessages, setCortexChatMessages } from '../../lib/cortex-chat-store';
+import { useCortexChatMessages, setCortexChatMessages, getCortexChatSnapshot } from '../../lib/cortex-chat-store';
 import type { CortexSignalBusPayload } from './CortexVisualizer';
 
 const DRAWER_CSS = `
@@ -276,31 +276,46 @@ export function CortexChatDrawer({ open, onClose, payload, onSubmitText }: Corte
   const [draft, setDraft] = useState('');
   const st = STATE_LABEL[payload.state] ?? STATE_LABEL.idle;
   const hydratedRef = useRef(false);
+  const hydrateAttemptsRef = useRef(0);
 
-  // Hydrate from server history when the store is empty (fresh page load —
-  // the store is module-level and does not survive a full reload).
-  useEffect(() => {
-    if (hydratedRef.current || messages.length > 0) return;
-    hydratedRef.current = true;
+  // Merge server-side history (disk backup) into the store by id — runs once
+  // per mount, and retries (max 3) whenever the drawer opens with an empty
+  // transcript, so a proxy restart mid-fetch doesn't lose the session.
+  const hydrate = () => {
+    if (hydratedRef.current && hydrateAttemptsRef.current > 0) return;
+    if (hydrateAttemptsRef.current >= 3) return;
+    hydrateAttemptsRef.current += 1;
     fetch('/api/cortex/chat-history', { cache: 'no-store' })
       .then((r) => r.json())
       .then((d) => {
+        hydratedRef.current = true;
         const msgs = Array.isArray(d?.messages) ? d.messages : [];
-        if (msgs.length) {
-          const current = getCortexChatSnapshot().messages;
-          if (current.length === 0) {
-            setCortexChatMessages(msgs.map((m: any) => ({ ...m, streaming: false })));
-          } else {
-            const existingIds = new Set(current.map((m) => m.id));
-            const newHistory = msgs.filter((m: any) => !existingIds.has(m.id)).map((m: any) => ({ ...m, streaming: false }));
-            if (newHistory.length) {
-              setCortexChatMessages([...newHistory, ...current]);
-            }
-          }
+        if (!msgs.length) return;
+        const current = getCortexChatSnapshot().messages;
+        const existingIds = new Set(current.map((m) => m.id));
+        const newHistory = msgs
+          .filter((m: any) => !existingIds.has(m.id))
+          .map((m: any) => ({ ...m, streaming: false }));
+        if (newHistory.length) {
+          // Server holds the durable tail — prepend anything we're missing.
+          setCortexChatMessages([...newHistory, ...current]);
         }
       })
-      .catch(() => { });
-  }, [messages.length]);
+      .catch(() => { /* retry on next open */ });
+  };
+
+  useEffect(() => {
+    if (hydratedRef.current) return;
+    hydrate();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Re-attempt hydration when the drawer opens and the transcript is empty
+  // (e.g. first fetch raced a proxy restart).
+  useEffect(() => {
+    if (open && messages.length === 0) hydrate();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
 
   const isCortexBusy = payload.state === 'thinking' || payload.state === 'working';
   const lastMsg = messages[messages.length - 1];

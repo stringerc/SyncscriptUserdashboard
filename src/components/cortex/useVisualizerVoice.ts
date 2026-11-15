@@ -961,7 +961,7 @@ export function useVisualizerVoice(enabled: boolean, onState: (speaking: boolean
     const activeSpeechRef = { current: '' };
     // Shared-transcript mirror: everything Cortex speaks this turn is appended
     // to the chat store so /cortex/chat and the visualizer drawer stay in sync.
-    const liveTurnRef = { aiId: null as string | null, buf: '', artifacts: [] as CortexArtifact[] };
+    const liveTurnRef = { aiId: null as string | null, userId: null as string | null, buf: '', artifacts: [] as CortexArtifact[] };
     const speechHistoryRef = { current: [] as string[] };
     const turnAbortRef = { current: null as AbortController | null };
     // Spec-confirmation gate: agent work with real blast radius (builder /
@@ -1539,7 +1539,7 @@ export function useVisualizerVoice(enabled: boolean, onState: (speaking: boolean
               lat: typeof res.activeCameraLat === 'number' ? res.activeCameraLat : undefined,
               lon: typeof res.activeCameraLon === 'number' ? res.activeCameraLon : undefined,
             },
-            preferredZone: 'mid-left',
+            preferredZone: 'mid-0',
           });
         }
         return;
@@ -1695,8 +1695,10 @@ export function useVisualizerVoice(enabled: boolean, onState: (speaking: boolean
       publishQueue();
       historyRef.current.push({ role: 'user', content: text });
       if (historyRef.current.length > 12) historyRef.current = historyRef.current.slice(-12);
+      const userMsgId = `viz-u-${Date.now()}`;
+      liveTurnRef.userId = userMsgId;
       appendCortexChatMessage({
-        id: `viz-u-${Date.now()}`,
+        id: userMsgId,
         role: 'user',
         content: text,
         timestamp: Date.now(),
@@ -1898,8 +1900,10 @@ export function useVisualizerVoice(enabled: boolean, onState: (speaking: boolean
           if (geo) {
             state.awaitingPlace = false;
             historyRef.current.push({ role: 'user', content: placeCandidate });
+            const geoUserId = `viz-u-${Date.now()}`;
+            liveTurnRef.userId = geoUserId;
             appendCortexChatMessage({
-              id: `viz-u-${Date.now()}`, role: 'user', content: placeCandidate,
+              id: geoUserId, role: 'user', content: placeCandidate,
               timestamp: Date.now(),
             } as ChatMessage);
             liveTurnRef.aiId = null; liveTurnRef.buf = ''; liveTurnRef.artifacts = [];
@@ -1921,7 +1925,7 @@ export function useVisualizerVoice(enabled: boolean, onState: (speaking: boolean
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({
                 messages: [
-                  { id: `viz-u-${Date.now()}`, role: 'user', content: placeCandidate, timestamp: Date.now() },
+                  { id: geoUserId, role: 'user', content: placeCandidate, timestamp: Date.now() },
                   { id: `viz-ai-${Date.now()}`, role: 'ai', content: spoken, timestamp: Date.now() },
                 ],
               }),
@@ -2000,7 +2004,7 @@ export function useVisualizerVoice(enabled: boolean, onState: (speaking: boolean
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             messages: [
-              { id: `viz-u-${Date.now()}`, role: 'user', content: text, timestamp: Date.now() },
+              { id: liveTurnRef.userId || `viz-u-${Date.now()}`, role: 'user', content: text, timestamp: Date.now() },
               { id: liveTurnRef.aiId || `viz-ai-${Date.now()}`, role: 'ai', content: finalText, timestamp: Date.now() },
             ],
           }),
