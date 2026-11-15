@@ -888,7 +888,10 @@ export function buildFlyView(
       heading_deg: 0,
       pitch_deg: pitch,
     },
-    layers: opts.layers?.length ? [...new Set([...FLY_LAYERS, ...opts.layers])] : [...FLY_LAYERS],
+    // Merge the session's active set: every fly re-sends a full layer list and
+    // GEV applies it authoritatively, so dropping to FLY_LAYERS here would
+    // switch off anything the user enabled since the last view.
+    layers: [...new Set([...(opts.layers ?? []), ...activeLayers])],
     map,
     annotations: [
       { type: 'pin', latitude: geo.lat, longitude: geo.lon, label: geo.name, color: 'cyan' },
@@ -936,7 +939,7 @@ if (typeof window !== 'undefined') {
           .map((st: any) => String(st.layerId));
         const v = w.view as { layers?: unknown } | null;
         if (bad.length && v && Array.isArray(v.layers) &&
-            bad.some((id) => (v.layers as string[]).includes(id)) && !w.retried) {
+            bad.some((id: string) => (v.layers as string[]).includes(id)) && !w.retried) {
           for (const id of bad) { activeLayers.delete(id); lastPrunedLayers.push(id); }
           const fixed = { ...(v as object), layers: (v.layers as string[]).filter((l) => !bad.includes(l)) };
           lastView = fixed as Record<string, unknown>;
