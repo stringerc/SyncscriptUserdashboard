@@ -562,11 +562,11 @@ function OrbitRing({ spec, live, index }: { spec: RingSpec; live: React.MutableR
  *  read by the DOM inspect card so it rides the agent's orbit. */
 export const agentScreenAnchors: Record<string, { x: number; y: number; behind: boolean }> = {};
 
-const SAT_COUNT = 9;
+const SAT_COUNT = 10;
 const SAT_AGENT_COLORS: Record<string, string> = {
-  sentinel: '#67e8f9', scout: '#e879f9', librarian: '#fbbf24', builder: '#34d399', reviewer: '#fb7185', runner: '#a3e635', warden: '#818cf8',
+  sentinel: '#67e8f9', scout: '#e879f9', librarian: '#fbbf24', builder: '#34d399', reviewer: '#fb7185', runner: '#a3e635', distributor: '#fb923c', warden: '#818cf8',
 };
-const SAT_AGENT_ORDER = ['sentinel', 'scout', 'librarian', 'builder', 'reviewer', 'runner', 'warden'];
+const SAT_AGENT_ORDER = ['sentinel', 'scout', 'librarian', 'builder', 'reviewer', 'runner', 'distributor', 'warden'];
 const satSpawnHue = (id: string) => {
   let h = 0;
   for (const ch of id) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
@@ -581,6 +581,9 @@ const satAgentSort = (a: AgentClient, b: AgentClient) => {
 };
 const satAgentColor = (a: AgentClient) =>
   SAT_AGENT_COLORS[a.id] || (a.spawnSpec ? `hsl(${satSpawnHue(a.id)} 85% 68%)` : '#94a3b8');
+/** Enterprise fleet (revenue agents + self-spawned) gets a real 3D satellite hull. */
+const satIsEnterprise = (a?: AgentClient | null) =>
+  !!a && (a.tier === 'enterprise' || !!a.spawnSpec);
 
 // Soft radial glow sprite texture — shared by all agent vessel halos.
 let glowTex: THREE.CanvasTexture | null = null;
@@ -620,6 +623,78 @@ function textTexture(text: string, color: string): THREE.CanvasTexture {
   return tex;
 }
 
+// Solar-wing panel texture — dark PV cells with silver bus lines.
+let wingPanelTex: THREE.CanvasTexture | null = null;
+function getWingPanelTexture(): THREE.CanvasTexture {
+  if (wingPanelTex) return wingPanelTex;
+  const cv = document.createElement('canvas');
+  cv.width = 256; cv.height = 96;
+  const g = cv.getContext('2d')!;
+  // cell field — deep blue-black photovoltaic cells
+  g.fillStyle = '#0a1226';
+  g.fillRect(0, 0, 256, 96);
+  // fine cell grid (8×4 cells)
+  g.strokeStyle = 'rgba(140,170,210,0.55)';
+  g.lineWidth = 1;
+  for (let x = 0; x <= 256; x += 32) { g.beginPath(); g.moveTo(x, 0); g.lineTo(x, 96); g.stroke(); }
+  for (let y = 0; y <= 96; y += 24) { g.beginPath(); g.moveTo(0, y); g.lineTo(256, y); g.stroke(); }
+  // silver interconnect bus lines
+  g.strokeStyle = 'rgba(210,225,245,0.8)';
+  g.lineWidth = 2;
+  for (let y = 12; y < 96; y += 24) { g.beginPath(); g.moveTo(0, y); g.lineTo(256, y); g.stroke(); }
+  // hinge shadow at root edge
+  const grad = g.createLinearGradient(0, 0, 24, 0);
+  grad.addColorStop(0, 'rgba(0,0,0,0.55)');
+  grad.addColorStop(1, 'rgba(0,0,0,0)');
+  g.fillStyle = grad;
+  g.fillRect(0, 0, 24, 96);
+  wingPanelTex = new THREE.CanvasTexture(cv);
+  wingPanelTex.colorSpace = THREE.SRGBColorSpace;
+  return wingPanelTex;
+}
+
+// Gold multi-layer-insulation foil — amber base, crinkle streaks, specular glints.
+let mliFoilTex: THREE.CanvasTexture | null = null;
+function getMliFoilTexture(): THREE.CanvasTexture {
+  if (mliFoilTex) return mliFoilTex;
+  const cv = document.createElement('canvas');
+  cv.width = cv.height = 256;
+  const g = cv.getContext('2d')!;
+  g.fillStyle = '#a97e3f';
+  g.fillRect(0, 0, 256, 256);
+  // crinkle facets — random thin quads in lighter/darker amber
+  for (let i = 0; i < 900; i++) {
+    const x = Math.random() * 256, y = Math.random() * 256;
+    const w = 3 + Math.random() * 14, h = 1 + Math.random() * 4;
+    const light = Math.random() > 0.5;
+    g.fillStyle = light
+      ? `rgba(255,214,140,${0.04 + Math.random() * 0.10})`
+      : `rgba(90,58,20,${0.05 + Math.random() * 0.12})`;
+    g.save();
+    g.translate(x, y);
+    g.rotate(Math.random() * Math.PI);
+    g.fillRect(-w / 2, -h / 2, w, h);
+    g.restore();
+  }
+  // long diagonal specular streaks
+  for (let i = 0; i < 26; i++) {
+    const x = Math.random() * 256, y = Math.random() * 256;
+    const len = 30 + Math.random() * 90;
+    const grad = g.createLinearGradient(x, y, x + len * 0.4, y + len);
+    grad.addColorStop(0, 'rgba(255,230,170,0)');
+    grad.addColorStop(0.5, `rgba(255,230,170,${0.05 + Math.random() * 0.10})`);
+    grad.addColorStop(1, 'rgba(255,230,170,0)');
+    g.strokeStyle = grad;
+    g.lineWidth = 1 + Math.random() * 2;
+    g.beginPath(); g.moveTo(x, y); g.lineTo(x + len * 0.4, y + len); g.stroke();
+  }
+  mliFoilTex = new THREE.CanvasTexture(cv);
+  mliFoilTex.colorSpace = THREE.SRGBColorSpace;
+  mliFoilTex.wrapS = mliFoilTex.wrapT = THREE.RepeatWrapping;
+  mliFoilTex.repeat.set(2, 1);
+  return mliFoilTex;
+}
+
 function Satellites({ live }: { live: React.MutableRefObject<LiveSignal> }) {
   const groupRef = useRef<THREE.Group>(null);
   const sats = useMemo(
@@ -650,6 +725,17 @@ function Satellites({ live }: { live: React.MutableRefObject<LiveSignal> }) {
   const agentsRef = useRef<AgentClient[]>([]);
   const agentColorsRef = useRef<THREE.Color[]>([]);
   const tagRefs = useRef<(THREE.Sprite | null)[]>([]);
+  // 3D enterprise satellite hulls — one group per orbit slot, visible only
+  // when the slot's agent is enterprise-tier.
+  const satMeshRefs = useRef<(THREE.Group | null)[]>([]);
+  const satWingRefs = useRef<((THREE.MeshStandardMaterial | null)[] | undefined)[]>([]);
+  const satBeaconRefs = useRef<(THREE.MeshBasicMaterial | null)[]>([]);
+  const satNavPortRefs = useRef<(THREE.MeshBasicMaterial | null)[]>([]);
+  const satNavStarRefs = useRef<(THREE.MeshBasicMaterial | null)[]>([]);
+  const satThrustRefs = useRef<(THREE.Sprite | null)[]>([]);
+  const tmpW = useMemo(() => new THREE.Vector3(), []);
+  const tmpT = useMemo(() => new THREE.Vector3(), []);
+  const basisMat = useMemo(() => new THREE.Matrix4(), []);
   const UP = useMemo(() => new THREE.Vector3(0, 1, 0), []);
   const tmpDir = useMemo(() => new THREE.Vector3(), []);
   const tmpCtrl = useMemo(() => new THREE.Vector3(), []);
@@ -795,6 +881,69 @@ function Satellites({ live }: { live: React.MutableRefObject<LiveSignal> }) {
           : agent.status === 'offline' ? 0.3 : 0.5;
       }
 
+      // ── enterprise satellite hull: real 3D geometry riding the same orbit ──
+      const ent = satIsEnterprise(agent);
+      const hull = satMeshRefs.current[i];
+      if (hull) {
+        hull.visible = ent;
+        if (ent && agent && col) {
+          hull.position.set(px, py, pz);
+          // Orient: nose (+Z) along orbit tangent, top toward radial outward.
+          const a2 = a + 0.09;
+          const rad2 = s.radius * (agent.spawnSpec ? 1.38 : 1);
+          tmpW.set(
+            Math.cos(a2) * rad2 - px,
+            Math.sin(a2 * 0.7 + s.incl) * rad2 * 0.45 - py,
+            Math.sin(a2) * rad2 - pz,
+          ).normalize();
+          tmpT.set(px, py, pz).normalize(); // radial outward = satellite "up"
+          const fwd = tmpDir.copy(tmpW).transformDirection(groupRef.current!.matrixWorld).normalize();
+          const up = tmpPerp.copy(tmpT).transformDirection(groupRef.current!.matrixWorld).normalize();
+          tmpCtrl.crossVectors(up, fwd).normalize(); // right = up × forward
+          basisMat.makeBasis(tmpCtrl, up, fwd);
+          hull.quaternion.setFromRotationMatrix(basisMat);
+          // Slow attitude drift — real sats aren't perfectly rigid in frame.
+          hull.rotateZ(Math.sin(t * 0.12 + i * 1.7) * 0.045);
+          // Status-driven materials: PV cells glow with the agent hue,
+          // beacon blinks, nav lights shimmer, thrusters fire when working.
+          const wingMats = satWingRefs.current[i];
+          const beacon = satBeaconRefs.current[i];
+          const navPort = satNavPortRefs.current[i];
+          const navStar = satNavStarRefs.current[i];
+          const thrust = satThrustRefs.current[i];
+          const dim = agent.status === 'offline' || agent.status === 'retired';
+          if (wingMats) {
+            for (const wm of wingMats) {
+              if (!wm) continue;
+              wm.emissive.copy(col);
+              wm.emissiveIntensity = dim ? 0.02
+                : agent.status === 'working' ? 0.34 + 0.1 * Math.sin(t * 2.2 + i)
+                : agent.status === 'error' ? 0.12 : 0.18;
+            }
+          }
+          if (beacon) {
+            const err = agent.status === 'error';
+            const b = 0.5 + 0.5 * Math.sin(t * (err ? 7 : 3.2) + i * 2.3);
+            beacon.color.set(err ? '#f87171' : b > 0.62 ? '#fecaca' : '#7f1d1d');
+            beacon.opacity = dim ? 0.15 : err ? 0.5 + 0.5 * b : 0.35 + 0.65 * b;
+          }
+          // Port = red, starboard = green — steady nav lights, shimmer only.
+          const navOp = dim ? 0.06 : 0.3 + 0.14 * Math.sin(t * 1.4 + i * 3.1);
+          if (navPort) navPort.opacity = agent.status === 'error' ? navOp * (0.5 + 0.5 * Math.sin(t * 9)) : navOp;
+          if (navStar) navStar.opacity = agent.status === 'error' ? navOp * (0.5 + 0.5 * Math.sin(t * 9 + 1.4)) : navOp;
+          if (thrust) {
+            thrust.visible = working && !dim;
+            if (thrust.visible) {
+              const tm = thrust.material as THREE.SpriteMaterial;
+              tm.color.copy(col);
+              tm.opacity = 0.5 + 0.3 * Math.sin(t * 11 + i * 2);
+              thrust.scale.setScalar(0.05 + 0.03 * Math.sin(t * 13 + i));
+            }
+          }
+          hull.scale.setScalar(working && !dim ? 1 + 0.1 * Math.sin(t * 5.2 + i * 1.7) : 1);
+        }
+      }
+
       // ── ember current: curved particle stream agent → core ──
       // No beam geometry — just light motes flowing along a quadratic bezier
       // whose control point sways on two slow sines. Reads as energy in
@@ -921,6 +1070,13 @@ function Satellites({ live }: { live: React.MutableRefObject<LiveSignal> }) {
 
   return (
     <group ref={groupRef}>
+      {/* Lighting for the enterprise satellite hulls (standard materials).
+          Sprites/basic materials are unlit and unaffected. The cyan point
+          light at the core doubles as earthshine/rim on the hulls. */}
+      <ambientLight intensity={0.55} color="#9db8d8" />
+      <directionalLight position={[4, 6, 3]} intensity={1.5} color="#fff1d6" />
+      <pointLight position={[0, 0, 0]} intensity={2.6} color="#67e8f9" distance={5} decay={2} />
+      <pointLight position={[-4, -2, -3]} intensity={0.9} color="#f59e0b" distance={6} decay={2} />
       {sats.map((s, i) => (
         <group key={i}>
           <sprite
@@ -943,6 +1099,152 @@ function Satellites({ live }: { live: React.MutableRefObject<LiveSignal> }) {
               blending={THREE.AdditiveBlending}
             />
           </sprite>
+          {/* Enterprise satellite hull — realistic spacecraft geometry,
+              visible only for enterprise-tier agents. Nose +Z = direction
+              of travel, wings span ±X, top +Y faces radial outward. */}
+          <group
+            ref={(el) => { satMeshRefs.current[i] = el; }}
+            visible={false}
+            onClick={(e) => {
+              e.stopPropagation();
+              const ag = agentsRef.current[i];
+              if (ag) window.dispatchEvent(new CustomEvent('cortex-agent-select', { detail: ag.id }));
+            }}
+          >
+            {/* ── bus: gold MLI foil main structure ── */}
+            <mesh>
+              <boxGeometry args={[0.055, 0.06, 0.17]} />
+              <meshStandardMaterial
+                map={getMliFoilTexture()}
+                color="#e8c98a"
+                metalness={0.78}
+                roughness={0.38}
+              />
+            </mesh>
+            {/* equipment bays fore/aft — darker anodised panels */}
+            {[-1, 1].map((d) => (
+              <mesh key={d} position={[0, 0, d * 0.098]}>
+                <boxGeometry args={[0.05, 0.052, 0.046]} />
+                <meshStandardMaterial color="#182642" metalness={0.6} roughness={0.5} />
+              </mesh>
+            ))}
+            {/* radiator plates top/bottom */}
+            {[1, -1].map((d) => (
+              <mesh key={d} position={[0, d * 0.032, 0]} rotation={[d * Math.PI / 2, 0, 0]}>
+                <planeGeometry args={[0.045, 0.14]} />
+                <meshStandardMaterial color="#0c1322" metalness={0.4} roughness={0.75} side={THREE.DoubleSide} />
+              </mesh>
+            ))}
+            {/* RCS thruster blocks — four corner pods */}
+            {[-1, 1].map((sx) => [-1, 1].map((sy) => [-1, 1].map((sz) => (
+              <mesh key={`${sx}${sy}${sz}`} position={[sx * 0.03, sy * 0.034, sz * 0.068]}>
+                <boxGeometry args={[0.013, 0.013, 0.013]} />
+                <meshStandardMaterial color="#26314e" metalness={0.55} roughness={0.55} />
+              </mesh>
+            ))))}
+            {/* comms mast + whip antenna */}
+            <mesh position={[0.02, 0.068, -0.075]}>
+              <cylinderGeometry args={[0.0035, 0.0035, 0.05, 6]} />
+              <meshStandardMaterial color="#8b98b8" metalness={0.7} roughness={0.4} />
+            </mesh>
+            {/* star tracker — small angled plate on aft deck */}
+            <mesh position={[0, 0.042, -0.045]} rotation={[0.3, 0, 0]}>
+              <boxGeometry args={[0.022, 0.005, 0.022]} />
+              <meshStandardMaterial color="#1a2340" metalness={0.6} roughness={0.4} />
+            </mesh>
+            {/* high-gain dish — parabolic bowl on fore mast */}
+            <mesh position={[0, 0.052, 0.045]} rotation={[-0.7, 0, 0]}>
+              <sphereGeometry args={[0.038, 18, 10, 0, Math.PI * 2, 0, Math.PI * 0.42]} />
+              <meshStandardMaterial color="#c7cede" metalness={0.45} roughness={0.45} side={THREE.DoubleSide} />
+            </mesh>
+            <mesh position={[0, 0.062, 0.062]} rotation={[-0.7, 0, 0]}>
+              <cylinderGeometry args={[0.0025, 0.0025, 0.03, 6]} />
+              <meshStandardMaterial color="#6b7694" metalness={0.7} roughness={0.4} />
+            </mesh>
+            {/* main engine nozzles — twin bells aft */}
+            {[-1, 1].map((sx) => (
+              <mesh key={sx} position={[sx * 0.014, 0, -0.093]} rotation={[Math.PI / 2, 0, 0]}>
+                <coneGeometry args={[0.007, 0.024, 10, 1, true]} />
+                <meshStandardMaterial color="#3a4666" metalness={0.8} roughness={0.35} side={THREE.DoubleSide} />
+              </mesh>
+            ))}
+            {/* solar wings — 3 panel segments per side, cant + cell texture */}
+            {[-1, 1].map((sgn) => (
+              <group key={sgn} position={[sgn * 0.135, 0, 0]} rotation={[sgn * 0.14, 0, 0]}>
+                {[0, 1, 2].map((seg) => (
+                  <mesh
+                    key={seg}
+                    position={[sgn * (0.062 + seg * 0.122), 0, 0]}
+                  >
+                    <planeGeometry args={[0.112, 0.22]} />
+                    <meshStandardMaterial
+                      ref={(el) => {
+                        if (!satWingRefs.current[i]) satWingRefs.current[i] = [];
+                        satWingRefs.current[i]![sgn === 1 ? seg : 3 + seg] = el;
+                      }}
+                      map={getWingPanelTexture()}
+                      color="#0d1526"
+                      emissive="#67e8f9"
+                      emissiveIntensity={0.18}
+                      metalness={0.35}
+                      roughness={0.4}
+                      side={THREE.DoubleSide}
+                    />
+                  </mesh>
+                ))}
+                {/* wing root hinge */}
+                <mesh position={[sgn * 0.02, 0, 0]} rotation={[0, 0, Math.PI / 2]}>
+                  <cylinderGeometry args={[0.008, 0.008, 0.05, 8]} />
+                  <meshStandardMaterial color="#39466b" metalness={0.7} roughness={0.4} />
+                </mesh>
+              </group>
+            ))}
+            {/* navigation lights — port red, starboard green at wingtips */}
+            <mesh position={[-0.52, 0.02, 0]}>
+              <sphereGeometry args={[0.006, 8, 8]} />
+              <meshBasicMaterial
+                ref={(el) => { satNavPortRefs.current[i] = el; }}
+                color="#f87171"
+                transparent
+                opacity={0.5}
+              />
+            </mesh>
+            <mesh position={[0.52, 0.02, 0]}>
+              <sphereGeometry args={[0.006, 8, 8]} />
+              <meshBasicMaterial
+                ref={(el) => { satNavStarRefs.current[i] = el; }}
+                color="#4ade80"
+                transparent
+                opacity={0.5}
+              />
+            </mesh>
+            {/* beacon — masthead strobe, blinks in useFrame */}
+            <mesh position={[0.02, 0.096, -0.075]}>
+              <sphereGeometry args={[0.008, 8, 8]} />
+              <meshBasicMaterial
+                ref={(el) => { satBeaconRefs.current[i] = el; }}
+                color="#7f1d1d"
+                transparent
+                opacity={0.6}
+              />
+            </mesh>
+            {/* engine flare — visible only while working */}
+            <sprite
+              ref={(el) => { satThrustRefs.current[i] = el; }}
+              position={[0, 0, -0.13]}
+              visible={false}
+              renderOrder={4}
+            >
+              <spriteMaterial
+                map={getGlowTexture()}
+                color="#67e8f9"
+                transparent
+                opacity={0.6}
+                depthWrite={false}
+                blending={THREE.AdditiveBlending}
+              />
+            </sprite>
+          </group>
           {/* Ember current — the stream body: motes flowing agent → core
               along a living curve. No geometry, pure additive light. */}
           {Array.from({ length: EMBER_COUNT }, (_, k) => (
