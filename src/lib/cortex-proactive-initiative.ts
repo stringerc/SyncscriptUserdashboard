@@ -23,7 +23,8 @@ export type InitiativeCategory =
   | 'memory_allostasis'
   | 'calibration_audit'
   | 'scratch_hygiene'
-  | 'system_resonance';
+  | 'system_resonance'
+  | 'forecast';
 
 export interface ProactiveProposal {
   id: string;

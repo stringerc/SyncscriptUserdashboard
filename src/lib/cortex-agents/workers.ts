@@ -16,6 +16,8 @@ import type { AgentContext, AgentRuntime, WorkerHandler } from './runtime';
 import type { SpawnSpec, ToolScope } from './types';
 import { registerWardenWorker } from './warden';
 import { registerDistributorWorker } from './distribution';
+import { runForecastCycle, type RoutedForecast, type ProbeDeps } from './forecaster';
+import { getCortexProactiveInitiative } from '../cortex-proactive-initiative';
 import { cortexObsidianMemory } from '../cortex-obsidian-memory';
 
 const PORT = process.env.PORT ? parseInt(process.env.PORT) : 5173;
@@ -860,6 +862,82 @@ export function makeEphemeralWorker(spec: SpawnSpec): WorkerHandler {
   };
 }
 
+// ── Forecaster: evidence-cited prediction cycle ────────────────────
+// Probes emit ForecastSignals; the router tiers them (ambient → initiative
+// proposal → rationed spoken). No LLM in the loop for detection — signals
+// are deterministic reads of real state. LLM composition comes later for
+// interrupt-class narration only.
+
+const forecasterWorker: WorkerHandler = async (ctx) => {
+  const kind = ctx.task.kind || 'forecast_cycle';
+  if (kind !== 'forecast_cycle' && kind !== 'forecast_status') {
+    throw new Error(`forecaster: unknown task kind '${kind}'`);
+  }
+  ctx.progress(0.2);
+
+  const deps: ProbeDeps = {
+    now: Date.now(),
+    base: BASE,
+    fetchImpl: fetch,
+    getAgentSnapshot: async () => {
+      const res = await fetch(`${BASE}/api/cortex/agents/state`, { signal: AbortSignal.timeout(8000) });
+      if (!res.ok) throw new Error(`agents/state HTTP ${res.status}`);
+      return res.json();
+    },
+    listUpcomingEvents: async () => {
+      // Calendar source is pluggable; until a local events endpoint exists
+      // the probe gets an empty list and stays silent (honest, not an error).
+      try {
+        const res = await fetch(`${BASE}/api/cortex/calendar/upcoming`, { signal: AbortSignal.timeout(5000) });
+        if (!res.ok) return [];
+        const data: any = await res.json();
+        return Array.isArray(data?.events) ? data.events : [];
+      } catch {
+        return [];
+      }
+    },
+  };
+
+  const result = await runForecastCycle(deps, {
+    submitProposal: (r: RoutedForecast) => {
+      const engine = getCortexProactiveInitiative();
+      return engine.submitProposal({
+        category: 'forecast',
+        title: r.claim.slice(0, 140),
+        summary: [
+          r.why ? `Why: ${r.why}` : null,
+          r.suggestedAction ? `Suggested: ${r.suggestedAction}` : null,
+          `Evidence: ${r.evidence.map((e) => `${e.kind}:${e.ref}`).join(', ')}`,
+          `Confidence: ${Math.round(r.confidence * 100)}% · domain: ${r.domain}`,
+        ].filter(Boolean).join('\n'),
+        urgency: r.confidence >= 0.85 ? 'high' : r.confidence >= 0.6 ? 'medium' : 'low',
+        suggestedTool: 'cortex_memory',
+        suggestedArgs: { action: 'search', query: r.claim.slice(0, 200), limit: 5 },
+        requiresApproval: true,
+        epistemicConfidence: r.confidence,
+        source: 'sensor',
+        dedupeKey: r.id,
+        why: r.why,
+      });
+    },
+  });
+  ctx.progress(1);
+  return {
+    kind,
+    probes: ['fleet', 'calendar'],
+    signalsFound: result.signalsFound,
+    routed: result.routed.map((r) => ({
+      id: r.id, domain: r.domain, tier: r.tier, claim: r.claim,
+      confidence: r.confidence, demoted: r.demoted === true,
+    })),
+    droppedNoEvidence: result.droppedNoEvidence,
+    proposalsFiled: result.proposalsFiled,
+    spokenUsed: result.spokenUsed,
+    spokenRemaining: result.spokenRemaining,
+    probeErrors: result.probeErrors,
+  };
+};
+
 // ── Registration ──────────────────────────────────────────────────
 
 export function registerAgentWorkers(runtime: AgentRuntime) {
@@ -870,5 +948,6 @@ export function registerAgentWorkers(runtime: AgentRuntime) {
   runtime.registerWorker('reviewer', reviewerWorker);
   runtime.registerWorker('runner', runnerWorker);
   registerDistributorWorker(runtime);
+  runtime.registerWorker('forecaster', forecasterWorker);
   registerWardenWorker(runtime);
 }
