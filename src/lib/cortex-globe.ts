@@ -102,6 +102,8 @@ export type MapCommand =
   | { type: 'time'; op: 'seek'; at: number } | { type: 'time'; op: 'play' | 'pause' | 'live' }
   | { type: 'cctv'; action: 'nearest' | 'next' | 'prev' | 'focus' | 'select' | 'coverage'; query?: string; enabled?: boolean }
   | { type: 'cctv-place'; place: string }
+  | { type: 'place-search'; query: string; place: string }
+  | { type: 'place-details'; query: string; place?: string }
   | { type: 'back' }
   | { type: 'forward' };
 
@@ -182,6 +184,7 @@ const LAYER_ALIASES: Array<[RegExp, string]> = [
   [/\b(?:ghost\s*maps?|s2\s+ghost)\b/i, 's2-ghostmaps'],
   [/\b(?:active\s+fires?|firms|hotspots?|thermal\s+hot\s*spots?)\b/i, 'local-firms'],
   [/\b(?:bhote[\s-]?koshi|koshi)\b/i, 'bhote-koshi-2026'],
+  [/\b(?:map\s+)?search\s+results?|place\s+results?|osm\s+places?\b/i, 'osm-places'],
 ];
 
 const LAYER_VERB_RE = /\b(show|display|enable|turn\s+on|add|overlay|layer\s+on|bring\s+up)\b/i;
@@ -227,6 +230,7 @@ const LAYER_NAMES: Record<string, string> = {
   'local-firms': 'active fire detections',
   'bhote-koshi-2026': 'Bhote Koshi flood',
   'bhote-koshi-locator': 'Bhote Koshi locator',
+  'osm-places': 'map search results',
 };
 export function layerName(id: string): string {
   return LAYER_NAMES[id] ?? id.replace(/-/g, ' ');
@@ -535,6 +539,36 @@ function compoundPlace(t: string): string | null {
   return place;
 }
 
+// Place search: "burger places in Duluth", "find coffee shops near me",
+// "popular restaurants in Austin", "top rated tacos around Denver".
+// group 1 = free-text query (may be empty → the category noun is the query),
+// group 2 = anchor place.
+const PLACE_SEARCH_RE =
+  /^(?:(?:can|could|would|will)\s+you\s+|please\s+)?(?:(?:find|show|search(?:\s+for)?|look\s+for|get|list|discover|locate|what\s+are|where\s+are|i\s+want|i'?d\s+like|need)\s+)?(?:me\s+)?(?:(?:the|some|any|good|best|top|popular|cheap|local|nearest|nearby|famous|highest[\s-]rated|well[\s-]rated|new|open|currently)\s+)*(.*?)\s*(places?|restaurants?|eateries|food|diners?|grills?|bistros?|cafes?|coffee(?:\s+shops?)?|bars?|pubs?|breweries|brewpubs|pizzerias?|sushi|tacos?|bbq|burgers?|steakhouses?|wineries|distilleries|hotels?|motels?|lodging|resorts?|gyms?|fitness|salons?|barbershops?|spas?|pharmacies|drugstores?|grocery|supermarkets?|malls?|stores?|shops?|bookstores?|bakeries|bowling|theaters?|museums?|parks?|campgrounds?|gas\s+stations?|mechanics?|dentists?|doctors?|veterinarians?|vets?|pet\s+stores?|florists?|hardware|furniture|jewelers?|banks?|libraries|churches)\s+(?:in|near|around|by|close\s+to|within\s+\d+\s*(?:miles?|km|blocks?)\s+of)\s+(.{2,80}?)[.!?]*$/i;
+
+// Place details: "reviews for LR Burger", "is the diner in duluth any good",
+// "what do people say about that taco place". Keyword presence + subject
+// extraction; a trailing "in/near <place>" splits anchor from subject.
+const PLACE_REVIEW_HINT_RE =
+  /\b(?:reviews?|ratings?|rated|recommend(?:ed|ations?)?|any\s+good|worth\s+(?:it|a\s+visit|visiting|eating|trying)|how\s+(?:is|are)\s+\S+\s+(?:rated|reviewed)|what\s+do\s+people\s+say)\b/i;
+const PLACE_PIN_GUARD_RE =
+  /^(?:(?:can|could|would|will)\s+you\s+|please\s+)?(?:drop|pin|mark|flag|stick|plant)\b|\b(?:drop|put|place|stick)\s+(?:a\s+|the\s+)?pin\b/i;
+
+function splitPlaceAnchor(rest: string): { query: string; place?: string } | null {
+  const cleaned = rest.replace(PLACE_NOISE, '').replace(/[.!?]+$/, '').trim();
+  if (cleaned.length < 2 || cleaned.length > 140) return null;
+  // Split at the LAST geo preposition so "burger joints in duluth" keeps
+  // "burger joints" as the query and "duluth" as the anchor.
+  const m = cleaned.match(/^(.*\S)\s+(?:in|near|around|by|close\s+to)\s+(.{2,60})$/i);
+  if (m?.[1] && m?.[2]) {
+    const query = m[1].trim();
+    const place = m[2].trim();
+    if (query.length >= 2 && place.length >= 2) return { query, place };
+  }
+  if (isNonGeoPlace(cleaned)) return null;
+  return { query: cleaned };
+}
+
 function layerIdsIn(text: string): string[] {
   const ids = new Set<string>();
   for (const [re, id] of LAYER_ALIASES) if (re.test(text)) ids.add(id);
@@ -620,6 +654,33 @@ export function parseMapCommand(text: string): MapCommand | null {
         if (place.length >= 2 && place.length <= 80 && !CCTV_PLACE_BAD.test(place)) {
           return { type: 'cctv-place', place };
         }
+      }
+    }
+  }
+  // Place intelligence: reviews/details and category search ("burger places
+  // in Duluth"). AFTER cctv-place so camera commands keep priority, BEFORE
+  // layer toggles and pin/place parsing so category nouns aren't geocoded.
+  // Pin-verbed utterances are excluded — "pin a restaurant in downtown" is
+  // annotation intent, not a search.
+  if (!PLACE_PIN_GUARD_RE.test(t)) {
+    if (PLACE_REVIEW_HINT_RE.test(t)) {
+      // Strip leading question/command scaffolding, keep the subject.
+      const subject = t
+        .replace(/^(?:hey|hi|hello|ok|okay)?\s*cortex[,:\s]*/i, '')
+        .replace(/^(?:can|could|would|will)\s+you\s+|please\s+|i\s+want\s+to\s+know\s+|tell\s+me\s+/i, '')
+        .replace(/^(?:what\s+(?:are|is|do|does)|how\s+(?:is|are)|where\s+are)\b[^?]*?\b(?:for|on|of|about)\s+/i, '')
+        .replace(/\b(?:reviews?|ratings?|rated|recommend(?:ed|ations?)?|any\s+good|worth\s+(?:it|a\s+visit|visiting|eating|trying))\b/gi, ' ')
+        .replace(/\s+/g, ' ').trim();
+      const parsed = splitPlaceAnchor(subject);
+      if (parsed) return { type: 'place-details', query: parsed.query, place: parsed.place };
+    }
+    const sm = t.match(PLACE_SEARCH_RE);
+    if (sm) {
+      const category = (sm[2] || '').toLowerCase();
+      const query = (sm[1] || '').trim() || category;
+      const place = (sm[3] || '').replace(/[.!?]+$/, '').trim();
+      if (query.length >= 2 && place.length >= 2 && place.length <= 80) {
+        return { type: 'place-search', query, place };
       }
     }
   }
@@ -948,7 +1009,7 @@ if (typeof window !== 'undefined') {
         }
         w.finish(!!d.ok);
       }
-    } else if (d.type === 'gev:time-applied' || d.type === 'gev:cctv-applied') {
+    } else if (d.type === 'gev:time-applied' || d.type === 'gev:cctv-applied' || d.type === 'gev:places-applied') {
       cmdWaiters.get(`${d.type}:${d.id}`)?.(d);
     }
   });
@@ -961,8 +1022,8 @@ const cmdWaiters = new Map<string, (msg: Record<string, unknown>) => void>();
 let cmdSeq = 0;
 
 function postGlobeCommand(
-  type: 'gev:time' | 'gev:cctv',
-  replyType: 'gev:time-applied' | 'gev:cctv-applied',
+  type: 'gev:time' | 'gev:cctv' | 'gev:places',
+  replyType: 'gev:time-applied' | 'gev:cctv-applied' | 'gev:places-applied',
   payload: Record<string, unknown>,
   timeoutMs = 15000,
 ): Promise<Record<string, unknown> | null> {
@@ -1006,6 +1067,30 @@ export function globeTime(
 let lastCctvName: string | null = null;
 export function getLastCctvName(): string | null { return lastCctvName; }
 export function setLastCctvName(name: string | null) { lastCctvName = name; }
+
+/** Google Places search via the embed bridge → osm-places pins on the globe. */
+export function globePlacesSearch(
+  query: string,
+  opts: { lat?: number; lon?: number; radiusM?: number } = {},
+): Promise<Record<string, unknown> | null> {
+  return postGlobeCommand('gev:places', 'gev:places-applied', {
+    action: 'search',
+    query,
+    ...(opts.lat !== undefined ? { lat: opts.lat } : {}),
+    ...(opts.lon !== undefined ? { lon: opts.lon } : {}),
+    ...(opts.radiusM !== undefined ? { radiusM: opts.radiusM } : {}),
+  }, 30000);
+}
+
+/** Google Place Details (rating, reviews, hours) via the embed bridge. */
+export function globePlaceDetails(
+  opts: { id?: string; q?: string; lat?: number; lon?: number },
+): Promise<Record<string, unknown> | null> {
+  return postGlobeCommand('gev:places', 'gev:places-applied', {
+    action: 'details',
+    ...opts,
+  });
+}
 
 /** CCTV camera control via GEV's own control_cctv action. */
 export function globeCctv(

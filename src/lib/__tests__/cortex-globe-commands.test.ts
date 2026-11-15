@@ -114,6 +114,34 @@ describe('parseMapCommand — hardening', () => {
     expect(parseMapCommand('pin duluth georgia')?.type).toBe('pin-place');
   });
 
+  it('parses place searches with query + anchor', () => {
+    const cmd = parseMapCommand('find all the popular burger places in duluth');
+    expect(cmd?.type).toBe('place-search');
+    if (cmd?.type === 'place-search') {
+      expect(cmd.query.toLowerCase()).toContain('burger');
+      expect(cmd.place.toLowerCase()).toContain('duluth');
+    }
+    const cmd2 = parseMapCommand('show me coffee shops near austin');
+    expect(cmd2?.type).toBe('place-search');
+    if (cmd2?.type === 'place-search') expect(cmd2.query.toLowerCase()).toContain('coffee');
+  });
+
+  it('parses place review/details intents', () => {
+    const cmd = parseMapCommand('what are the reviews for LR Burger in Duluth');
+    expect(cmd?.type).toBe('place-details');
+    if (cmd?.type === 'place-details') {
+      expect(cmd.query.toLowerCase()).toContain('lr burger');
+      expect(cmd.place?.toLowerCase()).toContain('duluth');
+    }
+    const cmd2 = parseMapCommand('is the diner in atlanta any good');
+    expect(cmd2?.type).toBe('place-details');
+  });
+
+  it('pin-verbed place nouns stay annotation intent', () => {
+    expect(parseMapCommand('pin a restaurant in downtown')?.type).not.toBe('place-search');
+    expect(parseMapCommand('drop a pin on the burger place')?.type).not.toBe('place-search');
+  });
+
   it('exact address parsing & view altitude scaling', () => {
     const cmd1 = parseMapCommand('fly to 350 5th Ave, New York, NY');
     expect(cmd1?.type).toBe('open');

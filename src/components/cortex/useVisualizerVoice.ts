@@ -31,6 +31,7 @@ import {
   globeTime, globeCctv, hasGlobeView, getGlobeMapStyle,
   getLastCctvName, setLastCctvName, haversineKm, flyGlobeBack, flyGlobeForward,
   isNonGeoPlace,
+  globePlacesSearch, globePlaceDetails,
   type MapCommand,
 } from '../../lib/cortex-globe';
 import type { STTResult } from '../../types/voice-engine';
@@ -1357,6 +1358,83 @@ export function useVisualizerVoice(enabled: boolean, onState: (speaking: boolean
         } else {
           await speakWhole(ok ? 'Pin dropped.' : 'Pin sent.');
         }
+        return;
+      }
+      // ── Place intelligence: Google Places search + details via GEV bridge ──
+      if (cmd.type === 'place-search' || cmd.type === 'place-details') {
+        if (!isGlobeAvailable()) {
+          await speakWhole('The live globe isn\'t running — start gods-eye-view on port fifty-one eighty first.');
+          return;
+        }
+        setGlobeMode('globe');
+        // Resolve the anchor: explicit place → last destination → user GPS.
+        let anchor: { lat: number; lon: number; name?: string } | null = null;
+        const anchorName = cmd.type === 'place-search' ? cmd.place : cmd.place;
+        if (anchorName && !/^(?:me|here|my\s+location|current\s+location)$/i.test(anchorName)) {
+          anchor = await geocodePlace(anchorName);
+        }
+        if (!anchor) {
+          const last = getLastDestination();
+          if (last) anchor = { lat: last.lat, lon: last.lon, name: last.name };
+        }
+        if (!anchor) {
+          const pos = await getUserPosition();
+          if (pos) anchor = { lat: pos.coords.latitude, lon: pos.coords.longitude, name: 'your location' };
+        }
+        if (aborted()) return;
+        if (cmd.type === 'place-search') {
+          const where = anchor?.name || cmd.place;
+          publish({ state: 'thinking', level: 0.15, text: `Searching places: ${cmd.query} in ${where}…` });
+          const res = await globePlacesSearch(cmd.query, {
+            ...(anchor ? { lat: anchor.lat, lon: anchor.lon, radiusM: 25000 } : {}),
+          });
+          if (aborted()) return;
+          if (!res || res.ok === false) {
+            await speakWhole(`Place search didn't come back — ${String(res?.error || 'globe not responding')}.`);
+            return;
+          }
+          const places = Array.isArray(res.places) ? (res.places as any[]) : [];
+          const count = typeof res.count === 'number' ? res.count : places.length;
+          if (!count) {
+            await speakWhole(`I couldn't find any ${cmd.query} around ${where}.`);
+            return;
+          }
+          // Frame the results: fly to the anchor (or first result) so the pins
+          // are on screen, then speak the top rated few.
+          const top = [...places]
+            .filter((p) => Number.isFinite(p?.rating))
+            .sort((a, b) => (b.rating ?? 0) - (a.rating ?? 0))
+            .slice(0, 3);
+          const frame = top[0] && Number.isFinite(top[0].lat)
+            ? { lat: top[0].lat, lon: top[0].lon, name: top[0].name }
+            : anchor;
+          if (frame) await flyGlobe(buildFlyView({ lat: frame.lat, lon: frame.lon, name: frame.name || where } as any, undefined, { altitude: 30000, pitch: -55 }));
+          if (aborted()) return;
+          const spoken = top.length
+            ? `Found ${count} ${cmd.query} around ${where}. Top rated: ${top.map((p) => `${p.name} ${p.rating}★`).join(', ')}. Tap a pin for reviews.`
+            : `Found ${count} ${cmd.query} around ${where} — they're pinned on the globe. Tap one for reviews.`;
+          await speakWhole(spoken);
+          return;
+        }
+        // place-details
+        publish({ state: 'thinking', level: 0.15, text: `Looking up ${cmd.query}…` });
+        const dres = await globePlaceDetails({
+          q: cmd.query,
+          ...(anchor ? { lat: anchor.lat, lon: anchor.lon } : {}),
+        });
+        if (aborted()) return;
+        const place = (dres?.place ?? null) as any;
+        if (!dres || dres.ok === false || !place) {
+          await speakWhole(`I couldn't pull up details for ${cmd.query} — ${String(dres?.error || 'no matching place')}.`);
+          return;
+        }
+        const bits = [
+          place.name,
+          place.rating != null ? `${place.rating} stars from ${place.ratingCount?.toLocaleString?.() ?? place.ratingCount ?? '?'} reviews` : 'no rating yet',
+          place.priceLevel ? `price level ${String(place.priceLevel).replace('PRICE_LEVEL_', '').toLowerCase()}` : null,
+          place.openNow === true ? 'open now' : place.openNow === false ? 'currently closed' : null,
+        ].filter(Boolean).join(', ');
+        await speakWhole(`${bits}. Full reviews are on the pin if it's on the globe.`);
         return;
       }
       // ── Place annotations: pin/highlight/area/label/arrow ──────────────
