@@ -252,3 +252,20 @@ describe('energyProbe', () => {
     expect(await forecaster.energyProbe.run({ now: peak.getTime(), base: 'http://x', fetchImpl: fetch as any })).toEqual([]);
   });
 });
+
+describe('calendarProbe prep handoff', () => {
+  it('attaches a PREP handoff to noprep signals', async () => {
+    const start = NOW + 2 * 3600_000;
+    const out = await forecaster.calendarProbe.run({
+      now: NOW, base: 'http://x', fetchImpl: fetch as any,
+      listUpcomingEvents: async () => [{
+        id: 'ev1', title: 'Q3 Review', start, end: start + 3600_000,
+        attendees: 3, attendeeNames: ['alice@x.com', 'bob@x.com'],
+      }],
+    });
+    const noprep = out.find((s) => s.id === 'calendar:ev1:noprep');
+    expect(noprep?.handoff?.agent).toBe('prep');
+    expect(noprep?.handoff?.kind).toBe('prep_brief');
+    expect(noprep?.handoff?.input.attendees).toEqual(['alice@x.com', 'bob@x.com']);
+  });
+});

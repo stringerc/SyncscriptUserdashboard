@@ -50,6 +50,10 @@ export interface ForecastSignal {
   suggestedAction?: string;
   urgency: ForecastUrgency;
   topic?: string;
+  /** Downstream agent handoff — e.g. a calendar noprep signal dispatches a
+   *  PREP task. Executed by the worker after routing, budget-gated by the
+   *  target agent's own daily budget and submitTask dedupe. */
+  handoff?: { agent: string; kind: string; title: string; input: Record<string, unknown> };
 }
 
 export interface ForecastProbe {
@@ -85,6 +89,9 @@ export interface ForecastCalendarEvent {
   start: number; // epoch ms
   end?: number;
   attendees?: number;
+  /** Attendee display names/emails when the calendar source provides them —
+   *  forwarded to PREP handoffs. */
+  attendeeNames?: string[];
   hasPrepBrief?: boolean;
 }
 
@@ -302,6 +309,17 @@ export const calendarProbe: ForecastProbe = {
           horizon: { notBefore: now, notAfter: ev.start },
           suggestedAction: 'Have PREP build a cited brief.',
           urgency: inHours <= 1 ? 'interrupt' : 'proposal',
+          handoff: {
+            agent: 'prep',
+            kind: 'prep_brief',
+            title: `Prep brief: ${ev.title}`.slice(0, 140),
+            input: {
+              title: ev.title,
+              start: ev.start,
+              attendees: ev.attendeeNames || [],
+              forecastSignal: `calendar:${ev.id}:noprep`,
+            },
+          },
         });
       }
       // Back-to-back: next event starts <15min after this one ends.

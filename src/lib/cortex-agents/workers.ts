@@ -13,7 +13,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import type { AgentContext, AgentRuntime, WorkerHandler } from './runtime';
-import type { SpawnSpec, ToolScope } from './types';
+import type { AgentId, SpawnSpec, ToolScope } from './types';
 import { registerWardenWorker } from './warden';
 import { registerDistributorWorker } from './distribution';
 import { runForecastCycle, type RoutedForecast, type ProbeDeps } from './forecaster';
@@ -869,7 +869,7 @@ export function makeEphemeralWorker(spec: SpawnSpec): WorkerHandler {
 // are deterministic reads of real state. LLM composition comes later for
 // interrupt-class narration only.
 
-const forecasterWorker: WorkerHandler = async (ctx) => {
+const forecasterWorker = (runtime: AgentRuntime): WorkerHandler => async (ctx) => {
   const kind = ctx.task.kind || 'forecast_cycle';
   if (kind !== 'forecast_cycle' && kind !== 'forecast_status') {
     throw new Error(`forecaster: unknown task kind '${kind}'`);
@@ -892,7 +892,18 @@ const forecasterWorker: WorkerHandler = async (ctx) => {
         const res = await fetch(`${BASE}/api/cortex/calendar/upcoming`, { signal: AbortSignal.timeout(5000) });
         if (!res.ok) return [];
         const data: any = await res.json();
-        return Array.isArray(data?.events) ? data.events : [];
+        const events = Array.isArray(data?.events) ? data.events : [];
+        return events.map((e: any) => ({
+          id: String(e?.id ?? e?.title ?? ''),
+          title: String(e?.title ?? e?.summary ?? ''),
+          start: Number(e?.start ?? e?.startTime ?? 0),
+          end: Number.isFinite(Number(e?.end ?? e?.endTime)) ? Number(e?.end ?? e?.endTime) : undefined,
+          attendees: Array.isArray(e?.attendees) ? e.attendees.length : Number(e?.attendees) || 0,
+          attendeeNames: Array.isArray(e?.attendees)
+            ? e.attendees.map((a: any) => String(a?.email ?? a?.name ?? a)).filter(Boolean)
+            : Array.isArray(e?.attendeeNames) ? e.attendeeNames.map(String) : undefined,
+          hasPrepBrief: e?.hasPrepBrief === true,
+        })).filter((e: any) => e.title && e.start > 0);
       } catch {
         return [];
       }
@@ -987,9 +998,23 @@ const forecasterWorker: WorkerHandler = async (ctx) => {
     },
   });
   ctx.progress(1);
+  // Agent handoffs: routed signals may dispatch downstream tasks (e.g.
+  // calendar noprep → PREP brief). Target agent budgets + submitTask dedupe
+  // govern whether the handoff actually runs — FORECASTER never forces it.
+  let prepsDispatched = 0;
+  const handoffErrors: string[] = [];
+  for (const r of result.routed) {
+    if (!r.handoff) continue;
+    try {
+      const sub = runtime.submitTask(r.handoff.agent as AgentId, r.handoff.kind, r.handoff.title, r.handoff.input);
+      if (sub.ok) prepsDispatched++; else handoffErrors.push(`${r.handoff.agent}: ${sub.error || 'rejected'}`);
+    } catch (e) {
+      handoffErrors.push(`${r.handoff.agent}: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
   return {
     kind,
-    probes: ['fleet', 'calendar'],
+    probes: ['fleet', 'calendar', 'comms', 'build', 'distribution', 'weather', 'energy'],
     signalsFound: result.signalsFound,
     routed: result.routed.map((r) => ({
       id: r.id, domain: r.domain, tier: r.tier, claim: r.claim,
@@ -1000,6 +1025,8 @@ const forecasterWorker: WorkerHandler = async (ctx) => {
     spokenUsed: result.spokenUsed,
     spokenRemaining: result.spokenRemaining,
     probeErrors: result.probeErrors,
+    prepsDispatched,
+    handoffErrors,
   };
 };
 
@@ -1013,7 +1040,7 @@ export function registerAgentWorkers(runtime: AgentRuntime) {
   runtime.registerWorker('reviewer', reviewerWorker);
   runtime.registerWorker('runner', runnerWorker);
   registerDistributorWorker(runtime);
-  runtime.registerWorker('forecaster', forecasterWorker);
+  runtime.registerWorker('forecaster', forecasterWorker(runtime));
   runtime.registerWorker('prep', makePrepWorker({
     toolExecute: (name, args, timeoutMs, telemetry) => toolExecute(name, args, timeoutMs, telemetry),
     fetchInbox: async () => {
