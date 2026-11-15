@@ -417,7 +417,214 @@ const sentinelWorker: WorkerHandler = async (ctx) => {
 
 // ── Scout: research ───────────────────────────────────────────────
 
+// ── SCOUT extended kinds ──────────────────────────────────────────
+// repo_scan: daily-ish sweep of GitHub for repos that fit Cortex's stack.
+// agent_ideas: fleet self-reflection — proposes SpawnSpecs through the
+// deterministic spawn gate (capability_gap evidence; Inbox approval still
+// required — free thinking, governed birth).
+
+const REPO_SCAN_QUERIES = [
+  'ai agent orchestration',
+  'voice agent framework',
+  'model context protocol',
+  'local llm inference',
+  'obsidian ai plugin',
+  'proactive ai assistant',
+];
+
+async function githubRepoSearch(query: string, sinceDays: number): Promise<{ items: any[]; status: number }> {
+  const since = new Date(Date.now() - sinceDays * 24 * 3600_000).toISOString().slice(0, 10);
+  const q = `${query} created:>${since}`;
+  const url = `https://api.github.com/search/repositories?q=${encodeURIComponent(q)}&sort=stars&order=desc&per_page=8`;
+  const res = await fetch(url, {
+    headers: {
+      'Accept': 'application/vnd.github+json',
+      'User-Agent': 'cortex-scout',
+      ...(process.env.GITHUB_TOKEN ? { Authorization: `Bearer ${process.env.GITHUB_TOKEN}` } : {}),
+    },
+    signal: AbortSignal.timeout(12000),
+  });
+  if (!res.ok) return { items: [], status: res.status };
+  const data: any = await res.json();
+  return { items: Array.isArray(data?.items) ? data.items : [], status: res.status };
+}
+
+async function repoScanWorker(ctx: AgentContext) {
+  ctx.progress(0.1);
+  const input = (ctx.task.input || {}) as any;
+  const queries: string[] = Array.isArray(input.queries) && input.queries.length
+    ? input.queries.map(String)
+    : REPO_SCAN_QUERIES;
+  const sinceDays = Math.min(180, Math.max(7, Number(input.sinceDays) || 45));
+
+  const perQuery = await Promise.all(queries.map((q) => githubRepoSearch(q, sinceDays).catch(() => ({ items: [], status: 0 }))));
+  const apiErrors = perQuery.filter((r) => r.status !== 200).length;
+  const seen = new Set<string>();
+  const repos: any[] = [];
+  for (const { items: list } of perQuery) {
+    for (const r of list) {
+      if (seen.has(r.full_name)) continue;
+      seen.add(r.full_name);
+      repos.push({
+        name: r.full_name,
+        url: r.html_url,
+        description: String(r.description || '').slice(0, 200),
+        stars: r.stargazers_count || 0,
+        language: r.language || '',
+        topics: Array.isArray(r.topics) ? r.topics.slice(0, 6) : [],
+        pushedAt: r.pushed_at || '',
+      });
+    }
+  }
+  ctx.progress(0.5);
+  if (!repos.length) {
+    return {
+      scanned: 0,
+      apiErrors,
+      note: apiErrors === queries.length
+        ? `GitHub API unavailable or rate-limited (${apiErrors}/${queries.length} queries failed) — unauthenticated search allows 10/min; set GITHUB_TOKEN for higher limits`
+        : 'GitHub search returned no candidates',
+    };
+  }
+
+  const shortlist = repos.sort((a, b) => b.stars - a.stars).slice(0, 15);
+  const raw = await ctx.llm({
+    tier: 'reason',
+    maxTokens: 1200,
+    messages: [
+      {
+        role: 'system',
+        content: [
+          'You are SCOUT evaluating GitHub repos for fit with Cortex — a local-first cognitive OS with:',
+          'voice agents, a governed agent runtime (spawn gates, budgets, approval inboxes), a live 3D globe,',
+          'calendar/energy scheduling, Obsidian memory, and distribution automation.',
+          'Score each repo 0-1 for fit. Output STRICT JSON: {"picks":[{"name","fit","why","action":"adopt|watch|ignore"}]}.',
+          'Only include repos worth attention (fit >= 0.5). Max 8 picks. No prose outside JSON.',
+        ].join(' '),
+      },
+      {
+        role: 'user',
+        content: `REPOS (last ${sinceDays}d, by stars):\n${shortlist.map((r) =>
+          `- ${r.name} ★${r.stars} [${r.language}] ${r.description} topics:${r.topics.join(',')}`
+        ).join('\n')}`,
+      },
+    ],
+  });
+  ctx.progress(0.8);
+
+  let picks: any[] = [];
+  try {
+    const m = String(raw).match(/\{[\s\S]*\}/);
+    picks = m ? (JSON.parse(m[0])?.picks || []) : [];
+  } catch { picks = []; }
+
+  const brief = [
+    `# Repo Scan — ${new Date().toISOString().slice(0, 10)}`,
+    `Scanned ${repos.length} candidates across ${queries.length} queries (last ${sinceDays}d).`,
+    '',
+    ...picks.map((p) => `- **${p.action?.toUpperCase()}** ${p.name} (fit ${p.fit}) — ${p.why}`),
+    picks.length ? '' : '_No repos cleared the fit bar this cycle._',
+    '',
+    '## Shortlist',
+    ...shortlist.slice(0, 10).map((r) => `- ${r.name} ★${r.stars} — ${r.description} (${r.url})`),
+  ].join('\n');
+
+  try {
+    cortexObsidianMemory.ensureVaultInitialized();
+    cortexObsidianMemory.writeNote(
+      '02 - Projects',
+      `repo-scan-${new Date().toISOString().slice(0, 10)}`,
+      brief,
+      { created: new Date().toISOString(), agent: 'SCOUT', kind: 'repo-scan' },
+    );
+  } catch {}
+
+  ctx.progress(1);
+  return { scanned: repos.length, picks: picks.length, note: '02 - Projects/repo-scan' };
+}
+
+async function agentIdeasWorker(ctx: AgentContext) {
+  ctx.progress(0.15);
+  // Fleet digest — real telemetry only; ideation must be grounded in what
+  // the fleet actually struggled with, not free-floating invention.
+  const snapRes = await fetch(`${BASE}/api/cortex/agents/state`, { signal: AbortSignal.timeout(8000) });
+  if (!snapRes.ok) throw new Error(`agents/state HTTP ${snapRes.status}`);
+  const snap: any = await snapRes.json();
+  const agents: any[] = Array.isArray(snap?.agents) ? snap.agents : [];
+  const tasks: any[] = Array.isArray(snap?.tasks) ? snap.tasks : [];
+  const failed = tasks.filter((t) => t.status === 'failed').slice(-30);
+  const digest = agents.map((a) =>
+    `${a.id}: status=${a.status} done=${a.tasksCompleted ?? 0} failed=${a.tasksFailed ?? 0} budget=${a.dailyBudget ?? '?'}`
+  ).join('\n');
+  const failures = failed.map((t) => `${t.agentId}/${t.kind}: ${String(t.error || '').slice(0, 120)}`).join('\n') || 'none';
+  ctx.progress(0.4);
+
+  const raw = await ctx.llm({
+    tier: 'reason',
+    maxTokens: 1500,
+    messages: [
+      {
+        role: 'system',
+        content: [
+          'You are SCOUT\'s ideation pass for the Cortex agent fleet. Review fleet health and recent failures,',
+          'then propose up to 2 ephemeral agent SpawnSpecs that would close a REAL recurring gap.',
+          'Output STRICT JSON: {"ideas":[{"callSign","role","mission","tools","modelPin","dailyBudget","ttlHours","systemBrief","doneCriteria","gap"}]}.',
+          'tools ⊆ ["read","write","exec","surface"]; modelPin.tier ∈ fast|reason|deep; dailyBudget 1-32; ttlHours 1-168.',
+          'callSign UPPER-DASH. Propose NOTHING if the fleet looks healthy — an empty {"ideas":[]} is a valid, preferred answer.',
+          'No prose outside JSON.',
+        ].join(' '),
+      },
+      {
+        role: 'user',
+        content: `FLEET:\n${digest}\n\nRECENT FAILURES:\n${failures}`,
+      },
+    ],
+  });
+  ctx.progress(0.7);
+
+  let ideas: any[] = [];
+  try {
+    const m = String(raw).match(/\{[\s\S]*\}/);
+    ideas = m ? (JSON.parse(m[0])?.ideas || []) : [];
+  } catch { ideas = []; }
+  ideas = ideas.slice(0, 2);
+
+  const results: any[] = [];
+  for (const idea of ideas) {
+    try {
+      const res = await fetch(`${BASE}/api/cortex/agents/spawn/propose`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          proposedBy: 'scout',
+          spec: {
+            callSign: idea.callSign, role: idea.role, mission: idea.mission,
+            tools: idea.tools, modelPin: idea.modelPin,
+            dailyBudget: idea.dailyBudget, ttlHours: idea.ttlHours,
+            systemBrief: idea.systemBrief, doneCriteria: idea.doneCriteria,
+          },
+          evidence: [{
+            kind: 'capability_gap',
+            refs: [],
+            summary: `Ideation pass: ${String(idea.gap || idea.mission || '').slice(0, 200)}`,
+          }],
+        }),
+        signal: AbortSignal.timeout(8000),
+      });
+      const data: any = await res.json().catch(() => ({}));
+      results.push({ callSign: idea.callSign, ok: res.ok && data?.ok === true, reason: data?.error || data?.reason || null, proposalId: data?.proposal?.id || null });
+    } catch (e: any) {
+      results.push({ callSign: idea.callSign, ok: false, reason: String(e?.message || e).slice(0, 120) });
+    }
+  }
+  ctx.progress(1);
+  return { ideas: ideas.length, results };
+}
+
 const scoutWorker: WorkerHandler = async (ctx) => {
+  const kind = ctx.task.kind || 'research';
+  if (kind === 'repo_scan') return repoScanWorker(ctx);
+  if (kind === 'agent_ideas') return agentIdeasWorker(ctx);
   const query = str(ctx.task.input.query);
   const depth = Math.min(3, Math.max(1, Number(ctx.task.input.depth) || 1));
   if (!query) throw new Error('scout research requires input.query');
