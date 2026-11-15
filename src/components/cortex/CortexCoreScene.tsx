@@ -940,7 +940,7 @@ function Satellites({ live }: { live: React.MutableRefObject<LiveSignal> }) {
               thrust.scale.setScalar(0.05 + 0.03 * Math.sin(t * 13 + i));
             }
           }
-          hull.scale.setScalar(working && !dim ? 1 + 0.1 * Math.sin(t * 5.2 + i * 1.7) : 1);
+          hull.scale.setScalar((working && !dim ? 1 + 0.1 * Math.sin(t * 5.2 + i * 1.7) : 1) * 0.5);
         }
       }
 
