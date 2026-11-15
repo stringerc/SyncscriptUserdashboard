@@ -1,0 +1,219 @@
+import { useNavigate, useLocation } from 'react-router';
+import { useState, useEffect } from 'react';
+import { 
+  LayoutDashboard, Target, Calendar, Bot, Zap, Waves, Users, 
+  TrendingUp, Gamepad2, Link2, Building2, FileText, Menu, Settings, Mail, DollarSign,
+  FolderOpen,
+  X
+} from 'lucide-react';
+import { motion, AnimatePresence } from 'motion/react';
+import logoImage from 'figma:asset/914d5787f554946c037cbfbb2cf65fcc0de06278.png';
+import { navigationLinks } from '../utils/navigation';
+import { useAI } from '../contexts/AIContext';
+
+export function MobileNav() {
+  const navigate = useNavigate();
+  const location = useLocation();
+  const [isDrawerOpen, setIsDrawerOpen] = useState(false);
+  const { hasUnreadAIMessage, clearUnreadAIMessage } = useAI();
+  
+  // Clear unread dot when user navigates to AI page
+  useEffect(() => {
+    if (location.pathname.startsWith('/ai') && hasUnreadAIMessage) {
+      clearUnreadAIMessage();
+    }
+  }, [location.pathname, hasUnreadAIMessage, clearUnreadAIMessage]);
+
+  const navItems = [
+    { icon: LayoutDashboard, label: 'Dashboard', id: 'Dashboard', path: navigationLinks.sidebar.dashboard },
+    { icon: Target, label: 'Projects', id: 'Projects', path: navigationLinks.sidebar.tasks },
+    { icon: Calendar, label: 'Calendar', id: 'Calendar', path: navigationLinks.sidebar.calendar },
+    { icon: DollarSign, label: 'Financials', id: 'Financials', path: navigationLinks.sidebar.financials },
+    { icon: Mail, label: 'Email', id: 'Email', path: navigationLinks.sidebar.email },
+    { icon: FolderOpen, label: 'Library', id: 'Library', path: navigationLinks.sidebar.library },
+    { icon: Bot, label: 'AI', id: 'AI', path: navigationLinks.sidebar.ai },
+    { icon: Zap, label: 'Energy', id: 'Energy', path: navigationLinks.sidebar.energy },
+    { icon: Waves, label: 'Resonance Engine', id: 'Resonance', path: navigationLinks.sidebar.resonance },
+    { icon: Users, label: 'Team', id: 'Team', path: navigationLinks.sidebar.team },
+    { icon: Gamepad2, label: 'Gaming', id: 'Gaming', path: navigationLinks.sidebar.gaming },
+    { icon: FileText, label: 'Scripts & Templates', id: 'Scripts', path: navigationLinks.sidebar.scripts },
+    { icon: TrendingUp, label: 'Analytics', id: 'Analytics', path: navigationLinks.sidebar.analytics },
+    // Integrations removed from sidebar - accessible via Settings only
+    { icon: Building2, label: 'Enterprise', id: 'Enterprise', path: navigationLinks.sidebar.enterprise },
+    { icon: Menu, label: 'All Features', id: 'AllFeatures', path: navigationLinks.sidebar.allFeatures },
+  ];
+
+  const handleNavClick = (item: typeof navItems[0]) => {
+    navigate(item.path);
+    setIsDrawerOpen(false);
+  };
+
+  return (
+    <>
+      {/* Mobile Bottom Navigation Bar - Visible on <768px */}
+      <div
+        id="syncscript-mobile-bottom-nav"
+        className="md:hidden fixed bottom-0 left-0 right-0 z-[399] bg-gradient-to-r from-[#1d232d]/95 via-[#1a2029]/95 to-[#171c24]/95 backdrop-blur-md border-t border-gray-700/70 shadow-[0_-8px_36px_rgba(45,212,191,0.09)] safe-area-inset-bottom touch-manipulation"
+      >
+        <div className="grid grid-cols-5 gap-0.5 px-1 py-1.5">
+          {/* Dashboard */}
+          <button
+            type="button"
+            onClick={() => navigate(navigationLinks.sidebar.dashboard)}
+            className={`flex flex-col items-center justify-center gap-0.5 py-2 px-1 rounded-lg transition-all min-h-[60px] ${
+              location.pathname === navigationLinks.sidebar.dashboard
+                ? 'text-teal-400 bg-teal-600/20'
+                : 'text-gray-400 active:bg-gray-700/30'
+            }`}
+          >
+            <LayoutDashboard className="w-6 h-6" />
+            <span className="text-[10px] font-medium">Home</span>
+          </button>
+
+          {/* Tasks */}
+          <button
+            type="button"
+            onClick={() => navigate(navigationLinks.sidebar.tasks)}
+            className={`flex flex-col items-center justify-center gap-0.5 py-2 px-1 rounded-lg transition-all min-h-[60px] ${
+              location.pathname === navigationLinks.sidebar.tasks
+                ? 'text-teal-400 bg-teal-600/20'
+                : 'text-gray-400 active:bg-gray-700/30'
+            }`}
+          >
+            <Target className="w-6 h-6" />
+            <span className="text-[10px] font-medium">Tasks</span>
+          </button>
+
+          {/* Calendar */}
+          <button
+            type="button"
+            onClick={() => navigate(navigationLinks.sidebar.calendar)}
+            className={`flex flex-col items-center justify-center gap-0.5 py-2 px-1 rounded-lg transition-all min-h-[60px] ${
+              location.pathname === navigationLinks.sidebar.calendar
+                ? 'text-teal-400 bg-teal-600/20'
+                : 'text-gray-400 active:bg-gray-700/30'
+            }`}
+          >
+            <Calendar className="w-6 h-6" />
+            <span className="text-[10px] font-medium">Calendar</span>
+          </button>
+
+          {/* AI */}
+          <button
+            type="button"
+            onClick={() => navigate(navigationLinks.sidebar.ai)}
+            className={`relative flex flex-col items-center justify-center gap-0.5 py-2 px-1 rounded-lg transition-all min-h-[60px] ${
+              location.pathname === navigationLinks.sidebar.ai
+                ? 'text-teal-400 bg-teal-600/20'
+                : 'text-gray-400 active:bg-gray-700/30'
+            }`}
+          >
+            <Bot className="w-6 h-6" />
+            <span className="text-[10px] font-medium">AI</span>
+            {hasUnreadAIMessage && !location.pathname.startsWith('/ai') && (
+              <span className="absolute top-1.5 right-2 w-2 h-2 bg-red-500 rounded-full animate-pulse" />
+            )}
+          </button>
+
+          {/* Menu Drawer Trigger */}
+          <button
+            type="button"
+            onClick={() => setIsDrawerOpen(true)}
+            className={`flex flex-col items-center justify-center gap-0.5 py-2 px-1 rounded-lg transition-all min-h-[60px] ${
+              isDrawerOpen
+                ? 'text-teal-400 bg-teal-600/20'
+                : 'text-gray-400 active:bg-gray-700/30'
+            }`}
+          >
+            <Menu className="w-6 h-6" />
+            <span className="text-[10px] font-medium">More</span>
+          </button>
+        </div>
+      </div>
+
+      {/* Mobile Drawer - Full Menu */}
+      <AnimatePresence>
+        {isDrawerOpen && (
+          <>
+            {/* Backdrop — strong scrim so the drawer is clearly the foreground */}
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.2 }}
+              onClick={() => setIsDrawerOpen(false)}
+              className="md:hidden fixed inset-0 z-[390] bg-black/72 backdrop-blur-sm"
+              aria-hidden
+            />
+
+            {/* Drawer — darker frosted panel (blur only on this strip, not the full screen) */}
+            <motion.div
+              initial={{ x: '-100%' }}
+              animate={{ x: 0 }}
+              exit={{ x: '-100%' }}
+              transition={{ type: 'spring', damping: 30, stiffness: 300 }}
+              className="md:hidden fixed left-0 top-0 bottom-0 w-[min(88vw,300px)] z-[391] overflow-y-auto ambient-scrollbar bg-[#0b0f16]/95 backdrop-blur-xl backdrop-saturate-150 border-r border-gray-700/75 shadow-[inset_0_1px_0_rgba(255,255,255,0.06),8px_0_48px_rgba(0,0,0,0.65)]"
+            >
+              {/* Header */}
+              <div className="flex items-center justify-between p-4 border-b border-gray-800">
+                <div className="flex items-center gap-3">
+                  <img src={logoImage} alt="SyncScript" className="w-10 h-10" />
+                  <span className="font-semibold text-white">SyncScript</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setIsDrawerOpen(false)}
+                  className="p-2 hover:bg-gray-700/50 rounded-lg transition-colors"
+                >
+                  <X className="w-5 h-5 text-gray-400" />
+                </button>
+              </div>
+
+              {/* Navigation Items */}
+              <nav className="p-4 space-y-2">
+                {navItems.map((item) => {
+                  const Icon = item.icon;
+                  const pathOnly = item.path.split('?')[0];
+                  const isActive = location.pathname === pathOnly;
+
+                  return (
+                    <button
+                      type="button"
+                      key={item.id}
+                      onClick={() => handleNavClick(item)}
+                      className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all ${
+                        isActive
+                          ? 'bg-teal-600 text-white shadow-lg shadow-teal-600/30'
+                          : 'text-gray-200 hover:bg-white/10 hover:text-white'
+                      }`}
+                    >
+                      <Icon className="w-5 h-5 flex-shrink-0" />
+                      <span className="text-sm">{item.label}</span>
+                    </button>
+                  );
+                })}
+
+                {/* Settings */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    navigate(navigationLinks.sidebar.settings);
+                    setIsDrawerOpen(false);
+                  }}
+                  className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all ${
+                    location.pathname === navigationLinks.sidebar.settings
+                      ? 'bg-teal-600 text-white shadow-lg shadow-teal-600/30'
+                      : 'text-gray-200 hover:bg-white/10 hover:text-white'
+                  }`}
+                >
+                  <Settings className="w-5 h-5 flex-shrink-0" />
+                  <span className="text-sm">Settings</span>
+                </button>
+              </nav>
+            </motion.div>
+          </>
+        )}
+      </AnimatePresence>
+    </>
+  );
+}

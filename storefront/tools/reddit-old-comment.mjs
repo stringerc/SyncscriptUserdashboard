@@ -1,0 +1,17 @@
+import { chromium } from '/Users/Apple/.cursor/mcp-servers/google-flow-browser-mcp/node_modules/playwright-core/index.mjs';
+import { readFileSync } from 'fs';
+const [permalink, file] = process.argv.slice(2);
+const text = readFileSync(file, 'utf8').trim();
+const browser = await chromium.connectOverCDP('http://localhost:9222');
+const page = browser.contexts()[0].pages().find(p => p.url().includes('reddit.com'));
+await page.goto('https://old.reddit.com' + permalink, {waitUntil:'domcontentloaded'});
+await page.waitForTimeout(3500);
+const ta = page.locator('textarea[name="text"]').first();
+await ta.click();
+await ta.fill(text);
+await page.waitForTimeout(800);
+await page.locator('button:has-text("save"), input[value="save"]').first().click();
+await page.waitForTimeout(4000);
+const ok = await page.evaluate(t => document.body.innerText.includes(t.slice(0,40)), text);
+console.log('POSTED:', ok, '| url:', page.url());
+await browser.close();

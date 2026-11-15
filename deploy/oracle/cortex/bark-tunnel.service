@@ -1,0 +1,15 @@
+[Unit]
+Description=Cloudflare quick tunnel for Bark push server
+After=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+ExecStart=/usr/local/bin/cloudflared tunnel --url http://127.0.0.1:8081 --no-autoupdate
+Restart=always
+RestartSec=10
+StandardOutput=append:/home/ubuntu/cortex-oracle/bark-tunnel.log
+StandardError=append:/home/ubuntu/cortex-oracle/bark-tunnel.log
+
+[Install]
+WantedBy=multi-user.target

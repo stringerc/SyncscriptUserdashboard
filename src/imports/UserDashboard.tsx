@@ -8,6 +8,7 @@ import imgPrimitiveImg4 from "figma:asset/7d99b6ac70210faffa2ce5893d00a818091c56
 import imgImageSyncScript from "figma:asset/32f9c29c68f7ed10b9efd8ff6ac4135b7a2a4290.png";
 import imgPrimitiveImg5 from "figma:asset/0da3094bdfb779c6e044ac8ae51d7afc3151da28.png";
 import { imgGroup } from "./svg-m3718";
+import { formatAppDate } from '../utils/app-date';
 
 function ImageSyncScriptLogo() {
   return (
@@ -1382,7 +1383,7 @@ function Paragraph10() {
   return (
     <div className="h-[24px] relative shrink-0 w-[467.328px]" data-name="Paragraph">
       <div className="bg-clip-padding border-0 border-[transparent] border-solid box-border h-[24px] relative w-[467.328px]">
-        <p className="absolute font-['Inter:Regular',_sans-serif] font-normal leading-[24px] left-0 not-italic text-[#99a1af] text-[16px] text-nowrap top-0 tracking-[-0.3125px] whitespace-pre">My Day: Tuesday, Nov 28, 2023</p>
+        <p className="absolute font-['Inter:Regular',_sans-serif] font-normal leading-[24px] left-0 not-italic text-[#99a1af] text-[16px] text-nowrap top-0 tracking-[-0.3125px] whitespace-pre">My Day: {formatAppDate('full')}</p>
       </div>
     </div>
   );

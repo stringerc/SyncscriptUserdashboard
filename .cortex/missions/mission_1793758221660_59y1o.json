@@ -1,0 +1,60 @@
+{
+  "id": "mission_1793758221660_59y1o",
+  "title": "SAM.gov Federal Contract Opportunities & Eligibility Assessment",
+  "objective": "Navigate Chrome to SAM.gov Contract Opportunities, search active solicitations matching business NAICS codes, extract eligibility criteria, and synthesize an actionable bidding package.",
+  "riskClass": "low",
+  "status": "queued",
+  "overallProgress": 0,
+  "createdAt": 1793758221660,
+  "updatedAt": 1793758221660,
+  "milestones": [
+    {
+      "id": "m1",
+      "title": "Navigate Chrome to SAM.gov Opportunities Search",
+      "weight": 0.25,
+      "progress": 0,
+      "status": "pending",
+      "activeTool": "chrome_control"
+    },
+    {
+      "id": "m2",
+      "title": "Search Solicitations & Match NAICS Domains",
+      "weight": 0.25,
+      "progress": 0,
+      "status": "pending",
+      "activeTool": "web_search"
+    },
+    {
+      "id": "m3",
+      "title": "Extract Eligibility, Deadlines & Set-Asides",
+      "weight": 0.25,
+      "progress": 0,
+      "status": "pending",
+      "activeTool": "read_file"
+    },
+    {
+      "id": "m4",
+      "title": "Synthesize Actionable Application Package",
+      "weight": 0.25,
+      "progress": 0,
+      "status": "pending",
+      "activeTool": "write_file"
+    }
+  ],
+  "telemetry": {
+    "phi": 1.24,
+    "freeEnergy": 0.22,
+    "currentStep": 0,
+    "maxSteps": 45,
+    "elapsedMs": 0,
+    "etaMs": 180000,
+    "activeTool": "chrome_control",
+    "neuromodulatoryTone": {
+      "dopamine": 0.92,
+      "noradrenaline": 0.45,
+      "serotonin": 0.88
+    }
+  },
+  "steerInstructions": [],
+  "executionTrace": []
+}

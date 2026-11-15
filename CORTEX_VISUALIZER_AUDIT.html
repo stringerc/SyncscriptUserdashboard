@@ -1,0 +1,383 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cortex Visualizer Audit</title>
+<meta name="description" content="Elite security &amp; quality audit of http://127.0.0.1:5173/cortex/visualizer — SyncScript Cortex dev server.">
+<style>
+:root{
+  --bg:#0b0c10;
+  --panel:#14161f;
+  --panel-2:#1b1e2a;
+  --text:#e8eaed;
+  --muted:#94a3b8;
+  --border:#2d3242;
+  --accent:#7c83e8;
+  --danger:#ef4444;
+  --warn:#f59e0b;
+  --ok:#22c55e;
+  --info:#38bdf8;
+  --critical-bg:rgba(239,68,68,0.10);
+  --critical-border:rgba(239,68,68,0.35);
+  --high-bg:rgba(245,158,11,0.10);
+  --high-border:rgba(245,158,11,0.35);
+  --med-bg:rgba(99,102,241,0.10);
+  --med-border:rgba(99,102,241,0.35);
+  --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif, "Apple Color Emoji", "Segoe UI Emoji";
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){}
+}
+@media (prefers-color-scheme: dark){
+  :root[data-theme="dark"]{ --bg:#0b0c10; --panel:#14161f; --panel-2:#1b1e2a; --text:#e8eaed; --muted:#94a3b8; --border:#2d3242; --accent:#7c83e8; }
+}
+body{
+  margin:0;
+  background:var(--bg);
+  color:var(--text);
+  font-family:var(--font);
+  font-size:14px;
+  line-height:1.6;
+}
+.wrap{
+  max-width:1000px;
+  margin:0 auto;
+  padding:24px 16px;
+  position:relative;
+  overflow-x:hidden;
+}
+/* phone width safety */
+@media (max-width: 480px){
+  .wrap{padding:16px 12px;}
+}
+.strip{
+  position:absolute; top:0; left:0; right:0; height:4px;
+  background:linear-gradient(90deg, var(--danger), var(--warn), var(--accent));
+}
+header{
+  display:flex; flex-wrap:wrap; align-items:center; gap:12px; margin-bottom:8px;
+}
+h1{
+  font-size:20px; margin:0; letter-spacing:-0.2px; color:var(--text);
+}
+.sub{color:var(--muted); font-size:13px; margin:0;}
+.meta{
+  display:flex; gap:10px; align-items:center; margin:6px 0 18px; padding-top:12px; border-top:1px solid var(--border);
+  flex-wrap:wrap;
+}
+.badge{
+  display:inline-flex; align-items:center; gap:6px; padding:2px 10px; border-radius:999px; font-size:12px; font-weight:700; border:1px solid var(--border); background:var(--panel-2); color:var(--muted);
+}
+.badge.critical{color:var(--danger); border-color:rgba(239,68,68,0.45);}
+.badge.high{color:var(--warn); border-color:rgba(245,158,11,0.45);}
+.pill{
+  display:inline-flex; align-items:center; gap:6px; padding:2px 10px; border-radius:999px; font-size:11.5px; border:1px solid var(--border); background:var(--panel-2);
+}
+.pill.crit{color:var(--danger); border-color:var(--critical-border);}
+.pill.hi{color:var(--warn); border-color:var(--high-border);}
+.pill.med{color:#a5b4fc; border-color:var(--med-border);}
+.pill.low{color:var(--ok); border-color:rgba(34,197,94,0.45);}
+.pill.info{color:var(--info); border-color:rgba(56,189,248,0.45);}
+h2{
+  font-size:15px; margin:26px 0 8px; color:var(--text); text-transform:uppercase; letter-spacing:0.08em; opacity:0.85;
+}
+p{margin:0 0 10px; color:var(--text);}
+a{color:var(--accent); text-decoration:none;}
+a:hover{text-decoration:underline;}
+table{width:100%; border-collapse:collapse; margin:10px 0 16px; font-size:13px;}
+th,td{border:1px solid var(--border); padding:7px 9px; text-align:left; vertical-align:top;}
+th{background:var(--panel-2); color:var(--muted); font-size:11.5px; text-transform:uppercase; letter-spacing:0.06em;}
+tbody tr{background:var(--panel);}
+tbody tr:nth-child(even){background:var(--panel-2);}
+.finding{
+  background:var(--panel);
+  border:1px solid var(--border);
+  border-radius:10px;
+  padding:14px 16px;
+  margin:0 0 14px;
+  position:relative;
+}
+.finding header{display:flex; align-items:flex-start; gap:10px; margin-bottom:4px; flex-wrap:wrap;}
+.finding h3{margin:0 0 3px; font-size:15px; color:var(--text);}
+.finding .tag{font-size:11px; padding:0 6px; border-radius:6px; font-weight:800; white-space:nowrap;}
+.finding .tag.critical{background:var(--critical-bg); color:var(--danger); border:1px solid var(--critical-border);}
+.finding .tag.high{background:var(--high-bg); color:#fb923c; border:1px solid var(--high-border);}
+.finding .tag.medium{background:var(--med-bg); color:#818cf8; border:1px solid var(--med-border);}
+.finding .tag.low{background:rgba(34,197,94,0.10); color:var(--ok); border:1px solid rgba(34,197,94,0.45);}
+.finding .tag.info{background:rgba(56,189,248,0.10); color:var(--info); border:1px solid rgba(56,189,248,0.45);}
+.evidence,.remediation,.impact{
+  margin:8px 0 0; padding:8px 12px; border-radius:8px; font-size:12.5px;
+}
+.evidence{background:rgba(255,255,255,0.03); border-left:3px solid var(--muted);}
+.remediation{background:rgba(34,197,94,0.08); border-left:3px solid var(--ok); color:#ccf4e3;}
+.remediation b{color:#bbf7d0;}
+.kv{border:1px solid var(--border); border-radius:10px; background:var(--panel-2); padding:12px 14px; margin-bottom:16px;}
+.kv td{border:none; padding:4px 0; font-size:13px;}
+.kv td:first-child{color:var(--muted); width:130px; vertical-align:text-top; font-size:12px;}
+code{font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size:12px; background:rgba(255,255,255,0.06); padding:0 3px; border-radius:4px; color:#bcd7ee;}
+pre{font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size:11.5px; background:#0f1118; border:1px solid var(--border); border-radius:8px; padding:10px 12px; overflow-x:auto; margin:8px 0;}
+.small{font-size:12px; color:var(--muted); margin-top:6px;}
+ol,ul{margin:6px 0 12px; padding-left:18px;}
+li{margin-bottom:5px; color:var(--text);}
+.sig{margin-top:40px; padding-top:16px; border-top:1px solid var(--border); font-size:12px; color:var(--muted);}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){}
+}
+</style>
+</head>
+<body>
+<div class="strip"></div>
+<div class="wrap">
+<header>
+<h1>Cortex Visualizer Audit</h1>
+</header>
+<p class="sub">Elite security &amp; quality review of <code>http://127.0.0.1:5173/cortex/visualizer</code> — SyncScript Cortex dev server (Vite middleware). Overall risk: <b style="color:var(--warn)">HIGH</b>.</p>
+<div class="meta">
+<span class="badge critical">DO NOT EXPOSE PUBLICLY</span>
+<span class="pill crit">Critical: 2</span>
+<span class="pill hi">High: 3</span>
+<span class="pill med">Medium: 4</span>
+<span class="pill low">Low: 1</span>
+<span class="pill info">Info: 2</span>
+</div>
+
+<div class="kv">
+<tr><td>Target</td><td><code>http://127.0.0.1:5173/cortex/visualizer</code></td></tr>
+<tr><td>Audited surface</td><td><code>public/js/cortex-visualizer.js</code>, <code>public/css/cortex-visualizer.css</code>, mount block in <code>vite.config.ts</code>, plus dev-server middleware <code>/api/cortex/*</code>, <code>/api/ai/*</code>, <code>/api/web/*</code> (~7,700 lines)</td></tr>
+<tr><td>Method</td><td>Full-file static review, runtime smoke probes (GET/OPTIONS only — no exploit payloads), localhost dev-server threat model. Not a penetration test.</td></tr>
+</div>
+
+<h2>Executive summary</h2>
+<p>The Cortex visualizer is a feature-rich operational debugging shell for the Cortex agent runtime. It is well engineered in places (provider failover circuit-breaker, destructive-command Volition guard, call-tape replay), but it is exposed <b>without authentication</b>, with <b>CORS <code>*</code> on every endpoint</b>, with <b>secrets committed to source</b>, and with <b>no rate limiting</b>.</p>
+<p>The critical chain: any website the operator visits while the dev server runs can make cross-origin requests from the user&rsquo;s browser to <code>http://127.0.0.1:5173</code> and invoke Cortex host tools &mdash; <code>run_command</code>, <code>kill_process</code>, <code>write_file</code>, <code>memory</code> read/write, TTS, image generation, AI proxying. Verified live: <code>OPTIONS /api/cortex/tools</code> from <code>http://127.0.0.1:5173</code> returns HTTP 204 with <code>Vary: Origin</code>.</p>
+<p>Must fix before any wider exposure: <b>authentication, CORS lockdown, secret removal.</b></p>
+
+<h2>Findings</h2>
+
+<div class="finding">
+<header>
+<h3>SEC-01 &middot; Hard-coded production secret in source (Govee API key)</h3>
+<span class="tag critical">Critical</span>
+</header>
+<p class="evidence"><b>Evidence:</b> <code>vite.config.ts:7249</code> &mdash; <code>const apiKey = process.env.GOVEE_API_KEY || 'dab9261f-d5cf-4607-81fb-d4ff6f63974e';</code></p>
+<p>When <code>GOVEE_API_KEY</code> is unset, the server silently falls back to a key committed in plaintext. Every copy of the repo shares one key to the operator&rsquo;s Govee account; repository read = compromise of the physical-lighting account, and rotation requires a code change. The <code>/api/cortex/govee</code> endpoint (device discovery + control) then operates against that account with no per-request authorization.</p>
+<div class="remediation"><b>Remediation:</b> Remove the fallback; fail closed (503) when the env var is missing; rotate the exposed key; gate <code>/api/cortex/govee</code> behind the same authentication as other Cortex tools.</div>
+</div>
+
+<div class="finding">
+<header>
+<h3>SEC-02 &middot; No authentication on the Cortex tool surface; cross-origin RCE via CORS <code>*</code></h3>
+<span class="tag critical">Critical</span>
+</header>
+<p class="evidence"><b>Evidence:</b> <code>vite.config.ts:7579</code> mounts <code>cortexToolsHandler</code> at <code>/api/cortex/tools</code>. The handler exposes <code>run_command</code> (shell execution on the macOS host), <code>kill_process</code>, <code>memory</code> read/write, <code>write_file</code>, <code>run_python</code>, <code>generate_image</code>, TTS, and AI proxying. Every endpoint emits <code>Access-Control-Allow-Origin: *</code> and answers <code>OPTIONS</code> with <code>204</code>.</p>
+<p>Consequence: any page the user loads &mdash; including malicious ads &mdash; can issue POST requests from the user&rsquo;s browser to localhost and execute arbitrary shell commands. The Volition Governor deny-list at <code>vite.config.ts:2470</code> blocks only known <code>rm -rf</code>/<code>.git</code>/<code>.env</code> patterns; shell-encoding bypasses remain possible.</p>
+<p class="evidence"><b>Live confirmation:</b> <code>OPTIONS /api/cortex/tools</code> with <code>Origin: http://127.0.0.1:5173</code> &rarr; HTTP 204.</p>
+<div class="remediation"><b>Remediation:</b> Single origin-of-trust auth &mdash; require a bearer/device key bound to the local Cortex instance (e.g. derived from the Cortex access key used at the <code>/cortex</code> login); reject <code>Origin: null</code> and unlisted origins; always emit <code>Vary: Origin</code>; CSRF double-submit (cookie + header); tool-scoped authorization so write/destructive tools require an explicit allowlist; append-only audit log written off the request path.</div>
+</div>
+
+<div class="finding">
+<header>
+<h3>SEC-03 &middot; CORS wildcard on ~30 endpoints + origin echo</h3>
+<span class="tag high">High</span>
+</header>
+<p class="evidence"><b>Evidence:</b> <code>res.setHeader('Access-Control-Allow-Origin', '*')</code> at <code>vite.config.ts:1343, 1377, 1397, 1435, 1556, 1572, 1581, 1856, 1907, 1941, 2056</code>; proxies echo <code>origin || '*'</code> (e.g. <code>2298, 2324, 2353, 2373, 2398</code>). Several wildcard responses lack <code>Vary: Origin</code>, so caches may serve a wildcard policy to the wrong client.</p>
+<div class="remediation"><b>Remediation:</b> Explicit allowlist of <code>http://127.0.0.1:5173</code> and <code>http://localhost:5173</code> only; always <code>Vary: Origin</code>; never reflect arbitrary origins.</div>
+</div>
+
+<div class="finding">
+<header>
+<h3>SEC-04 &middot; Server-side fetch proxy without SSRF guard</h3>
+<span class="tag high">High</span>
+</header>
+<p class="evidence"><b>Evidence:</b> <code>vite.config.ts:7475-7508</code> &mdash; <code>generate_image</code> POSTs to OpenRouter with a key read from <code>.env</code>; <code>vite.config.ts:7582-7748</code> &mdash; TTS handler fetches <code>kokoroTtsUrl</code>, <code>voiceStudioUrl</code>, <code>pocketTtsUrl</code> from env. None of these fetches use a scheme/host allowlist or block private/reserved ranges. If any env value is attacker-controlled, or a generic <code>/api/cortex/fetch</code>-style proxy is added, the operator&rsquo;s machine can be used to reach link-local and instance-metadata services.</p>
+<div class="remediation"><b>Remediation:</b> Host/scheme allowlist for server-side fetch; block <code>127.0.0.0/8</code>, <code>10.0.0.0/8</code>, <code>172.16.0.0/12</code>, <code>192.168.0.0/16</code>, <code>169.254.0.0/16</code>, <code>::1</code>/link-local; keep existing <code>AbortSignal.timeout</code> guards.</div>
+</div>
+
+<div class="finding">
+<header>
+<h3>SEC-05 &middot; Confidential information in client-visible errors</h3>
+<span class="tag medium">Medium</span>
+</header>
+<p class="evidence"><b>Evidence:</b> the <code>/api/cortex/tools</code> catch returns <code>err.message</code> to the client (<code>vite.config.ts:7563-7571</code>); the memory-object serialization replacer stringifies <code>Error</code> instances including <code>stack</code>, leaking absolute local paths into the UI and <code>memory.jsonl</code>; <code>nexus-guest</code> forwards <code>X-Provider</code> / <code>X-Provider-Model</code> headers (7955-7956) fingerprinting the provider stack; <code>recordConnectionAudit</code> writes full upstream URLs (which may embed credentials) to plaintext console.</p>
+<div class="remediation"><b>Remediation:</b> Generic client error messages with server-side-only logs; strip <code>stack</code> from persisted/returned objects; drop or gate provenance headers behind a debug flag; redact credentials from audit records.</div>
+</div>
+
+<div class="finding">
+<header>
+<h3>SEC-06 &middot; No rate limiting anywhere</h3>
+<span class="tag medium">Medium</span>
+</header>
+<p>No per-IP, per-client, or per-tool throttling on <code>/api/cortex/tools</code>, <code>/api/cortex/tts</code>, or <code>/api/cortex/govee</code>. Enables TTS voice exhaustion, image-generation cost exhaustion, and log flooding via <code>recordConnectionAudit</code>.</p>
+<div class="remediation"><b>Remediation:</b> Token bucket per client key + per-endpoint caps; <code>429</code> responses; cost headers for image/TTS endpoints.</div>
+</div>
+
+<div class="finding">
+<header>
+<h3>SEC-07 &middot; Missing security headers</h3>
+<span class="tag low">Low</span>
+</header>
+<p>No <code>Content-Security-Policy</code>, <code>X-Content-Type-Options: nosniff</code>, <code>Referrer-Policy</code>, or <code>Permissions-Policy</code> on the visualizer page or API responses; inline script execution is unrestricted.</p>
+<div class="remediation"><b>Remediation:</b> CSP (e.g. <code>default-src 'self'</code>, <code>script-src 'self'</code> with hashes for the inline visualizer app, <code>object-src 'none'</code>, <code>base-uri 'self'</code>); add the standard response-header set.</div>
+</div>
+
+<div class="finding">
+<header>
+<h3>STB-01 &middot; Request timeouts not guaranteed; failures swallowed</h3>
+<span class="tag high">High</span>
+</header>
+<p>External fetches use <code>AbortSignal.timeout</code>, but Cortex tool invocations and long-running operations can hang with no client-visible deadline; several call sites rely only on the OS TCP timeout. Unhandled rejections in <code>ambientTick().catch(() => {})</code>, <code>fetchProblemSuggestions</code>, and stream readers are swallowed silently &mdash; failures are visible only in console.</p>
+<div class="remediation"><b>Remediation:</b> Bound every outbound call with deadline + abort; central unhandled-rejection handler; surface a degraded-mode banner to the user.</div>
+</div>
+
+<div class="finding">
+<header>
+<h3>STB-02 &middot; Category / tool-group mismatch between backend and UI</h3>
+<span class="tag high">High</span>
+</header>
+<p class="evidence"><b>Evidence:</b> <code>public/js/cortex-visualizer.js</code> &mdash; category render loop iterates a hard-coded category list while drawing from <code>GROUPED_TOOL_CATS</code>.</p>
+<p>Unknown or mismatched category keys produce empty groups or render exceptions for that section, so parts of the tool index can appear missing without error.</p>
+<div class="remediation"><b>Remediation:</b> Derive UI categories from the backend group map; validate each group shape before render; render a &ldquo;group unavailable&rdquo; fallback instead of crashing a section.</div>
+</div>
+
+<div class="finding">
+<header>
+<h3>STB-03 &middot; Fragile middleware registration order</h3>
+<span class="tag medium">Medium</span>
+</header>
+<p class="evidence"><b>Evidence:</b> <code>vite.config.ts:7575-7579</code> notes <code>cortexToolsHandler</code> &ldquo;was defined but never registered, so every tool call 404&rsquo;d in production&rdquo; &mdash; it is mounted late.</p>
+<p>Route precedence vs. the SPA static fallback is order-dependent, and there is no startup assertion that <code>/api/cortex/*</code> is reachable.</p>
+<div class="remediation"><b>Remediation:</b> Register API middleware before the SPA fallback; add a startup health assertion (<code>OPTIONS GET /api/cortex/tools</code> returns 204) failing the dev server loud on misconfiguration.</div>
+</div>
+
+<div class="finding">
+<header>
+<h3>STB-04 &middot; Unvalidated dynamic keys</h3>
+<span class="tag medium">Medium</span>
+</header>
+<p>Tool handlers index dictionaries by <code>ts.type</code> and <code>evt.tool</code> without shape validation; malformed trace lines produce <code>undefined</code> keys and silent drops instead of structured errors.</p>
+<div class="remediation"><b>Remediation:</b> Schema-validate incoming traces/events; dead-letter queue for malformed entries.</div>
+</div>
+
+<div class="finding">
+<header>
+<h3>PERF-01 &middot; No pagination or virtualization</h3>
+<span class="tag medium">Medium</span>
+</header>
+<p class="evidence"><b>Evidence:</b> <code>public/js/cortex-visualizer.js</code> &mdash; full tool index (~hundreds of entries) built as one HTML string per category and injected via <code>innerHTML</code>.</p>
+<p>Every re-render reflows the entire list. Acceptable today; will degrade as the tool registry grows.</p>
+<div class="remediation"><b>Remediation:</b> Pagination or <code>IntersectionObserver</code> virtualization; cache rendered category HTML; lazy-load category panels.</div>
+</div>
+
+<div class="finding">
+<header>
+<h3>PERF-02 &middot; Fixed 30s SSE heartbeat regardless of visibility</h3>
+<span class="tag medium">Medium</span>
+</header>
+<p>The heartbeat timer fires every 30s per open tab; no <code>document.visibilityState</code> adaptation; idle tabs keep connections warm.</p>
+<div class="remediation"><b>Remediation:</b> Pause heartbeat when <code>visibilityState === 'hidden'</code>, resume on focus; exponential backoff on reconnect.</div>
+</div>
+
+<div class="finding">
+<header>
+<h3>ACC-01 &middot; Keyboard and screen-reader gaps</h3>
+<span class="tag medium">Medium</span>
+</header>
+<p class="evidence"><b>Evidence:</b> <code>public/css/cortex-visualizer.css</code> removes focus indicators (<code>*:focus { outline: none }</code>); custom controls lack <code>role</code>/<code>aria-*</code>; no skip-to-content link; SVG sprite accessible names not verified.</p>
+<p>Blocks WCAG 2.1 AA conformance.</p>
+<div class="remediation"><b>Remediation:</b> Restore focus outlines (or custom visible focus state); add ARIA labels/roles; skip link; verify icon accessible names.</div>
+</div>
+
+<div class="finding">
+<header>
+<h3>ACC-02 &middot; Reduced-motion not honored</h3>
+<span class="tag low">Low</span>
+</header>
+<p>Transitions/animations run regardless of <code>prefers-reduced-motion</code>; only <code>prefers-color-scheme</code> is honored for theming.</p>
+<div class="remediation"><b>Remediation:</b> Honor <code>prefers-reduced-motion: reduce</code> by disabling animations.</div>
+</div>
+
+<div class="finding">
+<header>
+<h3>CQ-01 &middot; Monolithic dev server, duplicated middleware boilerplate</h3>
+<span class="tag medium">Medium</span>
+</header>
+<p><code>vite.config.ts</code> (~7,700 lines) repeats CORS/header/body-parsing blocks ~30 times by hand. High regression risk when making security changes &mdash; a missed handler stays wide open.</p>
+<div class="remediation"><b>Remediation:</b> Extract shared middleware helpers (<code>corsAllowlist</code>, <code>jsonBody</code>, <code>noCache</code>, <code>errorHandler</code>); unit-test middleware behaviour.</div>
+</div>
+
+<div class="finding">
+<header>
+<h3>CQ-02 &middot; <code>new Function()</code> on user-supplied JS</h3>
+<span class="tag low">Low</span>
+</header>
+<p class="evidence"><b>Evidence:</b> <code>vite.config.ts:2452</code> uses <code>new Function(content)</code> to validate <code>.js</code>/<code>.mjs</code> syntax.</p>
+<p>It parses without executing today, but is one edit away from becoming an RCE sink if user content is passed through.</p>
+<div class="remediation"><b>Remediation:</b> Replace with a pure parser (acorn/esprima) or remove; add a lint rule forbidding <code>new Function</code>/<code>eval</code>.</div>
+</div>
+
+<div class="finding">
+<header>
+<h3>OBS-01 &middot; Console-only logging</h3>
+<span class="tag info">Info</span>
+</header>
+<p>No structured logs, no request IDs, no error-tracking integration. <code>ambientTick</code> failures and provider failovers are visible only in the terminal.</p>
+<div class="remediation"><b>Remediation:</b> Structured JSON logs to file + correlation IDs; log provider failover events.</div>
+</div>
+
+<div class="finding">
+<header>
+<h3>OBS-02 &middot; No health endpoint</h3>
+<span class="tag info">Info</span>
+</header>
+<p>No <code>/healthz</code>/<code>/readyz</code>; readiness can only be guessed from page load.</p>
+<div class="remediation"><b>Remediation:</b> Add <code>GET /api/cortex/health</code> returning dependency states.</div>
+</div>
+
+<h2>Verified runtime observations</h2>
+<table>
+<thead><tr><th>Check</th><th>Result</th></tr></thead>
+<tbody>
+<tr><td><code>GET /cortex/visualizer</code></td><td>HTTP 200 &mdash; SPA loads</td></tr>
+<tr><td><code>OPTIONS /api/cortex/tools</code> from <code>http://127.0.0.1:5173</code></td><td>HTTP 204 (<code>Vary: Origin</code>) &mdash; preflight open, POST reachable cross-origin from that origin</td></tr>
+</tbody>
+</table>
+
+<h2>Positive findings (what is done well)</h2>
+<ul>
+<li>Volition Guardrail / &ldquo;Libet Conscious Veto&rdquo; blocks destructive shell patterns (<code>rm -rf</code>, <code>.git</code>, <code>.env</code>) at the tool layer (<code>vite.config.ts:2470</code>).</li>
+<li>Provider failover circuit-breaker (<code>tripProvider</code> / <code>providerCooling</code>) with per-provider cooldowns in the AI proxy.</li>
+<li>Call-tape replay / call-pending queue with TTL-based pruning (24h cutoff, last-20 cap).</li>
+<li>Multi-provider AI failover (Anthropic / OpenRouter / Groq) with SSE stream forwarding.</li>
+<li>The hard-coded Govee key fallback at least logs <code>[generate_image] orKey? set/EMPTY</code>, so misconfiguration is visible.</li>
+</ul>
+
+<h2>Remediation roadmap</h2>
+<table>
+<thead><tr><th style="width:14%">Window</th><th style="width:12%">Priority</th><th>Work</th></tr></thead>
+<tbody>
+<tr><td>Week 1</td><td class="crit">Critical</td><td>Auth on <code>/api/cortex/tools</code> + <code>/api/cortex/govee</code>; remove hard-coded Govee key (fail closed); CORS allowlist + <code>Vary: Origin</code></td></tr>
+<tr><td>Week 2</td><td class="hi">High</td><td>SSRF host/scheme allowlist for server fetch; rate limiting on TTS/image/tools; sanitize client-facing errors &amp; stacks; security headers (CSP, <code>nosniff</code>, referrer-policy)</td></tr>
+<tr><td>Week 3</td><td class="med">Medium</td><td>Guaranteed tool request timeouts + central unhandled-rejection handler; derive UI categories from backend; middleware registration order + startup health assertion</td></tr>
+<tr><td>Week 4</td><td class="low">Low</td><td>Pagination/virtualization for tool index; visibility-aware heartbeat; WCAG AA focus/ARIA/reduced-motion; structured logs + <code>/healthz</code></td></tr>
+</tbody>
+</table>
+
+<h2>Evidence index</h2>
+<ul>
+<li><code>vite.config.ts:7575-7579</code> &mdash; tool handler mount and &ldquo;never registered in production&rdquo; comment</li>
+<li><code>vite.config.ts:7249</code> &mdash; hard-coded Govee fallback key</li>
+<li><code>vite.config.ts:2470</code> &mdash; Volition deny-list</li>
+<li><code>vite.config.ts:7475-7508</code> &mdash; server-side fetch (OpenRouter image generation)</li>
+<li><code>vite.config.ts:7582-7748</code> &mdash; TTS proxies (VoiceStudio / Kokoro / Pocket TTS)</li>
+<li><code>vite.config.ts:7563-7571</code> &mdash; error detail returned to client</li>
+<li><code>vite.config.ts:7955-7956</code> &mdash; <code>X-Provider</code> / <code>X-Provider-Model</code> provenance headers</li>
+<li><code>vite.config.ts:2452</code> &mdash; <code>new Function</code> syntax check</li>
+<li><code>public/js/cortex-visualizer.js</code> &mdash; category render loop, heartbeat timer, trace controller (<code>ts.type</code> indexing)</li>
+<li><code>public/css/cortex-visualizer.css</code> &mdash; focus-outline removal, theme media query</li>
+</ul>
+
+<p class="sig">Audit prepared by Security Engineering &mdash; Cortex / SyncScript platform review. This document covers findings observable from source and runtime probes only; it is not a clearance for production exposure of the dev server.</p>
+</div>
+</body>
+</html>

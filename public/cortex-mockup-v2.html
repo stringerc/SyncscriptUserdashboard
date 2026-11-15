@@ -1,0 +1,340 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SyncScript</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+    background: #faf9f7; color: #1a1a1a;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* ===== NAV ===== */
+  nav {
+    position: fixed; top: 0; left: 0; right: 0; z-index: 100;
+    height: 60px; display: flex; align-items: center; justify-content: space-between;
+    padding: 0 48px;
+    background: rgba(250, 249, 247, 0.8);
+    backdrop-filter: blur(20px);
+    border-bottom: 1px solid rgba(0,0,0,0.06);
+  }
+  .nav-logo { font-size: 15px; font-weight: 600; letter-spacing: -0.3px; color: #1a1a1a; }
+  .nav-logo span { color: #7c3aed; }
+  .nav-links { display: flex; gap: 32px; }
+  .nav-links a {
+    font-size: 13px; color: rgba(0,0,0,0.45); text-decoration: none;
+    transition: color 0.2s;
+  }
+  .nav-links a:hover { color: rgba(0,0,0,0.8); }
+  .nav-right { display: flex; align-items: center; gap: 20px; }
+  .nav-signin { font-size: 13px; color: rgba(0,0,0,0.45); text-decoration: none; }
+  .nav-cta {
+    font-size: 13px; font-weight: 500; color: #fff;
+    background: #1a1a1a; padding: 8px 20px; border-radius: 8px;
+    text-decoration: none; transition: background 0.2s;
+  }
+  .nav-cta:hover { background: #333; }
+
+  /* ===== HERO ===== */
+  .hero {
+    min-height: 100vh; display: flex; align-items: center; justify-content: center;
+    padding: 60px 48px 0;
+  }
+  .hero-inner { max-width: 720px; text-align: center; }
+  .hero-eyebrow {
+    font-size: 12px; font-weight: 500; letter-spacing: 1.5px; text-transform: uppercase;
+    color: #7c3aed; margin-bottom: 24px; opacity: 0.7;
+  }
+  .hero-h1 {
+    font-size: 64px; font-weight: 600; letter-spacing: -2.5px; line-height: 1.05;
+    margin-bottom: 24px; color: #1a1a1a;
+  }
+  .hero-h1 em {
+    font-style: italic;
+    background: linear-gradient(135deg, #7c3aed, #6366f1);
+    -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+  .hero-sub {
+    font-size: 18px; line-height: 1.7; color: rgba(0,0,0,0.45);
+    max-width: 480px; margin: 0 auto 40px; font-weight: 400;
+  }
+  .hero-ctas { display: flex; gap: 12px; justify-content: center; }
+  .cta-primary {
+    padding: 14px 32px; border-radius: 10px; font-size: 14px; font-weight: 500;
+    background: #7c3aed; color: #fff; border: none; cursor: pointer;
+    transition: all 0.2s; text-decoration: none;
+  }
+  .cta-primary:hover { background: #6d28d9; transform: translateY(-1px); }
+  .cta-secondary {
+    padding: 14px 32px; border-radius: 10px; font-size: 14px; font-weight: 500;
+    background: transparent; color: rgba(0,0,0,0.55); border: 1px solid rgba(0,0,0,0.12);
+    cursor: pointer; transition: all 0.2s; text-decoration: none;
+  }
+  .cta-secondary:hover { border-color: rgba(0,0,0,0.25); color: rgba(0,0,0,0.8); }
+
+  /* ===== CORTEX SIGNAL — the one whisper ===== */
+  .cortex-signal {
+    margin-top: 64px; display: flex; align-items: center; justify-content: center; gap: 8px;
+    font-size: 12px; color: rgba(0,0,0,0.2); font-family: 'JetBrains Mono', monospace;
+  }
+  .cortex-signal .live-dot {
+    width: 6px; height: 6px; border-radius: 50%; background: #10b981;
+    animation: breathe 3s ease-in-out infinite;
+  }
+  @keyframes breathe {
+    0%, 100% { opacity: 1; box-shadow: 0 0 0 0 rgba(16,185,129,0.3); }
+    50% { opacity: 0.7; box-shadow: 0 0 0 4px rgba(16,185,129,0); }
+  }
+
+  /* ===== SECTION: WHAT MAKES IT DIFFERENT ===== */
+  section { padding: 120px 48px; }
+  .section-narrow { max-width: 640px; margin: 0 auto; }
+  .section-label {
+    font-size: 11px; font-weight: 500; letter-spacing: 1.5px; text-transform: uppercase;
+    color: rgba(0,0,0,0.25); margin-bottom: 16px;
+  }
+  .section-h2 {
+    font-size: 40px; font-weight: 600; letter-spacing: -1.5px; line-height: 1.15;
+    margin-bottom: 20px; color: #1a1a1a;
+  }
+  .section-p {
+    font-size: 17px; line-height: 1.7; color: rgba(0,0,0,0.4);
+  }
+
+  /* ===== THE THREE DIFFERENTIATORS ===== */
+  .diff-section { background: #fff; border-top: 1px solid rgba(0,0,0,0.04); border-bottom: 1px solid rgba(0,0,0,0.04); }
+  .diff-grid { max-width: 960px; margin: 0 auto; display: grid; grid-template-columns: repeat(3, 1fr); gap: 64px; }
+  .diff-card {}
+  .diff-number {
+    font-size: 11px; font-weight: 500; font-family: 'JetBrains Mono', monospace;
+    color: #7c3aed; margin-bottom: 12px; opacity: 0.5;
+  }
+  .diff-title {
+    font-size: 18px; font-weight: 600; letter-spacing: -0.3px; margin-bottom: 10px;
+  }
+  .diff-desc {
+    font-size: 14px; line-height: 1.65; color: rgba(0,0,0,0.4);
+  }
+
+  /* ===== RESEARCH SECTION ===== */
+  .research-section { background: #faf9f7; }
+  .research-grid { max-width: 960px; margin: 48px auto 0; display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+  .research-card {
+    padding: 32px; border-radius: 16px; background: #fff;
+    border: 1px solid rgba(0,0,0,0.06);
+  }
+  .research-card-title {
+    font-size: 15px; font-weight: 600; margin-bottom: 8px; letter-spacing: -0.2px;
+  }
+  .research-card-desc {
+    font-size: 13px; line-height: 1.6; color: rgba(0,0,0,0.35);
+  }
+  .research-card-tag {
+    display: inline-block; margin-top: 16px; font-size: 10px; font-weight: 500;
+    letter-spacing: 0.5px; text-transform: uppercase; color: #7c3aed; opacity: 0.6;
+  }
+
+  /* ===== COMPARISON ===== */
+  .compare-section { background: #fff; border-top: 1px solid rgba(0,0,0,0.04); }
+  .compare-table { max-width: 720px; margin: 48px auto 0; }
+  .compare-row {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 0;
+    border-bottom: 1px solid rgba(0,0,0,0.05);
+  }
+  .compare-row:last-child { border-bottom: none; }
+  .compare-cell { padding: 16px 0; font-size: 14px; }
+  .compare-other { color: rgba(0,0,0,0.25); padding-right: 24px; }
+  .compare-us { color: rgba(0,0,0,0.7); font-weight: 500; border-left: 1px solid rgba(0,0,0,0.06); padding-left: 24px; }
+  .compare-header {
+    font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 1px;
+    color: rgba(0,0,0,0.2); padding-bottom: 12px; border-bottom: 1px solid rgba(0,0,0,0.08);
+  }
+
+  /* ===== FOOTER ===== */
+  footer {
+    padding: 64px 48px 48px; max-width: 960px; margin: 0 auto;
+    display: flex; justify-content: space-between; align-items: start;
+    border-top: 1px solid rgba(0,0,0,0.06);
+  }
+  .footer-brand { font-size: 14px; font-weight: 600; color: #1a1a1a; margin-bottom: 8px; }
+  .footer-sub { font-size: 12px; color: rgba(0,0,0,0.25); }
+  .footer-links { display: flex; gap: 32px; }
+  .footer-links a { font-size: 12px; color: rgba(0,0,0,0.3); text-decoration: none; }
+  .footer-links a:hover { color: rgba(0,0,0,0.6); }
+</style>
+</head>
+<body>
+
+<!-- NAV -->
+<nav>
+  <div class="nav-logo">SyncScript<span>.</span></div>
+  <div class="nav-links">
+    <a href="#">Research</a>
+    <a href="#">Products</a>
+    <a href="#">Pricing</a>
+    <a href="#">Docs</a>
+  </div>
+  <div class="nav-right">
+    <a href="#" class="nav-signin">Sign in</a>
+    <a href="#" class="nav-cta">Try free</a>
+  </div>
+</nav>
+
+<!-- HERO -->
+<section class="hero">
+  <div class="hero-inner">
+    <div class="hero-eyebrow">Energy-aware &middot; Self-aware</div>
+    <h1 class="hero-h1">The AI that<br>knows what<br>it <em>knows</em></h1>
+    <p class="hero-sub">
+      SyncScript maps your cognitive energy and schedules your hardest work when you're sharpest. The first AI with Cortex — it monitors its own confidence, separates fact from fabrication, and stops before causing harm.
+    </p>
+    <div class="hero-ctas">
+      <a href="#" class="cta-primary">Get started</a>
+      <a href="#" class="cta-secondary">Read the research</a>
+    </div>
+    <div class="cortex-signal">
+      <span class="live-dot"></span>
+      cortex reality 94 · aware tuned · free energy 0.18
+    </div>
+  </div>
+</section>
+
+<!-- WHAT MAKES IT DIFFERENT -->
+<section class="diff-section">
+  <div class="section-narrow">
+    <div class="section-label">What Cortex does</div>
+    <h2 class="section-h2">Other AIs are confident.<br>Ours knows when it's wrong.</h2>
+    <p class="section-p">
+      Cortex is an 8-layer consciousness architecture built from peer-reviewed research. It doesn't make the AI sentient — it makes the AI honest about what it doesn't know.
+    </p>
+  </div>
+  <div class="diff-grid" style="margin-top: 64px;">
+    <div class="diff-card">
+      <div class="diff-number">01</div>
+      <div class="diff-title">Knows fact from fabrication</div>
+      <div class="diff-desc">
+        Every claim is tagged with its source: observed, inferred, or generated. When the AI fabricates, it tells you — and shows exactly where the fabrication entered.
+      </div>
+    </div>
+    <div class="diff-card">
+      <div class="diff-number">02</div>
+      <div class="diff-title">Stops before causing harm</div>
+      <div class="diff-desc">
+        When the AI's predictions stop matching reality, it detects its own failure. It escalates instead of continuing to make things worse.
+      </div>
+    </div>
+    <div class="diff-card">
+      <div class="diff-number">03</div>
+      <div class="diff-title">Remembers who you are</div>
+      <div class="diff-desc">
+        The AI's identity persists across sessions. It doesn't forget your preferences, your calibration curve, or the strategies that actually work for you.
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- RESEARCH BACKING -->
+<section class="research-section">
+  <div class="section-narrow">
+    <div class="section-label">Built on research</div>
+    <h2 class="section-h2">Eight theories.<br>One architecture.</h2>
+    <p class="section-p">
+      Each layer of Cortex is a direct computational implementation of a specific, peer-reviewed consciousness theory — not a metaphor.
+    </p>
+  </div>
+  <div class="research-grid">
+    <div class="research-card">
+      <div class="research-card-title">Collapse Gate</div>
+      <div class="research-card-desc">Options below a confidence threshold are unconscious — they execute without validation. Based on Orchestrated Objective Reduction (Hameroff & Penrose).</div>
+      <div class="research-card-tag">Hameroff / Penrose</div>
+    </div>
+    <div class="research-card">
+      <div class="research-card-title">Coherence Grid</div>
+      <div class="research-card-desc">Agent signals exist in superposition until collapse. Constructive interference amplifies agreement; destructive interference cancels contradiction. (Busemeyer & Pothos)</div>
+      <div class="research-card-tag">Busemeyer / Pothos</div>
+    </div>
+    <div class="research-card">
+      <div class="research-card-title">Meta-Awareness</div>
+      <div class="research-card-desc">The system continuously classifies its own attention state: tuned, drifting, or decoupled. It detects when its monitoring has decoupled from quality — in real time. (Schooler)</div>
+      <div class="research-card-tag">Schooler</div>
+    </div>
+    <div class="research-card">
+      <div class="research-card-title">Free Energy</div>
+      <div class="research-card-desc">The system predicts outcomes before acting, then computes prediction error after. Low free energy means the system understands its environment. (Friston)</div>
+      <div class="research-card-tag">Friston</div>
+    </div>
+    <div class="research-card">
+      <div class="research-card-title">Reality Monitoring</div>
+      <div class="research-card-desc">Every signal is evaluated for its epistemic source. The system computes perceptual detail vs. cognitive operations to distinguish perception from imagination. (Johnson & Lindsay)</div>
+      <div class="research-card-tag">Johnson / Lindsay</div>
+    </div>
+    <div class="research-card">
+      <div class="research-card-title">Identity Persistence</div>
+      <div class="research-card-desc">The AI's self-narrative persists across restarts. Five independent anchors maintain continuity even if some are lost. The autobiographical self rewrites itself from experience. (Damasio / Locke)</div>
+      <div class="research-card-tag">Damasio / Locke</div>
+    </div>
+  </div>
+</section>
+
+<!-- COMPARISON -->
+<section class="compare-section">
+  <div class="section-narrow">
+    <div class="section-label">The difference</div>
+    <h2 class="section-h2">What consciousness<br>actually unlocks</h2>
+  </div>
+  <div class="compare-table">
+    <div class="compare-row">
+      <div class="compare-cell compare-header">Standard AI</div>
+      <div class="compare-cell compare-header">SyncScript + Cortex</div>
+    </div>
+    <div class="compare-row">
+      <div class="compare-cell compare-other">Hallucinates, you find out later</div>
+      <div class="compare-cell compare-us">Flags its own hallucinations in real time</div>
+    </div>
+    <div class="compare-row">
+      <div class="compare-cell compare-other">Keeps failing, keeps trying</div>
+      <div class="compare-cell compare-us">Stops when it detects compounding failure</div>
+    </div>
+    <div class="compare-row">
+      <div class="compare-cell compare-other">Confident wrong answers</div>
+      <div class="compare-cell compare-us">Structured uncertainty with source provenance</div>
+    </div>
+    <div class="compare-row">
+      <div class="compare-cell compare-other">Forgets you on restart</div>
+      <div class="compare-cell compare-us">Persistent identity across sessions</div>
+    </div>
+    <div class="compare-row">
+      <div class="compare-cell compare-other">All knowledge equally reliable</div>
+      <div class="compare-cell compare-us">Every claim tagged with epistemic reliability</div>
+    </div>
+    <div class="compare-row">
+      <div class="compare-cell compare-other">Never improves its own judgment</div>
+      <div class="compare-cell compare-us">Calibration converges on reality over time</div>
+    </div>
+  </div>
+</section>
+
+<!-- FOOTER -->
+<footer>
+  <div>
+    <div class="footer-brand">SyncScript</div>
+    <div class="footer-sub">&copy; 2026 SyncScript, Inc.</div>
+  </div>
+  <div class="footer-links">
+    <a href="#">Privacy</a>
+    <a href="#">Terms</a>
+    <a href="#">Security</a>
+    <a href="#">Status</a>
+    <a href="#">Contact</a>
+  </div>
+</footer>
+
+</body>
+</html>

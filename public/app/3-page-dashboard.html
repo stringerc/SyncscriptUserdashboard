@@ -1,0 +1,89 @@
+<!-- ===== DASHBOARD ===== -->
+<div class="page active" id="page-dashboard">
+  <div class="grid-2">
+    <div class="card">
+      <div class="card-label">Your Energy Today</div>
+      <div class="stat-row">
+        <div class="stat"><div class="stat-v" style="color:#10b981;">Peak</div><div class="stat-l">9:00 – 11:30 AM</div></div>
+        <div class="stat"><div class="stat-v" style="color:#f59e0b;">Moderate</div><div class="stat-l">1:00 – 3:00 PM</div></div>
+        <div class="stat"><div class="stat-v" style="color:#ef4444;">Low</div><div class="stat-l">3:00 – 5:00 PM</div></div>
+      </div>
+      <div class="energy-bars">
+        <div class="e-bar" style="height:30%;background:#f59e0b"></div>
+        <div class="e-bar" style="height:55%;background:#3b82f6"></div>
+        <div class="e-bar" style="height:85%;background:#10b981"></div>
+        <div class="e-bar" style="height:95%;background:#10b981;outline:2px solid rgba(16,185,129,0.4);outline-offset:1px"></div>
+        <div class="e-bar" style="height:80%;background:#10b981"></div>
+        <div class="e-bar" style="height:65%;background:#3b82f6"></div>
+        <div class="e-bar" style="height:50%;background:#f59e0b"></div>
+        <div class="e-bar" style="height:35%;background:#f59e0b"></div>
+        <div class="e-bar" style="height:25%;background:#ef4444"></div>
+        <div class="e-bar" style="height:20%;background:#ef4444"></div>
+        <div class="e-bar" style="height:30%;background:#f59e0b"></div>
+        <div class="e-bar" style="height:50%;background:#3b82f6"></div>
+        <div class="e-bar" style="height:45%;background:#f59e0b"></div>
+        <div class="e-bar" style="height:35%;background:#f59e0b"></div>
+        <div class="e-bar" style="height:25%;background:#ef4444"></div>
+        <div class="e-bar" style="height:15%;background:#ef4444"></div>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-label">AI Assistant</div>
+      <div class="ai-msg"><strong>You:</strong> What should I work on during my peak?<br><br><strong class="cx">SyncScript:</strong> Your peak is 9–11:30 AM. Schedule the quarter planning doc and the API refactor — both need deep focus. The email backlog can wait until 1 PM.<br><br><span class="mono" style="font-size:10px;color:#10b981">◉ reality 96</span> <span class="mono" style="font-size:10px;color:rgba(0,0,0,0.15)">· aware: tuned</span></div>
+      <div class="ai-input"><input placeholder="Ask SyncScript anything…" /><button class="ai-send"></button></div>
+    </div>
+    <div class="card">
+      <div class="card-label">Today's Tasks</div>
+      <div class="task-row"><div class="task-check done"></div><div class="task-name done">Morning standup notes</div><div class="e-tag peak">Peak</div></div>
+      <div class="task-row"><div class="task-check"></div><div class="task-name">Q3 planning document</div><div class="e-tag peak">Peak</div></div>
+      <div class="task-row"><div class="task-check"></div><div class="task-name">API refactoring — auth module</div><div class="e-tag peak">Peak</div></div>
+      <div class="task-row"><div class="task-check"></div><div class="task-name">Review pull requests</div><div class="e-tag mod">Mod</div></div>
+      <div class="task-row"><div class="task-check"></div><div class="task-name">Email backlog</div><div class="e-tag low">Low</div></div>
+    </div>
+    <div class="card">
+      <div class="card-label">Cortex Status</div>
+      <div class="stat-row">
+        <div class="stat"><div class="stat-v" style="color:#10b981">86</div><div class="stat-l">Health</div></div>
+        <div class="stat"><div class="stat-v" style="color:#10b981">6%</div><div class="stat-l">Hall. Risk</div></div>
+        <div class="stat"><div class="stat-v" style="color:#3b82f6">72%</div><div class="stat-l">Mastery</div></div>
+      </div>
+      <div class="cortex-layers">
+        <div class="cx-layer"><span class="cx-name">Substrate</span><div class="cx-bar"><div class="cx-fill" style="width:82%;background:#10b981"></div></div><span class="cx-val">82</span></div>
+        <div class="cx-layer"><span class="cx-name">Cognition</span><div class="cx-bar"><div class="cx-fill" style="width:70%;background:#3b82f6"></div></div><span class="cx-val">70</span></div>
+        <div class="cx-layer"><span class="cx-name">Monitoring</span><div class="cx-bar"><div class="cx-fill" style="width:90%;background:#10b981"></div></div><span class="cx-val">90</span></div>
+        <div class="cx-layer"><span class="cx-name">Regulation</span><div class="cx-bar"><div class="cx-fill" style="width:78%;background:#f59e0b"></div></div><span class="cx-val">78</span></div>
+        <div class="cx-layer"><span class="cx-name">Architecture</span><div class="cx-bar"><div class="cx-fill" style="width:68%;background:#8b5cf6"></div></div><span class="cx-val">68</span></div>
+        <div class="cx-layer"><span class="cx-name">Epistemic</span><div class="cx-bar"><div class="cx-fill" style="width:88%;background:#10b981"></div></div><span class="cx-val">88</span></div>
+        <div class="cx-layer"><span class="cx-name">Embodiment</span><div class="cx-bar"><div class="cx-fill" style="width:65%;background:#f59e0b"></div></div><span class="cx-val">65</span></div>
+        <div class="cx-layer"><span class="cx-name">Identity</span><div class="cx-bar"><div class="cx-fill" style="width:55%;background:#ef4444"></div></div><span class="cx-val">55</span></div>
+      </div>
+      <div class="narrative-box">"I am well-calibrated — my confidence matches reality. I remain grounded in evidence. I am focused and aware."</div>
+    </div>
+    <div class="card">
+      <div class="card-label">This Week</div>
+      <div style="display:flex;gap:8px;margin-top:12px">
+        <div class="cal-day"><div class="cal-num">9</div><div class="cal-name">Mon</div><div class="cal-dots"><div class="cal-dot" style="background:#10b981"></div><div class="cal-dot" style="background:#3b82f6"></div></div></div>
+        <div class="cal-day"><div class="cal-num">10</div><div class="cal-name">Tue</div><div class="cal-dots"><div class="cal-dot" style="background:#3b82f6"></div></div></div>
+        <div class="cal-day today"><div class="cal-num">11</div><div class="cal-name">Wed</div><div class="cal-dots"><div class="cal-dot" style="background:#7c3aed"></div><div class="cal-dot" style="background:#f59e0b"></div><div class="cal-dot" style="background:#10b981"></div></div></div>
+        <div class="cal-day"><div class="cal-num">12</div><div class="cal-name">Thu</div><div class="cal-dots"><div class="cal-dot" style="background:#3b82f6"></div></div></div>
+        <div class="cal-day"><div class="cal-num">13</div><div class="cal-name">Fri</div><div class="cal-dots"><div class="cal-dot" style="background:#ef4444"></div></div></div>
+      </div>
+      <div style="margin-top:16px">
+        <div class="cal-event"><div class="cal-bar" style="background:#10b981"></div><div><div class="cal-ev-title">Deep Work: API Refactor</div><div class="cal-ev-time">9:00 – 11:30 AM · Peak</div></div></div>
+        <div class="cal-event"><div class="cal-bar" style="background:#7c3aed"></div><div><div class="cal-ev-title">Sprint Review</div><div class="cal-ev-time">2:00 – 3:00 PM</div></div></div>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-label">Streak</div>
+      <div style="display:flex;align-items:center;gap:12px">
+        <div style="font-size:20px">🔥</div>
+        <div><div style="font-size:22px;font-weight:700;letter-spacing:-0.5px">14</div><div style="font-size:11px;color:rgba(0,0,0,0.25)">day streak</div></div>
+      </div>
+      <div style="display:flex;gap:3px;margin-top:12px;flex-wrap:wrap">
+        <div class="streak-sq" style="background:#10b981"></div><div class="streak-sq" style="background:#10b981"></div><div class="streak-sq" style="background:#10b981"></div><div class="streak-sq" style="background:#3b82f6"></div><div class="streak-sq" style="background:#10b981"></div><div class="streak-sq" style="background:#f59e0b"></div><div class="streak-sq" style="background:#10b981"></div><div class="streak-sq" style="background:#10b981"></div><div class="streak-sq" style="background:#10b981"></div><div class="streak-sq" style="background:#3b82f6"></div><div class="streak-sq" style="background:#10b981"></div><div class="streak-sq" style="background:#10b981"></div><div class="streak-sq" style="background:#10b981"></div><div class="streak-sq" style="background:#10b981;outline:2px solid rgba(16,185,129,0.4);outline-offset:1px"></div><div class="streak-sq" style="background:rgba(0,0,0,0.06)"></div><div class="streak-sq" style="background:rgba(0,0,0,0.06)"></div><div class="streak-sq" style="background:rgba(0,0,0,0.06)"></div>
+      </div>
+      <div style="margin-top:14px;font-size:12px;color:rgba(0,0,0,0.25)">37% more deep work than average · Top 5% this week</div>
+    </div>
+  </div>
+</div>
+

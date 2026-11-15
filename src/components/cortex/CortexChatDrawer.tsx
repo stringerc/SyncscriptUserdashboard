@@ -1,0 +1,460 @@
+import React, { Suspense, lazy, useEffect, useRef, useState } from 'react';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
+import { Copy, Check, X } from 'lucide-react';
+import {
+  C, preprocessMarkdown, cortexMarkdownComponents,
+  type ChatMessage,
+} from './cortex-demo-helpers';
+import type { CortexArtifact } from '../../lib/cortex-artifacts';
+
+const ArtifactRenderer = lazy(() => import('./artifacts/ArtifactRenderer'));
+import { useCortexChatMessages, setCortexChatMessages } from '../../lib/cortex-chat-store';
+import type { CortexSignalBusPayload } from './CortexVisualizer';
+
+const DRAWER_CSS = `
+  @keyframes cx-drawer-in {
+    from { transform: translateX(48px); opacity: 0; }
+    to   { transform: translateX(0); opacity: 1; }
+  }
+  @keyframes cx-caret-blink {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.15; }
+  }
+  @keyframes cx-shimmer-slide {
+    0% { transform: translateX(-100%); }
+    100% { transform: translateX(100%); }
+  }
+  @keyframes cx-wave-bar {
+    0%, 100% { height: 4px; opacity: 0.45; }
+    50% { height: 16px; opacity: 1; }
+  }
+  .cx-drawer-scroll::-webkit-scrollbar { width: 5px; }
+  .cx-drawer-scroll::-webkit-scrollbar-thumb { background: rgba(148,233,255,0.18); border-radius: 3px; }
+`;
+
+const STATE_LABEL: Record<string, { label: string; color: string }> = {
+  idle: { label: 'STANDBY', color: '#67e8f9' },
+  listening: { label: 'LISTENING', color: '#34d399' },
+  thinking: { label: 'PROCESSING', color: '#a78bfa' },
+  speaking: { label: 'SPEAKING', color: '#67e8f9' },
+  working: { label: 'WORKING', color: '#e879f9' },
+};
+
+function InlineProcessingBubble({ payload }: { payload: CortexSignalBusPayload }) {
+  const isWorking = payload.state === 'working';
+  const color = isWorking ? '#e879f9' : '#a78bfa';
+  const badgeLabel = isWorking ? 'WORKING' : 'PROCESSING';
+  const statusText = payload.text || (isWorking ? 'Executing system tools…' : 'Synthesizing response…');
+
+  return (
+    <div style={{ marginBottom: 14 }} className="cx-drawer-msg cx-inline-processing">
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 5 }}>
+        <span style={{
+          fontSize: 9, fontWeight: 700, letterSpacing: '0.28em',
+          color: C.cyan,
+          fontFamily: '"IBM Plex Mono", monospace',
+        }}>
+          CORTEX
+        </span>
+        <span style={{
+          display: 'inline-flex', alignItems: 'center', gap: 5,
+          padding: '2px 8px', borderRadius: 10,
+          background: `${color}18`, border: `1px solid ${color}44`,
+          fontSize: 8.5, fontWeight: 700, letterSpacing: '0.2em',
+          color: color, fontFamily: '"IBM Plex Mono", monospace',
+        }}>
+          <span style={{
+            width: 5, height: 5, borderRadius: '50%',
+            background: color, boxShadow: `0 0 6px ${color}`,
+            animation: 'pulse 1s infinite',
+          }} />
+          {badgeLabel}
+        </span>
+        {payload.tool && (
+          <span style={{
+            fontSize: 8.5, padding: '1px 5px', borderRadius: 2,
+            background: 'rgba(232,121,249,0.18)', border: '1px solid rgba(232,121,249,0.45)',
+            color: '#f0abfc', fontFamily: '"IBM Plex Mono", monospace', letterSpacing: '0.08em',
+          }}>
+            {payload.tool}()
+          </span>
+        )}
+      </div>
+
+      <div style={{
+        padding: '10px 14px', borderRadius: 10,
+        background: `linear-gradient(135deg, ${color}14, rgba(4,8,14,0.7) 65%)`,
+        border: `1px solid ${color}35`,
+        boxShadow: `0 4px 20px ${color}14`,
+        position: 'relative', overflow: 'hidden',
+        display: 'flex', flexDirection: 'column', gap: 8,
+      }}>
+        {/* Shimmer line across top border */}
+        <div style={{
+          position: 'absolute', top: 0, left: 0, width: '100%', height: 1,
+          background: `linear-gradient(90deg, transparent, ${color}, transparent)`,
+          animation: 'cx-shimmer-slide 2.2s infinite ease-in-out',
+        }} />
+
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          {/* Animated 3-bar audio/computation waveform */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 3, height: 16 }}>
+            <span style={{ width: 3, borderRadius: 2, background: color, animation: 'cx-wave-bar 0.9s infinite ease-in-out', animationDelay: '0ms' }} />
+            <span style={{ width: 3, borderRadius: 2, background: color, animation: 'cx-wave-bar 0.9s infinite ease-in-out', animationDelay: '180ms' }} />
+            <span style={{ width: 3, borderRadius: 2, background: color, animation: 'cx-wave-bar 0.9s infinite ease-in-out', animationDelay: '360ms' }} />
+          </div>
+
+          <div style={{
+            fontSize: 12.5, lineHeight: 1.5,
+            color: '#e8fbff', fontFamily: '"IBM Plex Mono", monospace',
+            display: 'flex', alignItems: 'center', gap: 4, flex: 1,
+            overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+          }}>
+            <span>{statusText}</span>
+            <span style={{ color, animation: 'cx-caret-blink 0.8s infinite' }}>▌</span>
+          </div>
+        </div>
+
+        {/* Real-time thought stream ticker */}
+        {payload.thought && (
+          <div style={{
+            fontSize: 9.5, color: '#bae6fd', fontFamily: '"IBM Plex Mono", monospace',
+            background: 'rgba(2, 6, 23, 0.7)', padding: '3px 8px', borderRadius: 3,
+            border: '1px solid rgba(56, 189, 248, 0.25)',
+            display: 'flex', gap: 6, alignItems: 'center',
+            overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+          }}>
+            <span style={{ color: '#38bdf8', fontWeight: 700, letterSpacing: '0.1em' }}>THOUGHT:</span>
+            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{payload.thought}</span>
+            <span style={{ color: '#38bdf8' }}>▮</span>
+          </div>
+        )}
+
+        {/* Cognitive Multi-Stage Progress Bar */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <div style={{
+            flex: 1, height: 4, background: 'rgba(15,23,42,0.85)', borderRadius: 2,
+            border: `1px solid ${color}35`, overflow: 'hidden',
+          }}>
+            {typeof payload.missionProgress === 'number' && payload.missionProgress >= 0 ? (
+              <div style={{
+                width: `${Math.round(payload.missionProgress * 100)}%`, height: '100%',
+                background: `linear-gradient(90deg, #38bdf8, ${color})`,
+                transition: 'width 0.4s ease',
+              }} />
+            ) : (
+              <div style={{
+                width: '40%', height: '100%',
+                background: `linear-gradient(90deg, transparent, ${color}, transparent)`,
+                animation: 'cx-shimmer-slide 1.4s infinite ease-in-out',
+              }} />
+            )}
+          </div>
+          <span style={{
+            fontSize: 9, fontWeight: 700, color, fontVariantNumeric: 'tabular-nums', fontFamily: '"IBM Plex Mono", monospace',
+          }}>
+            {typeof payload.missionProgress === 'number' && payload.missionProgress >= 0
+              ? `${Math.round(payload.missionProgress * 100)}%`
+              : isWorking ? '70%' : '35%'}
+          </span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function TranscriptMessage({ msg }: { msg: ChatMessage }) {
+  const [copied, setCopied] = useState(false);
+  const isUser = msg.role === 'user';
+  const isAi = msg.role === 'ai' || msg.role === 'cortex';
+
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(msg.content);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1600);
+    } catch { }
+  };
+
+  if (msg.role === 'system' || msg.role === 'tool') {
+    return (
+      <div style={{ marginBottom: 10, opacity: 0.75 }}>
+        <div style={{ fontSize: 9, letterSpacing: '0.24em', color: C.dim, marginBottom: 3 }}>
+          {msg.role === 'tool' ? '◈ TOOL' : '◈ SYSTEM'}
+        </div>
+        <div style={{ fontSize: 11, color: C.dim, fontFamily: '"IBM Plex Mono", monospace', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+          {msg.content.slice(0, 600)}
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ marginBottom: 14 }} className="cx-drawer-msg">
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 5 }}>
+        <span style={{
+          fontSize: 9, fontWeight: 700, letterSpacing: '0.28em',
+          color: isUser ? 'rgba(148,233,255,0.55)' : C.cyan,
+          fontFamily: '"IBM Plex Mono", monospace',
+        }}>
+          {isUser ? 'YOU' : 'CORTEX'}
+        </span>
+        {msg.streaming && (
+          <span style={{
+            width: 5, height: 5, borderRadius: '50%', background: C.cyan,
+            boxShadow: `0 0 6px ${C.cyan}`, animation: 'pulse 1s infinite',
+          }} />
+        )}
+        <button
+          onClick={copy}
+          title="Copy"
+          style={{
+            marginLeft: 'auto', background: 'none', border: 'none', cursor: 'pointer',
+            color: copied ? '#34d399' : 'rgba(148,233,255,0.4)', padding: 2,
+            display: 'flex', alignItems: 'center',
+          }}
+        >
+          {copied ? <Check size={11} /> : <Copy size={11} />}
+        </button>
+      </div>
+      {isUser ? (
+        <div style={{
+          display: 'inline-block', maxWidth: '92%',
+          background: 'rgba(148,233,255,0.08)',
+          border: '1px solid rgba(148,233,255,0.16)',
+          borderRadius: '12px 12px 3px 12px',
+          padding: '8px 12px',
+          fontSize: 13, lineHeight: 1.55, color: C.user,
+        }}>
+          {msg.content}
+        </div>
+      ) : (
+        <div style={{
+          fontSize: 13.5, lineHeight: 1.65, color: C.ai,
+          padding: '10px 14px', borderRadius: 10,
+          background: 'linear-gradient(135deg, rgba(103,232,249,0.05), rgba(167,139,250,0.03) 55%, transparent)',
+          border: '1px solid rgba(148,233,255,0.10)',
+        }}>
+          <ReactMarkdown remarkPlugins={[remarkGfm]} components={cortexMarkdownComponents}>
+            {preprocessMarkdown(msg.content)}
+          </ReactMarkdown>
+          {!msg.streaming && msg.meta?.artifacts && msg.meta.artifacts.length > 0 && (
+            <Suspense fallback={null}>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 8 }}>
+                {msg.meta.artifacts.map((a: CortexArtifact) => (
+                  <ArtifactRenderer
+                    key={a.id}
+                    artifact={a}
+                    compact
+                    onExpand={(art) => window.dispatchEvent(new CustomEvent('cortex-open-artifact', { detail: art }))}
+                    onPin={(art) => window.dispatchEvent(new CustomEvent('cortex-pin-artifact', { detail: art }))}
+                  />
+                ))}
+              </div>
+            </Suspense>
+          )}
+          {msg.streaming && msg.content && (
+            <span style={{ display: 'inline-block', width: 8, height: 15, background: C.cortex, borderRadius: 1, marginLeft: 2, verticalAlign: 'middle', animation: 'cx-caret-blink 0.9s steps(1) infinite' }} />
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+interface CortexChatDrawerProps {
+  open: boolean;
+  onClose: () => void;
+  payload: CortexSignalBusPayload;
+  onSubmitText?: (text: string) => void;
+}
+
+export function CortexChatDrawer({ open, onClose, payload, onSubmitText }: CortexChatDrawerProps) {
+  const messages = useCortexChatMessages();
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const [draft, setDraft] = useState('');
+  const st = STATE_LABEL[payload.state] ?? STATE_LABEL.idle;
+  const hydratedRef = useRef(false);
+
+  // Hydrate from server history when the store is empty (fresh page load —
+  // the store is module-level and does not survive a full reload).
+  useEffect(() => {
+    if (hydratedRef.current || messages.length > 0) return;
+    hydratedRef.current = true;
+    fetch('/api/cortex/chat-history', { cache: 'no-store' })
+      .then((r) => r.json())
+      .then((d) => {
+        const msgs = Array.isArray(d?.messages) ? d.messages : [];
+        if (msgs.length) {
+          const current = getCortexChatSnapshot().messages;
+          if (current.length === 0) {
+            setCortexChatMessages(msgs.map((m: any) => ({ ...m, streaming: false })));
+          } else {
+            const existingIds = new Set(current.map((m) => m.id));
+            const newHistory = msgs.filter((m: any) => !existingIds.has(m.id)).map((m: any) => ({ ...m, streaming: false }));
+            if (newHistory.length) {
+              setCortexChatMessages([...newHistory, ...current]);
+            }
+          }
+        }
+      })
+      .catch(() => { });
+  }, [messages.length]);
+
+  const isCortexBusy = payload.state === 'thinking' || payload.state === 'working';
+  const lastMsg = messages[messages.length - 1];
+  const isStreamingWithoutContent = Boolean(lastMsg && lastMsg.streaming && !lastMsg.content);
+  const isWaitingAfterUser = Boolean(lastMsg && lastMsg.role === 'user');
+  const isProcessing = isCortexBusy || isStreamingWithoutContent || isWaitingAfterUser;
+
+  // Auto-scroll on new content / streaming growth / state transitions
+  useEffect(() => {
+    if (!open) return;
+    const el = scrollRef.current;
+    if (!el) return;
+    const isNearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 120;
+    if (isNearBottom || isWaitingAfterUser) {
+      el.scrollTop = el.scrollHeight;
+    }
+  }, [messages, open, payload.text, payload.state, isProcessing, isWaitingAfterUser]);
+
+  if (!open) return null;
+
+  const submitDraft = () => {
+    const q = draft.trim();
+    if (!q) return;
+    setDraft('');
+    if (onSubmitText) {
+      onSubmitText(q);
+    } else {
+      window.location.href = `/cortex/chat?q=${encodeURIComponent(q)}`;
+    }
+  };
+
+  return (
+    <div
+      data-cortex-chat-drawer=""
+      role="dialog"
+      aria-modal="true"
+      aria-label="Cortex Uplink Chat"
+      style={{
+        position: 'absolute', top: 0, right: 0, bottom: 0, width: 'min(400px, 88vw)',
+        zIndex: 30, display: 'flex', flexDirection: 'column',
+        background: 'rgba(3,4,10,0.92)',
+        borderLeft: `1px solid ${C.borderBright}55`,
+        backdropFilter: 'blur(18px)', WebkitBackdropFilter: 'blur(18px)',
+        boxShadow: '-24px 0 60px rgba(0,0,0,0.55), inset 1px 0 0 rgba(148,233,255,0.06)',
+        animation: 'cx-drawer-in 0.35s cubic-bezier(0.16,1,0.3,1) both',
+        fontFamily: "'DM Sans', ui-sans-serif, system-ui, sans-serif",
+      }}>
+      <style>{DRAWER_CSS}</style>
+
+      {/* Header */}
+      <div style={{
+        display: 'flex', alignItems: 'center', gap: 10,
+        padding: '14px 16px',
+        borderBottom: `1px solid ${C.border}`,
+        flexShrink: 0,
+      }}>
+        <span style={{ width: 7, height: 7, borderRadius: '50%', background: st.color, boxShadow: `0 0 8px ${st.color}`, animation: 'pulse 1.6s infinite' }} />
+        <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.3em', color: C.cyan, fontFamily: '"IBM Plex Mono", monospace' }}>
+          CORTEX // UPLINK
+        </span>
+        <span style={{ fontSize: 9, letterSpacing: '0.22em', color: st.color, fontFamily: '"IBM Plex Mono", monospace' }}>
+          {st.label}
+        </span>
+        <div style={{ flex: 1 }} />
+        <a
+          href="/cortex/chat"
+          style={{
+            textDecoration: 'none', padding: '4px 10px', borderRadius: 2,
+            border: `1px solid ${C.borderBright}`, color: C.cyan,
+            fontSize: 9, fontWeight: 600, letterSpacing: '0.2em',
+            fontFamily: '"IBM Plex Mono", monospace',
+            transition: 'all 0.2s',
+          }}
+        >
+          FULL CHAT →
+        </a>
+        <button
+          onClick={onClose}
+          title="Close transcript"
+          style={{
+            background: 'none', border: 'none', cursor: 'pointer',
+            color: C.dim, padding: 4, display: 'flex',
+          }}
+        >
+          <X size={14} />
+        </button>
+      </div>
+
+      {/* Transcript */}
+      <div ref={scrollRef} className="cx-drawer-scroll" style={{ flex: 1, overflowY: 'auto', padding: '16px 14px' }}>
+        {messages.length === 0 && !isProcessing ? (
+          <div style={{ padding: '40px 12px', textAlign: 'center' }}>
+            <div style={{ fontSize: 10, letterSpacing: '0.34em', color: C.dim, marginBottom: 8 }}>— SILENT CHANNEL —</div>
+            <div style={{ fontSize: 12, color: 'rgba(232,251,255,0.6)', lineHeight: 1.7 }}>
+              No transcript yet. Speak or open full chat — everything Cortex says appears here live.
+            </div>
+          </div>
+        ) : (
+          <>
+            {messages.map((m) => <TranscriptMessage key={m.id} msg={m} />)}
+            {isProcessing && <InlineProcessingBubble payload={payload} />}
+          </>
+        )}
+      </div>
+
+      {/* Live caption — what Cortex is saying right now */}
+      <div style={{
+        padding: '10px 16px',
+        borderTop: `1px solid ${C.border}`,
+        background: 'rgba(4,8,14,0.6)',
+        flexShrink: 0,
+      }}>
+        <div style={{ fontSize: 8, letterSpacing: '0.32em', color: 'rgba(148,233,255,0.4)', marginBottom: 5 }}>
+          ── LIVE TRANSMISSION ──
+        </div>
+        <div style={{
+          fontSize: 12, lineHeight: 1.55, minHeight: 20,
+          color: payload.text ? '#e8fbff' : 'rgba(148,233,255,0.35)',
+          fontFamily: '"IBM Plex Mono", monospace',
+          textShadow: payload.text ? `0 0 14px ${st.color}44` : 'none',
+        }}>
+          {payload.text || 'Awaiting signal'}
+          {payload.text && <span style={{ color: st.color }}> ▌</span>}
+        </div>
+      </div>
+
+      {/* Composer — hands off to full chat */}
+      <div style={{
+        display: 'flex', gap: 8, padding: '10px 14px 14px',
+        borderTop: `1px solid ${C.border}`, flexShrink: 0,
+      }}>
+        <input
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          onKeyDown={(e) => { if (e.key === 'Enter') submitDraft(); }}
+          placeholder="Ask Cortex — voice & tools run here…"
+          style={{
+            flex: 1, padding: '8px 12px', borderRadius: 6, fontSize: 12,
+            background: C.glass, border: `1px solid ${C.border}`,
+            color: C.text, outline: 'none', fontFamily: 'inherit',
+          }}
+        />
+        <button
+          onClick={submitDraft}
+          style={{
+            padding: '8px 14px', borderRadius: 6, cursor: 'pointer',
+            background: 'rgba(103,232,249,0.10)', border: `1px solid ${C.borderBright}`,
+            color: C.cyan, fontSize: 10, fontWeight: 700, letterSpacing: '0.18em',
+            fontFamily: '"IBM Plex Mono", monospace',
+          }}
+        >
+          SEND →
+        </button>
+      </div>
+    </div>
+  );
+}

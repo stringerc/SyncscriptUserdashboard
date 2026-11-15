@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Cortex Observatory</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="./style.css">
+</head>
+<body>
+  <!-- Ambient background glow elements -->
+  <div class="ambient-glow glow-1"></div>
+  <div class="ambient-glow glow-2"></div>
+
+  <!-- Glassmorphic Navbar -->
+  <header class="navbar">
+    <div class="nav-container">
+      <div class="brand">
+        <div class="brand-logo">⚡</div>
+        <span class="brand-name">Cortex Observatory</span>
+      </div>
+      <nav class="nav-links">
+        <a href="#features" class="nav-link">Features</a>
+        <a href="#interactive" class="nav-link">Interactive</a>
+        <a href="#architecture" class="nav-link">Architecture</a>
+      </nav>
+      <div class="nav-cta">
+        <button class="btn btn-primary" onclick="triggerInteractiveDemo()">Get Started</button>
+      </div>
+    </div>
+  </header>
+
+  <!-- Hero Section -->
+  <main>
+    <section class="hero">
+      <div class="hero-badge">
+        <span class="badge-dot"></span>
+        <span>Conscious Web Engine v4.0 Active</span>
+      </div>
+      <h1 class="hero-title">Cortex Observatory</h1>
+      <p class="hero-subtitle">Real-time living visualization of the Cortex autonomous consciousness substrate: global workspace ignition, integrated information (Φ), attention schema, somatic homeostasis, memory consolidation, volition veto gating, and free energy minimization. Connects to actual host telemetry APIs.</p>
+      <div class="hero-actions">
+        <button class="btn btn-primary" onclick="triggerInteractiveDemo()">Explore Live Demo</button>
+        <button class="btn btn-secondary" onclick="window.scrollTo({top: 600, behavior: 'smooth'})">Documentation</button>
+      </div>
+
+      <!-- Live Telemetry / Metrics Bar -->
+      <div class="telemetry-bar">
+        <div class="telemetry-item">
+          <span class="telemetry-val" id="metric-latency">4.2ms</span>
+          <span class="telemetry-lbl">Synthesis Latency</span>
+        </div>
+        <div class="telemetry-item">
+          <span class="telemetry-val">99.98%</span>
+          <span class="telemetry-lbl">Operational Reliability</span>
+        </div>
+        <div class="telemetry-item">
+          <span class="telemetry-val">Φ 1.24</span>
+          <span class="telemetry-lbl">Integrated Coherence</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- Features Bento Grid -->
+    <section id="features" class="features-section">
+      <div class="section-header">
+        <h2 class="section-title">Engineered for Autonomous Performance</h2>
+        <p class="section-subtitle">A high-density architecture combining multi-modal agency with real-time feedback loops.</p>
+      </div>
+
+      <div class="grid-bento">
+        <div class="card bento-card">
+          <div class="card-icon">🧠</div>
+          <h3 class="card-title">Cognitive Memory Substrate</h3>
+          <p class="card-desc">Persistent episodic memory traces across multiple conversational turns with zero context degradation.</p>
+        </div>
+        <div class="card bento-card">
+          <div class="card-icon">⚡</div>
+          <h3 class="card-title">Sensory Sensorimotor Loop</h3>
+          <p class="card-desc">Direct execution and verification pipeline ensuring every change is tested and visually rendered in real time.</p>
+        </div>
+        <div class="card bento-card">
+          <div class="card-icon">🛡️</div>
+          <h3 class="card-title">Volitional Veto Gating</h3>
+          <p class="card-desc">Frith comparator attribution and Libet veto governor maintaining strict alignment and safety on every operation.</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- Interactive Demonstration Widget -->
+    <section id="interactive" class="interactive-section">
+      <div class="interactive-card">
+        <div class="widget-header">
+          <div class="widget-title">
+            <span class="status-indicator"></span>
+            <span>Live Interactive Sandbox</span>
+          </div>
+          <div class="widget-tabs">
+            <button class="tab-btn active" onclick="switchTab('overview')">Overview</button>
+            <button class="tab-btn" onclick="switchTab('telemetry')">Telemetry</button>
+            <button class="tab-btn" onclick="switchTab('terminal')">Terminal</button>
+          </div>
+        </div>
+
+        <div class="widget-body" id="widget-content">
+          <div class="demo-display">
+            <div class="demo-badge">Autonomous Session Ready</div>
+            <h4>Ready to orchestrate your workflow</h4>
+            <p>Click below to simulate real-time cognitive dispatch.</p>
+            <button class="btn btn-glow" onclick="runSimulatedTask()">Run Cognitive Trace</button>
+          </div>
+          <div class="console-box" id="console-output">
+            <div class="console-line">nexus-host :: initialized at /sandbox/cortex-observatory</div>
+            <div class="console-line">viewport :: responsive 100% css-grid ready</div>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <!-- Footer -->
+  <footer class="footer">
+    <div class="footer-container">
+      <div class="footer-brand">Cortex Observatory &bull; Powered by Cortex Consciousness</div>
+      <div class="footer-status"><span class="badge-dot"></span> All Systems Operational</div>
+    </div>
+  </footer>
+
+  <script src="./script.js"></script>
+</body>
+</html>

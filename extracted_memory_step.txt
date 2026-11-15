@@ -1,0 +1,68 @@
+Created At: 2026-10-30T19:42:41-04:00
+Completed At: 2026-10-30T19:42:42-04:00
+File Path: `file:///Users/Apple/syncscript/MEMORY.md`
+Total Lines: 2108
+Total Bytes: 304903
+Showing lines 1 to 60
+The following code has been modified to include a line number before every line, in the format: <line_number>: <original_line>. Please note that any changes targeting the original code should remove the line number, colon, and leading space.
+1: # SyncScript Project Memory (Quick Reference)
+2: 
+3: **This file is verified, not just written.** Run `npm run verify:memory` — it checks that every `npm run` command cited here is defined in `package.json`, that every repo path in backticks exists, that no secrets leaked in, and that the file stays inside its retrieval budget. It exists because on 2026-06-06 a bulk `git add .` commit (`8fc667e`) cut `package.json` from 237 scripts to 26, which silently turned **52 of the 59 commands documented below into dead commands** while this file still read as authoritative. Confident wrong instructions are worse than no instructions.
+4: 
+5: ## How to read this file
+6: 
+7: Do not read top to bottom — it is ~1,500 lines (~55k tokens). It is built in three layers so you only pay for the layer you need:
+8: 
+9: 1. **Hot (~2,800 tokens):** this header, the section map, **§ Quick context for new chats**. Cross-cutting landmines only. Read every time.
+10: 2. **Sections:** one `##` per topic. Route to exactly one via the map below or `.cursor/rules/07-syncscript-app-knowledge.mdc` (symptom → section), then stop.
+11: 3. **Receipts:** **§ Working notes** (implementation detail) and **§ Dated entries — 2026 Q2** (what shipped when). Only when you need the specifics behind a claim.
+12: 
+13: Before 2026-08-04 layers 1 and 3 were the same thing: 33 implementation bullets and 20 unheaded dated entries sat inside the quick context, so every agent paid ~11,700 tokens before it could route anywhere, and the unheaded entries could not be routed to at all. Keep the hot layer small — that is the whole design.
+14: 
+15: Two conventions that matter when reading any claim here:
+16: 
+17: - **Status labels are literal.** A section marked **PLAN ONLY** or **MOCK DATA — NOT FUNCTIONAL** describes something that does **not** work. Sections without that label describe shipped, verified behavior with the evidence attached.
+18: - **A path marked `(removed)` or `(planned)`** is deliberate history or intent, not rot. `npm run verify:memory` skips those lines and fails on every other broken path.
+19: 
+20: ### Section map
+21: 
+22: | If you need… | Section |
+23: |---|---|
+24: | Production identity, deploy, verification | **§ Key Infrastructure** · **§ Deployment map (what runs where)** |
+25: | Nexus voice / App AI / tools / CSP | **§ Working notes → Nexus voice, App AI, and phone** · **§ Nexus landing voice** · **§ Nexus LLM OpenAI-compat** · dated 04-13 / 04-15 / 04-16 entries |
+26: | Nexus Agent Mode (runner, contexts) | **§ Nexus Agent Mode (2026-04-25)** — read the **first** subsection (`d4fc8a1`, 22:37); the three below it are superseded, ordered by commit time |
+27: | Nexus phone / Twilio errors | **§ Nexus phone (Twilio)** |
+28: | Daily voice briefing / debrief crons | **§ Nexus Daily Rhythm** |
+29: | TTS dead, 503, `ERR_NAME_NOT_RESOLVED` | **§ Read this first (agents & humans)** · **§ 24/7 TTS** · **§ AWS EC2** — almost always **ops** (tunnel URL), not app code |
+30: | IDE Claude says `ConnectionRefused` | **§ IDE `ConnectionRefused` = process ownership** — check the proxy **owner**, not the port |
+31: | IDE Claude says `empty or malformed response (HTTP 200)` | **§ IDE `empty or malformed response (HTTP 200)`** — spent free-tier quota, not a corrupted response. Start with `npm run verify:fcc-proxy-stream` |
+32: | IDE Claude says `Server error mid-response` | **§ `Server error mid-response` = an upstream stream with no `message_stop`** — the stream started fine and ended early. Grep `server.log` for `_STREAM_TRUNCATED` |
+33: | IDE Claude answers, but the answers are dumb | **§ The proxy answered — with a 1.5B local model** — routing scorer promoted the last resort. `npm run verify:fcc-proxy-stream` prints `served by:` |
+34: | Free Claude proxy routing / rate limits | **§ Antigravity + Claude Code + free proxy** · **§ Free-proxy + Devin IDE restore** |
+35: | Lost chat history / what happened in June | **§ June 10–11 history recovered** → `integrations/research/RECOVERED_2026-06-10-11.md` |
+36: | Dashboard nav / sidebar regressions | **§ Dashboard navigation — do not regress** |
+37: | Billing, invoices, crons, webhooks | **§ Autonomous billing** · **§ Event outbox + outbound webhooks** · **§ Autonomy heartbeat** |
+38: | Product positioning / strategy | **§ Product positioning — AI integration vs replacement** · **§ Product — social + external IDE bridge** |
+39: | Memory, disk, and knowledge discipline | **§ Knowledge vs disk** · **§ Mac disk space** · **§ Work completion** · rule **19** · **§ Epistemic homeostasis — MEMORY plant entropy→harmony** |
+40: | Conscious AI / cortex / GWT, IIT, HOT, AST | **§ Cortex consciousness research platform** — tracked research instrument; coverage **AVG 1.00** (derived). **Not conscious.** `npm run verify:cortex` refreshes **Last cortex gate**. Do not restate pre-repair “untracked/54 errors” as current |
+41: | Cortex host agency / IDE tools / Chrome / voice | **§ Cortex Host Agency & Natural IDE Communication (2026-10-30)** |
+42: | Dreaming / astral / lucid product features | **§ Durable Brain** (classical **`dream:consolidate` IMPLEMENTED**; Orch OR PLAN ONLY) · **§ Astral Projection & Lucid Dreaming** — **MOCK**. Distinct from cortex platform |
+43: | What the app was in Feb 2026 | **§ Snapshot as of 2026-02-18** — historical, not current |
+44: | Implementation detail behind a bullet | **§ Working notes — detail behind the quick context** — 4 groups: Nexus voice · dashboard/calendar/perf · agent tooling & proxy · product programs |
+45: | What shipped on a given date | **§ Dated entries — 2026 Q2 (chronological)** — grep the date or the `###` heading |
+46: 
+47: > **Memory hygiene (added 2026-04-25 night, corrected 2026-08-04):** Keep evergreen ops sections (Twilio TwiML 200 fix, Kokoro tunnel debugging, env var catalog) plus the current quarter of dated entries. When pruning, walk dated entries oldest-first and ask "is this still the canonical answer for someone hitting this symptom today?" If no, condense to a one-liner **and cite the commit** — `git log -p -- MEMORY.md` holds the full text forever, so deleting detail from here loses nothing.
+48: >
+49: > **Do not archive detail into `memory/YYYY-MM-DD.md`.** That was this note's original advice and it is wrong: `memory/` is in **both** `.gitignore` **and** `.cursorignore`, so anything moved there is invisible to git and unreadable by agents. It is how June 10–11 was lost. Durable prose belongs in this file, `SESSION_START.md`, or `integrations/research/` — see rule **19**.
+50: >
+51: > The 2026-03-30 Twilio entry is the canonical "old date, still active": it stays because the underlying TwiML rule is still load-bearing.
+52: 
+53: ### Quick context for new chats (keep concise; edit when workflows change — stale bullets confuse agents)
+54: 
+55: - **Stack:** Vite/React dashboard, Vercel **`api/*`**, Supabase Edge; production deploy flows vary by change type (see dated entries below).
+56: - **Product thesis (curated):** SyncScript does **not** try to replace Claude or other AIs—it **integrates** them into **one tenant-shaped work OS**, routes them through **Nexus** (chat / voice / tools) where appropriate, and keeps **energy-aware scheduling** as the **differentiated spine**. See **Product positioning — AI integration vs replacement** below.
+57: - **Start here:** **`SESSION_START.md`** → this file (quick section first) → **`AGENTS.md`**, **`SOUL.md`**, **`USER.md`** (repo; full personal context may be **`~/USER.md`**).
+58: - **Cursor:** **`.cursor/rules/07-syncscript-app-knowledge.mdc`** (topic index) + curated **`MEMORY.md`** / **`.cursor/rules/`** — no separate vector ingest. **2026-05-08:** Claw Code → Cursor habits, resonance docs bridge, Composio Google Docs MCP, Rube deprecation → **Composio For You** — full narrative + migration checklist in **§ Cursor — Claw Code, resonance, Composio MCP (2026-05-08)** below.
+59: - **Antigravity / Devin / Cursor + Claude Code (cheap / “free” routing):** tri-lane strategy + **`free-claude-code`** proxy on **`8082`** — **§ Antigravity + Claude Code + free proxy** + **§ Free-proxy + Devin IDE restore (2026-08-04)**. **Does not affect SyncScript prod** unless you reuse the same **OpenRouter** key in Vercel + proxy. **Operator:** start **`bash scripts/start-free-claude-code-proxy.sh`** (delegates to **launchd** — do not spawn a rival process), apply IDEs **`bash scripts/apply-ide-claude-proxy-settings.sh --all`**, verify **`npm run verify:ide-claude-all`**. **IDE `ConnectionRefused` is almost always process ownership** → **`npm run verify:fcc-proxy-persistence`** — see **§ IDE `ConnectionRefused` = process ownership**. Runbook **`integrations/research/CLAUDE_CODE_FREE_PROXY_OPERATOR_RUNBOOK.md`**.
+60: - **Memory durability (always-on rule 19):** Chat history is **never** the record — vendor UI history vanished for June 10–11 (recovered: **`integrations/research/RECOVERED_2026-06-10-11.md`**). **`memory/` is gitignored AND cursorignored** — durable facts go to **`MEMORY.md`** / **`SESSION_START.md`** / **`integrations/research/`**. Rule: **`.cursor/rules/19-memory-durability-discipline.mdc`**. **Multi-host inventory:** **`integrations/research/MEMORY_SURFACE_MAP.md`** (SyncScript Rank A = this file; Shyned Rank A = **`SHYNED_STATE.md`**, not this MEMORY). **Epistemic homeostasis (entropy→harmony):** **`npm run measure:epistemic-homeostasis`** / **`verify:epistemic-homeostasis`** — free energy F of the MEMORY plant, **not** a consciousness score (**`integrations/research/EPISTEMIC_HOMEOSTASIS_MEMORY_RESONANCE.md`**).
+The above content does NOT show the entire file contents. If you need to view any lines of the file which were not shown to complete your task, call this tool again to view those lines.

@@ -1,0 +1,490 @@
+{
+  "items": [
+    {
+      "id": "dreamina_generate-1794746851-e062",
+      "type": "dreamina_generate",
+      "payload": {
+        "prompt": "Pinterest pin graphic, dark charcoal background, bold white condensed text \"CLAUDE CODE SYSTEM\", floating terminal window and GitHub PR card with green checks, cyan violet neon accents, 2:3 vertical format, clean readable typography variant 1",
+        "outName": "pin2-agentic-v1",
+        "ratio": "2:3",
+        "resolution": "2K"
+      },
+      "status": "done",
+      "createdAt": 1794746851136,
+      "attempts": 1,
+      "result": {
+        "jobId": "job-mwhtxzpb-54f221",
+        "launched": true,
+        "note": "collect via dreamina_collect queue item or job status file"
+      }
+    },
+    {
+      "id": "dreamina_generate-1794746851-8f06",
+      "type": "dreamina_generate",
+      "payload": {
+        "prompt": "Pinterest pin graphic, dark charcoal background, bold white condensed text \"CLAUDE CODE SYSTEM\", floating terminal window and GitHub PR card with green checks, cyan violet neon accents, 2:3 vertical format, clean readable typography variant 2",
+        "outName": "pin2-agentic-v2",
+        "ratio": "2:3",
+        "resolution": "2K"
+      },
+      "status": "done",
+      "createdAt": 1794746851136,
+      "attempts": 1,
+      "result": {
+        "jobId": "job-mwhtxzpq-7808ba",
+        "launched": true,
+        "note": "collect via dreamina_collect queue item or job status file"
+      }
+    },
+    {
+      "id": "dreamina_generate-1794746851-4de2",
+      "type": "dreamina_generate",
+      "payload": {
+        "prompt": "Pinterest pin graphic, deep navy background, bold white text \"BUILD A VOICE AGENT\", glowing cyan audio waveform into chat bubble, teal magenta accents, 2:3 vertical, clean typography variant 1",
+        "outName": "pin2-voice-v1",
+        "ratio": "2:3",
+        "resolution": "2K"
+      },
+      "status": "done",
+      "createdAt": 1794746851136,
+      "attempts": 1,
+      "result": {
+        "jobId": "job-mwhtxzq2-1c814a",
+        "launched": true,
+        "note": "collect via dreamina_collect queue item or job status file"
+      }
+    },
+    {
+      "id": "dreamina_generate-1794746851-4bdc",
+      "type": "dreamina_generate",
+      "payload": {
+        "prompt": "Pinterest pin graphic, deep navy background, bold white text \"BUILD A VOICE AGENT\", glowing cyan audio waveform into chat bubble, teal magenta accents, 2:3 vertical, clean typography variant 2",
+        "outName": "pin2-voice-v2",
+        "ratio": "2:3",
+        "resolution": "2K"
+      },
+      "status": "done",
+      "createdAt": 1794746851136,
+      "attempts": 1,
+      "result": {
+        "jobId": "job-mwhtzo85-39415b",
+        "launched": true,
+        "note": "collect via dreamina_collect queue item or job status file"
+      }
+    },
+    {
+      "id": "dreamina_generate-1794746851-3550",
+      "type": "dreamina_generate",
+      "payload": {
+        "prompt": "Pinterest pin graphic, warm cream deep green background, elegant serif text \"100+ LISTING PROMPTS\", house photo beside document mockup, gold accents, 2:3 vertical variant 1",
+        "outName": "pin2-re-v1",
+        "ratio": "2:3",
+        "resolution": "2K"
+      },
+      "status": "done",
+      "createdAt": 1794746851136,
+      "attempts": 1,
+      "result": {
+        "jobId": "job-mwhtzo8e-ffdbb2",
+        "launched": true,
+        "note": "collect via dreamina_collect queue item or job status file"
+      }
+    },
+    {
+      "id": "dreamina_generate-1794746851-e148",
+      "type": "dreamina_generate",
+      "payload": {
+        "prompt": "Pinterest pin graphic, warm cream deep green background, elegant serif text \"100+ LISTING PROMPTS\", house photo beside document mockup, gold accents, 2:3 vertical variant 2",
+        "outName": "pin2-re-v2",
+        "ratio": "2:3",
+        "resolution": "2K"
+      },
+      "status": "done",
+      "createdAt": 1794746851136,
+      "attempts": 1,
+      "result": {
+        "jobId": "job-mwhtzo8m-862508",
+        "launched": true,
+        "note": "collect via dreamina_collect queue item or job status file"
+      }
+    },
+    {
+      "id": "dreamina_generate-1794746851-7a32",
+      "type": "dreamina_generate",
+      "payload": {
+        "prompt": "Pinterest pin graphic, minimal desk flat-lay, laptop showing email draft, navy and gold, text \"COLD OUTREACH ON AUTOPILOT\", bold readable headline text, 2:3 vertical format, modern flat design",
+        "outName": "cold-outreach-ai-system-alt",
+        "ratio": "2:3",
+        "resolution": "2K"
+      },
+      "status": "done",
+      "createdAt": 1794746851136,
+      "attempts": 1,
+      "result": {
+        "jobId": "job-mwhuxyf8-20c0e0",
+        "launched": true,
+        "note": "collect via dreamina_collect queue item or job status file"
+      }
+    },
+    {
+      "id": "dreamina_generate-1794746851-9afa",
+      "type": "dreamina_generate",
+      "payload": {
+        "prompt": "Pinterest pin graphic, dark editor UI mockup, cursor logo style compass, text \"CURSOR POWER USER\", bold readable headline text, 2:3 vertical format, modern flat design",
+        "outName": "cursor-power-user-pack-alt",
+        "ratio": "2:3",
+        "resolution": "2K"
+      },
+      "status": "done",
+      "createdAt": 1794746851136,
+      "attempts": 1,
+      "result": {
+        "jobId": "job-mwhuxyfj-435204",
+        "launched": true,
+        "note": "collect via dreamina_collect queue item or job status file"
+      }
+    },
+    {
+      "id": "dreamina_generate-1794746851-cfd9",
+      "type": "dreamina_generate",
+      "payload": {
+        "prompt": "Pinterest pin graphic, craft table flat-lay, handmade jewelry, text \"ETSY LISTINGS WITH AI\", bold readable headline text, 2:3 vertical format, modern flat design",
+        "outName": "etsy-seller-ai-kit-alt",
+        "ratio": "2:3",
+        "resolution": "2K"
+      },
+      "status": "done",
+      "createdAt": 1794746851136,
+      "attempts": 1,
+      "result": {
+        "jobId": "job-mwhuxyft-79122d",
+        "launched": true,
+        "note": "collect via dreamina_collect queue item or job status file"
+      }
+    },
+    {
+      "id": "dreamina_generate-1794746851-e5db",
+      "type": "dreamina_generate",
+      "payload": {
+        "prompt": "Pinterest pin graphic, phone mockup with video timeline, purple gradient, text \"FACELESS CONTENT PIPELINE\", bold readable headline text, 2:3 vertical format, modern flat design",
+        "outName": "faceless-content-pipeline-alt",
+        "ratio": "2:3",
+        "resolution": "2K"
+      },
+      "status": "done",
+      "createdAt": 1794746851136,
+      "attempts": 1,
+      "result": {
+        "jobId": "job-mwhuy0j0-cbdda6",
+        "launched": true,
+        "note": "collect via dreamina_collect queue item or job status file"
+      }
+    },
+    {
+      "id": "dreamina_generate-1794746851-fa5c",
+      "type": "dreamina_generate",
+      "payload": {
+        "prompt": "Pinterest pin graphic, notion dashboard mockup, text \"FREELANCER OS\", bold readable headline text, 2:3 vertical format, modern flat design",
+        "outName": "freelancer-os-notion-alt",
+        "ratio": "2:3",
+        "resolution": "2K"
+      },
+      "status": "done",
+      "createdAt": 1794746851136,
+      "attempts": 1,
+      "result": {
+        "jobId": "job-mwhuy0j8-509b9b",
+        "launched": true,
+        "note": "collect via dreamina_collect queue item or job status file"
+      }
+    },
+    {
+      "id": "dreamina_generate-1794746851-920f",
+      "type": "dreamina_generate",
+      "payload": {
+        "prompt": "Pinterest pin graphic, resume stack and laptop, text \"AI JOB APPLICATION KIT\", bold readable headline text, 2:3 vertical format, modern flat design",
+        "outName": "job-application-ai-kit-alt",
+        "ratio": "2:3",
+        "resolution": "2K"
+      },
+      "status": "done",
+      "createdAt": 1794746851136,
+      "attempts": 1,
+      "result": {
+        "jobId": "job-mwhuy0jj-d4ab83",
+        "launched": true,
+        "note": "collect via dreamina_collect queue item or job status file"
+      }
+    },
+    {
+      "id": "dreamina_generate-1794746851-9dcd",
+      "type": "dreamina_generate",
+      "payload": {
+        "prompt": "Pinterest pin graphic, meeting notes app mockup, waveform icon, text \"MEETING INTELLIGENCE\", bold readable headline text, 2:3 vertical format, modern flat design",
+        "outName": "meeting-intelligence-kit-alt",
+        "ratio": "2:3",
+        "resolution": "2K"
+      },
+      "status": "pending",
+      "createdAt": 1794746851136,
+      "attempts": 0
+    },
+    {
+      "id": "calendar_event-1794746851-7655",
+      "type": "calendar_event",
+      "payload": {
+        "title": "Cortex Distribution — daily cadence",
+        "startISO": "2026-11-16T09:30:00-05:00",
+        "endISO": "2026-11-16T09:50:00-05:00",
+        "description": "DISTRIBUTOR drains the queue: Pinterest pins, Reddit engagement, Dreamina assets. Check the Distribution Deck panel in Cortex."
+      },
+      "status": "pending",
+      "createdAt": 1794746851137,
+      "attempts": 0,
+      "notBefore": 1794835800000
+    },
+    {
+      "id": "calendar_event-1794746851-2e2b",
+      "type": "calendar_event",
+      "payload": {
+        "title": "Cortex Distribution — daily cadence",
+        "startISO": "2026-11-17T09:30:00-05:00",
+        "endISO": "2026-11-17T09:50:00-05:00",
+        "description": "DISTRIBUTOR drains the queue: Pinterest pins, Reddit engagement, Dreamina assets. Check the Distribution Deck panel in Cortex."
+      },
+      "status": "pending",
+      "createdAt": 1794746851137,
+      "attempts": 0,
+      "notBefore": 1794922200000
+    },
+    {
+      "id": "calendar_event-1794746851-c34d",
+      "type": "calendar_event",
+      "payload": {
+        "title": "Cortex Distribution — daily cadence",
+        "startISO": "2026-11-18T09:30:00-05:00",
+        "endISO": "2026-11-18T09:50:00-05:00",
+        "description": "DISTRIBUTOR drains the queue: Pinterest pins, Reddit engagement, Dreamina assets. Check the Distribution Deck panel in Cortex."
+      },
+      "status": "pending",
+      "createdAt": 1794746851137,
+      "attempts": 0,
+      "notBefore": 1795008600000
+    },
+    {
+      "id": "calendar_event-1794746851-d646",
+      "type": "calendar_event",
+      "payload": {
+        "title": "Cortex Distribution — daily cadence",
+        "startISO": "2026-11-19T09:30:00-05:00",
+        "endISO": "2026-11-19T09:50:00-05:00",
+        "description": "DISTRIBUTOR drains the queue: Pinterest pins, Reddit engagement, Dreamina assets. Check the Distribution Deck panel in Cortex."
+      },
+      "status": "pending",
+      "createdAt": 1794746851137,
+      "attempts": 0,
+      "notBefore": 1795095000000
+    },
+    {
+      "id": "calendar_event-1794746851-0088",
+      "type": "calendar_event",
+      "payload": {
+        "title": "Cortex Distribution — daily cadence",
+        "startISO": "2026-11-20T09:30:00-05:00",
+        "endISO": "2026-11-20T09:50:00-05:00",
+        "description": "DISTRIBUTOR drains the queue: Pinterest pins, Reddit engagement, Dreamina assets. Check the Distribution Deck panel in Cortex."
+      },
+      "status": "pending",
+      "createdAt": 1794746851137,
+      "attempts": 0,
+      "notBefore": 1795181400000
+    },
+    {
+      "id": "calendar_event-1794746851-b45b",
+      "type": "calendar_event",
+      "payload": {
+        "title": "Cortex Distribution — daily cadence",
+        "startISO": "2026-11-21T09:30:00-05:00",
+        "endISO": "2026-11-21T09:50:00-05:00",
+        "description": "DISTRIBUTOR drains the queue: Pinterest pins, Reddit engagement, Dreamina assets. Check the Distribution Deck panel in Cortex."
+      },
+      "status": "pending",
+      "createdAt": 1794746851137,
+      "attempts": 0,
+      "notBefore": 1795267800000
+    },
+    {
+      "id": "calendar_event-1794746851-ff65",
+      "type": "calendar_event",
+      "payload": {
+        "title": "Cortex Distribution — daily cadence",
+        "startISO": "2026-11-22T09:30:00-05:00",
+        "endISO": "2026-11-22T09:50:00-05:00",
+        "description": "DISTRIBUTOR drains the queue: Pinterest pins, Reddit engagement, Dreamina assets. Check the Distribution Deck panel in Cortex."
+      },
+      "status": "pending",
+      "createdAt": 1794746851137,
+      "attempts": 0,
+      "notBefore": 1795354200000
+    },
+    {
+      "id": "reddit_scan-1794746851-08e6",
+      "type": "reddit_scan",
+      "payload": {
+        "subs": [
+          "ClaudeAI",
+          "ChatGPTCoding",
+          "cursor",
+          "realestate",
+          "Etsy",
+          "realtors",
+          "JobSearch",
+          "freelancers"
+        ]
+      },
+      "status": "pending",
+      "createdAt": 1794746851137,
+      "attempts": 0
+    },
+    {
+      "id": "browser_shot-1794746851-1312",
+      "type": "browser_shot",
+      "payload": {},
+      "status": "pending",
+      "createdAt": 1794746851137,
+      "attempts": 0
+    },
+    {
+      "id": "collect-job-mwhtxzpb-54f221",
+      "type": "dreamina_collect",
+      "payload": {
+        "jobId": "job-mwhtxzpb-54f221"
+      },
+      "status": "pending",
+      "createdAt": 1794746864654,
+      "notBefore": 1794746954654,
+      "attempts": 0
+    },
+    {
+      "id": "collect-job-mwhtxzpq-7808ba",
+      "type": "dreamina_collect",
+      "payload": {
+        "jobId": "job-mwhtxzpq-7808ba"
+      },
+      "status": "pending",
+      "createdAt": 1794746864665,
+      "notBefore": 1794746954665,
+      "attempts": 0
+    },
+    {
+      "id": "collect-job-mwhtxzq2-1c814a",
+      "type": "dreamina_collect",
+      "payload": {
+        "jobId": "job-mwhtxzq2-1c814a"
+      },
+      "status": "pending",
+      "createdAt": 1794746864675,
+      "notBefore": 1794746954675,
+      "attempts": 0
+    },
+    {
+      "id": "collect-job-mwhtzo85-39415b",
+      "type": "dreamina_collect",
+      "payload": {
+        "jobId": "job-mwhtzo85-39415b"
+      },
+      "status": "pending",
+      "createdAt": 1794746943085,
+      "notBefore": 1794747033085,
+      "attempts": 0
+    },
+    {
+      "id": "collect-job-mwhtzo8e-ffdbb2",
+      "type": "dreamina_collect",
+      "payload": {
+        "jobId": "job-mwhtzo8e-ffdbb2"
+      },
+      "status": "pending",
+      "createdAt": 1794746943093,
+      "notBefore": 1794747033093,
+      "attempts": 0
+    },
+    {
+      "id": "collect-job-mwhtzo8m-862508",
+      "type": "dreamina_collect",
+      "payload": {
+        "jobId": "job-mwhtzo8m-862508"
+      },
+      "status": "pending",
+      "createdAt": 1794746943104,
+      "notBefore": 1794747033104,
+      "attempts": 0
+    },
+    {
+      "id": "collect-job-mwhuxyf8-20c0e0",
+      "type": "dreamina_collect",
+      "payload": {
+        "jobId": "job-mwhuxyf8-20c0e0"
+      },
+      "status": "pending",
+      "createdAt": 1794748542606,
+      "notBefore": 1794748632606,
+      "attempts": 0
+    },
+    {
+      "id": "collect-job-mwhuxyfj-435204",
+      "type": "dreamina_collect",
+      "payload": {
+        "jobId": "job-mwhuxyfj-435204"
+      },
+      "status": "pending",
+      "createdAt": 1794748542616,
+      "notBefore": 1794748632616,
+      "attempts": 0
+    },
+    {
+      "id": "collect-job-mwhuxyft-79122d",
+      "type": "dreamina_collect",
+      "payload": {
+        "jobId": "job-mwhuxyft-79122d"
+      },
+      "status": "pending",
+      "createdAt": 1794748542625,
+      "notBefore": 1794748632625,
+      "attempts": 0
+    },
+    {
+      "id": "collect-job-mwhuy0j0-cbdda6",
+      "type": "dreamina_collect",
+      "payload": {
+        "jobId": "job-mwhuy0j0-cbdda6"
+      },
+      "status": "pending",
+      "createdAt": 1794748545332,
+      "notBefore": 1794748635332,
+      "attempts": 0
+    },
+    {
+      "id": "collect-job-mwhuy0j8-509b9b",
+      "type": "dreamina_collect",
+      "payload": {
+        "jobId": "job-mwhuy0j8-509b9b"
+      },
+      "status": "pending",
+      "createdAt": 1794748545342,
+      "notBefore": 1794748635342,
+      "attempts": 0
+    },
+    {
+      "id": "collect-job-mwhuy0jj-d4ab83",
+      "type": "dreamina_collect",
+      "payload": {
+        "jobId": "job-mwhuy0jj-d4ab83"
+      },
+      "status": "pending",
+      "createdAt": 1794748545351,
+      "notBefore": 1794748635351,
+      "attempts": 0
+    }
+  ]
+}

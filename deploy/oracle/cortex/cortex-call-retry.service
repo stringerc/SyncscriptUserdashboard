@@ -1,0 +1,8 @@
+[Unit]
+Description=Retry pending Cortex outbound call
+After=network-online.target cortex-voice-bridge.service
+
+[Service]
+Type=oneshot
+User=ubuntu
+ExecStart=/home/ubuntu/cortex-oracle/cortex-call-retry.sh

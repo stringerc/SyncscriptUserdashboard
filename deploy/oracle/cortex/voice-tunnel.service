@@ -1,0 +1,16 @@
+[Unit]
+Description=Cloudflare quick tunnel for Cortex voice-bridge media WebSocket
+After=network-online.target cortex-voice-bridge.service
+Wants=cortex-voice-bridge.service
+
+[Service]
+Type=simple
+User=ubuntu
+ExecStart=/usr/local/bin/cloudflared tunnel --url http://127.0.0.1:8790 --no-autoupdate
+Restart=always
+RestartSec=10
+StandardOutput=append:/home/ubuntu/cortex-oracle/voice-tunnel.log
+StandardError=append:/home/ubuntu/cortex-oracle/voice-tunnel.log
+
+[Install]
+WantedBy=multi-user.target

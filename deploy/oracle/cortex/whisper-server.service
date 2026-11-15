@@ -1,0 +1,17 @@
+[Unit]
+Description=whisper.cpp server (Cortex local STT)
+After=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+ExecStart=/home/ubuntu/whisper.cpp/src/build/bin/whisper-server --model /home/ubuntu/.cortex/models/ggml-base.en.bin --host 127.0.0.1 --port 8178 --inference-path /inference
+Restart=always
+RestartSec=5
+MemoryMax=4G
+# whisper.cpp inference would otherwise saturate all OCPUs and starve
+# cortex-app (vite) + the voice bridge on the same 4-core Ampere box.
+CPUQuota=200%
+
+[Install]
+WantedBy=multi-user.target

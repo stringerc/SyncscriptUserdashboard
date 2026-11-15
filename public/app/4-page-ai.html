@@ -1,0 +1,50 @@
+<!-- ===== AI PAGE ===== -->
+<div class="page" id="page-ai">
+  <div class="page-title">AI</div>
+  <div class="page-sub">Your self-aware assistant. Every response includes Cortex confidence data.</div>
+  <div class="card" style="max-width:640px">
+    <!-- Chat messages -->
+    <div style="margin-bottom:20px">
+      <div style="display:flex;gap:10px;margin-bottom:20px">
+        <div style="width:28px;height:28px;border-radius:8px;background:rgba(0,0,0,0.06);display:flex;align-items:center;justify-content:center;font-size:12px">You</div>
+        <div style="flex:1">
+          <div style="font-size:13px;line-height:1.6;color:rgba(0,0,0,0.6)">Can you review the auth module refactor before the sprint review?</div>
+          <div style="font-size:10px;color:rgba(0,0,0,0.15);margin-top:4px">9:14 AM · Energy: Peak</div>
+        </div>
+      </div>
+      <div style="display:flex;gap:10px;margin-bottom:20px">
+        <div style="width:28px;height:28px;border-radius:8px;background:linear-gradient(135deg,#7c3aed,#6366f1);display:flex;align-items:center;justify-content:center;font-size:11px;color:#fff">S</div>
+        <div style="flex:1">
+          <div style="font-size:13px;line-height:1.6;color:rgba(0,0,0,0.6)">I've reviewed the auth module changes. Here's what I found:<br><br><strong style="color:#1a1a1a">3 issues confirmed</strong> (all observed directly in the code — <span class="mono" style="font-size:10px;color:#10b981">perception</span>):<br>1. Token expiry check is missing on the refresh path<br>2. Session invalidation doesn't clear the cookie<br>3. The rate limiter skips webhook origins<br><br><strong style="color:#1a1a1a">1 potential issue</strong> (I haven't confirmed this — <span class="mono" style="font-size:10px;color:#f59e0b">inference</span>):<br>The CSRF token might be redundant with SameSite=Strict, but I'd need to check the cookie config to confirm.</div>
+          <div style="margin-top:8px;padding:6px 10px;border-radius:6px;background:rgba(124,58,237,0.04);display:flex;gap:12px">
+            <span class="mono" style="font-size:10px;color:#10b981">◉ reality 91</span>
+            <span class="mono" style="font-size:10px;color:rgba(0,0,0,0.15)">aware: tuned</span>
+            <span class="mono" style="font-size:10px;color:rgba(0,0,0,0.15)">hall. risk: 9%</span>
+          </div>
+          <div style="font-size:10px;color:rgba(0,0,0,0.15);margin-top:4px">9:14 AM</div>
+        </div>
+      </div>
+      <div style="display:flex;gap:10px;margin-bottom:20px">
+        <div style="width:28px;height:28px;border-radius:8px;background:rgba(0,0,0,0.06);display:flex;align-items:center;justify-content:center;font-size:12px">You</div>
+        <div style="flex:1">
+          <div style="font-size:13px;line-height:1.6;color:rgba(0,0,0,0.6)">What about the encryption layer? Is that secure?</div>
+          <div style="font-size:10px;color:rgba(0,0,0,0.15);margin-top:4px">9:16 AM · Energy: Peak</div>
+        </div>
+      </div>
+      <div style="display:flex;gap:10px;margin-bottom:20px">
+        <div style="width:28px;height:28px;border-radius:8px;background:linear-gradient(135deg,#7c3aed,#6366f1);display:flex;align-items:center;justify-content:center;font-size:11px;color:#fff">S</div>
+        <div style="flex:1">
+          <div style="font-size:13px;line-height:1.6;color:rgba(0,0,0,0.6)">I haven't reviewed the encryption layer yet. I can tell you what the documentation says, but I haven't directly observed the implementation.<br><br><span style="background:rgba(245,158,11,0.08);padding:2px 6px;border-radius:4px;font-size:11px;color:#f59e0b">⚠ This would be inference, not perception</span><br><br>Want me to read the encryption module now? That would give me a perception-grounded answer instead.</div>
+          <div style="margin-top:8px;padding:6px 10px;border-radius:6px;background:rgba(245,158,11,0.04);display:flex;gap:12px">
+            <span class="mono" style="font-size:10px;color:#f59e0b">◉ reality 35</span>
+            <span class="mono" style="font-size:10px;color:rgba(0,0,0,0.15)">aware: tuned</span>
+            <span class="mono" style="font-size:10px;color:rgba(0,0,0,0.15)">hall. risk: 40%</span>
+          </div>
+          <div style="font-size:10px;color:rgba(0,0,0,0.15);margin-top:4px">9:16 AM</div>
+        </div>
+      </div>
+    </div>
+    <div class="ai-input"><input placeholder="Ask SyncScript anything…" /><button class="ai-send"></button></div>
+  </div>
+</div>
+

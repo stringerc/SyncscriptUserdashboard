@@ -1,0 +1,16 @@
+[Unit]
+Description=Cloudflare quick tunnel for Cortex (trycloudflare HTTPS edge)
+After=cortex-app.service network-online.target
+Wants=cortex-app.service
+
+[Service]
+Type=simple
+User=ubuntu
+ExecStart=/usr/local/bin/cloudflared tunnel --url http://127.0.0.1:5173 --no-autoupdate
+Restart=always
+RestartSec=10
+StandardOutput=append:/home/ubuntu/cortex-oracle/tunnel.log
+StandardError=append:/home/ubuntu/cortex-oracle/tunnel.log
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Lightning Bolt Dashboard</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="./style.css">
+</head>
+<body class="dashboard-body">
+  <div class="ambient-glow glow-1"></div>
+  <div class="ambient-glow glow-2"></div>
+
+  <div class="app-layout">
+    <!-- Sidebar -->
+    <aside class="sidebar">
+      <div class="brand-block">
+        <div class="brand-badge">⚡</div>
+        <div class="brand-info">
+          <span class="brand-title">Lightning Bolt Dashboard</span>
+          <span class="brand-tag">v4.2 Executive OS</span>
+        </div>
+      </div>
+
+      <nav class="sidebar-nav">
+        <a href="#overview" class="nav-item active" onclick="navigateTab('overview', this)">
+          <span class="nav-icon">📊</span>
+          <span class="nav-label">Executive Overview</span>
+        </a>
+        <a href="#energy" class="nav-item" onclick="navigateTab('energy', this)">
+          <span class="nav-icon">⚡</span>
+          <span class="nav-label">Chrono-Energy Flow</span>
+        </a>
+        <a href="#tasks" class="nav-item" onclick="navigateTab('tasks', this)">
+          <span class="nav-icon">🎯</span>
+          <span class="nav-label">Focus & Task Sprints</span>
+        </a>
+        <a href="#cognitive" class="nav-item" onclick="navigateTab('cognitive', this)">
+          <span class="nav-icon">🧠</span>
+          <span class="nav-label">Cognitive Vitals</span>
+        </a>
+        <a href="#settings" class="nav-item" onclick="navigateTab('settings', this)">
+          <span class="nav-icon">⚙️</span>
+          <span class="nav-label">System Preferences</span>
+        </a>
+      </nav>
+
+      <div class="sidebar-footer">
+        <div class="user-pill">
+          <div class="user-avatar">SC</div>
+          <div class="user-meta">
+            <span class="user-name">Executive Operator</span>
+            <span class="user-status"><span class="status-dot"></span>Deep Work Flow</span>
+          </div>
+        </div>
+      </div>
+    </aside>
+
+    <!-- Main Workspace View -->
+    <main class="main-content">
+      <!-- Top Action Bar -->
+      <header class="topbar">
+        <div class="search-wrap">
+          <span class="search-icon">🔍</span>
+          <input type="text" placeholder="Search tasks, energy rhythms, cognitive telemetry..." class="search-bar" />
+        </div>
+        <div class="topbar-actions">
+          <div class="state-pill">
+            <span class="live-dot"></span>
+            <span>Φ 1.24 · Tuned Equilibrium</span>
+          </div>
+          <button class="btn btn-primary btn-sm" onclick="triggerQuickAction()">+ New Focus Block</button>
+        </div>
+      </header>
+
+      <!-- Welcome Banner -->
+      <div class="banner-card">
+        <div class="banner-text">
+          <h2>Lightning Bolt Dashboard</h2>
+          <p>High‑aesthetic operational screen triggered by the lightning bolt emoji, featuring real‑time KPI tiles, scheduler, and AI chat.</p>
+        </div>
+        <div class="banner-metric">
+          <span class="banner-stat">94%</span>
+          <span class="banner-lbl">Circadian Alignment</span>
+        </div>
+      </div>
+
+      <!-- 4 KPI Stat Widgets -->
+      <section class="kpi-grid">
+        <div class="kpi-card">
+          <div class="kpi-header">
+            <span class="kpi-title">Energy Rhythm</span>
+            <span class="kpi-badge badge-green">Peak 88%</span>
+          </div>
+          <div class="kpi-value">88.4%</div>
+          <p class="kpi-subtitle">Morning ultradian high-focus phase active.</p>
+          <div class="progress-bar"><div class="progress-fill" style="width: 88%;"></div></div>
+        </div>
+
+        <div class="kpi-card">
+          <div class="kpi-header">
+            <span class="kpi-title">Focus Velocity</span>
+            <span class="kpi-badge badge-cyan">4.8h Logged</span>
+          </div>
+          <div class="kpi-value">94.2</div>
+          <p class="kpi-subtitle">+12% over baseline daily target.</p>
+          <div class="progress-bar"><div class="progress-fill" style="width: 94%; background: linear-gradient(90deg, #00f0ff, #8b5cf6);"></div></div>
+        </div>
+
+        <div class="kpi-card">
+          <div class="kpi-header">
+            <span class="kpi-title">Active Automations</span>
+            <span class="kpi-badge badge-violet">12 Agents</span>
+          </div>
+          <div class="kpi-value">12 / 12</div>
+          <p class="kpi-subtitle">Zero sensorimotor friction detected.</p>
+          <div class="progress-bar"><div class="progress-fill" style="width: 100%; background: #8b5cf6;"></div></div>
+        </div>
+
+        <div class="kpi-card">
+          <div class="kpi-header">
+            <span class="kpi-title">Task Completion</span>
+            <span class="kpi-badge badge-amber">14 / 18</span>
+          </div>
+          <div class="kpi-value" id="task-metric">14 / 18</div>
+          <p class="kpi-subtitle">4 strategic milestones remaining today.</p>
+          <div class="progress-bar"><div class="progress-fill" id="task-progress-bar" style="width: 78%; background: #f59e0b;"></div></div>
+        </div>
+      </section>
+
+      <!-- Center Dual Split: Chrono-Energy Schedule & Focus Rhythm Controller -->
+      <section class="dashboard-split">
+        <!-- Left: Chrono-Energy Timeline -->
+        <div class="panel-card flex-2">
+          <div class="panel-header">
+            <div>
+              <h3 class="panel-title">Chrono-Energy Schedule & Workstreams</h3>
+              <p class="panel-desc">Time-blocked tasks aligned with physiological energy waves.</p>
+            </div>
+            <span class="badge-pill">Tuesday, Nov 3</span>
+          </div>
+
+          <div class="timeline-list">
+            <div class="timeline-item done">
+              <div class="time-col">09:00 - 10:30</div>
+              <div class="timeline-content">
+                <div class="item-title">Core Engine Architecture & Typecheck Guard</div>
+                <div class="item-meta">High Focus • Memory Persistence • Passed 102/102 Gates</div>
+              </div>
+              <span class="status-tag tag-done">✔ Done</span>
+            </div>
+
+            <div class="timeline-item active">
+              <div class="time-col">10:45 - 12:15</div>
+              <div class="timeline-content">
+                <div class="item-title">UI Redesign & Live Preview Sandbox Engine</div>
+                <div class="item-meta">Active In-Progress • Glassmorphism Tokens • Dynamic Templates</div>
+              </div>
+              <span class="status-tag tag-active">● Active</span>
+            </div>
+
+            <div class="timeline-item upcoming">
+              <div class="time-col">13:30 - 15:00</div>
+              <div class="timeline-content">
+                <div class="item-title">Autonomous Email Triage & Multi-Tab Deduplication</div>
+                <div class="item-meta">Chrome CDP Agency • Zero-Loop Verification</div>
+              </div>
+              <span class="status-tag tag-upcoming">Upcoming</span>
+            </div>
+
+            <div class="timeline-item upcoming">
+              <div class="time-col">15:30 - 17:00</div>
+              <div class="timeline-content">
+                <div class="item-title">Circadian Memory Consolidation & Dream State</div>
+                <div class="item-meta">Epistemic Sleep • Morning Briefing Generation</div>
+              </div>
+              <span class="status-tag tag-upcoming">Planned</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Right: Interactive Focus Timer & Task Checklist -->
+        <div class="panel-card flex-1">
+          <div class="panel-header">
+            <h3 class="panel-title">Live Focus Controller</h3>
+            <span class="badge-pill" id="timer-mode-lbl">25m Sprint</span>
+          </div>
+
+          <!-- Pomodoro Widget -->
+          <div class="timer-box">
+            <div class="timer-display" id="timer-display">25:00</div>
+            <div class="timer-controls">
+              <button class="btn btn-primary btn-sm" id="timer-toggle-btn" onclick="toggleTimer()">Start Focus</button>
+              <button class="btn btn-secondary btn-sm" onclick="resetTimer()">Reset</button>
+            </div>
+          </div>
+
+          <!-- Interactive Tasks -->
+          <div class="checklist-header">
+            <h4>Strategic Priorities</h4>
+            <span class="count-badge" id="completed-count">3/4 Done</span>
+          </div>
+          <div class="checklist" id="task-checklist">
+            <label class="check-item checked">
+              <input type="checkbox" checked onchange="updateTaskProgress(this)" />
+              <span class="check-text">Durable multi-tier chat history hydration</span>
+            </label>
+            <label class="check-item checked">
+              <input type="checkbox" checked onchange="updateTaskProgress(this)" />
+              <span class="check-text">Sub-600ms voice streaming with efference copy</span>
+            </label>
+            <label class="check-item checked">
+              <input type="checkbox" checked onchange="updateTaskProgress(this)" />
+              <span class="check-text">Visual gaze closed-loop canvas screenshot</span>
+            </label>
+            <label class="check-item">
+              <input type="checkbox" onchange="updateTaskProgress(this)" />
+              <span class="check-text">Dynamic dashboard sandbox redesign archetype</span>
+            </label>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <script src="./script.js"></script>
+</body>
+</html>

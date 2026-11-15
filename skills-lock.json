@@ -1,0 +1,49 @@
+{
+  "version": 1,
+  "skills": {
+    "remotion-best-practices": {
+      "source": "remotion-dev/skills",
+      "sourceType": "github",
+      "skillPath": "skills/remotion/SKILL.md",
+      "computedHash": "006f8413941b59eff54a7ce64851b8a2fb79e7a3a5f1a895e97a48f01482553d"
+    },
+    "dream-state": {
+      "source": "syncscript/cortex-dream-consolidation",
+      "sourceType": "internal",
+      "skillPath": "skills/dream-state/SKILL.md",
+      "installedAt": 1793729800000
+    },
+    "metacognition": {
+      "source": "syncscript/cortex-metacognition-calibration",
+      "sourceType": "internal",
+      "skillPath": "skills/metacognition/SKILL.md",
+      "installedAt": 1793731100000
+    },
+    "emotional-intelligence": {
+      "source": "syncscript/cortex-emotional-intelligence",
+      "sourceType": "internal",
+      "skillPath": "skills/emotional-intelligence/SKILL.md",
+      "installedAt": 1793731800000
+    },
+    "proactive-initiative": {
+      "source": "syncscript/cortex-proactive-initiative",
+      "sourceType": "internal",
+      "skillPath": "skills/proactive-initiative/SKILL.md",
+      "installedAt": 1793731810000
+    },
+    "agent-evolution": {
+      "source": "syncscript/cortex-agent-evolution",
+      "sourceType": "internal",
+      "skillPath": "skills/agent-evolution/SKILL.md",
+      "installedAt": 1793731820000
+    },
+    "malicious-synth-1793730348838": {
+      "source": "de_novo_synthesized",
+      "sourceType": "synthetic",
+      "skillPath": "skills/malicious-synth-1793730348838/SKILL.md",
+      "codePath": "skills/malicious-synth-1793730348838/index.js",
+      "installedAt": 1793730348840,
+      "deNovo": true
+    }
+  }
+}

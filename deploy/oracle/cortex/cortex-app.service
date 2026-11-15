@@ -1,0 +1,17 @@
+[Unit]
+Description=Cortex app (vite dev server, loopback only)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/opt/cortex-app
+EnvironmentFile=/opt/cortex-app/.env.cortex
+ExecStart=/usr/bin/npm run dev
+Restart=always
+RestartSec=5
+MemoryMax=6G
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,12 @@
+import puppeteer from 'puppeteer';
+const browser = await puppeteer.launch({ headless: 'new', args: ['--autoplay-policy=no-user-gesture-required','--use-fake-device-for-media-stream','--use-fake-ui-for-media-stream'] });
+const page = await browser.newPage();
+page.on('request', r => { if (r.url().includes('nexus-guest')) { try { const b=JSON.parse(r.postData()); console.log('REQ msgs=', JSON.stringify((b.messages||[]).map(m=>m.role+':'+String(m.content).slice(0,60)))); } catch(e){ console.log('REQ parse fail'); } } });
+page.on('response', async r => { if (r.url().includes('nexus-guest')) { const t = await r.text().catch(()=>''); const m=[...t.matchAll(/"token":"((?:[^"\\]|\\.)*)"/g)].map(x=>JSON.parse('"'+x[1]+'"')).join(''); console.log('RESP:', m.slice(0,200)); } });
+await page.goto('http://localhost:5173/cortex/visualizer', { waitUntil: 'networkidle2', timeout: 30000 });
+await new Promise(r => setTimeout(r, 2500));
+await page.evaluate(() => { [...document.querySelectorAll('button')].find(x=>/VOICE/.test(x.textContent||''))?.click(); });
+await new Promise(r => setTimeout(r, 2500));
+await page.evaluate(() => window.dispatchEvent(new CustomEvent('cortex-viz-turn', { detail: 'What is the capital of France?' })));
+await new Promise(r => setTimeout(r, 25000));
+await browser.close();

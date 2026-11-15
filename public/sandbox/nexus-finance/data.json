@@ -1,0 +1,35 @@
+{
+  "title": "Nexus Financial Model",
+  "columns": [
+    "Metric",
+    "Q1",
+    "Q2",
+    "Q3",
+    "Growth"
+  ],
+  "rows": [
+    [
+      "Revenue ($k)",
+      120,
+      240,
+      480,
+      "100%"
+    ],
+    [
+      "Gross Margin",
+      "84%",
+      "86%",
+      "88%",
+      "+4%"
+    ],
+    [
+      "Net Retention",
+      "118%",
+      "124%",
+      "132%",
+      "+14%"
+    ]
+  ],
+  "description": "",
+  "updatedAt": 1793373530778
+}

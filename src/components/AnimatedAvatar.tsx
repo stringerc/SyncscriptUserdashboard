@@ -1,13 +1,16 @@
 import { motion } from 'motion/react';
 import { Avatar, AvatarFallback, AvatarImage } from './ui/avatar';
+import { getROYGBIVProgress } from '../utils/progress-calculations';
 
 interface AnimatedAvatarProps {
-  src: string;
-  fallback: string;
-  progress: number; // 0-100
-  animationType: 'glow' | 'heartbeat' | 'shake' | 'spin' | 'pulse' | 'wiggle' | 'bounce';
+  name: string;
+  image: string;
+  fallback?: string;
+  progress?: number; // 0-100, default to 0
+  animationType?: 'glow' | 'heartbeat' | 'shake' | 'spin' | 'pulse' | 'wiggle' | 'bounce' | 'none';
   className?: string;
   size?: number; // size in pixels for the avatar (default 36)
+  status?: 'online' | 'away' | 'offline'; // Online status indicator
 }
 
 // Enhanced floating debris with energy aura (Super Saiyan effect)
@@ -20,11 +23,11 @@ function FloatingDebris({ size, intensity }: { size: number; intensity: number }
       <motion.div
         className="absolute inset-0 rounded-full pointer-events-none"
         style={{
-          background: 'radial-gradient(circle, rgba(251, 191, 36, 0.3) 0%, transparent 70%)',
+          background: 'radial-gradient(circle, rgb(251, 191, 36) 0%, transparent 70%)',
         }}
         animate={{
           scale: [1, 1.3, 1],
-          opacity: [0.3, 0.6, 0.3],
+          opacity: [0.09, 0.18, 0.09],
         }}
         transition={{
           duration: 2,
@@ -333,11 +336,11 @@ function RippleWaves({ size }: { size: number }) {
           transform: 'translate(-50%, -50%)',
           width: size,
           height: size,
-          background: 'radial-gradient(circle, rgba(168, 85, 247, 0.2) 0%, transparent 70%)',
+          background: 'radial-gradient(circle, rgb(168, 85, 247) 0%, transparent 70%)',
         }}
         animate={{
           scale: [1, 1.2, 1],
-          opacity: [0.5, 0.8, 0.5],
+          opacity: [0.1, 0.16, 0.1],
         }}
         transition={{
           duration: 2.5,
@@ -430,18 +433,36 @@ function BounceImpact({ size }: { size: number }) {
 }
 
 export function AnimatedAvatar({ 
-  src, 
-  fallback, 
-  progress, 
-  animationType, 
-  className = '',
-  size = 36 
+  name,
+  image,
+  fallback,
+  progress = 0, // Default to 0 instead of undefined
+  animationType = 'none',
+  className,
+  size = 36,
+  status
 }: AnimatedAvatarProps) {
-  const strokeWidth = 3;
+  // Auto-generate fallback from name if not provided
+  const avatarFallback = fallback || name.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2);
+  
+  const strokeWidth = size <= 44 ? 3 : Math.max(3, Math.round(size / 16)); // Scale stroke with size
   const radius = (size / 2) + 4;
   const circumference = 2 * Math.PI * radius;
-  const strokeDashoffset = circumference - (progress / 100) * circumference;
-  const intensity = progress / 100;
+  // Ensure progress is a valid number between 0 and 100
+  const validProgress = Math.max(0, Math.min(100, progress || 0));
+  
+  // ══════════════════════════════════════════════════════════════════════════════
+  // ROYGBIV LOOP PROGRESSION
+  // ══════════════════════════════════════════════════════════════════════════════
+  // Convert overall progress to ROYGBIV loop system
+  // Example: 45% overall → Green ring at 15% filled
+  // ══════════════════════════════════════════════════════════════════════════════
+  const roygbivProgress = getROYGBIVProgress(validProgress);
+  
+  // Use the fill percentage (0-100% within current color) for the ring display
+  const displayProgress = roygbivProgress.fillPercentage;
+  const strokeDashoffset = circumference - (displayProgress / 100) * circumference;
+  const intensity = displayProgress / 100;
 
   // Animation variants based on type and intensity (progress)
   const getAnimation = () => {
@@ -507,36 +528,42 @@ export function AnimatedAvatar({
     return baseDuration * (1 - (progress / 200)); // Higher progress = faster
   };
 
-  // Color animations for progress bar based on animation type
+  // ══════════════════════════════════════════════════════════════════════════════
+  // ROYGBIV COLOR SYSTEM - Loop Progression (Like Energy Points!)
+  // ══════════════════════════════════════════════════════════════════════════════
+  // Progress rings "level up" through ROYGBIV colors:
+  // 
+  // - 0-14% overall → RED ring fills from 0% → 100%
+  // - 15-28% overall → ORANGE ring fills from 0% → 100%
+  // - 29-42% overall → YELLOW ring fills from 0% → 100%
+  // - 43-57% overall → GREEN ring fills from 0% → 100%
+  // - 58-71% overall → BLUE ring fills from 0% → 100%
+  // - 72-85% overall → INDIGO ring fills from 0% → 100%
+  // - 86-100% overall → VIOLET ring fills from 0% → 100%
+  // 
+  // Example: 45% overall progress
+  // → Green level (43-57% range)
+  // → 15% filled within green
+  // → Display: Green ring at 15%
+  // 
+  // Research: Duolingo (2023), Oura Ring (2023), Whoop (2024)
+  // ══════════════════════════════════════════════════════════════════════════════
+  
   const getProgressColor = () => {
-    switch (animationType) {
-      case 'heartbeat':
-        return ['#ef4444', '#f97316', '#ef4444'];
-      case 'glow':
-        return ['#fbbf24', '#f59e0b', '#fbbf24'];
-      case 'shake':
-        return ['#fbbf24', '#eab308', '#fbbf24'];
-      case 'spin':
-        return ['#06b6d4', '#0891b2', '#06b6d4'];
-      case 'pulse':
-        return ['#a855f7', '#9333ea', '#a855f7'];
-      case 'wiggle':
-        return ['#10b981', '#059669', '#10b981'];
-      case 'bounce':
-        return ['#f97316', '#ea580c', '#f97316'];
-      default:
-        return ['#f97316'];
-    }
+    // Use the color from ROYGBIV progression
+    const color = roygbivProgress.color;
+    return [color, color, color];
   };
 
   return (
-    <div className="relative inline-block" style={{ width: size, height: size }}>
+    <div className="relative inline-block" style={{ width: size + 8, height: size + 8, overflow: 'visible' }}>
       {/* Effects that appear outside the animated container */}
       {animationType === 'pulse' && <RippleWaves size={size} />}
       
       {/* Animated Container - both progress bar and avatar move together */}
       <motion.div
-        className="relative"
+        className="relative w-full h-full"
+        style={{ overflow: 'visible' }}
         animate={getAnimation()}
         transition={{
           duration: getDuration(),
@@ -609,7 +636,7 @@ export function AnimatedAvatar({
         </svg>
 
         {/* Special effects overlay for each animation type */}
-        {animationType === 'heartbeat' && <EKGLine size={size} radius={radius} progress={progress} duration={getDuration()} />}
+        {animationType === 'heartbeat' && <EKGLine size={size} radius={radius} progress={validProgress} duration={getDuration()} />}
         {animationType === 'glow' && <FloatingDebris size={size} intensity={intensity} />}
         {animationType === 'shake' && <LightningBolts size={size} />}
         {animationType === 'spin' && <OrbitalParticles size={size} intensity={intensity} />}
@@ -617,11 +644,47 @@ export function AnimatedAvatar({
         {animationType === 'bounce' && <BounceImpact size={size} />}
         
         {/* Avatar */}
-        <Avatar className={className}>
-          <AvatarImage src={src} />
-          <AvatarFallback>{fallback}</AvatarFallback>
+        <Avatar 
+          className="rounded-full overflow-hidden"
+          style={{ 
+            width: size, 
+            height: size,
+            position: 'absolute',
+            left: '50%',
+            top: '50%',
+            transform: 'translate(-50%, -50%)',
+            borderRadius: '50%'
+          }}
+        >
+          <AvatarImage 
+            src={image} 
+            alt={name}
+            className="rounded-full"
+            style={{
+              width: '100%',
+              height: '100%',
+              objectFit: 'cover',
+              objectPosition: 'center',
+              borderRadius: '50%'
+            }}
+          />
+          <AvatarFallback className="rounded-full">{avatarFallback}</AvatarFallback>
         </Avatar>
       </motion.div>
+
+      {/* Status Indicator - Online/Away/Offline dot */}
+      {status && (
+        <div 
+          className={`absolute bottom-0 right-0 rounded-full border-2 border-[#1a1d24] z-20 ${
+            status === 'online' ? 'bg-green-400' :
+            status === 'away' ? 'bg-yellow-400' : 'bg-gray-400'
+          }`}
+          style={{
+            width: size > 48 ? '12px' : size > 36 ? '10px' : '8px',
+            height: size > 48 ? '12px' : size > 36 ? '10px' : '8px',
+          }}
+        />
+      )}
     </div>
   );
 }

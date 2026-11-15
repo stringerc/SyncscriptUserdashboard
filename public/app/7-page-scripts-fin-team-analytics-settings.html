@@ -1,0 +1,168 @@
+<!-- ===== SCRIPTS ===== -->
+<div class="page" id="page-scripts">
+  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:28px">
+    <div><div class="page-title" style="margin-bottom:0">Scripts</div><div class="page-sub" style="margin-bottom:0">Reusable automation patterns. Scripts learn from your behavior and improve over time.</div></div>
+    <button class="btn-p">+ Create script</button>
+  </div>
+  <div style="display:flex;gap:8px;margin-bottom:24px">
+    <button class="btn-sm" style="background:rgba(124,58,237,0.08);color:#7c3aed;border-color:rgba(124,58,237,0.2)">All</button>
+    <button class="btn-sm">Active</button>
+    <button class="btn-sm">Templates</button>
+    <button class="btn-sm">Suggested</button>
+  </div>
+  <div class="grid-3" style="max-width:960px">
+    <div class="script-card">
+      <div style="display:flex;align-items:center;gap:6px;margin-bottom:8px"><span style="font-size:8px;padding:2px 6px;border-radius:4px;background:rgba(16,185,129,0.1);color:#10b981;font-weight:500">ACTIVE</span></div>
+      <div class="script-name">Morning Briefing</div>
+      <div class="script-desc">Runs at 7:03 AM daily. Summarizes calendar, tasks, and energy curve for the day ahead. Sent to Telegram.</div>
+      <div class="script-meta"><span>Runs daily</span><span>Last: 7:03 AM</span><span>14-day streak</span></div>
+    </div>
+    <div class="script-card">
+      <div style="display:flex;align-items:center;gap:6px;margin-bottom:8px"><span style="font-size:8px;padding:2px 6px;border-radius:4px;background:rgba(16,185,129,0.1);color:#10b981;font-weight:500">ACTIVE</span></div>
+      <div class="script-name">Deploy Guardian</div>
+      <div class="script-desc">Pre-deploy checks: build, test, lint. Blocks deployment if Cortex hallucination risk > 30% for any code change.</div>
+      <div class="script-meta"><span>On deploy</span><span>Triggered: 4x today</span><span>100% pass</span></div>
+    </div>
+    <div class="script-card">
+      <div style="display:flex;align-items:center;gap:6px;margin-bottom:8px"><span style="font-size:8px;padding:2px 6px;border-radius:4px;background:rgba(124,58,237,0.1);color:#7c3aed;font-weight:500">TEMPLATE</span></div>
+      <div class="script-name">Energy-Based Scheduling</div>
+      <div class="script-desc">Auto-schedules tasks based on energy data. Moves high-cognitive tasks to peak windows, admin to low windows.</div>
+      <div class="script-meta"><span>Template</span><span>Used by 2.4k users</span></div>
+    </div>
+    <div class="script-card">
+      <div style="display:flex;align-items:center;gap:6px;margin-bottom:8px"><span style="font-size:8px;padding:2px 6px;border-radius:4px;background:rgba(124,58,237,0.1);color:#7c3aed;font-weight:500">TEMPLATE</span></div>
+      <div class="script-name">PR Review with Cortex</div>
+      <div class="script-desc">Reviews pull requests with epistemic tags. Flags inferred suggestions separately from code-observed findings.</div>
+      <div class="script-meta"><span>Template</span><span>Used by 1.1k users</span></div>
+    </div>
+    <div class="script-card">
+      <div style="display:flex;align-items:center;gap:6px;margin-bottom:8px"><span style="font-size:8px;padding:2px 6px;border-radius:4px;background:rgba(245,158,11,0.1);color:#f59e0b;font-weight:500">SUGGESTED</span></div>
+      <div class="script-name">Email Batch Processor</div>
+      <div class="script-desc">Based on your pattern: you process email at 1 PM in moderate energy. This script pre-sorts your inbox by urgency.</div>
+      <div class="script-meta"><span>New suggestion</span><span>AI-generated</span></div>
+    </div>
+    <div class="script-card">
+      <div style="display:flex;align-items:center;gap:6px;margin-bottom:8px"><span style="font-size:8px;padding:2px 6px;border-radius:4px;background:rgba(245,158,11,0.1);color:#f59e0b;font-weight:500">SUGGESTED</span></div>
+      <div class="script-name">Focus Mode Script</div>
+      <div class="script-desc">When you enter peak energy, auto-enable DND, close email tab, and start a pomodoro timer.</div>
+      <div class="script-meta"><span>New suggestion</span><span>AI-generated</span></div>
+    </div>
+  </div>
+</div>
+
+<!-- ===== FINANCIALS ===== -->
+<div class="page" id="page-financials">
+  <div class="page-title">Financials</div>
+  <div class="page-sub">Revenue, expenses, and projections — all in one place.</div>
+  <div class="grid-3" style="max-width:960px;margin-bottom:24px">
+    <div class="card"><div class="card-label">Monthly Revenue</div><div class="fin-num" style="color:#10b981">$12,480</div><div class="fin-change up">↑ 23% vs last month</div></div>
+    <div class="card"><div class="card-label">Monthly Expenses</div><div class="fin-num" style="color:#ef4444">$4,200</div><div class="fin-change down">↓ 8% vs last month</div></div>
+    <div class="card"><div class="card-label">Net Margin</div><div class="fin-num" style="color:#3b82f6">66%</div><div class="fin-change up">↑ 12pts vs last month</div></div>
+  </div>
+  <div class="card" style="max-width:960px">
+    <div class="card-label">Revenue Trend — 6 months</div>
+    <div class="analytics-chart" style="height:80px">
+      <div class="analytics-bar" style="height:35%"></div>
+      <div class="analytics-bar" style="height:42%"></div>
+      <div class="analytics-bar" style="height:55%"></div>
+      <div class="analytics-bar" style="height:68%"></div>
+      <div class="analytics-bar" style="height:82%"></div>
+      <div class="analytics-bar" style="height:100%;background:rgba(124,58,237,0.5)"></div>
+    </div>
+    <div style="display:flex;justify-content:space-between;margin-top:8px;font-size:9px;color:rgba(0,0,0,0.15);font-family:'JetBrains Mono',monospace"><span>Jan</span><span>Feb</span><span>Mar</span><span>Apr</span><span>May</span><span style="font-weight:600;color:rgba(0,0,0,0.3)">Jun</span></div>
+  </div>
+</div>
+
+<!-- ===== TEAM ===== -->
+<div class="page" id="page-team">
+  <div class="page-title">Team</div>
+  <div class="page-sub">Your team's energy and Cortex status at a glance.</div>
+  <div class="card" style="max-width:640px">
+    <div class="team-member">
+      <div class="team-avatar" style="background:linear-gradient(135deg,#7c3aed,#6366f1)">CS</div>
+      <div><div class="team-name">Chris Stringer</div><div class="team-role">Founder</div></div>
+      <div class="team-energy e-tag peak" style="margin-left:auto">Peak</div>
+    </div>
+    <div class="team-member">
+      <div class="team-avatar" style="background:linear-gradient(135deg,#10b981,#059669)">AL</div>
+      <div><div class="team-name">Alex Liu</div><div class="team-role">Engineering</div></div>
+      <div class="team-energy e-tag mod" style="margin-left:auto">Moderate</div>
+    </div>
+    <div class="team-member">
+      <div class="team-avatar" style="background:linear-gradient(135deg,#3b82f6,#2563eb)">MR</div>
+      <div><div class="team-name">Maria Rodriguez</div><div class="team-role">Design</div></div>
+      <div class="team-energy e-tag peak" style="margin-left:auto">Peak</div>
+    </div>
+    <div class="team-member">
+      <div class="team-avatar" style="background:linear-gradient(135deg,#f59e0b,#d97706)">JK</div>
+      <div><div class="team-name">James Kim</div><div class="team-role">Product</div></div>
+      <div class="team-energy e-tag low" style="margin-left:auto">Low</div>
+    </div>
+  </div>
+  <div class="card" style="max-width:640px;margin-top:20px">
+    <div class="card-label">Team Cortex Status</div>
+    <div style="display:flex;gap:16px">
+      <div class="stat"><div class="stat-v" style="color:#10b981">91%</div><div class="stat-l">Avg Reality Score</div></div>
+      <div class="stat"><div class="stat-v" style="color:#10b981">8%</div><div class="stat-l">Avg Hall. Risk</div></div>
+      <div class="stat"><div class="stat-v" style="color:#3b82f6">68%</div><div class="stat-l">Avg Mastery</div></div>
+    </div>
+  </div>
+</div>
+
+<!-- ===== ANALYTICS ===== -->
+<div class="page" id="page-analytics">
+  <div class="page-title">Analytics</div>
+  <div class="page-sub">Deep work, energy utilization, and Cortex performance over time.</div>
+  <div class="grid-3" style="max-width:960px;margin-bottom:24px">
+    <div class="card"><div class="card-label">Deep Work Hours</div><div class="card-val">4.2h<span style="font-size:14px;font-weight:400;color:rgba(0,0,0,0.3)"> / day avg</span></div><div class="fin-change up">↑ 37% vs baseline</div></div>
+    <div class="card"><div class="card-label">Energy Utilization</div><div class="card-val" style="color:#7c3aed">82%</div><div style="font-size:12px;color:rgba(0,0,0,0.25)">Peak hours matched with peak tasks</div></div>
+    <div class="card"><div class="card-label">Cortex Accuracy</div><div class="card-val" style="color:#10b981">91%</div><div style="font-size:12px;color:rgba(0,0,0,0.25)">Prediction → outcome match rate</div></div>
+  </div>
+  <div class="grid-2" style="max-width:960px">
+    <div class="card">
+      <div class="card-label">Deep Work Trend — 4 weeks</div>
+      <div class="analytics-chart" style="height:100px">
+        <div class="analytics-bar" style="height:52%"></div><div class="analytics-bar" style="height:58%"></div><div class="analytics-bar" style="height:65%"></div><div class="analytics-bar" style="height:70%"></div><div class="analytics-bar" style="height:60%"></div><div class="analytics-bar" style="height:72%"></div><div class="analytics-bar" style="height:68%"></div><div class="analytics-bar" style="height:75%"></div><div class="analytics-bar" style="height:80%"></div><div class="analytics-bar" style="height:78%"></div><div class="analytics-bar" style="height:85%"></div><div class="analytics-bar" style="height:82%"></div><div class="analytics-bar" style="height:88%"></div><div class="analytics-bar" style="height:90%"></div><div class="analytics-bar" style="height:92%"></div><div class="analytics-bar" style="height:95%;background:rgba(124,58,237,0.5)"></div>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-label">Cortex Free Energy — 4 weeks</div>
+      <div class="analytics-chart" style="height:100px">
+        <div class="analytics-bar" style="height:90%;background:rgba(239,68,68,0.3)"></div><div class="analytics-bar" style="height:85%;background:rgba(245,158,11,0.3)"></div><div class="analytics-bar" style="height:75%;background:rgba(245,158,11,0.3)"></div><div class="analytics-bar" style="height:70%;background:rgba(59,130,246,0.3)"></div><div class="analytics-bar" style="height:60%;background:rgba(59,130,246,0.3)"></div><div class="analytics-bar" style="height:55%;background:rgba(59,130,246,0.3)"></div><div class="analytics-bar" style="height:45%;background:rgba(16,185,129,0.3)"></div><div class="analytics-bar" style="height:40%;background:rgba(16,185,129,0.3)"></div><div class="analytics-bar" style="height:35%;background:rgba(16,185,129,0.3)"></div><div class="analytics-bar" style="height:30%;background:rgba(16,185,129,0.3)"></div><div class="analytics-bar" style="height:25%;background:rgba(16,185,129,0.3)"></div><div class="analytics-bar" style="height:22%;background:rgba(16,185,129,0.3)"></div><div class="analytics-bar" style="height:20%;background:rgba(16,185,129,0.3)"></div><div class="analytics-bar" style="height:18%;background:rgba(16,185,129,0.3)"></div><div class="analytics-bar" style="height:18%;background:rgba(16,185,129,0.4)"></div><div class="analytics-bar" style="height:18%;background:rgba(124,58,237,0.4)"></div>
+      </div>
+      <div style="margin-top:8px;font-size:11px;color:rgba(0,0,0,0.2)">↓ Decreasing = learning. The system is getting better at predicting outcomes.</div>
+    </div>
+  </div>
+</div>
+
+<!-- ===== SETTINGS ===== -->
+<div class="page" id="page-settings">
+  <div class="page-title">Settings</div>
+  <div class="page-sub">Your preferences, integrations, and account configuration.</div>
+  <div class="card" style="max-width:640px">
+    <div class="card-label">Profile</div>
+    <div class="setting-row"><div><div class="setting-label">Name</div><div class="setting-desc">Chris Stringer</div></div><button class="btn-sm">Edit</button></div>
+    <div class="setting-row"><div><div class="setting-label">Email</div><div class="setting-desc">chris@syncscript.app</div></div><button class="btn-sm">Edit</button></div>
+    <div class="setting-row"><div><div class="setting-label">Chronotype</div><div class="setting-desc">Morning person — peak 9:00–11:30 AM</div></div><button class="btn-sm">Change</button></div>
+  </div>
+  <div class="card" style="max-width:640px;margin-top:20px">
+    <div class="card-label">Cortex</div>
+    <div class="setting-row"><div><div class="setting-label">Show Cortex tags in AI responses</div><div class="setting-desc">Display reality score and hallucination risk on every AI message</div></div><div class="toggle on"><div class="knob"></div></div></div>
+    <div class="setting-row"><div><div class="setting-label">Auto-escalate on high hallucination risk</div><div class="setting-desc">Pause and ask for confirmation when AI hallucination risk > 50%</div></div><div class="toggle on"><div class="knob"></div></div></div>
+    <div class="setting-row"><div><div class="setting-label">Narrative self-generation</div><div class="setting-desc">Let Cortex rewrite its identity statement from experience</div></div><div class="toggle on"><div class="knob"></div></div></div>
+    <div class="setting-row"><div><div class="setting-label">Sensorimotor feedback</div><div class="setting-desc">Record build/test/deploy outcomes into Cortex mastery</div></div><div class="toggle on"><div class="knob"></div></div></div>
+  </div>
+  <div class="card" style="max-width:640px;margin-top:20px">
+    <div class="card-label">Integrations</div>
+    <div class="setting-row"><div><div class="setting-label">Google Calendar</div><div class="setting-desc" style="color:#10b981">Connected</div></div><button class="btn-sm">Manage</button></div>
+    <div class="setting-row"><div><div class="setting-label">Telegram</div><div class="setting-desc" style="color:#10b981">Connected · Briefings active</div></div><button class="btn-sm">Manage</button></div>
+    <div class="setting-row"><div><div class="setting-label">GitHub</div><div class="setting-desc" style="color:rgba(0,0,0,0.2)">Not connected</div></div><button class="btn-p" style="font-size:11px;padding:6px 14px">Connect</button></div>
+    <div class="setting-row"><div><div class="setting-label">Vercel</div><div class="setting-desc" style="color:rgba(0,0,0,0.2)">Not connected</div></div><button class="btn-p" style="font-size:11px;padding:6px 14px">Connect</button></div>
+  </div>
+  <div class="card" style="max-width:640px;margin-top:20px">
+    <div class="card-label">Enterprise</div>
+    <div class="setting-row"><div><div class="setting-label">SSO / SAML</div><div class="setting-desc">Available on Enterprise plan</div></div><button class="btn-sm">Upgrade</button></div>
+    <div class="setting-row"><div><div class="setting-label">Audit Logs</div><div class="setting-desc">Available on Enterprise plan</div></div><button class="btn-sm">Upgrade</button></div>
+  </div>
+</div>
+

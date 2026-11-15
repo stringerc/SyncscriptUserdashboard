@@ -1,0 +1,19 @@
+[Unit]
+Description=Cortex Voice Bridge (Telnyx PSTN voice agent)
+After=network-online.target cortex-app.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/opt/cortex-app
+EnvironmentFile=/opt/cortex-app/.env.cortex
+EnvironmentFile=/opt/cortex-app/.env
+ExecStart=/usr/bin/node /opt/cortex-app/deploy/oracle/cortex/cortex-voice-bridge.mjs
+Restart=always
+RestartSec=5
+StandardOutput=append:/home/ubuntu/cortex-oracle/voice-bridge.log
+StandardError=append:/home/ubuntu/cortex-oracle/voice-bridge.log
+
+[Install]
+WantedBy=multi-user.target

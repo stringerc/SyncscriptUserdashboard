@@ -1,15 +1,103 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
 
-  <!DOCTYPE html>
-  <html lang="en">
-    <head>
-      <meta charset="UTF-8" />
-      <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-      <title>User Dashboard</title>
-    </head>
+    <!-- Primary Meta Tags -->
+    <title>SyncScript | Energy-Aware Scheduling for AI Productivity</title>
+    <meta name="title" content="SyncScript | Energy-Aware Scheduling for AI Productivity" />
+    <meta name="description" content="Energy-aware scheduling for AI productivity. SyncScript orders tasks by real-time focus so you finish key work without burnout." />
 
-    <body>
-      <div id="root"></div>
-      <script type="module" src="/src/main.tsx"></script>
-    </body>
-  </html>
-  
+    <!-- Favicons (SyncScript ribbon mark — generated from syncscript-tab-logo.png) -->
+    <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png" />
+    <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png" />
+    <link rel="icon" type="image/png" sizes="48x48" href="/favicon-48x48.png" />
+    <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
+    <link rel="manifest" href="/site.webmanifest" />
+
+    <!-- iOS Web App Native Support -->
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="Cortex" />
+
+    <!-- Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link rel="preload" href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" as="style" onload="this.onload=null;this.rel='stylesheet'" />
+    <noscript>
+      <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+    </noscript>
+
+    <!-- Theme Color (browser chrome color on mobile) -->
+    <meta name="theme-color" content="#060a0e" />
+    <meta name="msapplication-TileColor" content="#0f172a" />
+
+    <!-- Open Graph / Facebook -->
+    <meta property="og:type" content="website" />
+    <meta property="og:url" content="https://syncscript.app/" />
+    <meta property="og:title" content="Plan Work When You're Sharp" />
+    <meta property="og:description" content="Energy-aware scheduling for AI productivity. SyncScript orders tasks by real-time focus so you finish key work without burnout." />
+    <meta property="og:image" content="https://syncscript.app/og-image.svg" />
+    <meta property="og:site_name" content="SyncScript" />
+
+    <!-- Twitter -->
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:site" content="@SyncScriptApp" />
+    <meta name="twitter:creator" content="@SyncScriptApp" />
+    <meta name="twitter:url" content="https://syncscript.app/" />
+    <meta name="twitter:title" content="Plan Work When You're Sharp" />
+    <meta name="twitter:description" content="Energy-aware scheduling for AI productivity. SyncScript orders tasks by real-time focus so you finish key work without burnout." />
+    <meta name="twitter:image" content="https://syncscript.app/og-image.svg" />
+    <meta name="twitter:image:alt" content="SyncScript energy-aware scheduling preview" />
+
+    <!-- SEO -->
+    <link rel="canonical" href="https://syncscript.app/" />
+    <meta property="og:locale" content="en_US" />
+    <meta name="robots" content="index, follow" />
+    <meta name="author" content="SyncScript" />
+    <meta name="keywords" content="productivity, AI scheduling, energy tracking, task management, circadian rhythm, focus, burnout prevention, calendar optimization" />
+
+    <!-- Google Analytics 4 — Create property at https://analytics.google.com then replace G-XXXXXXXXXX -->
+    <!--
+    <script async src="https://www.googletagmanager.com/gtag/js?id=G-XXXXXXXXXX"></script>
+    <script>
+      window.dataLayer = window.dataLayer || [];
+      function gtag(){dataLayer.push(arguments);}
+      gtag('js', new Date());
+      gtag('config', 'G-XXXXXXXXXX');
+    </script>
+    -->
+
+    <!-- Plausible is loaded at runtime behind feature flags in src/utils/analytics.ts -->
+
+    <!-- Structured Data (JSON-LD) -->
+    <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@type": "SoftwareApplication",
+      "name": "SyncScript",
+      "url": "https://syncscript.app",
+      "description": "Energy-aware scheduling for AI productivity. SyncScript helps you plan deep work when your focus is strongest.",
+      "applicationCategory": "ProductivityApplication",
+      "operatingSystem": "Web, iOS",
+      "offers": {
+        "@type": "Offer",
+        "price": "0",
+        "priceCurrency": "USD",
+        "description": "Free tier available"
+      },
+      "creator": {
+        "@type": "Organization",
+        "name": "SyncScript",
+        "url": "https://syncscript.app"
+      }
+    }
+    </script>
+  </head>
+
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx" defer></script>
+  </body>
+</html>

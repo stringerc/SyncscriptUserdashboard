@@ -1,0 +1,201 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "SyncScript API",
+    "version": "1.0.0",
+    "description": "Public API for SyncScript. Authenticated routes accept a Supabase access token (`Authorization: Bearer <jwt>`). Outbound webhooks signed with HMAC-SHA256 — see Webhooks tag.",
+    "contact": { "name": "SyncScript Trust", "url": "https://www.syncscript.app/trust", "email": "security@syncscript.app" },
+    "license": { "name": "Proprietary" }
+  },
+  "servers": [
+    { "url": "https://www.syncscript.app", "description": "Production" },
+    { "url": "https://kwhnrlzibgfedtxpkbgb.supabase.co/functions/v1/make-server-57781ad9", "description": "Supabase Edge (same-origin style paths: /business-plan, /activity/summary, …). Send `apikey` + `Authorization: Bearer <jwt|sspat_*>`." }
+  ],
+  "tags": [
+    { "name": "Agent", "description": "Nexus Agent Mode \u2014 drive a real headless browser on behalf of the user." },
+    { "name": "BYOK", "description": "Bring-Your-Own-Key for LLM providers." },
+    { "name": "Policy", "description": "Per-user automation policy: tier, caps, blocked / trusted sites." },
+    { "name": "Webhooks", "description": "Subscribe an external URL to receive signed event deliveries." },
+    { "name": "Live", "description": "Real-time signals (live screencast token, run status)." },
+    { "name": "Phone", "description": "Twilio-backed Nexus phone — calls, TwiML, post-call summaries. Response shapes vary by sub-route (JSON vs TwiML XML)." },
+    { "name": "ProductivityEdge", "description": "Supabase Edge `make-server-57781ad9` — tasks, calendar, capture inbox, activity, business plan, user file library, profile. Use second server URL + `apikey` + Bearer JWT or `sspat_*` PAT." }
+  ],
+  "components": {
+    "securitySchemes": {
+      "supabaseJwt": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "JWT",
+        "description": "Supabase access token from the user's session."
+      },
+      "syncscriptPat": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "sspat_*",
+        "description": "Personal access token (`sspat_…`) minted via `POST /api-tokens` (JWT only). Default scopes include tasks, activity, business_plan, calendar, profile, capture, library (see Settings → Privacy)."
+      }
+    },
+    "schemas": {
+      "Error": {
+        "type": "object",
+        "properties": {
+          "error": { "type": "string", "description": "Machine-readable error code." },
+          "detail": { "type": "string", "description": "Human-readable explanation (optional)." },
+          "request_id": { "type": "string" }
+        },
+        "required": ["error"]
+      },
+      "AgentRun": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string", "format": "uuid" },
+          "user_id": { "type": "string", "format": "uuid" },
+          "project_id": { "type": "string", "format": "uuid", "nullable": true },
+          "goal_text": { "type": "string" },
+          "status": { "type": "string", "enum": ["queued","running","waiting_user","paused","done","failed","cancelled"] },
+          "provider": { "type": "string", "nullable": true },
+          "model": { "type": "string", "nullable": true },
+          "steps_executed": { "type": "integer" },
+          "total_cost_cents": { "type": "integer" },
+          "summary": { "type": "string", "nullable": true },
+          "error_text": { "type": "string", "nullable": true },
+          "started_at": { "type": "string", "format": "date-time", "nullable": true },
+          "completed_at": { "type": "string", "format": "date-time", "nullable": true },
+          "created_at": { "type": "string", "format": "date-time" }
+        }
+      },
+      "AgentRunStep": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string", "format": "uuid" },
+          "step_index": { "type": "integer" },
+          "kind": { "type": "string", "enum": ["thought","browser_action","tool_call","screenshot","user_interjection","agent_message","approval_request","error"] },
+          "payload": { "type": "object" },
+          "screenshot_b64": { "type": "string", "nullable": true },
+          "cost_cents": { "type": "integer" },
+          "created_at": { "type": "string", "format": "date-time" }
+        }
+      },
+      "WebhookSubscription": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string", "format": "uuid" },
+          "label": { "type": "string", "nullable": true },
+          "url": { "type": "string", "format": "uri" },
+          "event_types": { "type": "array", "items": { "type": "string" }, "description": "Empty array = subscribe to ALL event types." },
+          "active": { "type": "boolean" },
+          "consecutive_failures": { "type": "integer" },
+          "disabled_reason": { "type": "string", "nullable": true },
+          "created_at": { "type": "string", "format": "date-time" },
+          "last_delivery_at": { "type": "string", "format": "date-time", "nullable": true },
+          "secret": { "type": "string", "description": "Always returned masked from list / detail. Returned in plaintext exactly once on `webhooks-create` and `webhooks-rotate` as `secret_displayed_once`." }
+        }
+      },
+      "WebhookEventEnvelope": {
+        "type": "object",
+        "description": "Shape POSTed to subscriber URLs. Verify the `X-SyncScript-Signature` header (`sha256=<hex>`) is HMAC-SHA256 of the raw body using your subscription's secret.",
+        "properties": {
+          "id": { "type": "string", "format": "uuid", "description": "Stable event id; safe to use as an idempotency key." },
+          "user_id": { "type": "string", "format": "uuid" },
+          "event_type": { "type": "string", "example": "task.created" },
+          "entity_id": { "type": "string", "description": "Primary entity id this event references (task id, document id, etc.)." },
+          "payload": { "type": "object" },
+          "created_at": { "type": "string", "format": "date-time" }
+        }
+      }
+    }
+  },
+  "security": [{ "supabaseJwt": [] }],
+  "paths": {
+    "/api/agent/list": { "get": { "summary": "List recent agent runs", "tags": ["Agent"], "responses": { "200": { "description": "OK" } } } },
+    "/api/agent/start": { "post": { "summary": "Start an agent run", "tags": ["Agent"], "responses": { "200": { "description": "OK" }, "402": { "description": "Quota exceeded" } } } },
+    "/api/agent/run": { "get": { "summary": "Single run detail (steps + messages)", "tags": ["Agent"], "responses": { "200": { "description": "OK" } } } },
+    "/api/agent/cancel": { "post": { "summary": "Cancel a running agent run", "tags": ["Agent"], "responses": { "200": { "description": "OK" } } } },
+    "/api/agent/interject": { "post": { "summary": "Inject mid-run user message", "tags": ["Agent"], "responses": { "200": { "description": "OK" } } } },
+    "/api/agent/approve": { "post": { "summary": "Approve / decline a paused destructive action", "tags": ["Agent"], "responses": { "200": { "description": "OK" } } } },
+    "/api/agent/live-token": { "get": { "summary": "Mint short-lived token for the live screencast WebSocket", "tags": ["Live"], "responses": { "200": { "description": "OK" } } } },
+    "/api/agent/policy": {
+      "get":  { "summary": "Get current automation policy", "tags": ["Policy"], "responses": { "200": { "description": "OK" } } },
+      "post": { "summary": "Update policy fields (partial)", "tags": ["Policy"], "responses": { "200": { "description": "OK" } } }
+    },
+    "/api/agent/byok-list":   { "get":  { "summary": "List your BYOK keys (masked)",  "tags": ["BYOK"], "responses": { "200": { "description": "OK" } } } },
+    "/api/agent/byok-set":    { "post": { "summary": "Create or rotate a BYOK key",   "tags": ["BYOK"], "responses": { "200": { "description": "OK" } } } },
+    "/api/agent/byok-delete": { "post": { "summary": "Delete a BYOK key",             "tags": ["BYOK"], "responses": { "200": { "description": "OK" } } } },
+    "/api/agent/webhooks-event-types": { "get":  { "summary": "Catalog of subscribable event types", "tags": ["Webhooks"], "responses": { "200": { "description": "OK" } } } },
+    "/api/agent/webhooks-list":        { "get":  { "summary": "List your webhook subscriptions",     "tags": ["Webhooks"], "responses": { "200": { "description": "OK" } } } },
+    "/api/agent/webhooks-create":      { "post": { "summary": "Create a webhook subscription",       "tags": ["Webhooks"], "responses": { "200": { "description": "OK" } } } },
+    "/api/agent/webhooks-delete":      { "post": { "summary": "Delete a subscription",               "tags": ["Webhooks"], "responses": { "200": { "description": "OK" } } } },
+    "/api/agent/webhooks-rotate":      { "post": { "summary": "Rotate the HMAC signing secret",      "tags": ["Webhooks"], "responses": { "200": { "description": "OK" } } } },
+    "/api/agent/webhooks-deliveries":  { "get":  { "summary": "Recent delivery attempts",            "tags": ["Webhooks"], "responses": { "200": { "description": "OK" } } } },
+    "/api/agent/webhooks-replay":      { "post": { "summary": "Replay a failed / DLQ'd delivery",    "tags": ["Webhooks"], "responses": { "200": { "description": "OK" } } } },
+    "/business-plan": {
+      "get": { "summary": "Load structured business plan sections", "tags": ["ProductivityEdge"], "security": [{ "supabaseJwt": [] }, { "syncscriptPat": [] }], "responses": { "200": { "description": "OK" } } },
+      "put": { "summary": "Upsert business plan sections", "tags": ["ProductivityEdge"], "security": [{ "supabaseJwt": [] }, { "syncscriptPat": [] }], "responses": { "200": { "description": "OK" } } }
+    },
+    "/business-plan/export.md": {
+      "get": { "summary": "Export plan as markdown", "tags": ["ProductivityEdge"], "security": [{ "supabaseJwt": [] }, { "syncscriptPat": [] }], "responses": { "200": { "description": "text/markdown" } } }
+    },
+    "/activity/summary": {
+      "get": { "summary": "Daily activity counts for heatmap", "tags": ["ProductivityEdge"], "security": [{ "supabaseJwt": [] }, { "syncscriptPat": [] }], "parameters": [{ "name": "days", "in": "query", "schema": { "type": "integer", "default": 371 } }], "responses": { "200": { "description": "OK" } } }
+    },
+    "/activity/events": {
+      "post": { "summary": "Append activity event (focus_block, external_ide_session, …)", "tags": ["ProductivityEdge"], "security": [{ "supabaseJwt": [] }, { "syncscriptPat": [] }], "responses": { "200": { "description": "OK" } } }
+    },
+    "/social/prefs": {
+      "get": { "summary": "Heatmap visibility + friend feed opt-in", "tags": ["ProductivityEdge"], "security": [{ "supabaseJwt": [] }, { "syncscriptPat": [] }], "responses": { "200": { "description": "OK" } } },
+      "put": { "summary": "Update social prefs (JWT only)", "tags": ["ProductivityEdge"], "security": [{ "supabaseJwt": [] }], "responses": { "200": { "description": "OK" } } }
+    },
+    "/friends/activity-feed": {
+      "get": { "summary": "Friend activity stream (RPC)", "tags": ["ProductivityEdge"], "security": [{ "supabaseJwt": [] }], "responses": { "200": { "description": "OK" } } }
+    },
+    "/api-tokens": {
+      "get": { "summary": "List PAT metadata (masked)", "tags": ["ProductivityEdge"], "security": [{ "supabaseJwt": [] }], "responses": { "200": { "description": "OK" } } },
+      "post": { "summary": "Create PAT (plaintext returned once)", "tags": ["ProductivityEdge"], "security": [{ "supabaseJwt": [] }], "responses": { "200": { "description": "OK" } } }
+    },
+    "/api-tokens/{id}": {
+      "delete": { "summary": "Revoke PAT", "tags": ["ProductivityEdge"], "security": [{ "supabaseJwt": [] }], "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } }], "responses": { "200": { "description": "OK" } } }
+    },
+    "/resources/upload": {
+      "post": { "summary": "Upload library file (multipart form, max ~50 MiB)", "tags": ["ProductivityEdge"], "security": [{ "supabaseJwt": [] }, { "syncscriptPat": [] }], "responses": { "200": { "description": "OK" }, "413": { "description": "Quota / size" } } }
+    },
+    "/resources/upload-json": {
+      "post": { "summary": "Upload library file (JSON base64, max 1 MiB decoded; MCP/agents)", "tags": ["ProductivityEdge"], "security": [{ "supabaseJwt": [] }, { "syncscriptPat": [] }], "responses": { "200": { "description": "OK" }, "413": { "description": "Too large" } } }
+    },
+    "/resources/files": {
+      "get": { "summary": "List user library files", "tags": ["ProductivityEdge"], "security": [{ "supabaseJwt": [] }, { "syncscriptPat": [] }], "parameters": [{ "name": "limit", "in": "query", "schema": { "type": "integer" } }, { "name": "offset", "in": "query", "schema": { "type": "integer" } }], "responses": { "200": { "description": "OK" } } }
+    },
+    "/resources/search": {
+      "get": { "summary": "Search library by filename / extracted text", "tags": ["ProductivityEdge"], "security": [{ "supabaseJwt": [] }, { "syncscriptPat": [] }], "parameters": [{ "name": "q", "in": "query", "required": true, "schema": { "type": "string" } }, { "name": "limit", "in": "query", "schema": { "type": "integer" } }], "responses": { "200": { "description": "OK" } } }
+    },
+    "/resources/file/{id}/signed-url": {
+      "get": { "summary": "Mint short-lived signed download URL", "tags": ["ProductivityEdge"], "security": [{ "supabaseJwt": [] }, { "syncscriptPat": [] }], "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } }], "responses": { "200": { "description": "OK" } } }
+    },
+    "/resources/link": {
+      "post": { "summary": "Link a file to a task, goal, calendar_event, …", "tags": ["ProductivityEdge"], "security": [{ "supabaseJwt": [] }, { "syncscriptPat": [] }], "responses": { "200": { "description": "OK" } } }
+    },
+    "/resources/file/{id}": {
+      "delete": { "summary": "Delete library file", "tags": ["ProductivityEdge"], "security": [{ "supabaseJwt": [] }, { "syncscriptPat": [] }], "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } }], "responses": { "200": { "description": "OK" } } }
+    },
+    "/resources/file/{id}/email-self": {
+      "post": { "summary": "Email library file to self (JWT only; PAT blocked)", "tags": ["ProductivityEdge"], "security": [{ "supabaseJwt": [] }], "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } }], "responses": { "200": { "description": "OK" }, "401": { "description": "PAT or missing auth" } } }
+    },
+    "/api/phone/{endpoint}": {
+      "get": {
+        "summary": "Phone API sub-route (TwiML, call status, …)",
+        "tags": ["Phone"],
+        "parameters": [
+          { "name": "endpoint", "in": "path", "required": true, "schema": { "type": "string" }, "description": "Vercel catch-all segment, e.g. twiml, calls, manage, discord." }
+        ],
+        "responses": { "200": { "description": "Endpoint-dependent body (often `text/xml` TwiML)." } }
+      },
+      "post": {
+        "summary": "Phone API POST (call control, Twilio callbacks, …)",
+        "tags": ["Phone"],
+        "parameters": [
+          { "name": "endpoint", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": { "200": { "description": "Endpoint-dependent." } }
+      }
+    }
+  }
+}

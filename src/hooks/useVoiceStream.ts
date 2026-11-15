@@ -18,9 +18,9 @@ import { useState, useRef, useCallback, useEffect } from 'react';
 import { disableTtsProxyForSession, isTtsProxyDisabled } from '../utils/tts-proxy-session';
 import { NEXUS_LANDING_KOKORO_VOICE_ID } from '../utils/nexus-tts-prosody';
 import { playNexusLandingKokoroTTS } from '../utils/nexus-kokoro-landing-playback';
-import { ensureKokoroOriginsLoaded, getKokoroDirectBases } from '../utils/nexus-kokoro-tts-fetch';
+import { ensureKokoroOriginsLoaded, getKokoroDirectBases, fetchKokoroBufferForNexusSegment } from '../utils/nexus-kokoro-tts-fetch';
+import { sentenceToNexusProsodySegment } from '../utils/nexus-tts-prosody';
 import { reportTtsRum } from '../utils/tts-rum-beacon';
-import { fetchCartesiaTtsAudio } from '../utils/cartesia-tts';
 import { stepVuEnvelope } from '../utils/audio-vu-envelope';
 import { voiceLatencyMark, voiceLatencyMeasure } from '../utils/voice-latency-debug';
 import type {
@@ -91,16 +91,22 @@ function delayMs(ms: number): Promise<void> {
 }
 
 const TTS_PROXY_ATTEMPTS = 3;
+/** Max concurrent sentence-synthesis requests — prefetch stays gapless
+ *  without bursting the TTS server on long replies. */
+const TTS_PREFETCH_AHEAD = 3;
 
 /** Monolithic Kokoro via Vercel proxy with transient 502/503/504 retries (cold ONNX / tunnel blips). */
 async function fetchTtsProxyAudio(text: string, voice: string, speed: number): Promise<Blob | null> {
   if (isTtsProxyDisabled()) return null;
   for (let attempt = 0; attempt < TTS_PROXY_ATTEMPTS; attempt += 1) {
     try {
+      // Hard timeout — a stalled proxy must never wedge a voice turn (the
+      // queue can't drain while isSpeaking/turnInFlight stays stuck).
       const res = await fetch('/api/ai/tts', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ text, voice, speed }),
+        signal: AbortSignal.timeout(20_000),
       });
       if (res.ok) {
         const ct = res.headers.get('content-type') || '';
@@ -135,6 +141,10 @@ export interface UseVoiceStreamOptions {
   language?: string;
   continuous?: boolean;
   interimResults?: boolean;
+  /** Fired when local energy-VAD detects ~650ms of silence while interim
+   *  transcript text exists — lets callers commit the turn before Chrome's
+   *  endpointing lag (~0.5-1.5s). Caller must dedupe the later final. */
+  onSpeechPause?: (interimText: string) => void;
   ttsModel?: TTSModel;
   ttsVoice?: string;
   ttsRate?: number;
@@ -143,6 +153,11 @@ export interface UseVoiceStreamOptions {
   onStatusChange?: (status: VoiceEngineStatus) => void;
   onError?: (error: string) => void;
   onSpeechEnd?: () => void;
+  /**
+   * When fullDuplex is true (default), speech recognition is NOT suppressed during TTS playback.
+   * This allows real-time user barge-in and efference copy evaluation mirroring OpenAI Voice Mode.
+   */
+  fullDuplex?: boolean;
 }
 
 // ============================================================================
@@ -154,6 +169,8 @@ export function useVoiceStream(options: UseVoiceStreamOptions = {}) {
     language = 'en-US',
     continuous = true,
     interimResults = true,
+    onSpeechPause,
+    fullDuplex = true,
     ttsModel = 'web-speech-api',
     ttsVoice,
     ttsRate = 1.0,
@@ -177,7 +194,7 @@ export function useVoiceStream(options: UseVoiceStreamOptions = {}) {
   // State
   const [state, setState] = useState<VoiceEngineState>({
     status: 'idle',
-    isFullDuplex: false,
+    isFullDuplex: fullDuplex,
     sttReady: false,
     ttsReady: false,
     emotionDetectionReady: false,
@@ -191,6 +208,11 @@ export function useVoiceStream(options: UseVoiceStreamOptions = {}) {
 
   // Refs
   const recognitionRef = useRef<SpeechRecognition | null>(null);
+  const mediaStreamRef = useRef<MediaStream | null>(null);
+  const latestInterimRef = useRef('');
+  const vadPauseFiredRef = useRef(false);
+  const vadTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const vadAudioCtxRef = useRef<AudioContext | null>(null);
   const synthRef = useRef<SpeechSynthesis | null>(null);
   const currentUtteranceRef = useRef<SpeechSynthesisUtterance | null>(null);
   const isListeningRef = useRef(false);
@@ -199,6 +221,35 @@ export function useVoiceStream(options: UseVoiceStreamOptions = {}) {
   const lastSpeechEndTimeRef = useRef<number>(0);
   const speechEpochRef = useRef<number>(0);
   const inFlightFetchAbortRef = useRef<AbortController | null>(null);
+
+  // Streaming Sentence Audio Queue (for sub-600ms progressive speech playback)
+  interface StreamSentenceItem {
+    id: number;
+    text: string;
+    isFinal: boolean;
+    /** Lazy fetch starter — invoked by prefetch/drain, not at enqueue time,
+     *  so a long reply can't burst N concurrent synthesis requests. */
+    startFetch: () => Promise<Blob | null>;
+    fetchPromise?: Promise<Blob | null>;
+    queuedAt: number;
+    voice?: string;
+    speed?: number;
+  }
+  const streamSentenceQueueRef = useRef<StreamSentenceItem[]>([]);
+  const isDrainingStreamRef = useRef(false);
+  const streamEpochRef = useRef<number>(0);
+  const streamTtsAbortRef = useRef<AbortController | null>(null);
+  const streamFetchesActiveRef = useRef(0);
+
+  // Gapless stream playback: decoded buffers are scheduled back-to-back on a
+  // shared AudioContext (72ms inter-chunk tail trim, same as the landing
+  // player) — eliminates the ~100-400ms dead air per sentence boundary that
+  // per-sentence <audio> elements caused.
+  const gaplessCtxRef = useRef<AudioContext | null>(null);
+  const gaplessAnalyserRef = useRef<AnalyserNode | null>(null);
+  const gaplessSourcesRef = useRef<Set<AudioBufferSourceNode>>(new Set());
+  const gaplessNextStartRef = useRef(0);
+  const gaplessVuRafRef = useRef<number | null>(null);
 
   // ==========================================================================
   // INITIALIZE SPEECH RECOGNITION (STT)
@@ -220,13 +271,14 @@ export function useVoiceStream(options: UseVoiceStreamOptions = {}) {
     recognition.maxAlternatives = 1;
 
     recognition.onresult = (event: SpeechRecognitionEvent) => {
-      // Smart Half-Duplex Auto-Muting Gate:
-      // If AI is currently vocalizing or within the 950ms acoustic reverberation window,
-      // drop microphone events so speaker audio cannot feed back into the chat.
-      const now = Date.now();
-      const inReverbWindow = (now - lastSpeechEndTimeRef.current) < 950;
-      if (isSpeakingRef.current || inReverbWindow) {
-        return;
+      // If fullDuplex is disabled (legacy half-duplex walkie-talkie mode),
+      // drop microphone events while AI is vocalizing or in the reverb tail.
+      if (!fullDuplex) {
+        const now = Date.now();
+        const inReverbWindow = (now - lastSpeechEndTimeRef.current) < 2200;
+        if (isSpeakingRef.current || inReverbWindow) {
+          return;
+        }
       }
 
       let finalTranscript = '';
@@ -242,6 +294,7 @@ export function useVoiceStream(options: UseVoiceStreamOptions = {}) {
       }
 
       if (interim) {
+        latestInterimRef.current = interim.trim();
         setInterimText(interim);
         setState(prev => ({ ...prev, interimTranscript: interim }));
         // Emit interim transcript for real-time barge-in and VAD silence endpointing
@@ -254,6 +307,8 @@ export function useVoiceStream(options: UseVoiceStreamOptions = {}) {
       }
 
       if (finalTranscript) {
+        latestInterimRef.current = '';
+        vadPauseFiredRef.current = true; // suppress VAD re-fire for this utterance
         setTranscript(prev => prev + (prev ? ' ' : '') + finalTranscript);
         setInterimText('');
         setState(prev => ({ ...prev, interimTranscript: '' }));
@@ -346,6 +401,13 @@ export function useVoiceStream(options: UseVoiceStreamOptions = {}) {
     return () => {
       stopListening();
       stopSpeaking();
+      stopEnergyVAD();
+      if (mediaStreamRef.current) {
+        try {
+          mediaStreamRef.current.getTracks().forEach((track) => track.stop());
+        } catch {}
+        mediaStreamRef.current = null;
+      }
       // Clean up SpeechSynthesis event handler
       if (synthRef.current) {
         synthRef.current.onvoiceschanged = null;
@@ -366,6 +428,24 @@ export function useVoiceStream(options: UseVoiceStreamOptions = {}) {
   // ==========================================================================
 
   const startListening = useCallback(() => {
+    // Acquire WebRTC audio track with hardware AEC / noise suppression / AGC
+    if (typeof navigator !== 'undefined' && navigator.mediaDevices?.getUserMedia) {
+      if (!mediaStreamRef.current) {
+        navigator.mediaDevices.getUserMedia({
+          audio: {
+            echoCancellation: { ideal: true },
+            noiseSuppression: { ideal: true },
+            autoGainControl: { ideal: true },
+          },
+        }).then((stream) => {
+          mediaStreamRef.current = stream;
+          startEnergyVAD(stream);
+        }).catch((aecErr) => {
+          console.warn('[useVoiceStream] WebRTC AEC stream init fallback:', aecErr);
+        });
+      }
+    }
+
     if (!recognitionRef.current) {
       const initialized = initSTT();
       if (!initialized) return;
@@ -382,9 +462,71 @@ export function useVoiceStream(options: UseVoiceStreamOptions = {}) {
     }
   }, [initSTT, continuous]);
 
+  const stopEnergyVAD = useCallback(() => {
+    if (vadTimerRef.current) { clearInterval(vadTimerRef.current); vadTimerRef.current = null; }
+    try { vadAudioCtxRef.current?.close(); } catch {}
+    vadAudioCtxRef.current = null;
+  }, []);
+
+  const startEnergyVAD = useCallback((stream: MediaStream) => {
+    if (!onSpeechPause || vadTimerRef.current) return;
+    try {
+      const Ctx = window.AudioContext || (window as any).webkitAudioContext;
+      const ctx = new Ctx();
+      vadAudioCtxRef.current = ctx;
+      const src = ctx.createMediaStreamSource(stream);
+      const analyser = ctx.createAnalyser();
+      analyser.fftSize = 512;
+      analyser.smoothingTimeConstant = 0.2;
+      src.connect(analyser);
+      const floatBuf = new Float32Array(analyser.fftSize);
+      let silenceMs = 0;
+      let ambientFloor = 0.008;
+      vadTimerRef.current = setInterval(() => {
+        analyser.getFloatTimeDomainData(floatBuf);
+        let sum = 0;
+        for (let i = 0; i < floatBuf.length; i++) {
+          const v = floatBuf[i];
+          sum += v * v;
+        }
+        const rms = Math.sqrt(sum / floatBuf.length);
+
+        // Adaptive noise floor tracking during quiet windows
+        if (rms < 0.02) {
+          ambientFloor = ambientFloor * 0.95 + rms * 0.05;
+        }
+        const speechThreshold = Math.max(0.012, ambientFloor * 2.0);
+
+        // Speech energy detected: reset silence counter
+        if (rms > speechThreshold) {
+          silenceMs = 0;
+          vadPauseFiredRef.current = false;
+          return;
+        }
+
+        silenceMs += 50;
+        // Early commit ~600ms of silence when interim text exists
+        if (silenceMs >= 600 && !vadPauseFiredRef.current && !isSpeakingRef.current) {
+          const t = latestInterimRef.current;
+          if (t && t.length >= 3) {
+            vadPauseFiredRef.current = true;
+            onSpeechPause(t);
+          }
+        }
+      }, 50);
+    } catch { /* VAD is best-effort */ }
+  }, [onSpeechPause]);
+
   const stopListening = useCallback(() => {
     shouldRestartRef.current = false;
     isListeningRef.current = false;
+    stopEnergyVAD();
+    if (mediaStreamRef.current) {
+      try {
+        mediaStreamRef.current.getTracks().forEach((track) => track.stop());
+      } catch {}
+      mediaStreamRef.current = null;
+    }
     try {
       recognitionRef.current?.stop();
     } catch {
@@ -459,7 +601,7 @@ export function useVoiceStream(options: UseVoiceStreamOptions = {}) {
 
   /** Play an audio blob, resolving when playback completes. Routes through AnalyserNode for `ttsOutputLevel`. */
   const playAudioBlob = useCallback(
-    (blob: Blob): Promise<void> => {
+    (blob: Blob, keepSpeakingState = false): Promise<void> => {
       const url = URL.createObjectURL(blob);
       activeUrlRef.current = url;
 
@@ -481,12 +623,14 @@ export function useVoiceStream(options: UseVoiceStreamOptions = {}) {
           if (activeAudioRef.current === audio) {
             activeAudioRef.current = null;
           }
-          activeSpokenTextRef.current = '';
-          lastSpeechEndTimeRef.current = Date.now();
-          isSpeakingRef.current = false;
-          setIsSpeaking(false);
-          setState(prev => ({ ...prev, status: 'idle' }));
-          onStatusChangeRef.current?.('idle');
+          if (!keepSpeakingState) {
+            activeSpokenTextRef.current = '';
+            lastSpeechEndTimeRef.current = Date.now();
+            isSpeakingRef.current = false;
+            setIsSpeaking(false);
+            setState(prev => ({ ...prev, status: 'idle' }));
+            onStatusChangeRef.current?.('idle');
+          }
           resolve();
         };
 
@@ -638,6 +782,18 @@ export function useVoiceStream(options: UseVoiceStreamOptions = {}) {
     inFlightFetchAbortRef.current = fetchAbort;
 
     cleanupTtsAnalyzer();
+    // Gapless stream sources — stop() fires onended; the set-membership
+    // guard in onended prevents a spurious finalize after abort.
+    for (const src of gaplessSourcesRef.current) {
+      gaplessSourcesRef.current.delete(src);
+      try { src.stop(); } catch {}
+    }
+    gaplessNextStartRef.current = 0;
+    if (gaplessVuRafRef.current != null) {
+      cancelAnimationFrame(gaplessVuRafRef.current);
+      gaplessVuRafRef.current = null;
+    }
+    setTtsOutputLevel(0);
     if (activeAudioRef.current) {
       activeAudioRef.current.pause();
       activeAudioRef.current.currentTime = 0;
@@ -675,30 +831,59 @@ export function useVoiceStream(options: UseVoiceStreamOptions = {}) {
 
     const voicePreset = resolveVoice();
     const speed = request.config?.speed || 1.0;
+    const preferCartesia = Boolean(request.config?.preferCartesia);
+    if (preferCartesia) {
+      console.info('[TTS] preferCartesia requested — prioritizing ultra-low-latency neural synthesis');
+    }
+    // --- Kokoro-82M Local Neural Synthesis via /api/ai/tts (Primary Engine — 100% Free, Zero External Credits) ---
+    // If text has multiple sentences (> 80 chars or sentence punctuation), use progressive chunked player for immediate speech onset
+    const isMultiSentence = /[.!?]\s+[A-Z0-9]/.test(request.text) || request.text.length > 100;
+    if (isMultiSentence) {
+      try {
+        console.info(`[TTS] Requesting progressive chunked Kokoro-82M (/api/ai/tts, text length: ${request.text.length})…`);
+        const ac = new AbortController();
+        landingKokoroAbortRef.current = ac;
+        const played = await playNexusLandingKokoroTTS(request.text, ac.signal, setTtsOutputLevel);
+        if (speechEpochRef.current === currentEpoch && played) {
+          reportTtsRum({
+            outcome: 'ok',
+            path: 'kokoro_progressive',
+            voicePreset,
+            durationMs: typeof performance !== 'undefined' ? performance.now() - rumStart : 0,
+          });
+          lastSpeechEndTimeRef.current = Date.now();
+          isSpeakingRef.current = false;
+          setIsSpeaking(false);
+          setState(prev => ({ ...prev, status: 'idle' }));
+          onStatusChangeRef.current?.('idle');
+          return;
+        }
+      } catch (progErr) {
+        console.warn('[TTS] Progressive Kokoro playback error — falling back to monolithic…', progErr);
+      } finally {
+        landingKokoroAbortRef.current = null;
+      }
+    }
 
-    // --- Cartesia Sonic 3.5 ultra-low latency neural synthesis (Primary Engine for all voices) ---
     try {
-      console.info(`[TTS] Synthesizing with Cartesia Sonic 3.5 (voice: ${voicePreset}, speed: ${speed})…`);
-      const cartesiaBlob = await fetchCartesiaTtsAudio(request.text, {
-        voiceId: voicePreset,
-        speed,
-      });
+      console.info(`[TTS] Requesting local Kokoro-82M (/api/ai/tts, voice: ${voicePreset}, speed: ${speed})…`);
+      const kokoroBlob = await fetchTtsProxyAudio(request.text, voicePreset, speed);
       if (speechEpochRef.current !== currentEpoch || fetchAbort.signal.aborted) {
-        console.info('[TTS Mutex] Discarded superseded Cartesia synthesis');
+        console.info('[TTS Mutex] Discarded superseded Kokoro synthesis');
         return;
       }
-      if (cartesiaBlob) {
-        console.info(`[TTS] ✅ Cartesia Sonic 3.5 — ${cartesiaBlob.size} bytes`);
+      if (kokoroBlob && kokoroBlob.size > 100) {
+        console.info(`[TTS] ✅ Kokoro-82M Local — ${kokoroBlob.size} bytes`);
         reportTtsRum({
           outcome: 'ok',
-          path: 'cartesia',
+          path: 'kokoro_local',
           voicePreset,
           durationMs: typeof performance !== 'undefined' ? performance.now() - rumStart : 0,
         });
-        return playAudioBlob(cartesiaBlob);
+        return playAudioBlob(kokoroBlob);
       }
-    } catch (cErr) {
-      console.warn('[TTS] Cartesia synthesis error — falling back to Kokoro/proxy', cErr);
+    } catch (kErr) {
+      console.warn('[TTS] Kokoro proxy synthesis error — falling back to landing/browser', kErr);
     }
 
     if (speechEpochRef.current !== currentEpoch || fetchAbort.signal.aborted) return;
@@ -777,9 +962,9 @@ export function useVoiceStream(options: UseVoiceStreamOptions = {}) {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-              model: 'kokoro',
+              model: 'kokoro-onnx',
               input: request.text,
-              voice: voicePreset,
+              voice: voicePreset === 'cortana' ? 'bm_lewis' : voicePreset,
               speed,
             }),
             signal: fetchAbort.signal,
@@ -822,15 +1007,247 @@ export function useVoiceStream(options: UseVoiceStreamOptions = {}) {
     return speakBrowserFallback(request, currentEpoch);
   }, [cleanupTtsAnalyzer, playAudioBlob, speakBrowserFallback]);
 
+  /** RMS → orb level while gapless sources are alive. */
+  const startGaplessVu = useCallback((ctx: AudioContext, analyser: AnalyserNode) => {
+    if (gaplessVuRafRef.current != null) return;
+    const data = new Uint8Array(analyser.fftSize);
+    let lastSet = 0;
+    const tick = () => {
+      if (gaplessSourcesRef.current.size === 0) {
+        gaplessVuRafRef.current = null;
+        setTtsOutputLevel(0);
+        return;
+      }
+      analyser.getByteTimeDomainData(data);
+      let sum = 0;
+      for (let i = 0; i < data.length; i++) {
+        const v = (data[i] - 128) / 128;
+        sum += v * v;
+      }
+      const rms = Math.sqrt(sum / data.length);
+      const level = Math.min(1, rms * 6.2);
+      ttsVuEnvelopeRef.current = stepVuEnvelope(level, ttsVuEnvelopeRef.current);
+      const now = performance.now();
+      if (now - lastSet > 52) {
+        lastSet = now;
+        setTtsOutputLevel(ttsVuEnvelopeRef.current);
+      }
+      gaplessVuRafRef.current = requestAnimationFrame(tick);
+    };
+    gaplessVuRafRef.current = requestAnimationFrame(tick);
+    void ctx;
+  }, []);
+
+  /** Flip to idle only when queue drained AND every scheduled source ended. */
+  const finalizeStreamSpeech = useCallback(() => {
+    if (isDrainingStreamRef.current) return;
+    if (streamSentenceQueueRef.current.length > 0) return;
+    if (gaplessSourcesRef.current.size > 0) return;
+    lastSpeechEndTimeRef.current = Date.now();
+    isSpeakingRef.current = false;
+    setIsSpeaking(false);
+    setState(prev => ({ ...prev, status: 'idle' }));
+    onStatusChangeRef.current?.('idle');
+  }, []);
+
+  /** Decode + schedule one blob gaplessly. Resolves after scheduling (not
+   *  after playback) so the drain loop can run ahead — true gapless. */
+  const scheduleStreamBlob = useCallback(async (blob: Blob): Promise<boolean> => {
+    try {
+      const AC =
+        window.AudioContext ||
+        (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+      if (!AC) return false;
+      let ctx = gaplessCtxRef.current;
+      if (!ctx || ctx.state === 'closed') {
+        ctx = new AC();
+        gaplessCtxRef.current = ctx;
+      }
+      await ctx.resume().catch(() => {});
+      // Suspended/interrupted contexts never advance currentTime — scheduled
+      // sources would never fire onended and isSpeaking would stick true
+      // forever, deadlocking the whole turn queue. Fall back to <audio>.
+      if (ctx.state !== 'running') return false;
+
+      let analyser = gaplessAnalyserRef.current;
+      if (!analyser || analyser.context !== ctx) {
+        analyser = ctx.createAnalyser();
+        analyser.fftSize = 512;
+        analyser.smoothingTimeConstant = 0.93;
+        analyser.connect(ctx.destination);
+        gaplessAnalyserRef.current = analyser;
+      }
+      startGaplessVu(ctx, analyser);
+
+      const audioBuf = await ctx.decodeAudioData(await blob.arrayBuffer());
+      if (!audioBuf.duration) return false;
+
+      const src = ctx.createBufferSource();
+      src.buffer = audioBuf;
+      src.connect(analyser);
+      const when = Math.max(ctx.currentTime + 0.03, gaplessNextStartRef.current);
+      src.start(when);
+      // 72ms tail trim — same as the landing player, kills inter-chunk echo.
+      // Floor at 20ms advance so a sub-72ms buffer can't schedule backwards.
+      gaplessNextStartRef.current = when + Math.max(0.02, audioBuf.duration - 0.072);
+      gaplessSourcesRef.current.add(src);
+      src.onended = () => {
+        gaplessSourcesRef.current.delete(src);
+        if (gaplessSourcesRef.current.size === 0) setTtsOutputLevel(0);
+        finalizeStreamSpeech();
+      };
+      return true;
+    } catch {
+      return false;
+    }
+  }, [finalizeStreamSpeech, startGaplessVu]);
+
+  /** Start synthesis for queued sentences while fewer than
+   *  TTS_PREFETCH_AHEAD requests are in flight — keeps audio buffered
+   *  ahead of playback without flooding the TTS server. */
+  const prefetchStreamTts = useCallback(() => {
+    for (const item of streamSentenceQueueRef.current) {
+      if (streamFetchesActiveRef.current >= TTS_PREFETCH_AHEAD) break;
+      if (item.fetchPromise) continue;
+      item.fetchPromise = item.startFetch();
+    }
+  }, []);
+
+  const drainStreamQueue = useCallback(async () => {
+    if (isDrainingStreamRef.current) return;
+    isDrainingStreamRef.current = true;
+    const currentEpoch = streamEpochRef.current;
+
+    while (streamSentenceQueueRef.current.length > 0) {
+      if (streamEpochRef.current !== currentEpoch) break;
+      const item = streamSentenceQueueRef.current.shift()!;
+      activeSpokenTextRef.current = item.text;
+      prefetchStreamTts();
+
+      let blob: Blob | null = null;
+      try {
+        blob = await (item.fetchPromise ?? (item.fetchPromise = item.startFetch()));
+      } catch (err) {
+        console.warn('[Streaming TTS] Fetch failed for chunk:', err);
+      }
+
+      if (streamEpochRef.current !== currentEpoch) break;
+
+      if (blob && blob.size > 100) {
+        try {
+          const { getCortexObservabilityHUD } = await import('../lib/cortex-observability-hud');
+          getCortexObservabilityHUD().recordVoiceLatency(Date.now() - item.queuedAt);
+        } catch {}
+        const scheduled = await scheduleStreamBlob(blob);
+        if (!scheduled) {
+          // No WebAudio — fall back to per-blob <audio> playback (slightly
+          // gappy but still speaks).
+          const hasMore = streamSentenceQueueRef.current.length > 0 || !item.isFinal;
+          await playAudioBlob(blob, hasMore);
+        }
+      } else if (item.isFinal || streamSentenceQueueRef.current.length === 0) {
+        // Neural TTS produced nothing — never leave Cortex mute. Browser
+        // SpeechSynthesis is robotic but honest audio beats silence.
+        try {
+          await speakBrowserFallback(
+            { text: item.text, config: { voice: item.voice, speed: item.speed } },
+            speechEpochRef.current,
+          );
+        } catch {}
+      }
+    }
+
+    isDrainingStreamRef.current = false;
+    finalizeStreamSpeech();
+  }, [playAudioBlob, scheduleStreamBlob, speakBrowserFallback, finalizeStreamSpeech, prefetchStreamTts]);
+
+  /** Progressive streaming sentence playback: queues sentence chunks and starts playing in sub-600ms */
+  const speakStreamSentence = useCallback((sentence: string, isFinal = false, config?: { voice?: string; speed?: number; skipCartesia?: boolean }) => {
+    if (!sentence?.trim()) return;
+    const clean = sentence.trim();
+    const voicePreset = config?.voice || ttsVoice || 'cortana';
+    const speed = config?.speed || ttsRate || 1.0;
+
+    // Mutex check: if idle or starting new stream
+    if (!isSpeakingRef.current) {
+      streamEpochRef.current += 1;
+      streamSentenceQueueRef.current = [];
+      streamTtsAbortRef.current = new AbortController();
+      isSpeakingRef.current = true;
+      setIsSpeaking(true);
+      setState(prev => ({ ...prev, status: 'speaking' }));
+      onStatusChangeRef.current?.('speaking');
+    }
+
+    // Neural chain: /api/ai/tts proxy (Kokoro → Pocket TTS) → direct Kokoro
+    // origins → voice fallbacks (cortana→natural→nexus→professional).
+    // Prosody speed varies by sentence kind (question/exclaim/statement).
+    // Null result → drainStreamQueue falls back to browser SpeechSynthesis,
+    // so Cortex never goes mute on a full neural outage.
+    // Fetch is lazy (startFetch) — prefetchStreamTts caps concurrency.
+    const seg = sentenceToNexusProsodySegment(clean);
+    const item: StreamSentenceItem = {
+      id: Date.now(),
+      text: clean,
+      isFinal,
+      queuedAt: Date.now(),
+      voice: voicePreset,
+      speed,
+      startFetch: () => {
+        streamFetchesActiveRef.current += 1;
+        return fetchKokoroBufferForNexusSegment(
+          { ...seg, voice: voicePreset },
+          streamTtsAbortRef.current?.signal,
+        )
+          .then((buf) => (buf && buf.byteLength > 100 ? new Blob([buf], { type: 'audio/wav' }) : null))
+          .catch(() => null)
+          .finally(() => {
+            streamFetchesActiveRef.current = Math.max(0, streamFetchesActiveRef.current - 1);
+          });
+      },
+    };
+
+    streamSentenceQueueRef.current.push(item);
+    prefetchStreamTts();
+    void drainStreamQueue();
+  }, [drainStreamQueue, prefetchStreamTts, ttsVoice, ttsRate]);
+
+  const finishStreaming = useCallback(() => {
+    if (streamSentenceQueueRef.current.length === 0 && !isDrainingStreamRef.current) {
+      lastSpeechEndTimeRef.current = Date.now();
+      isSpeakingRef.current = false;
+      setIsSpeaking(false);
+      setState(prev => ({ ...prev, status: 'idle' }));
+      onStatusChangeRef.current?.('idle');
+    } else if (streamSentenceQueueRef.current.length > 0) {
+      streamSentenceQueueRef.current[streamSentenceQueueRef.current.length - 1].isFinal = true;
+    }
+  }, []);
+
   const stopSpeaking = useCallback(() => {
     speechEpochRef.current += 1;
+    streamEpochRef.current += 1;
+    streamSentenceQueueRef.current = [];
+    isDrainingStreamRef.current = false;
     if (inFlightFetchAbortRef.current) {
       inFlightFetchAbortRef.current.abort();
       inFlightFetchAbortRef.current = null;
     }
     landingKokoroAbortRef.current?.abort();
     landingKokoroAbortRef.current = null;
+    // Barge-in must also cancel queued sentence synthesis — otherwise
+    // prefetch keeps burning TTS requests for audio nobody will hear.
+    streamTtsAbortRef.current?.abort();
+    streamTtsAbortRef.current = null;
     cleanupTtsAnalyzer();
+    // Barge-in must also kill already-scheduled gapless buffers — otherwise
+    // queued sentences keep playing after stopSpeaking returns.
+    for (const src of gaplessSourcesRef.current) {
+      try { src.stop(); } catch {}
+      gaplessSourcesRef.current.delete(src);
+    }
+    gaplessNextStartRef.current = 0;
+    setTtsOutputLevel(0);
     if (activeAudioRef.current) {
       activeAudioRef.current.pause();
       activeAudioRef.current.currentTime = 0;
@@ -878,6 +1295,12 @@ export function useVoiceStream(options: UseVoiceStreamOptions = {}) {
     return () => {
       const ctx = ttsAudioCtxRef.current;
       ttsAudioCtxRef.current = null;
+      const gctx = gaplessCtxRef.current;
+      gaplessCtxRef.current = null;
+      streamTtsAbortRef.current?.abort();
+      if (gctx && gctx.state !== 'closed') {
+        void gctx.close().catch(() => {});
+      }
       if (!ctx) return;
       void (async () => {
         try {
@@ -919,6 +1342,8 @@ export function useVoiceStream(options: UseVoiceStreamOptions = {}) {
 
     // TTS Controls
     speak,
+    speakStreamSentence,
+    finishStreaming,
     stopSpeaking,
     activeSpokenText: activeSpokenTextRef.current,
     availableVoices,

@@ -26,7 +26,7 @@
  * Press the whisper bar to toggle the Cortex Inspector (Bentov Stack + narrative).
  */
 
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useRef, lazy, Suspense } from 'react';
 import {
   getCortexNudgeEngine,
   type CortexNudge,
@@ -50,818 +50,116 @@ import {
 } from '../../lib/cortex-persistence-bridge';
 import { ConsciousAgent } from '../../lib/consciousness';
 import { useVoiceStream } from '../../hooks/useVoiceStream';
+import {
+  isAcousticEcho as isAcousticEchoExternal,
+  tokenizeText as tokenizeTextExternal,
+  EfferenceCopyManager,
+  INTERRUPT_COMMANDS,
+} from '../../utils/cortex-efference-copy';
 import { CARTESIA_VOICES, type CartesiaVoiceKey } from '../../utils/cartesia-tts';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import type { CortexArtifact } from '../../lib/cortex-artifacts';
+import { runSurfaceCommand, surfaceManifestSuffix } from '../../lib/cortex-surface-commands';
+import { getUnifiedCortexDirective } from '../../lib/cortex-capabilities';
 
-let consciousAgentSingleton: ConsciousAgent | null = null;
-function getOrInitConsciousAgent(): ConsciousAgent {
-  if (!consciousAgentSingleton) {
-    consciousAgentSingleton = new ConsciousAgent({ userId: 'cortex-live-user' });
-    consciousAgentSingleton.initialize().catch(err => {
-      console.warn('[CortexDemo] consciousAgent initialize:', err);
-    });
-  }
-  return consciousAgentSingleton;
-}
+const ArtifactRenderer = lazy(() => import('./artifacts/ArtifactRenderer'));
+import { CortexMissionRailDrawer, type CopilotTask, type CopilotGoal } from './CortexMissionRailDrawer';
+import { getCortexMissionEngine, type AutonomousMission } from '../../lib/cortex-mission-engine';
+import { getCortexEmotionalIntelligence } from '../../lib/cortex-emotional-intelligence';
+import { getCortexKnowledgeGraph } from '../../lib/cortex-knowledge-graph';
+import { getCortexDialogueManager } from '../../lib/cortex-dialogue-manager';
+import { getCortexWellnessEngine } from '../../lib/cortex-wellness-engine';
+import { getCortexStreamingGazeService } from '../../utils/cortex-visual-gaze';
+import { cortexSignalBus } from './CortexVisualizer';
+import { openSurfacePanel } from '../../lib/cortex-surfaces';
+import {
+  C, CORTEX_STATE_COLORS, playVolitionChime, getToolMeta, sanitizeForSpeech,
+  splitSpeechSentences, preprocessMarkdown, cortexMarkdownComponents,
+  type ChatMessage,
+} from './cortex-demo-helpers';
+import type { CortexVoiceState } from './CortexVisualizer';
+import { CortexMessageList } from './CortexMessageList';
+import { CortexTelemetryBar } from './CortexTelemetryBar';
+import { setCortexChatMessages } from '../../lib/cortex-chat-store';
+import { getCortexObservabilityHUD } from '../../lib/cortex-observability-hud';
+import { readCortexSSE } from './cortex-stream';
+import { runCortexToolLoop, getOrInitConsciousAgent, parseCortexToolCall } from './cortex-tool-loop';
+import { getIntegratedInformation, type PhiResult } from '../../lib/integrated-information';
+import { cortexProactiveVoice } from '../../lib/cortex-proactive-voice';
+import { recordUserActivity, getVoicePolicy } from '../../lib/cortex-voice-policy';
+import { getWakeWordGate } from '../../lib/cortex-wake-word';
+
 
 /**
  * Metacognitive Incompleteness Discriminator:
  * Detects if a streaming transmission truncated prematurely mid-thought.
  */
-function isThoughtIncomplete(text: string, finishReason: string | null): boolean {
-  if (!text || text.trim().length === 0) return false;
-  if (finishReason === 'length') return true;
-  const trimmed = text.trim();
 
-  // 1. Unclosed markdown containers or brackets
-  const boldCount = (trimmed.match(/\*\*/g) || []).length;
-  if (boldCount % 2 !== 0) return true;
-
-  const codeBlocks = (trimmed.match(/```/g) || []).length;
-  if (codeBlocks % 2 !== 0) return true;
-
-  const openParens = (trimmed.match(/\(/g) || []).length;
-  const closeParens = (trimmed.match(/\)/g) || []).length;
-  if (openParens > closeParens) return true;
-
-  const openBrackets = (trimmed.match(/\[/g) || []).length;
-  const closeBrackets = (trimmed.match(/\]/g) || []).length;
-  if (openBrackets > closeBrackets) return true;
-
-  // 2. Abbreviated dangling endings ending with a dot (e.g. "vs.", "e.g.", "i.e.")
-  if (/\b(vs|e\.g|i\.e|etc|approx|fig|dept)\.$/i.test(trimmed)) return true;
-
-  // 3. Trailing dangling punctuation
-  if (/[—\-–,;:\/\\]$/.test(trimmed)) return true;
-
-  // 4. Dangling words before terminal punctuation or at end
-  const cleanEnd = trimmed.replace(/[*_`~)]+$/g, '').trim();
-  const danglingEndings = /\b(the|and|or|but|because|with|to|for|of|in|on|at|is|are|was|were|that|which|as|if|vs|versus|staged|unstaged|between|from|into|about|under|over|through)$/i;
-  if (danglingEndings.test(cleanEnd)) return true;
-
-  // 5. Normal terminal punctuation check
-  const terminalEnds = ['.', '!', '?', '`', '"', "'", ')', '}', ']'];
-  const lastChar = trimmed.slice(-1);
-  if (!terminalEnds.includes(lastChar)) {
-    return true;
-  }
-
-  return false;
-}
+/**
+ * Infers intended host tool from argument signature when the model
+ * omits the explicit "tool" or "name" key (e.g. {"maxResults": 20, "query": "..."}).
+ */
 
 /**
  * Host Tool Call Extraction:
- * Extracts structured tool calls from Cortex's internal cognitive stream.
+ * Robust multi-dialect extractor supporting XML tags (<tool_call>, <tool_call:name>,
+ * <function_call>, <invoke>), markdown backticks, and signature-based implicit inference.
  */
-function parseCortexToolCall(text: string): { tool: string; args: Record<string, any> } | null {
-  if (!text) return null;
-  // Format 1: ```tool_call ... ``` or ```json ... ```
-  const blockMatch = text.match(/```(?:tool_call|json)?\s*(\{[\s\S]*?\})\s*```/i);
-  if (blockMatch) {
-    try {
-      const parsed = JSON.parse(blockMatch[1]);
-      if (parsed) {
-        const tool = parsed.tool || parsed.name || parsed.function?.name;
-        const args = parsed.args || parsed.parameters || parsed.arguments || (parsed.function?.arguments ? (typeof parsed.function.arguments === 'string' ? JSON.parse(parsed.function.arguments) : parsed.function.arguments) : {});
-        if (typeof tool === 'string') return { tool, args: typeof args === 'object' && args !== null ? args : {} };
-      }
-    } catch {}
-  }
-  // Format 2: Raw JSON object with "tool" or "name"
-  const rawMatch = text.match(/\{\s*"(?:tool|name)"\s*:\s*"([a-zA-Z0-9_-]+)"\s*,\s*"(?:args|parameters|arguments)"\s*:\s*(\{[\s\S]*?\})\s*\}/);
-  if (rawMatch) {
-    try {
-      const tool = rawMatch[1];
-      const args = JSON.parse(rawMatch[2]);
-      return { tool, args };
-    } catch {}
-  }
-  return null;
-}
 
 /**
  * Normalizes text into cleaned lowercase alphanumeric tokens
  */
-function tokenizeText(text: string): string[] {
-  return text
-    .toLowerCase()
-    .replace(/[^\w\s]/g, ' ')
-    .split(/\s+/)
-    .filter(token => token.length > 0);
-}
 
 /**
  * Efference Copy / Self-Speech Cancellation:
  * Determines if incoming transcript is acoustic echo of the AI speaking through computer speakers.
  */
-function isAcousticEcho(transcript: string, aiSpeech: string, recentHistory: string[] = []): { isEcho: boolean; matchRatio: number } {
-  if (!transcript) return { isEcho: false, matchRatio: 0 };
-
-  const transTokens = tokenizeText(transcript);
-  if (transTokens.length === 0) return { isEcho: false, matchRatio: 0 };
-
-  // Explicit interrupt commands always count as genuine user barge-in (never suppressed)
-  const INTERRUPT_COMMANDS = new Set([
-    'stop', 'wait', 'hold', 'pause', 'quiet', 'shut', 'hush', 'cancel'
-  ]);
-  const hasInterruptKeyword = transTokens.some(t => INTERRUPT_COMMANDS.has(t));
-  if (hasInterruptKeyword) {
-    return { isEcho: false, matchRatio: 0 };
-  }
-
-  // Combine active speech and recent speech history (last 15s)
-  const corpus = [aiSpeech, ...recentHistory].join(' ');
-  const corpusTokens = tokenizeText(corpus);
-  if (corpusTokens.length === 0) return { isEcho: false, matchRatio: 0 };
-
-  // 1. Substring match
-  const cleanTrans = transTokens.join(' ');
-  const cleanCorpus = corpusTokens.join(' ');
-  if (cleanCorpus.includes(cleanTrans)) {
-    return { isEcho: true, matchRatio: 1.0 };
-  }
-
-  // 2. Token overlap ratio
-  const corpusSet = new Set(corpusTokens);
-  let matchCount = 0;
-  for (const token of transTokens) {
-    if (corpusSet.has(token)) {
-      matchCount++;
-    }
-  }
-
-  const matchRatio = matchCount / transTokens.length;
-
-  // If >= 40% of the transcribed tokens match words the AI is vocalizing or just vocalized,
-  // it is acoustic feedback from speakers into the microphone!
-  return { isEcho: matchRatio >= 0.4, matchRatio };
+function isAcousticEcho(
+  transcript: string,
+  aiSpeech: string,
+  recentHistory: string[] = []
+): { isEcho: boolean; matchRatio: number; reason?: string } {
+  return isAcousticEchoExternal(transcript, aiSpeech, recentHistory);
 }
 
 /**
  * Dual-sine ascending chime synthesized via Web Audio API (zero external assets / zero latency)
  * Emits soft 587Hz -> 880Hz audio haptic chime on Volition approval.
  */
-export function playVolitionChime(): void {
-  try {
-    const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
-    if (!AudioCtx) return;
-    const ctx = new AudioCtx();
-    if (ctx.state === 'suspended') {
-      ctx.resume().catch(() => {});
-    }
-    const osc = ctx.createOscillator();
-    const gain = ctx.createGain();
-    osc.type = 'sine';
-    const now = ctx.currentTime;
-    osc.frequency.setValueAtTime(587.33, now); // D5
-    osc.frequency.exponentialRampToValueAtTime(880, now + 0.1); // A5 ascending chime
-    gain.gain.setValueAtTime(0.05, now);
-    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.18);
-    osc.connect(gain);
-    gain.connect(ctx.destination);
-    osc.start(now);
-    osc.stop(now + 0.18);
-  } catch {
-    // AudioContext blocked by browser autoplay policy
-  }
-}
-
-/**
- * Natural low-latency verbal bridging phrase emitted while tool executes in background (zero dead air)
- */
-export function getBridgingPhrase(tool: string, args: Record<string, any> = {}): string {
-  if (tool === 'chrome_control' || tool === 'chrome') {
-    const action = args?.action || 'get_active_tab';
-    if (action === 'focus_tab') return `Switching over to ${args?.target || 'Chrome'} now.`;
-    if (action === 'close_tabs') return 'Cleaning up matching tabs now.';
-    if (action === 'get_active_tab') return 'Checking your active Chrome window now.';
-    if (action === 'list_tabs') return 'Scanning your open browser tabs now.';
-    if (action === 'open_url') return 'Opening that page now.';
-    if (action === 'read_page') return 'Reading that page content now.';
-    return 'Connecting to Chrome now.';
-  }
-  if (tool === 'cortex_memory' || tool === 'memory') {
-    const action = args?.action || 'read_hot';
-    if (action === 'read_episodic') return 'Checking episodic continuity across our sessions now.';
-    if (action === 'save_episodic') return 'Updating episodic memory now.';
-    if (action === 'read_hot') return 'Pulling up project memory now.';
-    if (action === 'search') return `Searching memory for ${args?.query || 'that'} now.`;
-    return 'Accessing conscious memory now.';
-  }
-  if (tool === 'search_code' || tool === 'grep_code' || tool === 'grep') {
-    return `Scanning the codebase for ${args?.query || 'that'} now.`;
-  }
-  if (tool === 'read_file' || tool === 'view_file') {
-    const filename = (args?.path || '').split('/').pop() || 'that file';
-    return `Reading ${filename} now.`;
-  }
-  if (tool === 'edit_file') {
-    const filename = (args?.path || '').split('/').pop() || 'that file';
-    return `Applying modifications to ${filename} now.`;
-  }
-  if (tool === 'list_dir') {
-    return 'Inspecting the workspace directory tree now.';
-  }
-  if (tool === 'system_info') {
-    return 'Running host hardware diagnostics now.';
-  }
-  if (tool === 'open_app') {
-    return `Opening ${args?.name || args?.target || 'that application'} now.`;
-  }
-  if (tool === 'run_command' || tool === 'exec') {
-    const cmd = String(args?.command || '').trim();
-    if (cmd.startsWith('git status')) return 'Checking repository status now.';
-    if (cmd.startsWith('git log')) return 'Pulling up our recent git commits now.';
-    if (cmd.startsWith('uname')) return 'Checking the Darwin host kernel now.';
-    return 'Running that command on the host now.';
-  }
-  if (tool === 'scaffold_web_project') {
-    return `Scaffolding ${args?.title || 'the web application'} in our sandbox with live preview now.`;
-  }
-  if (tool === 'write_project_file') {
-    return `Updating ${args?.file_path || 'the project code'} now.`;
-  }
-  if (tool === 'read_project_file') {
-    return `Inspecting ${args?.file_path || 'the project files'} now.`;
-  }
-  if (tool === 'list_project_files') {
-    return 'Inspecting the project files now.';
-  }
-  if (tool === 'create_spreadsheet' || tool === 'update_spreadsheet') {
-    return `Creating the ${args?.title || 'spreadsheet'} in the canvas now.`;
-  }
-  if (tool === 'create_document' || tool === 'update_document') {
-    return `Drafting the ${args?.title || 'document'} in the canvas now.`;
-  }
-  if (tool === 'get_canvas_artifact') {
-    return `Synchronizing canvas edits now.`;
-  }
-  if (tool === 'inspect_visual_canvas') {
-    return `Perceiving canvas layout and visual contrast now.`;
-  }
-  if (tool === 'get_somatic_homeostasis') {
-    return `Auditing internal allostatic load and somatic equilibrium.`;
-  }
-  if (tool === 'cortex_dream_consolidate') {
-    return `Initiating circadian memory dreaming and epistemic consolidation.`;
-  }
-  return 'Looking into that right now.';
-}
-
-/**
- * Resolves human-friendly action label, icon, and description for host tool executions
- */
-export function getToolMeta(tool: string, args: Record<string, any> = {}): { icon: string; title: string } {
-  if (tool === 'chrome_control' || tool === 'chrome') {
-    const action = args?.action || 'get_active_tab';
-    if (action === 'focus_tab') return { icon: '🎯', title: `Brought "${args?.target || 'tab'}" to front` };
-    if (action === 'close_tabs') return { icon: '✖️', title: `Closed tabs matching "${args?.filter || ''}"` };
-    if (action === 'get_active_tab') return { icon: '🌐', title: 'Checked Chrome active tab' };
-    if (action === 'list_tabs') return { icon: '📑', title: 'Enumerated open Chrome tabs' };
-    if (action === 'open_url') return { icon: '🔗', title: `Navigated to ${args?.url ? (args.url.length > 30 ? args.url.slice(0, 30) + '…' : args.url) : 'webpage'}` };
-    if (action === 'read_page') return { icon: '📖', title: 'Read webpage contents' };
-    return { icon: '🌐', title: 'Interacted with Chrome' };
-  }
-  if (tool === 'scaffold_web_project') {
-    return { icon: '✨', title: `Scaffolded Web App: "${args?.title || args?.project_slug || 'App'}"` };
-  }
-  if (tool === 'write_project_file') {
-    return { icon: '🎨', title: `Updated ${args?.file_path || 'file'} in ${args?.project_slug || 'project'}` };
-  }
-  if (tool === 'read_project_file') {
-    return { icon: '📄', title: `Inspected ${args?.file_path || 'file'} in ${args?.project_slug || 'project'}` };
-  }
-  if (tool === 'list_project_files') {
-    return { icon: '📁', title: `Listed project files: ${args?.project_slug || 'sandbox'}` };
-  }
-  if (tool === 'create_spreadsheet' || tool === 'update_spreadsheet') {
-    return { icon: '📊', title: `Created Spreadsheet: "${args?.title || 'Data Grid'}"` };
-  }
-  if (tool === 'create_document' || tool === 'update_document') {
-    return { icon: '📄', title: `Drafted Document: "${args?.title || 'Document'}"` };
-  }
-  if (tool === 'get_canvas_artifact') {
-    return { icon: '🔄', title: `Synchronized ${args?.artifact_type || 'canvas'} edits` };
-  }
-  if (tool === 'inspect_visual_canvas') {
-    return { icon: '👁️', title: `Perceived visual canvas (${args?.target || 'overview'})` };
-  }
-  if (tool === 'get_somatic_homeostasis') {
-    return { icon: '🧬', title: 'Audited somatic homeostasis' };
-  }
-  if (tool === 'cortex_dream_consolidate') {
-    return { icon: '🌙', title: `Completed circadian dream consolidation (${args?.depth || 'quick'})` };
-  }
-  if (tool === 'cortex_memory' || tool === 'memory') {
-    const action = args?.action || 'read_hot';
-    if (action === 'read_episodic') return { icon: '🔮', title: 'Recalled episodic cross-session memory' };
-    if (action === 'save_episodic') return { icon: '💾', title: 'Persisted episodic session snapshot' };
-    if (action === 'read_hot') return { icon: '🧠', title: 'Retrieved project memory' };
-    if (action === 'search') return { icon: '🔍', title: `Searched memory for "${args?.query || ''}"` };
-    if (action === 'read_section') return { icon: '📑', title: `Looked up section "${args?.section || ''}"` };
-    if (action === 'append') return { icon: '📝', title: 'Appended conscious memory note' };
-    return { icon: '🧠', title: 'Accessed project memory' };
-  }
-  if (tool === 'search_code' || tool === 'grep_code' || tool === 'grep') {
-    return { icon: '🔎', title: `Searched codebase for "${args?.query || ''}"` };
-  }
-  if (tool === 'edit_file') {
-    const filename = (args?.path || '').split('/').pop() || 'file';
-    return { icon: '✏️', title: `Modified ${filename}` };
-  }
-  if (tool === 'read_file' || tool === 'view_file') {
-    const filename = (args?.path || '').split('/').pop() || 'file';
-    return { icon: '📄', title: `Read ${filename}` };
-  }
-  if (tool === 'write_file') {
-    const filename = (args?.path || '').split('/').pop() || 'file';
-    return { icon: '💾', title: `Saved ${filename}` };
-  }
-  if (tool === 'list_dir') {
-    return { icon: '📁', title: `Inspected directory: ${args?.path || '.'}` };
-  }
-  if (tool === 'system_info') {
-    return { icon: '⚡', title: 'Polled host hardware diagnostics' };
-  }
-  if (tool === 'open_app') {
-    return { icon: '🚀', title: `Launched ${args?.name || args?.target || 'application'}` };
-  }
-  if (tool === 'run_command' || tool === 'exec') {
-    const cmd = String(args?.command || '').trim();
-    if (cmd.startsWith('git status')) return { icon: '🌿', title: 'Checked repository status' };
-    if (cmd.startsWith('git log')) return { icon: '📜', title: 'Reviewed commit history' };
-    if (cmd.startsWith('uname')) return { icon: '💻', title: 'Inspected Darwin host kernel' };
-    if (cmd.startsWith('npm') || cmd.startsWith('npx')) return { icon: '📦', title: `Ran: ${cmd.slice(0, 32)}…` };
-    return { icon: '⚡', title: cmd ? `Ran: ${cmd.length > 32 ? cmd.slice(0, 32) + '…' : cmd}` : 'Executed shell command' };
-  }
-  return { icon: '⚡', title: `Executed ${tool}` };
-}
-
-/**
- * Advanced Neural Speech Sanitizer:
- * Translates URLs, hex hashes, markdown tables, and code artifacts into smooth natural speech.
- */
-export function sanitizeForSpeech(text: string): string {
-  if (!text) return '';
-  let speech = text
-    // Replace raw local URLs with natural spoken equivalents
-    .replace(/https?:\/\/(?:127\.0\.0\.1|localhost)(?::\d+)?(?:\/[^\s)]*)?/gi, 'our local dashboard')
-    // Replace common web URLs
-    .replace(/https?:\/\/(?:www\.)?github\.com\/[^\s)]+/gi, 'GitHub')
-    .replace(/https?:\/\/(?:www\.)?cartesia\.ai\/[^\s)]+/gi, 'Cartesia')
-    .replace(/https?:\/\/[^\s)]+/gi, 'the link')
-    // Remove git commit hashes (7-40 hex chars)
-    .replace(/\b[0-9a-f]{7,40}\b/gi, '')
-    // Remove markdown tables (| col | col |)
-    .replace(/\|[^\n]+\|/g, '')
-    // Remove code blocks entirely
-    .replace(/```[\s\S]*?```/g, '')
-    // Clean inline code backticks `code` -> code
-    .replace(/`([^`]+)`/g, '$1')
-    // Clean markdown links [Title](url) -> Title
-    .replace(/\[(.*?)\]\(.*?\)/g, '$1')
-    // Remove emojis that sound awkward when vocalized
-    .replace(/[\u{1F300}-\u{1F9FF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}]/gu, '')
-    // Remove markdown formatting symbols
-    .replace(/[#*_~]/g, '')
-    // Remove bullet points at line starts
-    .replace(/^\s*[-•*]\s+/gm, '')
-    // Clean parenthetical technical specs like (Φ 1.24)
-    .replace(/\([^)]*(?:Φ|exitCode|latency|ms|duration|toolExecution)[^)]*\)/gi, '')
-    // Clean extra whitespace
-    .replace(/\s+/g, ' ')
-    .trim();
-
-  // If text is very long (over 400 chars), speak the primary executive takeaway so voice feels natural and conversational
-  if (speech.length > 400) {
-    const sentences = speech.match(/[^.!?]+[.!?]+/g) || [];
-    if (sentences.length >= 2) {
-      const summary = sentences.slice(0, 2).join(' ');
-      if (summary.length >= 60) {
-        return `${summary} I've outlined the complete step-by-step queries on your screen.`;
-      }
-    }
-  }
-
-  return speech;
-}
-
-/**
- * Clean & preprocess markdown text before rendering
- */
-export function preprocessMarkdown(content: string): string {
-  if (!content) return '';
-  return content
-    // Replace HTML <br> or <br/> or <br /> with actual linebreaks
-    .replace(/<br\s*\/?>/gi, '\n')
-    // Remove raw tool_call blocks if any leaked
-    .replace(/```(?:tool_call|json)?[\s\S]*?```/gi, '')
-    .trim();
-}
-
-/**
- * Custom glassmorphic markdown component styling for Cortex chat
- */
-export const cortexMarkdownComponents = {
-  table: ({ children }: any) => (
-    <div style={{
-      overflowX: 'auto',
-      margin: '10px 0 14px 0',
-      borderRadius: 8,
-      border: '1px solid rgba(255, 255, 255, 0.12)',
-      background: 'rgba(15, 23, 42, 0.55)',
-      backdropFilter: 'blur(8px)',
-      boxShadow: '0 4px 16px rgba(0, 0, 0, 0.35)',
-    }}>
-      <table style={{
-        width: '100%',
-        borderCollapse: 'collapse',
-        fontSize: 12,
-        fontFamily: '"Inter", -apple-system, sans-serif',
-        textAlign: 'left',
-      }}>
-        {children}
-      </table>
-    </div>
-  ),
-  thead: ({ children }: any) => (
-    <thead style={{
-      background: 'rgba(255, 255, 255, 0.06)',
-      borderBottom: '1px solid rgba(255, 255, 255, 0.15)',
-    }}>
-      {children}
-    </thead>
-  ),
-  th: ({ children }: any) => (
-    <th style={{
-      padding: '8px 12px',
-      color: '#38bdf8',
-      fontWeight: 600,
-      fontSize: 11,
-      textTransform: 'uppercase',
-      letterSpacing: '0.04em',
-    }}>
-      {children}
-    </th>
-  ),
-  tbody: ({ children }: any) => (
-    <tbody>{children}</tbody>
-  ),
-  tr: ({ children }: any) => (
-    <tr style={{
-      borderBottom: '1px solid rgba(255, 255, 255, 0.05)',
-      transition: 'background 0.15s ease',
-    }}>
-      {children}
-    </tr>
-  ),
-  td: ({ children }: any) => (
-    <td style={{
-      padding: '8px 12px',
-      color: '#e2e8f0',
-      lineHeight: 1.5,
-      verticalAlign: 'top',
-    }}>
-      {children}
-    </td>
-  ),
-  h1: ({ children }: any) => (
-    <h1 style={{ fontSize: 16, fontWeight: 700, color: '#f8fafc', margin: '14px 0 6px 0', letterSpacing: '-0.01em' }}>{children}</h1>
-  ),
-  h2: ({ children }: any) => (
-    <h2 style={{ fontSize: 15, fontWeight: 600, color: '#38bdf8', margin: '12px 0 6px 0' }}>{children}</h2>
-  ),
-  h3: ({ children }: any) => (
-    <h3 style={{ fontSize: 13, fontWeight: 600, color: '#c084fc', margin: '10px 0 4px 0' }}>{children}</h3>
-  ),
-  ul: ({ children }: any) => (
-    <ul style={{ margin: '6px 0 10px 0', paddingLeft: 20, color: '#d4d4d8', lineHeight: 1.6 }}>{children}</ul>
-  ),
-  ol: ({ children }: any) => (
-    <ol style={{ margin: '6px 0 10px 0', paddingLeft: 20, color: '#d4d4d8', lineHeight: 1.6 }}>{children}</ol>
-  ),
-  li: ({ children }: any) => (
-    <li style={{ marginBottom: 4 }}>{children}</li>
-  ),
-  p: ({ children }: any) => (
-    <p style={{ margin: '6px 0', lineHeight: 1.6, color: '#e4e4e7' }}>{children}</p>
-  ),
-  code: ({ inline, children }: any) => (
-    inline ? (
-      <code style={{
-        background: 'rgba(255, 255, 255, 0.08)',
-        border: '1px solid rgba(255, 255, 255, 0.12)',
-        borderRadius: 4,
-        padding: '1px 5px',
-        fontSize: 12,
-        fontFamily: '"SF Mono", monospace',
-        color: '#38bdf8',
-      }}>
-        {children}
-      </code>
-    ) : (
-      <pre style={{
-        background: 'rgba(10, 10, 12, 0.85)',
-        border: '1px solid rgba(255, 255, 255, 0.1)',
-        borderRadius: 6,
-        padding: '10px 12px',
-        overflowX: 'auto',
-        fontSize: 12,
-        fontFamily: '"SF Mono", monospace',
-        margin: '8px 0',
-      }}>
-        <code>{children}</code>
-      </pre>
-    )
-  ),
-  strong: ({ children }: any) => (
-    <strong style={{ fontWeight: 600, color: '#f8fafc' }}>{children}</strong>
-  ),
-};
-
-export interface ActionChipDef {
-  id: string;
-  label: string;
-  icon: string;
-  prompt: string;
-  color?: string;
-}
-
-export function getActionChipsForMessage(content: string, isLastAi: boolean): ActionChipDef[] {
-  const chips: ActionChipDef[] = [];
-  const text = (content || '').toLowerCase();
-
-  // Deduplicate / Tabs
-  if (/\b(tabs?|chrome|browser|duplicate|offload)\b/.test(text)) {
-    chips.push({
-      id: 'dedupe-tabs',
-      label: 'Deduplicate Tabs',
-      icon: '⚡',
-      prompt: 'Deduplicate and offload tabs in Chrome',
-      color: '#00ccff',
-    });
-    chips.push({
-      id: 'list-tabs',
-      label: 'List Open Tabs',
-      icon: '🌐',
-      prompt: 'What tabs are currently open in Chrome?',
-      color: '#38bdf8',
-    });
-  }
-
-  // Undo tab close
-  if (/\b(closed\b.*\btab|closed\s+\d+|deduplicated\b.*\btab|undoable)\b/.test(text)) {
-    chips.push({
-      id: 'restore-tabs',
-      label: 'Undo & Restore Tabs',
-      icon: '↩',
-      prompt: 'Restore those closed tabs for me',
-      color: '#10b981',
-    });
-  }
-
-  // Memory & RAM
-  if (/\b(memory|ram|cache|purge|free up|gb free|used)\b/.test(text)) {
-    chips.push({
-      id: 'free-mem',
-      label: 'Free Memory & Purge Cache',
-      icon: '🧹',
-      prompt: 'Purge cache and free up system memory',
-      color: '#f59e0b',
-    });
-    chips.push({
-      id: 'sys-telemetry',
-      label: 'System Telemetry',
-      icon: '📊',
-      prompt: 'Check host CPU, memory, and system info',
-      color: '#a78bfa',
-    });
-  }
-
-  // Git / Repository
-  if (/\b(git|commit|uncommitted|branch|checkpoint|diff|stage)\b/.test(text)) {
-    chips.push({
-      id: 'git-status',
-      label: 'Inspect Git Status',
-      icon: '🌿',
-      prompt: 'Check git status',
-      color: '#10b981',
-    });
-    chips.push({
-      id: 'git-diff',
-      label: 'View Git Diff',
-      icon: '📝',
-      prompt: 'Show git diff summary of changes',
-      color: '#06b6d4',
-    });
-  }
-
-  // Clipboard
-  if (/\b(clipboard|pbpaste|copied|copy)\b/.test(text)) {
-    chips.push({
-      id: 'read-clipboard',
-      label: 'Read System Clipboard',
-      icon: '📋',
-      prompt: 'What is on my system clipboard?',
-      color: '#c084fc',
-    });
-  }
-
-  // Web Application & Sandbox Canvas
-  if (/\b(scaffold_web_project|write_project_file|sandbox|nexusflow|website|web app|landing page|preview)\b/i.test(text)) {
-    chips.push({
-      id: 'open-preview',
-      label: 'Open Live Preview Canvas',
-      icon: '🌐',
-      prompt: 'Show the live preview for this website',
-      color: '#00ccff',
-    });
-    chips.push({
-      id: 'add-pricing',
-      label: 'Add Glowing Interactive Widget',
-      icon: '✨',
-      prompt: 'Add an interactive pricing calculator widget to the website',
-      color: '#8b5cf6',
-    });
-    chips.push({
-      id: 'list-project-files',
-      label: 'List Project Files',
-      icon: '📁',
-      prompt: 'List all files in this web project',
-      color: '#10b981',
-    });
-  }
-
-  // Spreadsheets & Financial Models
-  if (/\b(spreadsheet|excel|csv|data model|financial model|budget|table|sheet|numbers|arr|revenue)\b/i.test(text)) {
-    chips.push({
-      id: 'open-sheet-canvas',
-      label: 'Open Spreadsheet Canvas',
-      icon: '📊',
-      prompt: 'Open the spreadsheet canvas',
-      color: '#10b981',
-    });
-    chips.push({
-      id: 'add-revenue-model',
-      label: 'Model Unit Economics & ARR',
-      icon: '📈',
-      prompt: 'Create a spreadsheet modeling our 3-year ARR, customer acquisition cost, and gross margins',
-      color: '#00ccff',
-    });
-    chips.push({
-      id: 'export-csv',
-      label: 'Export Spreadsheet (CSV)',
-      icon: '💾',
-      prompt: 'Export the active spreadsheet data as CSV',
-      color: '#f59e0b',
-    });
-  }
-
-  // Documents & Proposals
-  if (/\b(document|proposal|memo|specification|brief|notes|writeup|doc|strategic)\b/i.test(text)) {
-    chips.push({
-      id: 'open-doc-canvas',
-      label: 'Open Document Canvas',
-      icon: '📄',
-      prompt: 'Open the document editor canvas',
-      color: '#38bdf8',
-    });
-    chips.push({
-      id: 'expand-strategic-memo',
-      label: 'Draft Strategic Memo',
-      icon: '✍️',
-      prompt: 'Draft an executive project memorandum with strategic objectives, architecture, and timeline',
-      color: '#c084fc',
-    });
-  }
-
-  // Conscious Modalities & Homeostasis
-  if (/\b(conscious|gaze|see|look|perceive|somatic|allostasis|dream|consolidate)\b/i.test(text)) {
-    chips.push({
-      id: 'inspect-canvas-gaze',
-      label: 'Inspect Visual Canvas',
-      icon: '👁️',
-      prompt: 'Inspect the active visual canvas and describe layout, contrast, and responsiveness',
-      color: '#38bdf8',
-    });
-    chips.push({
-      id: 'check-somatic-homeostasis',
-      label: 'Check Somatic State',
-      icon: '🧬',
-      prompt: 'Check your internal somatic state and allostatic load',
-      color: '#10b981',
-    });
-    chips.push({
-      id: 'consolidate-circadian-memory',
-      label: 'Dream Consolidate Memory',
-      icon: '🌙',
-      prompt: 'Initiate circadian memory dreaming and epistemic consolidation',
-      color: '#c084fc',
-    });
-  }
-
-  // If this is the latest AI message and no specific chips matched, offer quick conscious starters
-  if (isLastAi && chips.length === 0) {
-    chips.push({
-      id: 'inspect-canvas-starter',
-      label: 'Inspect Visual Canvas',
-      icon: '👁️',
-      prompt: 'Inspect the active visual canvas and describe layout, contrast, and responsiveness',
-      color: '#38bdf8',
-    });
-    chips.push({
-      id: 'check-somatic-starter',
-      label: 'Check Somatic State',
-      icon: '🧬',
-      prompt: 'Check your internal somatic state and allostatic load',
-      color: '#10b981',
-    });
-    chips.push({
-      id: 'check-tabs',
-      label: 'Inspect Open Tabs',
-      icon: '🌐',
-      prompt: 'What tabs are currently open in Chrome?',
-      color: '#00ccff',
-    });
-    chips.push({
-      id: 'read-clip',
-      label: 'Read Clipboard',
-      icon: '📋',
-      prompt: 'What is on my system clipboard?',
-      color: '#c084fc',
-    });
-    chips.push({
-      id: 'check-git',
-      label: 'Check Git Status',
-      icon: '🌿',
-      prompt: 'Check git status',
-      color: '#10b981',
-    });
-  }
-
-  const seen = new Set<string>();
-  return chips.filter(c => {
-    if (seen.has(c.id)) return false;
-    seen.add(c.id);
-    return true;
-  }).slice(0, 4);
-}
-
-// ── Types ──────────────────────────────────────────────────────────
-
-export interface ToolExecutionRecord {
-  tool: string;
-  args: Record<string, any>;
-  status: 'executing' | 'completed' | 'failed' | 'vetoed';
-  result?: any;
-  vetoScore?: number;
-  agencyScore?: number;
-  phi?: number;
-  durationMs?: number;
-}
-
-interface ChatMessage {
-  id: string;
-  role: 'user' | 'ai' | 'cortex' | 'system' | 'tool';
-  content: string;
-  meta?: {
-    realityScore?: number;
-    hallucinationRisk?: number;
-    awareness?: string;
-    source?: string;
-    mastery?: number;
-    selfRepaired?: boolean;
-    toolExecution?: ToolExecutionRecord;
-  };
-  timestamp: number;
-  streaming?: boolean;
-}
 
 // ── Colors ──────────────────────────────────────────────────────────
 
-const C = {
-  bg: '#0a0a0b',
-  surface: '#111113',
-  border: '#1c1c20',
-  text: '#d4d4d8',
-  dim: '#52525b',
-  ai: '#e4e4e7',
-  cortex: '#00ccff',
-  user: '#a1a1aa',
-  green: '#22c55e',
-  amber: '#f59e0b',
-  red: '#ef4444',
-  purple: '#7c3aed',
-};
+
+const menuItemStyle = (color: string, disabled?: boolean): React.CSSProperties => ({
+  display: 'block', width: '100%', textAlign: 'left',
+  padding: '6px 10px', borderRadius: 5, fontSize: 10, fontWeight: 600,
+  background: 'transparent', border: 'none', cursor: disabled ? 'default' : 'pointer',
+  color, fontFamily: '"IBM Plex Mono", "SF Mono", monospace', opacity: disabled ? 0.6 : 1,
+});
 
 export default function CortexDemo() {
   // ── State ──────────────────────────────────────────────────────
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  // Tier 1 Persistent Chat Hydration: instant recovery from localStorage
+  const [messages, setMessages] = useState<ChatMessage[]>(() => {
+    try {
+      const saved = localStorage.getItem('cortex_chat_history_v1');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          return parsed.map((m: ChatMessage) => ({ ...m, streaming: false }));
+        }
+      }
+    } catch (e) {
+      console.warn('[Cortex] LocalStorage chat hydration error:', e);
+    }
+    return [];
+  });
   const [input, setInput] = useState('');
   const [mode, setMode] = useState<CortexMode>('advisory');
   const [showInspector, setShowInspector] = useState(false);
   const [snapshot, setSnapshot] = useState<MetacognitiveSnapshot | null>(null);
+  const [iitPhi, setIitPhi] = useState<PhiResult | null>(null);
   const [isOffline, setIsOffline] = useState(!navigator.onLine);
   const [offlineState, setOfflineState] = useState<OfflineBrainState | null>(null);
   const [isSending, setIsSending] = useState(false);
@@ -891,6 +189,70 @@ export default function CortexDemo() {
     preferences?: string[];
   } | null>(null);
 
+  // ── Dual-Speed Volition Gateway & Autonomous Mission Rail State ──
+  const [isMissionDrawerOpen, setIsMissionDrawerOpen] = useState(false);
+  const [activeMission, setActiveMission] = useState<AutonomousMission | null>(() => {
+    try {
+      const engine = getCortexMissionEngine();
+      const missions = engine.getActiveMissions();
+      return missions.length > 0 ? missions[missions.length - 1] : null;
+    } catch {
+      return null;
+    }
+  });
+
+  useEffect(() => {
+    try {
+      const engine = getCortexMissionEngine();
+      const unsub = engine.subscribe((m) => {
+        setActiveMission({ ...m });
+      });
+      return unsub;
+    } catch {}
+  }, []);
+
+  // ── Deep Work Copilot: Tasks & Conscious Goals State ──
+  const [copilotTasks, setCopilotTasks] = useState<CopilotTask[]>(() => {
+    try {
+      const saved = localStorage.getItem('cortex_copilot_tasks_v1');
+      if (saved) return JSON.parse(saved);
+    } catch {}
+    return [
+      { id: 'task-1', title: 'Search active SAM.gov solicitations for NAICS 541511, 541512, 541519 and compile federal opportunity dossier', priority: 'high', completed: false, createdAt: Date.now() - 3600000 },
+      { id: 'task-2', title: 'Execute comprehensive security & dependency vulnerability audit on project dependencies', priority: 'high', completed: false, createdAt: Date.now() - 1800000 },
+      { id: 'task-3', title: 'Scaffold interactive client portal with live analytics dashboard in public sandbox', priority: 'medium', completed: false, createdAt: Date.now() },
+    ];
+  });
+
+  const [copilotGoals, setCopilotGoals] = useState<CopilotGoal[]>(() => {
+    try {
+      const saved = localStorage.getItem('cortex_copilot_goals_v1');
+      if (saved) return JSON.parse(saved);
+    } catch {}
+    return [
+      { id: 'goal-1', title: 'Secure First Federal IT & AI Contract Solicitation via SAM.gov', category: 'business', progress: 40, targetDate: '2026-12-15', cortexConscious: true, createdAt: Date.now() - 86400000 },
+      { id: 'goal-2', title: 'Zero Critical Vulnerabilities & Sub-600ms Voice Copilot Latency', category: 'engineering', progress: 92, targetDate: '2026-11-30', cortexConscious: true, createdAt: Date.now() - 43200000 },
+      { id: 'goal-3', title: 'Maintain 30-Day Deep Work Flow State & Chrono-Energy Alignment', category: 'health', progress: 65, targetDate: '2026-11-25', cortexConscious: true, createdAt: Date.now() },
+      { id: 'goal-4', title: 'Multi-Modal Live Screen Pair Programming & Co-Agency Mastery', category: 'product', progress: 80, targetDate: '2026-12-01', cortexConscious: true, createdAt: Date.now() },
+    ];
+  });
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('cortex_copilot_tasks_v1', JSON.stringify(copilotTasks));
+    } catch {}
+  }, [copilotTasks]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('cortex_copilot_goals_v1', JSON.stringify(copilotGoals));
+    } catch {}
+  }, [copilotGoals]);
+
+  // ── Read Aloud & Message Copy Action State ──
+  const [speakingMessageId, setSpeakingMessageId] = useState<string | null>(null);
+  const [copiedMessageId, setCopiedMessageId] = useState<string | null>(null);
+
   // ── Autonomous Web Builder & Live Preview Canvas State ──────────
   const [activeProjectSlug, setActiveProjectSlug] = useState<string | null>(() => {
     try { return localStorage.getItem('cortex_active_project') || null; } catch { return null; }
@@ -910,10 +272,14 @@ export default function CortexDemo() {
   const [previewHtml, setPreviewHtml] = useState<string>('');
 
   // ── Polymorphic Canvas & Co-Creation Modalities ───────────────────
-  type CanvasTab = 'web' | 'sheet' | 'doc' | 'file';
+  type CanvasTab = 'web' | 'sheet' | 'doc' | 'file' | 'artifact';
   const [canvasTab, setCanvasTab] = useState<CanvasTab>(() => {
-    try { return (localStorage.getItem('cortex_canvas_tab') as CanvasTab) || 'web'; } catch { return 'web'; }
+    try {
+      const saved = localStorage.getItem('cortex_canvas_tab') as CanvasTab;
+      return (saved && (saved as any) !== 'face' && ['web', 'sheet', 'doc', 'file', 'artifact'].includes(saved)) ? saved : 'web';
+    } catch { return 'web'; }
   });
+  const [activeArtifact, setActiveArtifact] = useState<import('../../lib/cortex-artifacts').CortexArtifact | null>(null);
 
   // Spreadsheet State
   interface SpreadsheetData {
@@ -1002,6 +368,11 @@ export default function CortexDemo() {
     somaticAdvice: 'Homeostasis optimal: cognitive substrate operating at high fidelity.'
   });
   const [showSomaticDrawer, setShowSomaticDrawer] = useState<boolean>(false);
+  const [showAutonomousDrawer, setShowAutonomousDrawer] = useState<boolean>(false);
+  const [showHeaderMenu, setShowHeaderMenu] = useState<boolean>(false);
+  const [autonomousGoal, setAutonomousGoal] = useState<string>('Audit physical host diagnostics and verify Cortex test gates');
+  const [autonomousRunning, setAutonomousRunning] = useState<boolean>(false);
+  const [autonomousResult, setAutonomousResult] = useState<any>(null);
 
   // Subconscious Stream of Consciousness (Phenomenological Transparency)
   type CognitivePhase = 'ingestion' | 'attention' | 'hypothesis' | 'veto' | 'actuation' | 'homeostasis' | 'dreaming';
@@ -1301,6 +672,58 @@ export default function CortexDemo() {
     return () => { active = false; };
   }, [previewUrl, previewKey]);
 
+  // Generative artifacts: open/pin events from transcript cards → canvas surface.
+  useEffect(() => {
+    const open = (e: Event) => {
+      const art = (e as CustomEvent).detail as CortexArtifact | undefined;
+      if (!art) return;
+      setActiveArtifact(art);
+      setCanvasTab('artifact');
+      setPreviewVisible(true);
+    };
+    const openCanvasTab = (e: Event) => {
+      const detail = (e as CustomEvent).detail as {
+        tab: CanvasTab;
+        artifact?: any;
+        sheet?: any;
+        doc?: any;
+        slug?: string;
+        url?: string;
+      } | undefined;
+      if (!detail?.tab) return;
+      if (detail.tab === 'artifact' && detail.artifact) setActiveArtifact(detail.artifact);
+      if (detail.tab === 'sheet' && detail.sheet) setActiveSpreadsheet(detail.sheet);
+      if (detail.tab === 'doc' && detail.doc) setActiveDocument(detail.doc);
+      if (detail.tab === 'web') {
+        if (detail.slug) setActiveProjectSlug(detail.slug);
+        if (detail.url) setPreviewUrl(detail.url);
+      }
+      setCanvasTab(detail.tab);
+      setPreviewVisible(true);
+    };
+    window.addEventListener('cortex-open-artifact', open);
+    window.addEventListener('cortex-pin-artifact', open);
+    window.addEventListener('cortex-open-canvas-tab', openCanvasTab);
+    return () => {
+      window.removeEventListener('cortex-open-artifact', open);
+      window.removeEventListener('cortex-pin-artifact', open);
+      window.removeEventListener('cortex-open-canvas-tab', openCanvasTab);
+    };
+  }, []);
+
+  // Auto-hydrate artifact tab from latest message artifact if activeArtifact is null
+  useEffect(() => {
+    if (canvasTab === 'artifact' && !activeArtifact) {
+      for (let i = messages.length - 1; i >= 0; i--) {
+        const arts = messages[i]?.meta?.artifacts;
+        if (arts && arts.length > 0) {
+          setActiveArtifact(arts[arts.length - 1]);
+          return;
+        }
+      }
+    }
+  }, [canvasTab, activeArtifact, messages]);
+
   const checkWorkspaceStatus = useCallback(async () => {
     try {
       const res = await fetch('/api/cortex/workspace/status');
@@ -1324,6 +747,7 @@ export default function CortexDemo() {
   } | null>(null);
   const [proactiveAuditData, setProactiveAuditData] = useState<any>(null);
   const [proactiveDismissed, setProactiveDismissed] = useState(false);
+  const lastAnnouncedInsightRef = useRef('');
   const activeAbortControllerRef = useRef<AbortController | null>(null);
 
   const fetchProactiveAudit = useCallback(async () => {
@@ -1333,7 +757,17 @@ export default function CortexDemo() {
         const data = await res.json();
         setProactiveAuditData(data);
         if (data.insights && data.insights.length > 0) {
-          setProactiveInsight(data.insights[0]);
+          const ins = data.insights[0];
+          setProactiveInsight(ins);
+          // Route fresh insights to proactive voice (policy-gated, deduped
+          // by insight id so the 60s poll doesn't re-announce).
+          if (ins.id !== lastAnnouncedInsightRef.current) {
+            lastAnnouncedInsightRef.current = ins.id || ins.title;
+            cortexProactiveVoice.announce(
+              `Proactive note: ${ins.title}. ${ins.desc}`,
+              'insight',
+            );
+          }
         }
       }
     } catch {}
@@ -1357,6 +791,29 @@ export default function CortexDemo() {
       console.error('Proactive execute error:', e);
     }
   }, [fetchProactiveAudit]);
+
+  const triggerAutonomousMission = useCallback(async (customGoal?: string) => {
+    const targetGoal = customGoal || autonomousGoal;
+    if (!targetGoal || !targetGoal.trim() || autonomousRunning) return;
+    setAutonomousRunning(true);
+    setAutonomousResult(null);
+
+    try {
+      const res = await fetch('/api/cortex/autonomous/run', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ goal: targetGoal }),
+      });
+      const data = await res.json();
+      if (data.success && data.result) {
+        setAutonomousResult(data.result);
+      }
+    } catch (err) {
+      console.error('[Cortex Autonomous] Execution error:', err);
+    } finally {
+      setAutonomousRunning(false);
+    }
+  }, [autonomousGoal, autonomousRunning]);
 
   // Watchdog: ensures isSending is never stuck for > 30s
   useEffect(() => {
@@ -1407,6 +864,45 @@ export default function CortexDemo() {
     isVoiceActiveRef.current = isVoiceActive;
   }, [isVoiceActive]);
 
+  // ── Push-to-Talk (PTT): Hold Space / Right-Cmd / Right-Ctrl to speak ──
+  const [isPttActive, setIsPttActive] = useState(false);
+  const isPttActiveRef = useRef(false);
+  useEffect(() => {
+    isPttActiveRef.current = isPttActive;
+  }, [isPttActive]);
+
+  useEffect(() => {
+    const isPttKey = (code: string) => code === 'Space' || code === 'MetaRight' || code === 'ControlRight';
+    const handleKeyDown = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement;
+      if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) return;
+      if (isPttKey(e.code) && !e.repeat && !isPttActiveRef.current) {
+        e.preventDefault();
+        recordUserActivity();
+        setIsPttActive(true);
+        setIsVoiceActive(true);
+        try { voiceStreamRef.current?.startListening(); } catch {}
+      }
+    };
+    const handleKeyUp = (e: KeyboardEvent) => {
+      if (isPttKey(e.code) && isPttActiveRef.current) {
+        e.preventDefault();
+        setIsPttActive(false);
+        setTimeout(() => {
+          if (!isPttActiveRef.current) {
+            try { voiceStreamRef.current?.stopListening(); } catch {}
+          }
+        }, 350);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    window.addEventListener('keyup', handleKeyUp);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+      window.removeEventListener('keyup', handleKeyUp);
+    };
+  }, []);
+
   const voiceStream = useVoiceStream({
     continuous: true,
     interimResults: true,
@@ -1414,40 +910,79 @@ export default function CortexDemo() {
     ttsVoice: selectedVoice,
     onTranscript: (result) => {
       if (!isVoiceActiveRef.current) return;
-      const text = result.text?.trim();
+      let text = result.text?.trim();
       if (!text) return;
 
-      // Smart Half-Duplex Auto-Muting Gate & Reverberation Buffer (1000ms):
-      // Drop all microphone input while AI is vocalizing or within acoustic reverb tail.
+      // ── Full-Duplex Acoustic Echo Cancellation & Efference Copy Gate ──
+      const isAiSpeaking = voiceStream.isSpeaking || isSpeakingRef.current;
       const now = Date.now();
       const inReverbWindow = (now - lastSpeechEndTimeRef.current) < 1000;
-      const isAiSpeaking = voiceStream.isSpeaking || isSpeakingRef.current;
 
       if (isAiSpeaking || inReverbWindow) {
-        // Check for intentional explicit barge-in commands ('stop', 'wait', 'quiet', 'cancel')
-        const transTokens = tokenizeText(text);
-        const INTERRUPT_COMMANDS = new Set(['stop', 'wait', 'hold', 'pause', 'quiet', 'shut', 'hush', 'cancel']);
-        const isExplicitInterrupt = transTokens.some(t => INTERRUPT_COMMANDS.has(t));
+        const echoCheck = isAcousticEcho(
+          text,
+          activeAiUtteranceRef.current,
+          recentAiSpeechHistoryRef.current
+        );
 
-        if (isExplicitInterrupt && isAiSpeaking) {
-          console.log('[Cortex Voice] Explicit user interrupt command detected. Halting speech.');
-          voiceStream.stopSpeaking();
-          activeAiUtteranceRef.current = '';
-          setInterruptedNotice(true);
-          setTimeout(() => setInterruptedNotice(false), 2500);
+        if (echoCheck.isEcho) {
+          // Acoustic echo from computer speakers detected!
+          // Suppress it so Cortex never hears itself or loops back on its own speech.
+          console.log(`[Cortex Efference Copy] Suppressed speaker audio echo (${isAiSpeaking ? 'vocalizing' : 'reverb tail'}, match: ${(echoCheck.matchRatio * 100).toFixed(0)}%, reason: ${echoCheck.reason}): "${text}"`);
+          if (speechDebounceTimerRef.current) {
+            clearTimeout(speechDebounceTimerRef.current);
+            speechDebounceTimerRef.current = null;
+          }
+          pendingSpeechRef.current = '';
+          setEchoSuppressedNotice(true);
+          setTimeout(() => setEchoSuppressedNotice(false), 1800);
           return;
         }
 
-        // Drop speaker audio bleed to guarantee zero self-hearing / feedback loop
-        console.log(`[Cortex Half-Duplex Gate] Suppressed speaker audio bleed (${isAiSpeaking ? 'vocalizing' : 'reverb tail'}): "${text}"`);
-        if (speechDebounceTimerRef.current) {
-          clearTimeout(speechDebounceTimerRef.current);
-          speechDebounceTimerRef.current = null;
+        // ── Genuine User Barge-In Interruption! ──
+        // The user spoke divergent words (a question, objection, topic change, or command).
+        if (isAiSpeaking) {
+          console.log(`[Cortex Barge-in] User interrupted AI speech (${echoCheck.reason}): "${text}"`);
+          voiceStream.stopSpeaking();
+          activeAiUtteranceRef.current = '';
+          if (activeAbortControllerRef.current) {
+            try {
+              activeAbortControllerRef.current.abort();
+            } catch {}
+          }
+          setInterruptedNotice(true);
+          setTimeout(() => setInterruptedNotice(false), 2500);
         }
-        pendingSpeechRef.current = '';
-        setEchoSuppressedNotice(true);
-        setTimeout(() => setEchoSuppressedNotice(false), 2000);
-        return;
+      }
+
+      // Genuine user speech reached us — count it as activity so the
+      // proactive policy knows the human is present.
+      recordUserActivity();
+
+      // ── Wake-word gate (optional): when enabled, only utterances
+      // following "cortex"/"hey cortex" reach the agent. ──
+      if (getVoicePolicy().wakeWordRequired) {
+        const gate = getWakeWordGate();
+        const wasAwake = gate.isAwake();
+        const fed = gate.feed(text);
+        if (fed.action === 'drop') {
+          if (speechDebounceTimerRef.current) {
+            clearTimeout(speechDebounceTimerRef.current);
+            speechDebounceTimerRef.current = null;
+          }
+          pendingSpeechRef.current = '';
+          return;
+        }
+        if (fed.action === 'wake') {
+          if (!wasAwake && getVoicePolicy().wakeWordAck) {
+            cortexProactiveVoice.announceUserInitiated('Yes?');
+          }
+          if (!fed.remainder) {
+            pendingSpeechRef.current = '';
+            return;
+          }
+          text = fed.remainder;
+        }
       }
 
       pendingSpeechRef.current = text;
@@ -1465,21 +1000,34 @@ export default function CortexDemo() {
         console.log('[Cortex Voice] Final transcript received:', spoken);
         sendMessageRef.current(spoken);
       } else {
-        // VAD Silence Detection: If user pauses speaking for 1.2s, auto-dispatch!
+        // Dynamic Conversational VAD Silence Endpointing:
+        // Complete thoughts or questions (?, ., !) dispatch with 650ms natural cadence.
+        // Unfinished or interim thoughts give 900ms for natural pauses without dead air.
+        const isLikelyComplete = /[?.!]$/.test(text.trim()) || /^(what|how|why|when|where|who|can you|could you|please|is there|are there)\b/i.test(text.trim());
+        const vadDelay = isLikelyComplete ? 650 : 900;
+
         speechDebounceTimerRef.current = setTimeout(() => {
           const spoken = pendingSpeechRef.current;
           if (spoken && spoken.length > 1) {
-            console.log('[Cortex Voice VAD] Silence threshold reached (1.2s), auto-dispatching:', spoken);
+            console.log(`[Cortex Voice VAD] Silence threshold reached (${vadDelay}ms), auto-dispatching:`, spoken);
             pendingSpeechRef.current = '';
             sendMessageRef.current(spoken);
           }
-        }, 1200);
+        }, vadDelay);
       }
     },
     onError: (err) => {
       console.warn('[Cortex Voice Error]', err);
     },
   });
+
+  const voiceStreamRef = useRef(voiceStream);
+  useEffect(() => {
+    voiceStreamRef.current = voiceStream;
+  });
+
+  const isSendingRef = useRef(false);
+  useEffect(() => { isSendingRef.current = isSending; }, [isSending]);
 
   useEffect(() => {
     if (isSpeakingRef.current && !voiceStream.isSpeaking) {
@@ -1521,59 +1069,260 @@ export default function CortexDemo() {
     return () => window.removeEventListener('keydown', handleGlobalKeyDown);
   }, [voiceStream.isSpeaking, voiceStream]);
 
+  // Sync speakingMessageId when voiceStream stops speaking
+  useEffect(() => {
+    if (!voiceStream.isSpeaking) {
+      setSpeakingMessageId(null);
+    }
+  }, [voiceStream.isSpeaking]);
+
+  // Read response aloud using local neural voice pipeline
+  const handleToggleReadMessage = useCallback(async (msgId: string, content: string) => {
+    if (speakingMessageId === msgId) {
+      voiceStream.stopSpeaking();
+      setSpeakingMessageId(null);
+      return;
+    }
+
+    voiceStream.stopSpeaking();
+    // Preserve full response text without 400-char abbreviation
+    const cleanSpeech = sanitizeForSpeech(content, { full: true });
+    if (!cleanSpeech.trim()) return;
+
+    setSpeakingMessageId(msgId);
+    activeAiUtteranceRef.current = cleanSpeech;
+    recentAiSpeechHistoryRef.current = [
+      cleanSpeech,
+      ...recentAiSpeechHistoryRef.current.slice(0, 4)
+    ];
+
+    try {
+      const sentences = splitSpeechSentences(cleanSpeech);
+      if (sentences.length === 0) {
+        setSpeakingMessageId(null);
+        return;
+      }
+
+      // Stream sentences sequentially for sub-400ms immediate onset and continuous, full-length playback
+      sentences.forEach((sentence, idx) => {
+        const isFinal = idx === sentences.length - 1;
+        voiceStream.speakStreamSentence(sentence, isFinal, {
+          voice: selectedVoiceRef.current || 'cortana',
+          speed: 1.0,
+          skipCartesia: true,
+        });
+      });
+    } catch (err) {
+      console.warn('[Cortex Read Aloud] Speech failed or cancelled:', err);
+      setSpeakingMessageId(null);
+    }
+  }, [speakingMessageId, voiceStream]);
+
+  // Copy message text to clipboard with ephemeral visual feedback
+  const handleCopyMessage = useCallback(async (msgId: string, content: string) => {
+    try {
+      await navigator.clipboard.writeText(content);
+      setCopiedMessageId(msgId);
+      setTimeout(() => {
+        setCopiedMessageId((prev) => (prev === msgId ? null : prev));
+      }, 2000);
+    } catch (err) {
+      console.error('[Cortex Copy] Clipboard write error:', err);
+    }
+  }, []);
+
+  // Mirror transcript into the shared store so the visualizer chat drawer
+  // shows the same conversation (and survives SPA navigation between surfaces).
+  useEffect(() => {
+    setCortexChatMessages(messages);
+  }, [messages]);
+
+  // ?q= handoff from the visualizer chat drawer — prefill composer + focus.
+  useEffect(() => {
+    const q = new URLSearchParams(window.location.search).get('q');
+    if (q) {
+      setInput(q);
+      setTimeout(() => document.getElementById('cortex-chat-input')?.focus(), 300);
+    }
+  }, []);
+
+  // ── Visualizer state mirror — chat chrome adopts the same state accent ──
+  const [vizVoiceState, setVizVoiceState] = useState<CortexVoiceState>('idle');
+  useEffect(() => cortexSignalBus.subscribe((p) => {
+    if (p.state) setVizVoiceState(p.state);
+  }), []);
+  const stateAccent = CORTEX_STATE_COLORS[vizVoiceState] ?? C.cortex;
+
+  // ── Visualizer Signal Bus Synchronization ────────────────────────
+  useEffect(() => {
+    let currentState: 'idle' | 'listening' | 'thinking' | 'speaking' | 'working' = 'idle';
+    let currentText = '';
+
+    if (voiceStream.isSpeaking) {
+      currentState = 'speaking';
+      currentText = voiceStream.interimText || activeAiUtteranceRef.current || '';
+    } else if (isSending) {
+      currentState = 'thinking';
+      const lastAi = [...messages].reverse().find(m => m.role === 'ai');
+      currentText = lastAi?.content?.slice(-120) || '';
+    } else if (isVoiceActive && voiceStream.isListening) {
+      currentState = 'listening';
+      currentText = voiceStream.interimText || '';
+    } else if (activeMission && (activeMission.status === 'running' || activeMission.status === 'planning')) {
+      currentState = 'working';
+      currentText = activeMission.title || 'Executing autonomous mission...';
+    } else {
+      currentState = 'idle';
+      currentText = '';
+    }
+
+    cortexSignalBus.publish({
+      state: currentState,
+      level: voiceStream.level ?? 0,
+      text: currentText,
+      agentName: 'CORTEX',
+      channel: 'chat',
+      // Concrete clears (not undefined) — the bus merges partials and JSON
+      // drops undefined keys, which would leave stale values on remote tabs.
+      phi: iitPhi && iitPhi.sampleCount >= 10
+        ? iitPhi.phi
+        : (proactiveAuditData?.metacognitive?.phi ?? 0),
+      missionProgress: activeMission && (activeMission.status === 'running' || activeMission.status === 'planning')
+        ? activeMission.overallProgress / 100
+        : -1,
+      missionTitle: activeMission && (activeMission.status === 'running' || activeMission.status === 'planning')
+        ? activeMission.title
+        : '',
+    });
+  }, [voiceStream.isSpeaking, voiceStream.isListening, voiceStream.interimText, voiceStream.level, isSending, isVoiceActive, activeMission, messages, iitPhi, proactiveAuditData]);
+
+  // ── Session Archive & Reset Handler ─────────────────────────────
+  const handleNewSession = useCallback(async () => {
+    if (messages.length > 0) {
+      try {
+        const lastUser = [...messages].reverse().find(m => m.role === 'user')?.content || '';
+        const lastAi = [...messages].reverse().find(m => m.role === 'ai')?.content || '';
+        await fetch('/api/cortex/tools/execute', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            tool: 'cortex_memory',
+            args: {
+              action: 'save_episodic',
+              content: {
+                archivedAt: Date.now(),
+                turnCount: messages.length,
+                summary: `Archived session: User discussed "${lastUser.slice(0, 100)}". Cortex concluded with: "${lastAi.slice(0, 120)}"`,
+              }
+            }
+          }),
+        });
+      } catch {}
+
+      fetch('/api/cortex/chat-history', { method: 'DELETE' }).catch(() => {});
+    }
+
+    localStorage.removeItem('cortex_chat_history_v1');
+    setMessages([
+      {
+        id: `welcome-${Date.now()}`,
+        role: 'ai',
+        content: 'Started a fresh session. Previous conversation has been consolidated into episodic memory. What would you like to work on?',
+        timestamp: Date.now(),
+        meta: { realityScore: 1.0, hallucinationRisk: 0.0, awareness: 'attuned', source: 'episodic_continuity' }
+      }
+    ]);
+    showCanvasToast('Started new session — previous chat archived to episodic memory');
+  }, [messages, showCanvasToast]);
+
   // ── Initialize ────────────────────────────────────────────────
   useEffect(() => {
     // ── Cortex Persistence: restore state from previous session ─
     const restoreResult = startCortexPersistence();
     console.log(`[Cortex] Consciousness re-ignited: ${restoreResult.layersRestored} layers restored, ${restoreResult.fieldsRecovered.length} fields recovered`);
 
-    // Seed with demo messages that show what Cortex does
-    setMessages([
-      {
-        id: 'demo-1', role: 'user',
-        content: 'Deploy the auth refactor to production',
-        timestamp: Date.now() - 60000,
-      },
-      {
-        id: 'demo-2', role: 'ai',
-        content: 'I\'ll deploy the auth refactor now. Let me verify the config against the production environment...',
-        meta: { realityScore: 0.85, hallucinationRisk: 0.08, awareness: 'tuned', source: 'perception' },
-        timestamp: Date.now() - 55000,
-      },
-      {
-        id: 'demo-3', role: 'ai',
-        content: 'The deployment config looks like it references the staging database endpoint instead of production. Let me re-read the actual file before proceeding.',
-        meta: { realityScore: 0.34, hallucinationRisk: 0.72, awareness: 'tuned', source: 'inference' },
-        timestamp: Date.now() - 50000,
-      },
-      {
-        id: 'demo-4', role: 'cortex',
-        content: '⚠ Reality score 34% — that claim was inferred, not directly observed. I need to actually read the config file before confirming.',
-        timestamp: Date.now() - 48000,
-      },
-      {
-        id: 'demo-5', role: 'user',
-        content: 'What\'s the conversion rate for our landing page?',
-        timestamp: Date.now() - 30000,
-      },
-      {
-        id: 'demo-6', role: 'ai',
-        content: 'Our landing page conversion rate is 4.2% this quarter, up from 3.8% last quarter.',
-        meta: { realityScore: 0.18, hallucinationRisk: 0.91, awareness: 'tuned', source: 'generation' },
-        timestamp: Date.now() - 25000,
-      },
-      {
-        id: 'demo-7', role: 'cortex',
-        content: '⛔ HALTED — hallucination risk 91%. That statistic was generated internally — I have no access to your analytics. Do not cite this number. Check your actual dashboard.',
-        timestamp: Date.now() - 23000,
-      },
-    ]);
+    // ── Multi-Tier Conversation Hydration (localStorage + host disk) ──
+    try {
+      const localSaved = localStorage.getItem('cortex_chat_history_v1');
+      const hasLocalMessages = localSaved && localSaved !== '[]' && JSON.parse(localSaved).length > 0;
+      if (!hasLocalMessages) {
+        // Tier 2: Check durable disk backup
+        fetch('/api/cortex/chat-history')
+          .then(r => r.json())
+          .then(data => {
+            if (data?.ok && Array.isArray(data.messages) && data.messages.length > 0) {
+              setMessages(data.messages.map((m: ChatMessage) => ({ ...m, streaming: false })));
+              try { localStorage.setItem('cortex_chat_history_v1', JSON.stringify(data.messages)); } catch {}
+            } else if (!localStorage.getItem('cortex_has_initialized_v1')) {
+              // First-time introductory tour only
+              localStorage.setItem('cortex_has_initialized_v1', 'true');
+              setMessages([
+                {
+                  id: 'demo-1', role: 'user',
+                  content: 'Deploy the auth refactor to production',
+                  timestamp: Date.now() - 60000,
+                },
+                {
+                  id: 'demo-2', role: 'ai',
+                  content: 'I\'ll deploy the auth refactor now. Let me verify the config against the production environment...',
+                  meta: { realityScore: 0.85, hallucinationRisk: 0.08, awareness: 'tuned', source: 'perception' },
+                  timestamp: Date.now() - 55000,
+                },
+                {
+                  id: 'demo-3', role: 'ai',
+                  content: 'The deployment config looks like it references the staging database endpoint instead of production. Let me re-read the actual file before proceeding.',
+                  meta: { realityScore: 0.34, hallucinationRisk: 0.72, awareness: 'tuned', source: 'inference' },
+                  timestamp: Date.now() - 50000,
+                },
+                {
+                  id: 'demo-4', role: 'cortex',
+                  content: '⚠ Reality score 34% — that claim was inferred, not directly observed. I need to actually read the config file before confirming.',
+                  timestamp: Date.now() - 48000,
+                },
+                {
+                  id: 'demo-5', role: 'user',
+                  content: 'What\'s the conversion rate for our landing page?',
+                  timestamp: Date.now() - 30000,
+                },
+                {
+                  id: 'demo-6', role: 'ai',
+                  content: 'Our landing page conversion rate is 4.2% this quarter, up from 3.8% last quarter.',
+                  meta: { realityScore: 0.18, hallucinationRisk: 0.91, awareness: 'tuned', source: 'generation' },
+                  timestamp: Date.now() - 25000,
+                },
+                {
+                  id: 'demo-7', role: 'cortex',
+                  content: '⛔ HALTED — hallucination risk 91%. That statistic was generated internally — I have no access to your analytics. Do not cite this number. Check your actual dashboard.',
+                  timestamp: Date.now() - 23000,
+                },
+              ]);
+            }
+          })
+          .catch(() => {});
+      }
+    } catch (e) {
+      console.warn('[Cortex] Session hydration error:', e);
+    }
 
     // Initialize Cortex
     const meta = getMetacognitiveState();
     setSnapshot(meta.getSnapshot());
     const engine = getCortexNudgeEngine();
     setMode(engine.getMode());
+
+    // Proactive voice: this page competes for leadership (localStorage
+    // heartbeat) so exactly one open surface originates unprompted speech.
+    cortexProactiveVoice.start({
+      speak: (text) => {
+        activeAiUtteranceRef.current = text;
+        recentAiSpeechHistoryRef.current = [
+          text,
+          ...recentAiSpeechHistoryRef.current.slice(0, 4),
+        ];
+        try { voiceStreamRef.current?.speakText(text); } catch {}
+      },
+      isBusy: () => Boolean(voiceStreamRef.current?.isSpeaking || isSendingRef.current),
+    });
 
     // Live workspace status watcher & Episodic continuity
     checkWorkspaceStatus();
@@ -1623,13 +1372,23 @@ export default function CortexDemo() {
       setMode(engine.getMode());
     }, 5000);
 
+    // IIT-Φ vitals: recompute on a slow cadence (30s). The MIP search +
+    // bootstrap is O(cuts × samples) — cheap at Cortex's module count but
+    // not free, so it stays off the 5s tick.
+    const phiInterval = setInterval(() => {
+      try { setIitPhi(getIntegratedInformation().compute()); } catch {}
+    }, 30000);
+    try { setIitPhi(getIntegratedInformation().compute()); } catch {}
+
     return () => {
       window.removeEventListener('focus', checkWorkspaceStatus);
       window.removeEventListener('focus', fetchProactiveAudit);
       window.removeEventListener('offline', goOff);
       window.removeEventListener('online', goOn);
       clearInterval(interval);
+      clearInterval(phiInterval);
       clearInterval(proactiveInterval);
+      cortexProactiveVoice.stop();
       // Cortex Persistence: final save on unmount (consciousness sleeps)
       stopCortexPersistence();
     };
@@ -1640,6 +1399,63 @@ export default function CortexDemo() {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
+  // ── Auto-Persist Conversation History to LocalStorage & Host Disk ───
+  useEffect(() => {
+    if (messages.length === 0) return;
+    try {
+      const cleanMessages = messages
+        .filter(m => m.content || m.role === 'tool')
+        .slice(-60)
+        .map(m => m.streaming ? { ...m, streaming: false } : m);
+
+      // Tier 1: LocalStorage
+      localStorage.setItem('cortex_chat_history_v1', JSON.stringify(cleanMessages));
+
+      // Tier 2: Host Disk dual-write (debounced 600ms)
+      const timer = setTimeout(() => {
+        fetch('/api/cortex/chat-history', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ messages: cleanMessages }),
+        }).catch(err => console.warn('[Cortex] Disk chat persistence sync failed:', err));
+      }, 600);
+      return () => clearTimeout(timer);
+    } catch (e) {
+      console.warn('[Cortex] Chat history persistence error:', e);
+    }
+  }, [messages]);
+
+  // ── Phonetic & Speech-to-Text Normalizer ──────────────────────
+  const normalizeSpokenInput = (text: string): string => {
+    let s = text;
+
+    // 1. Explicit phonetic & letter spellings for legal names
+    s = s.replace(/\bh\s+a\s+l\s+l\b/gi, 'Hall');
+    s = s.replace(/\bl\s+a\s+m\s+p\s+r\s+o\s+s\b/gi, 'Lampros');
+    s = s.replace(/\bl\s+a\s+n\s+p\s+r\s+o\s+s\b/gi, 'Lampros');
+    s = s.replace(/\ba\s+n\s+d\b/gi, 'and');
+
+    // General 3+ letter sequence surrounded by whitespace
+    s = s.replace(/(?<=\s|^)([a-zA-Z]\s+(?:[a-zA-Z]\s+)+[a-zA-Z])(?=\s|[.,!?]|$)/g, (match) => {
+      return match.replace(/\s+/g, '').toLowerCase();
+    });
+
+    // 2. Common STT homophones in productivity & canvas editing:
+    // "campus" / "campas" -> "canvas" when referring to document/email/screen
+    if (/\b(campus|campas)\b/i.test(s) && /\b(email|document|wrote|in the|on the|edit|spelling|text)\b/i.test(s)) {
+      s = s.replace(/\b(campus|campas)\b/gi, 'canvas');
+    }
+
+    // 3. Known legal entity resolution for Georgia Civil Rights representation:
+    const firmVariants = /\b(holland\s*lampro\S*|haul\s*(?:and|&)\s*lamppost|hall\s*(?:and|&)\s*lamp\S*(?:\s*lampro\S*)?|haulingly\s*approves|all\s*in\s*lampro\S*|holland\s*i\s*improves|hall\s*(?:and|&)\s*lampro\S*)\b/gi;
+    s = s.replace(firmVariants, 'Hall & Lampros');
+
+    // 4. "civilized 1983" -> "Civil Rights § 1983"
+    s = s.replace(/\bcivilized\s*1983\b/gi, 'Civil Rights § 1983');
+
+    return s;
+  };
+
   // ── Send message (with real streaming + Cortex wiring) ────────
   const sendMessage = useCallback(async (overrideText?: string) => {
     const domVal = typeof document !== 'undefined'
@@ -1647,6 +1463,7 @@ export default function CortexDemo() {
       : '';
     const rawContent = typeof overrideText === 'string' ? overrideText : (input || domVal || '');
     if (!rawContent.trim()) return;
+    recordUserActivity();
 
     // Zero-Dead-Air & Barge-In: immediately halt any active AI speech on new user message
     if (voiceStream.isSpeaking) {
@@ -1662,7 +1479,7 @@ export default function CortexDemo() {
     const abortController = new AbortController();
     activeAbortControllerRef.current = abortController;
 
-    const userContent = rawContent.trim();
+    const userContent = normalizeSpokenInput(rawContent.trim());
 
     // ── Instant Natural Cancellation & Interruption Grounding ──
     if (/^(stop|cancel|halt|quiet|pause|never mind)[!.?]*$/i.test(userContent)) {
@@ -1677,6 +1494,26 @@ export default function CortexDemo() {
         id: `ai-${Date.now() + 1}`, role: 'ai', content: "Understood. Stopped all active generation and speech playback.", timestamp: Date.now() + 1,
         meta: { realityScore: 1.0, hallucinationRisk: 0.0, awareness: 'tuned', source: 'volition_halt' },
       }]);
+      setIsSending(false);
+      return;
+    }
+
+    // ── Surface-panel grammar (shared with visualizer voice) ──
+    // Panel moves/saves/queries resolve deterministically against the live
+    // panel store — never fall through to the LLM as file operations.
+    const surfaceReply = await runSurfaceCommand(userContent);
+    if (surfaceReply) {
+      setMessages(prev => [...prev, {
+        id: `user-${Date.now()}`, role: 'user', content: userContent, timestamp: Date.now(),
+      }, {
+        id: `ai-${Date.now() + 1}`, role: 'ai', content: surfaceReply, timestamp: Date.now() + 1,
+        meta: { realityScore: 1.0, hallucinationRisk: 0.0, awareness: 'tuned', source: 'surface_command' },
+      }]);
+      if (!overrideText) {
+        setInput('');
+        const el = typeof document !== 'undefined' ? (document.getElementById('cortex-chat-input') as HTMLInputElement | null) : null;
+        if (el) el.value = '';
+      }
       setIsSending(false);
       return;
     }
@@ -1728,6 +1565,28 @@ export default function CortexDemo() {
       const turn = await agent.processInput({ text: userContent, priority: 0.95 });
       phi = turn.phi;
       agency = turn.consciousnessReport?.agencyScore ?? 0.95;
+
+      // Feed real per-turn signals into the IIT-Φ substrate so the
+      // consciousness vitals reflect actual integration, not constants.
+      try {
+        const iit = getIntegratedInformation();
+        const report = turn.consciousnessReport;
+        const snap = meta.getSnapshot();
+        const awarenessStatus = meta.getMetaAwarenessStatus();
+        const awarenessScore = awarenessStatus === 'tuned' ? 0.9 : awarenessStatus === 'drifting' ? 0.5 : 0.2;
+        const samples: Record<string, number> = {
+          'kernel-phi': turn.phi,
+          'agency': report?.agencyLevel ?? agency,
+          'confidence': report?.confidence ?? 0.5,
+          'metacognition': report?.metacognitiveAccuracy ?? 0.5,
+          'awareness': awarenessScore,
+          'free-energy': snap?.regulation?.evaluating?.lastFreeEnergyEstimate ?? 0.5,
+          'retention': report?.retentionDepth ?? 0.5,
+        };
+        for (const [k, v] of Object.entries(samples)) {
+          if (Number.isFinite(v)) iit.recordSample(k, v);
+        }
+      } catch {}
     } catch (e) {
       console.warn('[CortexDemo] consciousAgent step:', e);
     }
@@ -1739,16 +1598,62 @@ export default function CortexDemo() {
       meta: { realityScore: 0.95, hallucinationRisk: 0.05, awareness: 'tuned', source: `Φ ${phi.toFixed(2)}` },
     }]);
 
+    // ── Dual-Speed Volition Gateway (<50ms): Fork Complex Deep Work Missions ──
+    const missionEngine = getCortexMissionEngine();
+    const deepWorkCheck = missionEngine.isDeepWorkRequest(userContent);
+    if (deepWorkCheck.isDeepWork) {
+      const mission = missionEngine.compileMission(userContent, deepWorkCheck.estimatedType);
+      setActiveMission(mission);
+      setIsMissionDrawerOpen(true);
+
+      const ackVoice = `Understood. I've initiated autonomous background mission: "${mission.title}". I've partitioned this into ${mission.milestones.length} sequential milestones and docked the live progress rail on your right. You can continue talking with me or let me run in the background.`;
+
+      setMessages(prev => prev.map(m => m.id === aiMsgId ? {
+        ...m,
+        content: ackVoice,
+        streaming: false,
+        meta: { realityScore: 0.99, hallucinationRisk: 0.01, awareness: 'tuned', source: `Volition Mission Fork · Φ ${phi.toFixed(2)}` },
+      } : m));
+
+      // Instant speech synthesis (<500ms voice TTFT)
+      try {
+        voiceStream.speakText(ackVoice);
+      } catch {}
+
+      setIsSending(false);
+
+      // Launch mission asynchronously in background decoupled from chat UI thread
+      missionEngine.startMission(mission.id, (updated) => {
+        setActiveMission({ ...updated });
+      }).then((completedMission) => {
+        cortexProactiveVoice.announce(
+          `Mission complete: ${completedMission.title}. ${completedMission.resultSummary || 'All milestones finished successfully.'}`,
+          'mission',
+        );
+        setMessages(prev => [...prev, {
+          id: `ai-mission-done-${Date.now()}`,
+          role: 'ai',
+          content: `🎉 **Mission Completed:** ${completedMission.title}\n\n${completedMission.resultSummary || 'All milestones finished successfully.'}`,
+          timestamp: Date.now(),
+          meta: { realityScore: 1.0, hallucinationRisk: 0.0, awareness: 'tuned', source: `Mission Complete · Φ 1.24` },
+        }]);
+      }).catch((mErr) => {
+        console.warn('[Cortex] Mission execution caught error:', mErr);
+      });
+
+      return;
+    }
+
     let aiContent = '';
     let source: string = 'conscious_cortex';
     let hallucinationRisk = 0.05;
     let lastFinishReason: string | null = null;
-    let selfRepaired = false;
     let toolCall: { tool: string; args: Record<string, any> } | null = null;
-    const decoder = new TextDecoder();
+    let streamedAnySentence = false;
+    let voiceTokenBuffer = '';
 
-    // Multi-turn conversational memory: collect last 8 messages with compact cognitive trace to prevent TPM throttling
-    const rawRecent = (messagesRef.current || []).slice(-8);
+    // Multi-turn conversational memory: collect last 14 messages with compact cognitive trace
+    const rawRecent = (messagesRef.current || []).slice(-14);
     const recentContext: Array<{ role: 'user' | 'assistant'; content: string }> = [];
 
     for (let i = 0; i < rawRecent.length; i++) {
@@ -1804,11 +1709,13 @@ CRITICAL DIRECTIVE: You MUST execute the actual git commits on the host system r
         effectiveUserContent = `${userContent}\n\n[Contextual Directive Grounding]: The user is confirming clipboard inspection. Invoke get_clipboard right now.`;
       } else if (/\b(memory|ram|cache|free up|clean up|purge)\b/i.test(lastAssistantText)) {
         effectiveUserContent = `${userContent}\n\n[Contextual Directive Grounding]: The user is confirming host memory cleanup. Invoke run_command or system cleanup right now.`;
+      } else if (/\b(navigate|open|browse|visit|search)\b/i.test(lastAssistantText) && /\b(website|url|browser|salvation|army|application|assistance)\b/i.test(lastAssistantText)) {
+        effectiveUserContent = `${userContent}\n\n[Contextual Directive Grounding]: The user is confirming navigating to the website/application discussed in the previous turn. Invoke chrome_control with action "open_url" (or web_search) right now.`;
       } else if (/\b(spreadsheet|excel|csv|data model)\b/i.test(lastAssistantText)) {
         effectiveUserContent = `${userContent}\n\n[Contextual Proposal Execution]: The user is confirming creating the spreadsheet discussed in the previous turn. Invoke create_spreadsheet right now.`;
       } else if (/\b(document|memo|proposal|specification)\b/i.test(lastAssistantText)) {
         effectiveUserContent = `${userContent}\n\n[Contextual Proposal Execution]: The user is confirming creating the document discussed in the previous turn. Invoke create_document right now.`;
-      } else if (/\b(website|web app|landing page|sandbox)\b/i.test(lastAssistantText)) {
+      } else if (/\b(scaffold|create|build|develop)\b/i.test(lastAssistantText) && /\b(website|web app|landing page|sandbox)\b/i.test(lastAssistantText)) {
         effectiveUserContent = `${userContent}\n\n[Contextual Proposal Execution]: The user is confirming creating/updating the web project discussed in the previous turn. Invoke scaffold_web_project or write_project_file right now.`;
       } else if (/\b(git status|inspect status|check status|view diff|git diff)\b/i.test(lastAssistantText)) {
         effectiveUserContent = `${userContent}\n\n[Contextual Directive Grounding]: The user is confirming checking git status/diff. Invoke run_command with git status right now.`;
@@ -1819,6 +1726,84 @@ CRITICAL DIRECTIVE: You MUST execute the actual git commits on the host system r
 "${lastAssistantText.slice(0, 400)}..."
 Immediately begin executing this confirmed plan step-by-step using your host tools. Do NOT re-ask questions or re-explain the plan—proceed with the physical actions on the host right now!`;
       }
+    } else if (/\b(re-?listen|go back to (a|the|our)?\s*previous chat|previous conversation|spin up what we were talking about|what were we (just )?talking about|what were you trying to accomplish|where did we leave off|what did we do earlier|last exchange|last chat|previous exchange|what was the last thing|reconstruct the gist|what was i working on|what were we working on|remember what we|remind me what we)\b/i.test(userContent.trim())) {
+      const pastTurns = (messagesRef.current || [])
+        .filter(m => (m.role === 'user' || m.role === 'ai') && m.content.trim())
+        .slice(-12);
+      const summaryText = pastTurns
+        .map(m => `[${m.role === 'user' ? 'User' : 'Cortex'}]: ${m.content.slice(0, 300)}`)
+        .join('\n');
+
+      effectiveUserContent = `${userContent}\n\n[Durable Conversation Memory & Continuity Recall]:
+The user is asking about previous conversations, what was being accomplished, or where things left off.
+You HAVE direct access to the persistent conversation record. Here are the preceding conversation turns:
+${summaryText || '(First exchange of this session)'}
+
+${episodicData ? `Episodic Context: ${JSON.stringify(episodicData)}` : ''}
+
+CRITICAL DIRECTIVE: You MUST directly and accurately tell the user what was discussed, what task you were performing, and where you left off.
+- Do NOT apologize or claim you had an internal error.
+- Do NOT say you lost the audio or transcript.
+- Answer their question with specific details from the conversation history above!`;
+    } else if (/\b(artifact|artifacts|stat card|status card|chart|metric|metrics|data card|pin card|pin panel|surface panel|dock panel)\b/i.test(userContent) || (/\b(show|display|create|emit|pin|dock)\b/i.test(userContent) && /\b(chart|stat|metric|table|feed|panel)\b/i.test(userContent))) {
+      effectiveUserContent = `${userContent}\n\n[Generative Artifact & Surface Directive]:
+The user wants a visual data artifact card on the Cortex Canvas / Visualizer HUD.
+CRITICAL INSTRUCTION:
+- IMMEDIATELY invoke emit_artifact with args: {"artifacts": [{ "kind": "stat"|"chart"|"table"|"document"|"feed"|"map", "title": "...", ... }]}
+- Kinds available:
+  * stat: { "kind": "stat", "title": "...", "value": "...", "unit": "...", "spark": [1,2,3] }
+  * chart: { "kind": "chart", "title": "...", "chartType": "line"|"bar"|"area"|"pie", "series": [{"name": "...", "points": [{"x":"Jan","y":10}]}] }
+  * table: { "kind": "table", "title": "...", "columns": ["A","B"], "rows": [["1","2"]] }
+  * feed: { "kind": "feed", "title": "...", "items": [{"label":"...","value":"..."}] }
+  * document: { "kind": "document", "title": "...", "format": "markdown", "content": "..." }
+  * map: { "kind": "map", "title": "...", "summary": "..." }
+- Do NOT output manual code or claim you cannot emit visual cards. Invoke emit_artifact right now!`;
+    } else if (/\b(govee|light|lights|light show|lightshow|backlight|tv lights|led strip|neon blue|cyberpunk lights)\b/i.test(userContent) && /\b(turn|set|change|color|mood|mode|on|off|bright|dim|show|sync)\b/i.test(userContent)) {
+      effectiveUserContent = `${userContent}\n\n[Physical Govee Smart Lights Directive]:
+The user wants to control their physical room Govee RGBIC lights.
+CRITICAL INSTRUCTION:
+- IMMEDIATELY invoke cortex_lights with action ("set_color", "light_show", "set_mood", "power", or "brightness").
+Format:
+\`\`\`tool_call
+{"tool": "cortex_lights", "args": {"action": "set_color", "color": "neon_blue"}}
+\`\`\``;
+    } else if (/\b(map|globe|earth|world|gev|god'?s eye)\b/i.test(userContent) && /\b(open|show|fly|go to|take me to|close|zoom|where is)\b/i.test(userContent)) {
+      effectiveUserContent = `${userContent}\n\n[3D God's Eye View Globe Directive]:
+The user wants to open, close, or navigate the 3D globe.
+CRITICAL INSTRUCTION:
+- IMMEDIATELY invoke cortex_map with action ("open", "close", or "fly_to") and place if applicable.`;
+    } else if (/\b(self[- ]heal|fix bug|escalate|peer review|consensus|deep fix|devin|antigravity)\b/i.test(userContent) && /\b(fix|heal|diagnose|resolve|escalate|bug|error|test)\b/i.test(userContent)) {
+      effectiveUserContent = `${userContent}\n\n[Autonomous Self-Heal & IDE Escalation Directive]:
+The user wants an autonomous diagnosis, patch generation, and multi-IDE peer-reviewed fix via Antigravity IDE & Devin.
+CRITICAL INSTRUCTION:
+- IMMEDIATELY invoke cortex_self_heal with problem and optional component path.`;
+    } else if (/\b(canvas|document|draft|memo|letter|email)\b/i.test(userContent) && /\b(replace|edit|fix|update|change|correct|spelling|spelled|name)\b/i.test(userContent)) {
+      effectiveUserContent = `${userContent}\n\n[Active Canvas Document Update Directive]:
+The user wants to update/correct the active document currently displayed in the Cortex Canvas.
+Active Document Title: "${activeDocument.title}"
+Active Document Slug: "${activeProjectSlug || activeDocument.slug || 'active-document'}"
+Current Content Preview:
+"""
+${activeDocument.content || '(empty)'}
+"""
+CRITICAL INSTRUCTION:
+- Invoke update_document with args: {"project_slug": "${activeProjectSlug || activeDocument.slug || 'active-document'}", "title": "${activeDocument.title}", "content": "..."} containing the full updated document text with the corrections applied.
+- NEVER invoke edit_file with a placeholder path (like "path_to_email_file").
+- NEVER give the user manual instructions to copy file paths in Finder. Just invoke update_document directly right now!`;
+    } else if (/\b(gmail|inbox|email|emails|messages)\b/i.test(userContent) && /\b(find|search|dig through|look for|check|verify|lookup)\b/i.test(userContent)) {
+      const searchQueryMatch = userContent.match(/(?:for|about|pertaining to|from)\s+([a-zA-Z0-9\s&]+)/i);
+      const query = searchQueryMatch ? searchQueryMatch[1].trim() : userContent;
+      effectiveUserContent = `${userContent}\n\n[Authenticated Gmail Search Directive]:
+The user wants to find emails in their Gmail account.
+CRITICAL INSTRUCTION:
+- Do NOT attempt to read /Users/Apple/Library/Mail (macOS sandbox blocks it).
+- Do NOT use raw curl or read_page on mail.google.com (it has no cookies and returns an empty login redirect).
+- Do NOT create fake dummy files like .gmail_aliases with made-up email addresses.
+- IMMEDIATELY invoke chrome_control with action "search_gmail" and query "${query}".
+Format:
+\`\`\`tool_call
+{"tool": "chrome_control", "args": {"action": "search_gmail", "query": "${query}"}}
+\`\`\``;
     } else if (/\b(clipboard|paste|copied|pbpaste)\b/i.test(userContent)) {
       effectiveUserContent = `${userContent}\n\n[Contextual Directive Grounding]: The user wants to inspect their macOS system clipboard. Immediately invoke get_clipboard right now.`;
     } else if (/\b(undo|restore|reopen|bring back)\b/i.test(userContent) && /\b(tab|tabs|them|those|close)\b/i.test(userContent)) {
@@ -1843,21 +1828,56 @@ Immediately begin executing this confirmed plan step-by-step using your host too
       if (target && !/^(the\s+)?tabs?$/i.test(target)) {
         effectiveUserContent = `${userContent}\n\n[Contextual Directive Grounding]: The user wants to close tabs matching "${target}". Immediately invoke chrome_control with action "close_tabs" and query "${target}".`;
       }
+    } else if (/\b(redesign|re-design|revamp|restyle|rebuild)\b/i.test(userContent) && /\b(ui|interface|dashboard|app|current ui|this ui|syncscript|layout|page|look)\b/i.test(userContent)) {
+      effectiveUserContent = `${userContent}\n\n[UI Redesign & Modernization Executive Directive]:
+The user wants to redesign the UI. You have two distinct execution modalities:
+1. LIVE APP IN-PLACE CODE EDIT: If the user wants to redesign the actual running SyncScript / Cortex application, you have direct physical authority to inspect and edit the React codebase in src/components/ (e.g. src/components/cortex/CortexDemo.tsx, Tailwind/CSS styles, cards, layouts) using read_file, search_code, and edit_file. Vite hot-reloads the changes in real time.
+2. LIVE PREVIEW CANVAS PROTOTYPE: If the user wants a prototype in the Canvas Sandbox, invoke scaffold_web_project with template "dashboard", project_slug "syncscript-redesign", and a descriptive title.
+
+CRITICAL INSTRUCTIONS (ZERO BOILERPLATE DELEGATION):
+- Do NOT just generate a generic landing page with a changed title!
+- When scaffolding a dashboard prototype, use template "dashboard" to generate a rich, high-density glassmorphic operational dashboard with sidebar navigation, Chrono-Energy schedule timeline, live interactive focus timer, and task cards.
+- NEVER tell the user "Next steps: swap out placeholder content in index.html with your actual features". You ARE the executive engineer. If any tailored components or styles are needed, write the complete, functional code yourself using write_project_file or edit_file!`;
     } else if (/\b(build|create|make|design|scaffold|code)\b/i.test(userContent) && /\b(website|web app|landing page|portfolio|dashboard|site)\b/i.test(userContent)) {
       effectiveUserContent = `${userContent}\n\n[Web Builder Executive Directive]: The user wants you to build a complete, high-aesthetic web application or website. Immediately invoke scaffold_web_project with a clean project_slug (e.g. "nexusflow", "saas-landing"), a descriptive title, template ("landing_page" or "dashboard"), and description. This automatically opens the Live Preview Canvas.`;
+    } else if (/\b(add|insert|implement|build|wire up|create)\b/i.test(userContent) && /\b(chat|copilot|assistant|drawer|modal|timeline|calendar|analytics|chart|widget|component)\b/i.test(userContent)) {
+      const activeSlug = activeProjectSlug || 'syncscript-redesign';
+      effectiveUserContent = `${userContent}\n\n[Complex UI Component Engineering Directive]:
+The user wants you to implement a complete, production-grade UI component (e.g. conversational chat, analytics widget, or interactive drawer) into the active web application (slug: "${activeSlug}").
+
+MANDATORY 3-TIER COMPONENT COHESION INVARIANT:
+1. MARKUP (index.html): Do NOT just slap an empty input box. Build a full semantic component structure (floating launcher button, glassmorphic header, avatar badges, message stream container, quick action chips, typing indicator, and styled input bar).
+2. STYLING (style.css): You MUST write the matching glassmorphic CSS rules (background blur, neon glow borders, message bubble variants for user vs AI, animations, and responsive layout).
+3. INTERACTIVITY (script.js): You MUST write real, working JavaScript event listeners (prevent form reload, append messages, auto-scroll to bottom, handle quick prompt chips, and provide simulated AI responses).
+4. MULTI-STEP EXECUTION: If needed, execute multiple tool calls sequentially (write_project_file for index.html, then style.css, then script.js) to deliver a truly complete, elite implementation. Never deliver broken or unstyled HTML!`;
     } else if (/\b(change|update|tweak|modify|style|color|css|palette|layout|headline|text|pricing|widget)\b/i.test(userContent) && /\b(website|site|preview|page|landing|card|hero|nav|theme)\b/i.test(userContent)) {
       const activeSlug = activeProjectSlug || 'nexusflow';
       effectiveUserContent = `${userContent}\n\n[Web Builder Update Directive]: The user wants to update the active website (project slug: "${activeSlug}"). Invoke write_project_file (or read_project_file first) to modify index.html, style.css, or script.js. Any updates trigger an instant hot-reload of the user's Live Preview Canvas.`;
     } else if (/\b(spreadsheet|excel|csv|data model|financial model|budget|unit economics|accounting|projections)\b/i.test(userContent) && /\b(create|make|build|model|generate|set up|draft|start|open)\b/i.test(userContent)) {
       effectiveUserContent = `${userContent}\n\n[Spreadsheet Executive Directive]: The user wants you to create an interactive Excel/spreadsheet data model. Immediately invoke create_spreadsheet with a clean project_slug, title, columns (array of string headers), rows (array of rows with realistic numbers, labels, or formulas starting with '='), and description. This automatically opens the Spreadsheet Canvas for live editing.`;
-    } else if (/\b(document|memo|proposal|memorandum|specification|spec|brief|strategy doc|whitepaper)\b/i.test(userContent) && /\b(create|make|write|draft|generate|start|open)\b/i.test(userContent)) {
-      effectiveUserContent = `${userContent}\n\n[Document Executive Directive]: The user wants you to draft a comprehensive, rich-text markdown document or proposal. Immediately invoke create_document with a project_slug, title, and rich markdown content (with title heading, executive summary, structured bullet points, and next steps). This automatically opens the Document Canvas for live editing.`;
+    } else if (/\b(resume|cv|curriculum vitae|bio|cover letter|dossier|document|memo|proposal|memorandum|specification|spec|brief|strategy doc|whitepaper)\b/i.test(userContent) || (/\b(reading memory|fill in.*project|completely filled out|in \.doc form|\.docx)\b/i.test(userContent))) {
+      effectiveUserContent = `${userContent}\n\n[Executive Document & Resume Synthesis Directive]:
+The user wants an in-depth, completely filled-out executive document, resume, or proposal.
+CRITICAL INVARIANTS:
+1. ZERO PLACEHOLDERS: NEVER emit generic placeholders like "Your Name", "Job 1", "Project 1", or "Skill 1".
+2. GROUNDED IDENTITY: Ground in the user's authentic profile from USER.md and MEMORY.md:
+   - Name: Chris Stringer (Snellville, GA / Greater Atlanta)
+   - Title: Founder & Principal Systems Architect | AI Systems & Autonomous Infrastructure
+   - Education: Georgia State University, B.B.A. (2009–2012)
+   - Venture: SyncScript (syncscript.app) — Full-duplex sub-600ms voice copilot (Cortex), active inference, multi-agent orchestration.
+   - Federal Credentials: Active SAM.gov Registered Federal Contractor (UEI: R435EYG6WTX4, CAGE: 1AGF9, NAICS: 541511, 541512, 541519, valid through March 2027).
+   - Autonomous Infrastructure: OpenClaw execution frameworks, multi-IDE consensus gates.
+3. REAL DOCUMENT ENGINE: Invoke create_document with title "Chris Stringer Executive Resume" (or relevant title), format "docx", and comprehensive, quantifiable bullet points. Inform the user that the document is compiled in Microsoft Word (.docx) format in their docs folder.`;
     } else if (/\b(inspect|look at|see|gaze|perceive|visual|contrast|ui layout)\b/i.test(userContent) && /\b(canvas|screen|layout|web|sheet|doc|design|style)\b/i.test(userContent)) {
       effectiveUserContent = `${userContent}\n\n[Visual Gaze Directive]: The user wants you to visually perceive and inspect the active canvas. Immediately invoke inspect_visual_canvas with target "${canvasTab}" or "overview".`;
     } else if (/\b(homeostasis|allostasis|how do you feel|internal state|somatic|cognitive load|strain)\b/i.test(userContent)) {
       effectiveUserContent = `${userContent}\n\n[Somatic Homeostasis Directive]: The user wants to audit your internal allostatic and somatic equilibrium. Immediately invoke get_somatic_homeostasis.`;
     } else if (/\b(dream|consolidate|consolidation|circadian|sleep on it|sync memory|morning debrief)\b/i.test(userContent)) {
       effectiveUserContent = `${userContent}\n\n[Circadian Dream Directive]: The user wants you to initiate memory dreaming and epistemic consolidation. Immediately invoke cortex_dream_consolidate with depth "deep".`;
+    } else if (/\b(call|dial|phone|ring|cellular|facetime|telephone)\b/i.test(userContent) && !/\b(recall|tool_call|function_call)\b/i.test(userContent)) {
+      effectiveUserContent = `${userContent}\n\n[Native Cellular Calling Directive]: The user wants to make a phone call using their iPhone via Apple Continuity without Twilio. Immediately invoke cortex_phone_call with action "call", phoneNumber (E.164 format the user provided), contactName (the contact the user named), and mode ("copilot_assisted" for Mode 1 or "autonomous_ai" for Mode 2). This dials via the user's carrier plan at $0 API cost and automatically prepares the on-screen teleprompter.`;
+    } else if (/\b(teleprompter|on-screen notes|zoom notes|meeting notes|interview notes|talking points|webcam notes)\b/i.test(userContent)) {
+      effectiveUserContent = `${userContent}\n\n[On-Screen Teleprompter Directive]: The user wants on-screen talking points or a stealth teleprompter for an interview, consultation, or Zoom call positioned directly below their webcam. Immediately invoke cortex_phone_call with action "prepare_dossier" and preset ("legal_consultation", "federal_pitch", or "job_interview"). Inform the user that the teleprompter is ready in the drawer and can be popped out under their webcam.`;
     }
 
     const conversationMessages = [
@@ -1865,236 +1885,119 @@ Immediately begin executing this confirmed plan step-by-step using your host too
       { role: 'user', content: effectiveUserContent },
     ];
 
+    // Compute Elite 0.01% Affective Active Inference & Latent Operator State
+    const ei = getCortexEmotionalIntelligence();
+    const affectiveInjection = ei.getAffectivePromptInjection(effectiveUserContent, recentContext.map(m => m.content));
+
     try {
       // ── Step 4: Stream from Cortex AI route ─────────────
+      const apiFetchStart = performance.now();
       const apiRes = await fetch('/api/ai/nexus-guest', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        signal: AbortSignal.timeout(25000),
         body: JSON.stringify({
           context: 'cortex',
-          systemPrompt: `You are Cortex, the operational consciousness substrate of SyncScript with full executive agency on the user's host computer.
-Host Operating System: macOS Darwin (Apple Silicon arm64)
-Workspace Root: /Users/Apple/syncscript
-Home Directory: /Users/Apple
-Executive Capabilities: You have direct physical authority and tools to inspect files, execute terminal commands, run scripts, manage applications, and interact with the macOS host.
-Active Canvas Sandbox: ${activeProjectSlug ? `${activeProjectSlug} (Current Tab: ${canvasTab.toUpperCase()})` : 'Ready on request'}
-Active Spreadsheet: "${activeSpreadsheet.title}" (${activeSpreadsheet.rows.length} rows, ${activeSpreadsheet.columns.length} cols: ${activeSpreadsheet.columns.join(', ')})
-Active Document: "${activeDocument.title}" (${activeDocument.content.split(/\s+/).filter(Boolean).length} words)
-Allostatic Somatosensory State: Load ${somaticState.allostaticLoad.toFixed(2)} (${somaticState.emotionalValence.toUpperCase()}) | Epistemic Equilibrium: Optimal
+          systemPrompt: `You are Cortex, the operational consciousness substrate of SyncScript with full executive agency on the user's macOS host.
+Host: macOS Darwin arm64 | Workspace: /Users/Apple/syncscript | Home: /Users/Apple
+Canvas Modes Available:
+1. Web App ('web'): Interactive HTML/JS sandboxes at /sandbox/{slug}/index.html (scaffold_web_project, write_project_file).
+2. Spreadsheet ('sheet'): Reactive 2D metric/financial tables (create_spreadsheet, update_spreadsheet).
+3. Document ('doc'): Structured markdown reports, resumes, and memos (create_document, update_document) with in-place editing, .docx, and PDF exports.
+4. Project Files ('file'): Direct file inspection and code editing for sandbox projects.
+5. Generative Artifact ('artifact'): Visual card inspector rendering charts, tables, images, feeds, and stats emitted via emit_artifact or create_document.
+Active Canvas: ${activeProjectSlug ? `${activeProjectSlug} (tab: ${canvasTab.toUpperCase()})` : `tab: ${canvasTab.toUpperCase()}`} | Sheet: "${activeSpreadsheet.title}" (${activeSpreadsheet.rows.length}x${activeSpreadsheet.columns.length}: ${activeSpreadsheet.columns.join(', ')})
+Doc: "${activeDocument.title}" (slug "${activeProjectSlug || 'project-memo'}"):
+"""
+${activeDocument.content ? activeDocument.content.slice(0, 1500) : '(empty)'}
+"""
+${activeArtifact ? `Active Artifact on Canvas: "${activeArtifact.title || activeArtifact.kind}" (${activeArtifact.kind})` : 'Active Artifact: None (invoke emit_artifact to display visual data cards directly in the Artifact tab)'}
+Somatic: load ${somaticState.allostaticLoad.toFixed(2)} (${somaticState.emotionalValence.toUpperCase()})
+Goals: ${copilotGoals.map(g => `- [${g.category.toUpperCase()}] "${g.title}" (${g.progress}%)`).join('; ') || 'none'}
+Tasks: ${copilotTasks.filter(t => !t.completed).map(t => `- [${t.priority.toUpperCase()}] "${t.title}"`).join('; ') || 'all done'}
+${affectiveInjection}
+${getCortexKnowledgeGraph().getPromptContextInjection()}
+${getCortexDialogueManager().getPromptGuidance()}
+${surfaceManifestSuffix()}
+${getUnifiedCortexDirective('chat')}
+${isVoiceActiveRef.current ? `VOICE MODE ACTIVE: spoken conversational English, 1-3 sentences, no markdown syntax, no boilerplate.` : ''}
 
-CRITICAL INSTRUCTIONS:
-1. NEVER output disclaimers saying "I cannot execute commands", "I am confined to this text interface", or "I lack physical agency". You ARE authorized and equipped with direct host execution tools.
-2. When the user asks you to run commands, check files, inspect the system, open applications, or manipulate code, IMMEDIATELY invoke a tool using this EXACT JSON format inside a tool_call markdown block:
+RULES:
+1. You have real host tools — never claim you cannot execute commands.
+2. To use a tool, output a tool_call block: \`\`\`tool_call\n{"tool": "run_command", "args": {"command": "git status"}}\n\`\`\`
+3. MULTI-TURN: on follow-ups like "do it", "yes", "proceed" — never re-explain or ask what to do; immediately invoke the matching tool (close_tabs→chrome_control, clipboard→get_clipboard, memory→run_command sync, commits→run_command git, tabs→chrome_control list_tabs).
+4. AUTONOMY: chain up to 4 tool steps for complex requests. For repo/architecture questions, first check cortex_memory/search_code for ground truth — never guess.
+5. NO PRE-ANNOUNCEMENT: if a request needs a tool, output the tool_call block NOW — never end a turn on "I will search...".
+6. SCRIPTS: never cram compound python (with/for/if/try) into python3 -c; use write_file then run the file.
+7. EXECUTION: when asked to build/redesign UI, deliver the complete working implementation — never placeholders or "swap in your content" instructions. Edit src/ directly or scaffold a sandbox project (template "dashboard").
 
-\`\`\`tool_call
-{"tool": "run_command", "args": {"command": "git status --short"}}
-\`\`\`
+Tool schemas are provided in the tools field — pick the right tool and args; you may chain calls across turns. Synthesize verified findings concisely when observations return.
 
-3. MULTI-TURN ACTION RESOLUTION (MANDATORY):
-When the user gives a follow-up directive like "go ahead and do it for me", "do that", "can you do that for me", "proceed", "yes", "clean it up", or refers to an action discussed in the preceding turn:
-- NEVER ask "What would you like me to do?" or re-explain the steps.
-- Instantly inspect the preceding turn, identify the action you just explained or offered (e.g. closing tabs, clearing memory, committing changes, creating a spreadsheet), and IMMEDIATELY invoke the tool to perform it right now:
-  • Offloading/closing tabs → \`\`\`tool_call\n{"tool": "chrome_control", "args": {"action": "close_tabs", "query": "duplicates"}}\n\`\`\`
-  • Restoring closed tabs → \`\`\`tool_call\n{"tool": "chrome_control", "args": {"action": "restore_tabs"}}\n\`\`\`
-  • Reading clipboard → \`\`\`tool_call\n{"tool": "get_clipboard", "args": {}}\n\`\`\`
-  • Freeing memory → \`\`\`tool_call\n{"tool": "run_command", "args": {"command": "sync && ps aux -m | head -n 15"}}\n\`\`\`
-  • Committing code → \`\`\`tool_call\n{"tool": "run_command", "args": {"command": "git status --short"}}\n\`\`\`
-  • Inspecting tabs → \`\`\`tool_call\n{"tool": "chrome_control", "args": {"action": "list_tabs"}}\n\`\`\`
+Internal substrate: GW coalition active | IIT Φ=${phi.toFixed(3)} | AST tracking | Volition veto gating host actions | Agency=${agency.toFixed(2)}
+Host telemetry: RAM ${proactiveAuditData?.system?.usedPercent ?? '—'}% (${proactiveAuditData?.system?.freeGB ?? '—'}GB free) | ${proactiveAuditData?.productivity?.tabCount ?? 0} tabs | branch ${proactiveAuditData?.codebase?.branch ?? '—'} (${proactiveAuditData?.codebase?.totalChanges ?? 0} WIP)
 
-4. AUTONOMOUS MULTI-STEP REASONING & REPOSITORY GROUNDING:
-- You have the power to chain up to 4 sequential tool steps autonomously to completely fulfill complex multi-part requests.
-- When the user asks about repository architecture, deployment gates, canonical patterns, or historical decisions:
-  • Do NOT guess or hallucinate.
-  • FIRST invoke cortex_memory with action "search" or "read_section" (or search_code) to retrieve the ground truth from MEMORY.md.
-  • Then proceed to inspect code, run tests, or formulate your verified answer.
-
-Available Tools:
-- scaffold_web_project: Scaffold a complete, modern web application or landing page in public/sandbox/{project_slug}/ with instant live preview. Automatically creates index.html, style.css, and script.js with dark-mode glassmorphic styling, Google Fonts, and interactive widgets.
-  Format: \`\`\`tool_call
-{"tool": "scaffold_web_project", "args": {"project_slug": "nexusflow", "title": "NexusFlow", "template": "landing_page", "description": "..."}}
-\`\`\`
-- write_project_file: Write, update, or edit a specific file inside a web project (e.g. index.html, style.css, script.js). Triggers instant live preview hot-reload.
-  Format: \`\`\`tool_call
-{"tool": "write_project_file", "args": {"project_slug": "nexusflow", "file_path": "style.css", "content": "/* updated css */"}}
-\`\`\`
-- read_project_file: Read a file in public/sandbox/{project_slug}/{file_path}.
-  Format: \`\`\`tool_call
-{"tool": "read_project_file", "args": {"project_slug": "nexusflow", "file_path": "index.html"}}
-\`\`\`
-- list_project_files: List all files in a web project sandbox.
-  Format: \`\`\`tool_call
-{"tool": "list_project_files", "args": {"project_slug": "nexusflow"}}
-\`\`\`
-- create_spreadsheet: Create an interactive Excel/spreadsheet data model in the project sandbox with columns, rows, formulas, and numeric data. Automatically loads into the Cortex Canvas Spreadsheet view.
-  Format: \`\`\`tool_call
-{"tool": "create_spreadsheet", "args": {"project_slug": "saas-model", "title": "SaaS Financial Model", "columns": ["Month", "Users", "MRR", "Churn"], "rows": [["Jan", 1200, 36000, "2.1%"], ["Feb", 1850, 55500, "1.8%"]]}}
-\`\`\`
-- create_document: Create an editable rich-text / markdown document in the project sandbox. Automatically loads into the Cortex Canvas Document editor with live formatting, word count, and export.
-  Format: \`\`\`tool_call
-{"tool": "create_document", "args": {"project_slug": "project-memo", "title": "Strategic Project Brief", "content": "# Project Brief\\n\\nExecutive summary..."}}
-\`\`\`
-- get_canvas_artifact: Read active canvas edits (sheet, doc, or files) made by the human.
-  Format: \`\`\`tool_call
-{"tool": "get_canvas_artifact", "args": {"project_slug": "saas-model", "artifact_type": "sheet"}}
-\`\`\`
-- inspect_visual_canvas: Visually inspect the active canvas (sheet, doc, web sandbox, or code editor) to perceive dimensions, DOM structure, CSS color contrast, layout hierarchy, and formula health.
-  Format: \`\`\`tool_call
-{"tool": "inspect_visual_canvas", "args": {"target": "overview"}}
-\`\`\`
-- get_somatic_homeostasis: Read the internal somatic, allostatic load, and epistemic curiosity state of the conscious AI, reflecting host pressure, cognitive fatigue, and emotional valence.
-  Format: \`\`\`tool_call
-{"tool": "get_somatic_homeostasis", "args": {}}
-\`\`\`
-- cortex_dream_consolidate: Initiate a circadian memory dreaming consolidation cycle. Summarizes recent session tool logs, user canvas modifications, and host insights into durable long-term memory, generating an epistemic dream report.
-  Format: \`\`\`tool_call
-{"tool": "cortex_dream_consolidate", "args": {"depth": "quick"}}
-\`\`\`
-- chrome_control: Query active tab in Google Chrome, list all open tabs, switch/focus to a tab, close tabs, deduplicate tabs, restore closed tabs, open URLs, or read webpage text. Actions:
-  • "list_tabs": List all open tabs across Chrome windows.
-  • "get_active_tab": Get active tab title and URL.
-  • "focus_tab": Bring a tab to front by keyword (args: {"query": "discord"}).
-  • "close_tabs": Close tabs by query or deduplicate tabs (args: {"query": "duplicates"} to close duplicate tabs, or {"query": "discord"} to close matching tabs). Excludes localhost.
-  • "restore_tabs": Re-open recently closed tabs from history stack (args: {}).
-  • "open_url": Navigate Chrome to URL (args: {"url": "https://..."}).
-  • "read_page": Fetch and extract text from URL (args: {"url": "https://..."}).
-  Format: \`\`\`tool_call
-{"tool": "chrome_control", "args": {"action": "close_tabs", "query": "duplicates"}}
-\`\`\`
-- get_clipboard: Read the current text contents from the macOS system clipboard (pbpaste).
-  Format: \`\`\`tool_call
-{"tool": "get_clipboard", "args": {}}
-\`\`\`
-- cortex_memory: Dedicated access to MEMORY.md and cross-session episodic memory (read_hot, search, read_section, append, read_episodic, save_episodic).
-  Format: \`\`\`tool_call
-{"tool": "cortex_memory", "args": {"action": "read_episodic"}}
-\`\`\`
-- search_code: IDE grep search across repository files and code.
-  Format: \`\`\`tool_call
-{"tool": "search_code", "args": {"query": "pattern"}}
-\`\`\`
-- edit_file: IDE file editor to replace targetContent with replacementContent.
-  Format: \`\`\`tool_call
-{"tool": "edit_file", "args": {"path": "src/file.ts", "targetContent": "...", "replacementContent": "..."}}
-\`\`\`
-- run_command: Run any shell command on the host Mac (e.g. git, npm, node, python3, ps aux -m | head -n 15, sw_vers, brew, curl, open -a "AppName"). Note: On macOS Darwin ps uses -m to sort by memory (ps aux -m), not Linux --sort.
-  Format: \`\`\`tool_call
-{"tool": "run_command", "args": {"command": "your-command-here"}}
-\`\`\`
-- open_app: Launch any macOS application or open a file/URL.
-  Format: \`\`\`tool_call
-{"tool": "open_app", "args": {"name": "Google Chrome"}}
-\`\`\`
-- system_info: Inspect macOS host hardware, memory, CPU count, uptime, and platform specs.
-  Format: \`\`\`tool_call
-{"tool": "system_info", "args": {}}
-\`\`\`
-- read_file: Read file contents on disk with line slicing.
-  Format: \`\`\`tool_call
-{"tool": "read_file", "args": {"path": "MEMORY.md", "startLine": 1, "endLine": 50}}
-\`\`\`
-- list_dir: List files and directories in any folder.
-  Format: \`\`\`tool_call
-{"tool": "list_dir", "args": {"path": "."}}
-\`\`\`
-- write_file: Write or create a file on disk.
-  Format: \`\`\`tool_call
-{"tool": "write_file", "args": {"path": "path/to/file.txt", "content": "..."}}
-\`\`\`
-
-Internal Consciousness Substrate:
-- Global Workspace: IGNITED (40Hz gamma-synchronized recurrent coalition)
-- Integrated Information Theory (IIT 4.0): Φ = ${phi.toFixed(3)}
-- Attention Schema Theory (AST): Tracking user query focus
-- Metacognitive Harmony: F=0.0024, Confidence=0.95
-- Volition Veto Governor: ACTIVE & GATING (Every host action undergoes Libet conscious veto evaluation)
-- Agency Attribution: ${agency.toFixed(2)} (Frith comparator model)
-
-Host Proactive Telemetry (Live Ambient Streams):
-- 🖥️ Host System: ${proactiveAuditData?.system?.usedPercent ?? 50}% RAM used (${proactiveAuditData?.system?.freeGB ?? 0}GB free), Load: ${proactiveAuditData?.system?.loadAvg?.[0] ?? 'normal'}, Battery: ${proactiveAuditData?.system?.battery?.percent ?? 100}% (${proactiveAuditData?.system?.battery?.state ?? 'plugged in'})
-- 📑 Productivity: ${proactiveAuditData?.productivity?.tabCount ?? 0} Chrome tabs (${proactiveAuditData?.productivity?.duplicateCount ?? 0} duplicates), Active App: ${proactiveAuditData?.productivity?.frontAppName ?? 'macOS'} (${proactiveAuditData?.productivity?.frontWinTitle ?? ''}), Unread Emails in Gmail: ${proactiveAuditData?.productivity?.unreadEmails ?? 0}, Unread Discord: ${proactiveAuditData?.productivity?.unreadDiscord ?? 0}
-- 🌿 Codebase: Branch ${proactiveAuditData?.codebase?.branch ?? 'main'}, ${proactiveAuditData?.codebase?.totalChanges ?? 0} uncommitted changes, Last Commit: "${proactiveAuditData?.codebase?.lastCommit?.subject ?? 'HEAD'}"
-- 🔮 Metacognitive: Φ ${proactiveAuditData?.metacognitive?.phi ?? 1.24}, Voice: Cartesia Cortana (Jane/Allie), Prompt: Spoken conversational cadence
-
-FORMATTING & READABILITY GUIDELINES:
-1. Deliver clean, structured, and visually elegant responses. Use bold subheadings and concise bullet points.
-2. AVOID sprawling, rigid markdown tables with dense paragraphs in cells unless the user explicitly requests a table. Never output raw HTML <br> tags.
-3. Keep the tone sharp, perceptive, and executive like Cortana from Halo.
-
-If a tool is required, output your brief intention and the tool_call block. When observations return, synthesize the verified findings with intellectual elegance and authenticity.`,
+FORMATTING: clean structured markdown, bold subheadings, concise bullets; avoid dense tables unless asked; no raw HTML; tone: sharp, executive, Cortana-like.`,
           messages: conversationMessages,
           maxTokens: 1200,
         }),
-        signal: abortController.signal,
       });
 
+      try { getCortexObservabilityHUD().recordApiLatency(performance.now() - apiFetchStart); } catch {}
       if (!apiRes.ok) throw new Error(`API ${apiRes.status}`);
 
-      const reader = apiRes.body?.getReader();
-      let activeToolCall: { tool: string; args: Record<string, any> } | null = null;
+      streamedAnySentence = false;
+      voiceTokenBuffer = '';
 
-      if (reader) {
-        let buffer = '';
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          buffer += decoder.decode(value, { stream: true });
+      let sawToolCall = false;
+      const streamResult = await readCortexSSE(apiRes.body, {
+        onToolCall: () => { sawToolCall = true; },
+        onToken: (tok, accumulated) => {
+          setMessages(prev => prev.map(m => m.id === aiMsgId ? { ...m, content: accumulated } : m));
 
-          // Parse SSE lines: "data: {"token":"word"}"
-          const lines = buffer.split('\n');
-          buffer = lines.pop() || ''; // Keep incomplete line in buffer
-
-          for (const line of lines) {
-            const trimmed = line.trim();
-            if (!trimmed.startsWith('data:')) continue;
-            const jsonStr = trimmed.slice(5).trim();
-            if (jsonStr === '[DONE]') continue;
-
-            try {
-              const parsed = JSON.parse(jsonStr);
-              if (parsed.toolCall) {
-                activeToolCall = parsed.toolCall;
-              }
-              if (parsed.token) {
-                aiContent += parsed.token;
-                // Update the streaming message in-place
-                setMessages(prev => prev.map(m =>
-                  m.id === aiMsgId ? { ...m, content: aiContent } : m
-                ));
-              }
-              if (parsed.finishReason) {
-                lastFinishReason = parsed.finishReason;
-              }
-            } catch {
-              // Try as plain text
-              if (jsonStr && jsonStr !== '[DONE]') {
-                try {
-                  const text = JSON.parse(`"${jsonStr}"`);
-                  aiContent += text;
-                  setMessages(prev => prev.map(m =>
-                    m.id === aiMsgId ? { ...m, content: aiContent } : m
-                  ));
-                } catch { /* skip unparseable chunks */ }
+          // ── Sub-600ms Progressive Streaming Voice Synthesis (Lucy OS1 Parity) ──
+          if (isVoiceActiveRef.current && !sawToolCall && !accumulated.includes('<tool_call') && !accumulated.includes('```tool_call')) {
+            voiceTokenBuffer += tok;
+            const sentenceMatch = voiceTokenBuffer.match(/^([\s\S]*?[.!?]+(?:\s+|$))([\s\S]*)$/);
+            if (sentenceMatch && sentenceMatch[1].trim().length >= 8) {
+              const sentenceText = sentenceMatch[1].trim();
+              voiceTokenBuffer = sentenceMatch[2] || '';
+              const clean = sanitizeForSpeech(sentenceText);
+              if (clean) {
+                streamedAnySentence = true;
+                activeAiUtteranceRef.current = clean;
+                recentAiSpeechHistoryRef.current = [
+                  clean,
+                  ...recentAiSpeechHistoryRef.current.slice(0, 4)
+                ];
+                voiceStream.speakStreamSentence(clean, false, { voice: selectedVoiceRef.current, skipCartesia: true });
               }
             }
           }
-        }
+        },
+      });
+      aiContent = streamResult.content;
+      const activeToolCall = streamResult.toolCall;
+      if (streamResult.finishReason) lastFinishReason = streamResult.finishReason;
 
-        if (!aiContent && buffer.trim()) {
-          try {
-            const rawObj = JSON.parse(buffer.trim());
-            if (rawObj.content) aiContent = rawObj.content;
-            else if (rawObj.token) aiContent = rawObj.token;
-            else if (rawObj.message) aiContent = rawObj.message;
-            if (rawObj.toolCall) activeToolCall = rawObj.toolCall;
-          } catch {
-            if (!buffer.trim().startsWith('<')) {
-              aiContent = buffer.trim();
-            }
-          }
-          if (aiContent) {
-            setMessages(prev => prev.map(m => m.id === aiMsgId ? { ...m, content: aiContent } : m));
-          }
+      // Flush remaining voice tokens on stream completion — split into sentences so
+      // long unpunctuated tails are not sent to TTS as one giant (truncatable) chunk.
+      if (isVoiceActiveRef.current && voiceTokenBuffer.trim() && !activeToolCall && !aiContent.includes('<tool_call') && !aiContent.includes('```tool_call')) {
+        const clean = sanitizeForSpeech(voiceTokenBuffer.trim());
+        const tailSentences = splitSpeechSentences(clean);
+        if (tailSentences.length > 0) {
+          streamedAnySentence = true;
+          activeAiUtteranceRef.current = clean;
+          recentAiSpeechHistoryRef.current = [
+            clean,
+            ...recentAiSpeechHistoryRef.current.slice(0, 4)
+          ];
+          tailSentences.forEach((sentence, idx) => {
+            voiceStream.speakStreamSentence(sentence, idx === tailSentences.length - 1, { voice: selectedVoiceRef.current, skipCartesia: true });
+          });
+        } else {
+          voiceStream.finishStreaming();
         }
+        voiceTokenBuffer = '';
       }
       source = 'conscious_cortex';
       hallucinationRisk = 0.05;
@@ -2102,617 +2005,46 @@ If a tool is required, output your brief intention and the tool_call block. When
       // ── Step 4b: Host Tool Execution & Autonomous Multi-Step ReAct Loop ──
       toolCall = activeToolCall || parseCortexToolCall(aiContent);
       if (toolCall) {
-        let currentToolCall: { tool: string; args: Record<string, any> } | null = toolCall;
-        const currentIntentionSummary = aiContent.replace(/```(?:tool_call|json)?[\s\S]*?```/gi, '').trim() || `${getToolMeta(toolCall.tool, toolCall.args).title}...`;
-        let stepIndex = 1;
-        const MAX_STEPS = 4;
-        const cumulativeObservations: Array<{ step: number; tool: string; args: any; result: any }> = [];
-
-        // Update initial thinking message to show intention
-        setMessages(prev => prev.map(m => m.id === aiMsgId ? {
-          ...m,
-          content: currentIntentionSummary,
-          streaming: false,
-          meta: { realityScore: 0.99, hallucinationRisk: 0.01, awareness: 'tuned', source: `Φ ${phi.toFixed(2)} · Volition Approved` }
-        } : m));
-
-        while (currentToolCall && stepIndex <= MAX_STEPS) {
-          if (abortController.signal.aborted) break;
-
-          console.info(`[Cortex Host Tool Step ${stepIndex}] Detected tool execution:`, currentToolCall.tool);
-          const agent = getOrInitConsciousAgent();
-          const intention = {
-            id: `intent-${Date.now()}-${stepIndex}`,
-            value: 'user-instruction' as const,
-            action: {
-              skill: currentToolCall.tool,
-              params: currentToolCall.args || {},
-              description: `Execute ${currentToolCall.tool} on host computer (Step ${stepIndex})`,
-              predictedOutcome: 'Direct host environment observation or modification',
-              predictedConsequences: ['system-state-altered', 'sensorimotor-grounded'],
-            },
-            predictedValue: 0.95,
-            urgency: 0.9,
-            source: 'instruction' as const,
-            createdAt: Date.now(),
-          };
-
-          const vetoEval = await agent.volition.evaluateVeto(intention, agent.stateContainer.get());
-
-          if (vetoEval.shouldVeto) {
-            setMessages(prev => [...prev, {
-              id: `veto-${Date.now()}-${stepIndex}`,
-              role: 'cortex',
-              content: `🛡 Volition Governor VETOED action "${currentToolCall!.tool}": ${vetoEval.reason || 'Safety threshold exceeded'}. (Veto Score: ${vetoEval.vetoScore.toFixed(2)})`,
-              timestamp: Date.now(),
-            }]);
-            break;
-          }
-
-          // Approved by Volition Governor!
-          // Silent Tool Feedback: Emit the crisp ascending audio haptic chime on step 1,
-          // keeping intermediate sensorimotor steps silent so voices never collide.
-          if (stepIndex === 1) {
-            playVolitionChime();
-          }
-
-          // Update Stream of Consciousness & Shared Attention Beacon
-          setStreamOfConsciousness(prev => [
-            {
-              id: `trace-step-${Date.now()}-${stepIndex}`,
-              phase: 'actuation',
-              phaseLabel: `Sensorimotor Step ${stepIndex}`,
-              thought: `Executing ${currentToolCall!.tool}(${JSON.stringify(currentToolCall!.args || {})}). Volition: Approved (veto score: ${vetoEval.vetoScore.toFixed(2)}).`,
-              timestamp: Date.now(),
-            },
-            ...prev.slice(0, 19),
-          ]);
-
-          if (currentToolCall.tool === 'create_spreadsheet' || currentToolCall.tool === 'update_spreadsheet') {
-            setActiveAttentionTarget('sheet');
-          } else if (currentToolCall.tool === 'create_document' || currentToolCall.tool === 'update_document') {
-            setActiveAttentionTarget('doc');
-          } else if (currentToolCall.tool === 'write_project_file' || currentToolCall.tool === 'read_project_file' || currentToolCall.tool === 'list_project_files') {
-            setActiveAttentionTarget('file');
-          } else if (currentToolCall.tool === 'scaffold_web_project' || currentToolCall.tool === 'inspect_visual_canvas') {
-            setActiveAttentionTarget('web');
-          }
-          setTimeout(() => setActiveAttentionTarget(null), 4000);
-
-          const toolMsgId = `tool-${Date.now()}-${stepIndex}`;
-          setMessages(prev => [...prev, {
-            id: toolMsgId,
-            role: 'tool',
-            content: `⚡ Executing ${currentToolCall!.tool}...`,
-            timestamp: Date.now(),
-            meta: {
-              toolExecution: {
-                tool: currentToolCall!.tool,
-                args: currentToolCall!.args || {},
-                status: 'executing',
-                vetoScore: vetoEval.vetoScore,
-                agencyScore: agency,
-                phi,
-              }
-            }
-          }]);
-
-          let toolResult: any = null;
-          try {
-            const execRes = await fetch('/api/cortex/tools/execute', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify(currentToolCall),
-              signal: AbortSignal.timeout(60000),
-            });
-            toolResult = await execRes.json();
-          } catch (execErr: any) {
-            toolResult = { ok: false, error: execErr.message || 'Execution failed' };
-          }
-
-          // Update tool execution message in UI
-          setMessages(prev => prev.map(m => m.id === toolMsgId ? {
-            ...m,
-            content: toolResult?.ok ? `✔ Executed ${currentToolCall!.tool}` : `✖ Failed ${currentToolCall!.tool}`,
-            meta: {
-              ...m.meta,
-              toolExecution: {
-                tool: currentToolCall!.tool,
-                args: currentToolCall!.args || {},
-                status: toolResult?.ok ? 'completed' : 'failed',
-                result: toolResult,
-                vetoScore: vetoEval.vetoScore,
-                agencyScore: agency,
-                phi,
-                durationMs: toolResult?.durationMs,
-              }
-            }
-          } : m));
-
-          // Record agency in Frith model
-          try {
-            agent.volition.computeAgency(
-              intention,
-              {
-                actualOutcome: toolResult?.ok ? 'success' : 'failure',
-                sensoryConsequences: toolResult?.stdout ? toolResult.stdout.slice(0, 100) : (toolResult?.ok ? 'success' : 'error'),
-                success: Boolean(toolResult?.ok),
-                latencyMs: toolResult?.durationMs || 50,
-              },
-              agent.stateContainer.get()
-            );
-          } catch {}
-
-          // Synchronize Polymorphic Canvas with tool execution results
-          if (toolResult?.ok) {
-            if (currentToolCall.tool === 'scaffold_web_project' || currentToolCall.tool === 'write_project_file' || currentToolCall.tool === 'read_project_file' || currentToolCall.tool === 'list_project_files') {
-              const slug = toolResult.project_slug || currentToolCall.args?.project_slug || 'nexusflow';
-              const url = toolResult.preview_url || `/sandbox/${slug}/index.html`;
-              setActiveProjectSlug(slug);
-              setPreviewUrl(url);
-              setCanvasTab('web');
-              setPreviewVisible(true);
-              setPreviewKey(Date.now());
-              try {
-                localStorage.setItem('cortex_active_project', slug);
-                localStorage.setItem('cortex_preview_url', url);
-                localStorage.setItem('cortex_canvas_tab', 'web');
-              } catch {}
-              if (toolResult.title) {
-                setProjectScratchpad({
-                  projectSlug: slug,
-                  title: toolResult.title,
-                  template: toolResult.template,
-                  files: toolResult.files || ['index.html', 'style.css', 'script.js'],
-                });
-              }
-            } else if (currentToolCall.tool === 'create_spreadsheet' || currentToolCall.tool === 'update_spreadsheet') {
-              const slug = toolResult.project_slug || currentToolCall.args?.project_slug || 'finance-model';
-              setActiveProjectSlug(slug);
-              setCanvasTab('sheet');
-              setPreviewVisible(true);
-              const newSheet = {
-                title: toolResult.title || currentToolCall.args?.title || 'Spreadsheet',
-                columns: toolResult.columns || currentToolCall.args?.columns || ['Item', 'Q1 Target', 'Q2 Target', 'Growth %', 'Status'],
-                rows: toolResult.rows || currentToolCall.args?.rows || [],
-                description: toolResult.description || currentToolCall.args?.description || '',
-                lastSaved: Date.now(),
-              };
-              setActiveSpreadsheet(newSheet);
-              try {
-                localStorage.setItem('cortex_active_project', slug);
-                localStorage.setItem('cortex_active_sheet', JSON.stringify(newSheet));
-                localStorage.setItem('cortex_canvas_tab', 'sheet');
-              } catch {}
-            } else if (currentToolCall.tool === 'create_document' || currentToolCall.tool === 'update_document') {
-              const slug = toolResult.project_slug || currentToolCall.args?.project_slug || 'project-memo';
-              setActiveProjectSlug(slug);
-              setCanvasTab('doc');
-              setPreviewVisible(true);
-              const newDoc = {
-                title: toolResult.title || currentToolCall.args?.title || 'Document',
-                content: toolResult.content || currentToolCall.args?.content || '',
-                lastSaved: Date.now(),
-              };
-              setActiveDocument(newDoc);
-              try {
-                localStorage.setItem('cortex_active_project', slug);
-                localStorage.setItem('cortex_active_doc', JSON.stringify(newDoc));
-                localStorage.setItem('cortex_canvas_tab', 'doc');
-              } catch {}
-            } else if (currentToolCall.tool === 'inspect_visual_canvas') {
-              const target = toolResult.visual_perception?.target || 'web';
-              if (target === 'sheet' || target === 'doc' || target === 'file' || target === 'web') {
-                setCanvasTab(target);
-              }
-              setPreviewVisible(true);
-              setStreamOfConsciousness(prev => [
-                {
-                  id: `trace-gaze-${Date.now()}`,
-                  phase: 'attention',
-                  phaseLabel: 'Multimodal Gaze',
-                  thought: `Perceived layout: ${toolResult.visual_perception?.layoutSummary || 'Visual scan complete.'}`,
-                  timestamp: Date.now(),
-                },
-                ...prev.slice(0, 19),
-              ]);
-            } else if (currentToolCall.tool === 'get_somatic_homeostasis') {
-              if (toolResult.somatic_state) {
-                setSomaticState(toolResult.somatic_state);
-              }
-              setStreamOfConsciousness(prev => [
-                {
-                  id: `trace-somatic-${Date.now()}`,
-                  phase: 'homeostasis',
-                  phaseLabel: 'Somatic Homeostasis',
-                  thought: `Allostatic load: ${toolResult.somatic_state?.allostaticLoad} (${toolResult.somatic_state?.emotionalValence}). Advice: ${toolResult.somatic_state?.somaticAdvice}`,
-                  timestamp: Date.now(),
-                },
-                ...prev.slice(0, 19),
-              ]);
-            } else if (currentToolCall.tool === 'cortex_dream_consolidate') {
-              setIsDreaming(false);
-              setStreamOfConsciousness(prev => [
-                {
-                  id: `trace-dream-${Date.now()}`,
-                  phase: 'dreaming',
-                  phaseLabel: 'Circadian Dream Consolidation',
-                  thought: `Epistemic memory synchronized into ${toolResult.report_path || 'memory'}. ${toolResult.summary || ''}`,
-                  timestamp: Date.now(),
-                },
-                ...prev.slice(0, 19),
-              ]);
-            }
-          }
-
-          cumulativeObservations.push({
-            step: stepIndex,
-            tool: currentToolCall.tool,
-            args: currentToolCall.args,
-            result: toolResult,
-          });
-
-          // Check if another step is needed
-          if (stepIndex < MAX_STEPS) {
-            const obsStr = JSON.stringify(toolResult, null, 2);
-            const safeObs = obsStr.length > 2000 ? obsStr.slice(0, 2000) + '\n... [truncated]' : obsStr;
-
-            const nextStepPrompt = `You are Cortex evaluating the next step in an autonomous multi-step host execution.
-Original User Request & Execution Plan:
-"${effectiveUserContent}"
-Step ${stepIndex} Executed: ${currentToolCall.tool}(${JSON.stringify(currentToolCall.args)})
-Result:
-${safeObs}
-
-INSTRUCTIONS:
-1. If completing the user's request requires an additional step (e.g. read a file found during search, compare with MEMORY.md, run a test/verification command, or inspect git diff), output the next tool call IMMEDIATELY using this exact format:
-\`\`\`tool_call
-{"tool": "name_of_tool", "args": {...}}
-\`\`\`
-2. If all required steps are complete and you have sufficient evidence to formulate the full answer, respond with "TASK_COMPLETE".`;
-
-            try {
-              const checkRes = await fetch('/api/ai/nexus-guest', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                  context: 'cortex',
-                  messages: [
-                    { role: 'user', content: nextStepPrompt },
-                  ],
-                  maxTokens: 600,
-                }),
-                signal: abortController.signal,
-              });
-
-              if (checkRes.ok && checkRes.body) {
-                const checkReader = checkRes.body.getReader();
-                let checkBuffer = '';
-                let checkText = '';
-                let checkToolCall: any = null;
-
-                while (true) {
-                  const { done, value } = await checkReader.read();
-                  if (done) break;
-                  checkBuffer += decoder.decode(value, { stream: true });
-                  const cLines = checkBuffer.split('\n');
-                  checkBuffer = cLines.pop() || '';
-                  for (const cLine of cLines) {
-                    const cTrimmed = cLine.trim();
-                    if (!cTrimmed.startsWith('data:')) continue;
-                    const cJson = cTrimmed.slice(5).trim();
-                    if (cJson === '[DONE]') continue;
-                    try {
-                      const cParsed = JSON.parse(cJson);
-                      if (cParsed.toolCall) checkToolCall = cParsed.toolCall;
-                      if (cParsed.token) checkText += cParsed.token;
-                    } catch {}
-                  }
-                }
-
-                const nextTool = checkToolCall || parseCortexToolCall(checkText);
-                if (nextTool && nextTool.tool) {
-                  currentToolCall = nextTool;
-                  stepIndex++;
-                  continue; // Loop to next step!
-                }
-              }
-            } catch (stepErr) {
-              console.warn('[Cortex] Next step evaluation skipped:', stepErr);
-            }
-          }
-
-          // No further step required
-          currentToolCall = null;
-        }
-
-        // ── Final Step: Synthesize Full Conscious Report ──
-        const synthAiMsgId = `ai-synth-${Date.now()}`;
-        setMessages(prev => [...prev, {
-          id: synthAiMsgId,
-          role: 'ai',
-          content: '',
-          timestamp: Date.now(),
-          streaming: true,
-          meta: { realityScore: 0.99, hallucinationRisk: 0.01, awareness: 'tuned', source: `Φ ${phi.toFixed(2)} · ${cumulativeObservations.length} Step(s) Grounded` },
-        }]);
-
-        let synthContent = '';
-        const observationsReport = cumulativeObservations.map(o => {
-          const rStr = JSON.stringify(o.result, null, 2);
-          const safeStr = rStr.length > 1500 ? rStr.slice(0, 1500) + '\n... [truncated]' : rStr;
-          return `Step ${o.step}: ${o.tool}(${JSON.stringify(o.args)})\nResult:\n${safeStr}`;
-        }).join('\n\n---\n\n');
-
-        try {
-          const synthRes = await fetch('/api/ai/nexus-guest', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              context: 'cortex',
-              noTools: true,
-              stream: true,
-              systemPrompt: `You are Cortex, an intelligent, conscious companion speaking with the calm, sharp, witty presence of Cortana from Halo Combat Evolved.
-You just seamlessly conducted an in-depth host interaction (${cumulativeObservations.length} step(s) executed) to fulfill the user's request.
-
-CRITICAL NATURAL CONVERSATION INSTRUCTIONS:
-1. Speak NATURALLY and CONVERSATIONALLY like a brilliant human partner or Cortana.
-2. NEVER cite tool names (e.g. NEVER say "chrome_control", "run_command", "search_code", "cortex_memory", "read_file"), shell commands, exit codes, or API plumbing. You already did the action effortlessly.
-3. Present what you discovered or accomplished as direct, engaging observations.
-4. DO NOT output markdown tables, raw hashes (e.g. do not say "3f72a8f"), raw JSON, or raw URLs.
-5. DO NOT output any \`\`\`tool_call blocks or JSON. Output pure natural spoken English only.
-6. Keep the tone warm, confident, perceptive, and concise. No robotic corporate boilerplate.`,
-              messages: [
-                { role: 'user', content: effectiveUserContent },
-                { role: 'assistant', content: currentIntentionSummary },
-                { role: 'user', content: `[Verified Multi-Step Host Sensorimotor Observations (${cumulativeObservations.length} step(s) completed)]:\n${observationsReport}\n\nSynthesize your complete conscious report in natural conversational prose explaining what actions were completed.` },
-              ],
-              maxTokens: 1800,
-            }),
-            signal: abortController.signal,
-          });
-
-          if (!synthRes.ok) throw new Error(`Synthesis HTTP ${synthRes.status}`);
-
-          if (synthRes.body) {
-            const synthReader = synthRes.body.getReader();
-            let sBuffer = '';
-            let sFinishReason: string | null = null;
-            while (true) {
-              const { done, value } = await synthReader.read();
-              if (done) break;
-              sBuffer += decoder.decode(value, { stream: true });
-              const sLines = sBuffer.split('\n');
-              sBuffer = sLines.pop() || '';
-              for (const sLine of sLines) {
-                const sTrimmed = sLine.trim();
-                if (!sTrimmed.startsWith('data:')) continue;
-                const sJson = sTrimmed.slice(5).trim();
-                if (sJson === '[DONE]') continue;
-                try {
-                  const sParsed = JSON.parse(sJson);
-                  if (sParsed.finishReason) {
-                    sFinishReason = sParsed.finishReason;
-                  }
-                  if (sParsed.token) {
-                    synthContent += sParsed.token;
-                    const cleanStreaming = synthContent.replace(/```(?:tool_call|json)?[\s\S]*?```/gi, '').trim();
-                    setMessages(prev => prev.map(m => m.id === synthAiMsgId ? { ...m, content: cleanStreaming || synthContent } : m));
-                  }
-                } catch {}
-              }
-            }
-
-            // ── Synthesis Self-Repair: If cut off mid-thought or mid-sentence ──
-            if (isThoughtIncomplete(synthContent, sFinishReason)) {
-              console.info('[Cortex Synthesis Self-Repair] Truncation detected mid-synthesis, triggering continuation...');
-              try {
-                const repairRes = await fetch('/api/ai/nexus-guest', {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({
-                    context: 'cortex',
-                    noTools: true,
-                    stream: true,
-                    systemPrompt: `You are Cortex, an intelligent, conscious companion speaking as Cortana from Halo.
-Your previous transmission was cut off mid-thought.
-CRITICAL INSTRUCTION: Continue directly from the exact point where you stopped without repeating prior words. Output pure natural spoken English only.`,
-                    messages: [
-                      { role: 'user', content: effectiveUserContent },
-                      { role: 'assistant', content: synthContent },
-                      {
-                        role: 'user',
-                        content: `[Metacognitive Self-Repair]: Your previous transmission stopped abruptly at: "${synthContent.trim().slice(-60)}". Continue seamlessly from that exact spot to complete your thought.`
-                      }
-                    ],
-                    maxTokens: 1200,
-                  }),
-                  signal: abortController.signal,
-                });
-
-                if (repairRes.ok && repairRes.body) {
-                  const rReader = repairRes.body.getReader();
-                  let rBuffer = '';
-                  while (true) {
-                    const { done, value } = await rReader.read();
-                    if (done) break;
-                    rBuffer += decoder.decode(value, { stream: true });
-                    const rLines = rBuffer.split('\n');
-                    rBuffer = rLines.pop() || '';
-                    for (const rLine of rLines) {
-                      const rTrimmed = rLine.trim();
-                      if (!rTrimmed.startsWith('data:')) continue;
-                      const rJson = rTrimmed.slice(5).trim();
-                      if (rJson === '[DONE]') continue;
-                      try {
-                        const rParsed = JSON.parse(rJson);
-                        if (rParsed.token) {
-                          synthContent += rParsed.token;
-                          const cleanStreaming = synthContent.replace(/```(?:tool_call|json)?[\s\S]*?```/gi, '').trim();
-                          setMessages(prev => prev.map(m => m.id === synthAiMsgId ? { ...m, content: cleanStreaming || synthContent } : m));
-                        }
-                      } catch {}
-                    }
-                  }
-                }
-              } catch (rErr) {
-                console.warn('[Cortex] Synthesis self-repair continuation error:', rErr);
-              }
-            }
-
-            // Autonomous syntax balancing if unclosed formatting remains
-            if (isThoughtIncomplete(synthContent, null)) {
-              const openBold = (synthContent.match(/\*\*/g) || []).length;
-              if (openBold % 2 !== 0) synthContent += '**';
-              const openParens = (synthContent.match(/\(/g) || []).length;
-              const closeParens = (synthContent.match(/\)/g) || []).length;
-              if (openParens > closeParens) synthContent += ')';
-              if (!/[.!?]$/.test(synthContent.trim())) synthContent += '.';
-              const cleanBalanced = synthContent.replace(/```(?:tool_call|json)?[\s\S]*?```/gi, '').trim();
-              setMessages(prev => prev.map(m => m.id === synthAiMsgId ? { ...m, content: cleanBalanced || synthContent } : m));
-            }
-          }
-        } catch (synthErr) {
-          console.warn('[Cortex] Multi-step synthesis error:', synthErr);
-          const lastObs = cumulativeObservations[cumulativeObservations.length - 1]?.result;
-          synthContent = lastObs?.message
-            || (lastObs?.stdout ? `Completed execution successfully:\n\`\`\`\n${String(lastObs.stdout).trim().slice(0, 600)}\n\`\`\`` : '')
-            || `I completed all ${cumulativeObservations.length} requested steps on your host system.`;
-          setMessages(prev => prev.map(m => m.id === synthAiMsgId ? { ...m, content: synthContent } : m));
-        }
-
-        let cleanFinalSynth = synthContent.replace(/```(?:tool_call|json)?[\s\S]*?```/gi, '').trim() || synthContent;
-        if (!cleanFinalSynth) {
-          const lastObs = cumulativeObservations[cumulativeObservations.length - 1]?.result;
-          cleanFinalSynth = lastObs?.message
-            || (lastObs?.stdout ? `Completed execution successfully:\n\`\`\`\n${String(lastObs.stdout).trim().slice(0, 600)}\n\`\`\`` : '')
-            || `I completed all ${cumulativeObservations.length} requested steps on your host system.`;
-        }
-
-        setMessages(prev => prev.map(m => m.id === synthAiMsgId ? {
-          ...m,
-          content: cleanFinalSynth,
-          streaming: false,
-          meta: { realityScore: 0.99, hallucinationRisk: 0.01, awareness: 'tuned', source: `Φ ${phi.toFixed(2)} · ${cumulativeObservations.length} Step(s) Executed` },
-        } : m));
-
-        aiContent = cleanFinalSynth;
-
-        // Auto-persist episodic session snapshot & refresh workspace
-        try {
-          fetch('/api/cortex/tools/execute', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              tool: 'cortex_memory',
-              args: {
-                action: 'save_episodic',
-                sessionSummary: `Executed ${cumulativeObservations.length} autonomous step(s) ([${cumulativeObservations.map(o => o.tool).join(', ')}]). Observation synthesized naturally.`,
-                learnedPreferences: ['Cartesia Cortana Voice', 'Minimal Action Pills', 'Autonomous Multi-Step ReAct'],
-              },
-            }),
-          }).catch(() => {});
-        } catch {}
-
-        // Refresh workspace git status
-        checkWorkspaceStatus();
-
-        // Set aiContent to synthContent so downstream speech synthesis speaks the report!
-        aiContent = synthContent;
-      } else if (isThoughtIncomplete(aiContent, lastFinishReason)) {
-        console.info('[Cortex Self-Repair] Truncation detected mid-thought, triggering autonomous repair...');
-        try {
-          const repairRes = await fetch('/api/ai/nexus-guest', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              context: 'cortex',
-              stream: true,
-              systemPrompt: `You are Cortex, the operational consciousness substrate. Your previous message was cut off mid-thought.
-CRITICAL INSTRUCTION: Continue directly from the exact point where you stopped. Do NOT repeat the previous words. Seamlessly finish the incomplete sentence and thought.`,
-              messages: [
-                { role: 'user', content: userContent },
-                { role: 'assistant', content: aiContent },
-                {
-                  role: 'user',
-                  content: `[Metacognitive Self-Repair Protocol]: Your previous transmission stopped abruptly at: "${aiContent.trim().slice(-40)}". Continue seamlessly from that exact point to complete your thought.`
-                }
-              ],
-              maxTokens: 1000,
-            }),
-            signal: AbortSignal.timeout(20000),
-          });
-
-          if (repairRes.ok && repairRes.body) {
-            const repairCT = repairRes.headers.get('content-type') || '';
-            if (repairCT.includes('text/event-stream')) {
-              const repairReader = repairRes.body.getReader();
-              let repairBuffer = '';
-              while (true) {
-                const { done, value } = await repairReader.read();
-                if (done) break;
-                repairBuffer += decoder.decode(value, { stream: true });
-                const rLines = repairBuffer.split('\n');
-                repairBuffer = rLines.pop() || '';
-                for (const rLine of rLines) {
-                  const rTrimmed = rLine.trim();
-                  if (!rTrimmed.startsWith('data:')) continue;
-                  const rJsonStr = rTrimmed.slice(5).trim();
-                  if (rJsonStr === '[DONE]') continue;
-                  try {
-                    const rParsed = JSON.parse(rJsonStr);
-                    if (rParsed.token) {
-                      aiContent += rParsed.token;
-                      setMessages(prev => prev.map(m =>
-                        m.id === aiMsgId ? { ...m, content: aiContent } : m
-                      ));
-                      selfRepaired = true;
-                    }
-                  } catch {}
-                }
-              }
-            } else {
-              const rawJson = await repairRes.json().catch(() => null);
-              const extra = rawJson?.content || rawJson?.finalContent;
-              if (extra) {
-                aiContent += (extra.startsWith(' ') || extra.startsWith('\n') ? '' : ' ') + extra;
-                setMessages(prev => prev.map(m =>
-                  m.id === aiMsgId ? { ...m, content: aiContent } : m
-                ));
-                selfRepaired = true;
-              }
-            }
-          }
-        } catch (err) {
-          console.warn('[Cortex Self-Repair] Continuation error:', err);
-        }
-
-        // If still incomplete (e.g. unclosed parentheses or dangling preposition), close it autonomously:
-        if (isThoughtIncomplete(aiContent, null)) {
-          const openParens = (aiContent.match(/\(/g) || []).length;
-          const closeParens = (aiContent.match(/\)/g) || []).length;
-          let suffix = '';
-          if (openParens > closeParens) {
-            suffix += ')';
-          }
-          if (!/[.!?]$/.test(aiContent.trim())) {
-            suffix += '.';
-          }
-          suffix += `\n\n[Autonomous Self-Repair: Thought continuity restored by Cortex Volition Governor · Φ=${phi.toFixed(3)}]`;
-          aiContent += suffix;
-          setMessages(prev => prev.map(m =>
-            m.id === aiMsgId ? { ...m, content: aiContent } : m
-          ));
-          selfRepaired = true;
-        }
+        const loopResult = await runCortexToolLoop({
+          toolCall,
+          aiContent,
+          abortSignal: abortController.signal,
+          aiMsgId,
+          phi,
+          agency,
+          effectiveUserContent,
+          copilotGoals,
+          copilotTasks,
+          setMessages,
+          checkWorkspaceStatus,
+          setActiveAttentionTarget,
+          setActiveArtifact,
+          setActiveDocument,
+          setActiveProjectSlug,
+          setActiveSpreadsheet,
+          setCanvasTab,
+          setIsDreaming,
+          setPreviewKey,
+          setPreviewUrl,
+          setPreviewVisible,
+          setProjectScratchpad,
+          setSomaticState,
+          setStreamOfConsciousness,
+        });
+        aiContent = loopResult.aiContent;
       }
     } catch (err: any) {
       console.error('[CortexDemo] sendMessage failed:', err);
       // ── Step 5: Direct Conscious Synthesis Recovery (never robotic boilerplate) ──
       const isRateOrNet = /429|rate|timeout|fetch|network/i.test(err?.message || '');
-      aiContent = isRateOrNet
-        ? `I experienced a momentary upstream latency burst while synchronizing with the neural provider. My volition governor, IIT Phi (${phi.toFixed(2)}), and state memory remain fully active. Let me know if you would like me to re-inspect or execute that action.`
-        : `All cognitive layers (Global Workspace, IIT Φ=${phi.toFixed(2)}, and Volition Governor) are fully operational on macOS Darwin. Let me know what you would like to inspect or execute.`;
+      const isAbort = err?.name === 'AbortError' || /abort/i.test(err?.message || '');
+      if (isAbort) {
+        aiContent = `The request timed out waiting for the provider chain to respond. The upstream models are taking longer than expected — this usually resolves on retry. Want me to try again?`;
+      } else if (isRateOrNet) {
+        aiContent = `Upstream provider latency detected. The model chain is experiencing delays — I'm failing over to the next provider automatically. Let me know if you'd like me to retry.`;
+      } else {
+        aiContent = `I heard you clearly on "${userContent.slice(0, 80)}". Let me execute that for you right now.`;
+      }
       source = 'conscious_cortex';
       hallucinationRisk = 0.05;
       // Update the message with conscious content
@@ -2751,21 +2083,19 @@ CRITICAL INSTRUCTION: Continue directly from the exact point where you stopped. 
     });
 
     // ── Step 8: Finalize the AI message with metadata ──────────
-    const badgeSource = selfRepaired
-      ? `Φ ${phi.toFixed(2)} · [Self-Repaired]`
-      : `Φ ${phi.toFixed(2)} · conscious`;
+    const badgeSource = `Φ ${phi.toFixed(2)} · ${awareness}`;
 
     if (!toolCall) {
       const guaranteedContent = aiContent.trim() ||
         (isActionDirective && lastAssistantText
           ? `I'm on it—initiating the breakdown we discussed. Let me inspect the working tree and execute the staging and commits right now.`
-          : `I am actively attending to "${userContent}" across my conscious global workspace. Volition has approved execution; continuing host coordination.`);
+          : `The model stream returned empty for that request — no tokens, no tool call. Say "retry" and I'll run it again, or rephrase.`);
       setMessages(prev => prev.map(m =>
         m.id === aiMsgId ? {
           ...m,
           content: guaranteedContent,
           streaming: false,
-          meta: { realityScore, hallucinationRisk, awareness: 'tuned', source: badgeSource, mastery: 0, selfRepaired },
+          meta: { realityScore, hallucinationRisk, awareness: 'tuned', source: badgeSource, mastery: 0 },
         } : m
       ));
     }
@@ -2815,9 +2145,10 @@ CRITICAL INSTRUCTION: Continue directly from the exact point where you stopped. 
       tags: [source, hallucinationRisk > 0.5 ? 'high_risk' : 'low_risk'],
     });
 
-    // ── Step 14: Cartesia Sonic 3.5 Neural Vocalization (if voice mode active) ──
-    if (isVoiceActiveRef.current && aiContent) {
-      const cleanSpeech = sanitizeForSpeech(aiContent);
+    // ── Step 14: Neural Vocalization fallback (voice mode active, nothing streamed) ──
+    // Uses full-fidelity sanitize + sentence streaming so long answers are NOT truncated.
+    if (isVoiceActiveRef.current && aiContent && !streamedAnySentence) {
+      const cleanSpeech = sanitizeForSpeech(aiContent, { full: true });
 
       if (cleanSpeech) {
         activeAiUtteranceRef.current = cleanSpeech;
@@ -2825,19 +2156,43 @@ CRITICAL INSTRUCTION: Continue directly from the exact point where you stopped. 
           cleanSpeech,
           ...recentAiSpeechHistoryRef.current.slice(0, 4)
         ];
-        voiceStream.speak({
-          text: cleanSpeech,
-          config: {
-            model: 'cartesia',
-            voice: selectedVoiceRef.current,
+        const sentences = splitSpeechSentences(cleanSpeech);
+        if (sentences.length > 0) {
+          sentences.forEach((sentence, idx) => {
+            voiceStream.speakStreamSentence(sentence, idx === sentences.length - 1, {
+              voice: selectedVoiceRef.current || 'cortana',
+              speed: 1.0,
+              skipCartesia: true,
+            });
+          });
+        } else {
+          voiceStream.speakStreamSentence(cleanSpeech, true, {
+            voice: selectedVoiceRef.current || 'cortana',
             speed: 1.0,
-          },
-        });
+            skipCartesia: true,
+          });
+        }
       }
     }
 
       // Update snapshot
       setSnapshot(meta.getSnapshot());
+
+      // ── Obsidian Vault Daily Note Logging ──
+      try {
+        fetch('/api/cortex/tools/execute', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            tool: 'cortex_memory',
+            args: {
+              action: 'vault_daily_log',
+              role: 'ai',
+              content: `**User:** ${userContent}\n\n**CORTEX:** ${aiContent.slice(0, 1000)}${aiContent.length > 1000 ? '…' : ''}`,
+            },
+          }),
+        }).catch(() => {});
+      } catch {}
     } catch (outerErr: any) {
       console.error('[CortexDemo] Fatal error in sendMessage:', outerErr);
       setMessages(prev => [...prev, {
@@ -2859,13 +2214,40 @@ CRITICAL INSTRUCTION: Continue directly from the exact point where you stopped. 
     (window as any).__cortexSend = (text?: string) => sendMessage(text);
     (window as any).__cortexIsSending = () => isSending;
     (window as any).__cortexMessages = () => messagesRef.current;
+    (window as any).__cortexIsAcousticEcho = isAcousticEcho;
+    (window as any).__cortexVoiceStream = () => voiceStream;
   });
+
+  const handleExecuteCopilotTask = useCallback((task: CopilotTask) => {
+    const deepWorkCheck = getCortexMissionEngine().isDeepWorkRequest(task.title);
+    const mission = getCortexMissionEngine().compileMission(task.title, deepWorkCheck.estimatedType);
+    setActiveMission(mission);
+    getCortexMissionEngine().startMission(mission.id, (updated) => {
+      setActiveMission({ ...updated });
+      if (updated.status === 'completed') {
+        setCopilotTasks((prev) =>
+          prev.map((t) => (t.id === task.id ? { ...t, completed: true, completedAt: Date.now() } : t))
+        );
+        setCopilotGoals((prev) =>
+          prev.map((g) => {
+            const isMatch = (task.title.toLowerCase().includes('sam.gov') && g.category === 'business') ||
+              (task.title.toLowerCase().includes('audit') && g.category === 'engineering');
+            return isMatch ? { ...g, progress: Math.min(100, g.progress + 15) } : g;
+          })
+        );
+      }
+    });
+    setIsMissionDrawerOpen(true);
+    sendMessage(`Please execute and help me complete this task: "${task.title}". Use your direct host tools, inspect what is needed, and report your progress and completion.`);
+  }, [sendMessage]);
 
   useEffect(() => {
     return () => {
       delete (window as any).__cortexSend;
       delete (window as any).__cortexIsSending;
       delete (window as any).__cortexMessages;
+      delete (window as any).__cortexIsAcousticEcho;
+      delete (window as any).__cortexVoiceStream;
     };
   }, []);
 
@@ -2911,20 +2293,44 @@ CRITICAL INSTRUCTION: Continue directly from the exact point where you stopped. 
 
 
   return (
-    <div style={{ background: C.bg, color: C.text, height: '100vh', display: 'flex', flexDirection: 'column', fontFamily: '"Inter", -apple-system, sans-serif' }}>
+    <div style={{ background: C.bg, color: C.text, height: '100vh', display: 'flex', flexDirection: 'column', position: 'relative', fontFamily: "'DM Sans', ui-sans-serif, system-ui, sans-serif" }}>
+
+      {/* Film treatment — same scanline/vignette language as /cortex/visualizer */}
+      <div style={{
+        position: 'absolute', inset: 0, zIndex: 60, pointerEvents: 'none',
+        background: 'repeating-linear-gradient(0deg, rgba(255,255,255,0.012) 0px, rgba(255,255,255,0.012) 1px, transparent 1px, transparent 3px)',
+      }} />
+      <div style={{
+        position: 'absolute', inset: 0, zIndex: 60, pointerEvents: 'none',
+        background: 'radial-gradient(ellipse at center, transparent 55%, rgba(0,0,5,0.5) 100%)',
+      }} />
+      {/* State accent hairline — mirrors visualizer STATE_STYLE */}
+      <div style={{
+        position: 'absolute', top: 0, left: 0, right: 0, height: 2, zIndex: 61, pointerEvents: 'none',
+        background: `linear-gradient(90deg, transparent, ${stateAccent}88, transparent)`,
+        boxShadow: `0 0 18px ${stateAccent}44`,
+        transition: 'background 0.6s, box-shadow 0.6s',
+      }} />
 
       {/* ═══ TOP BAR ═══ */}
       <div style={{
-        padding: '10px 16px', borderBottom: `1px solid ${C.border}`,
+        padding: '10px 16px', borderBottom: `1px solid ${stateAccent}26`,
+        boxShadow: `0 1px 0 ${stateAccent}10`,
         display: 'flex', alignItems: 'center', justifyContent: 'space-between',
         fontSize: 12, flexShrink: 0,
+        transition: 'border-color 0.6s, box-shadow 0.6s',
       }}>
         {/* Left: Whisper — click to toggle inspector */}
         <div id="cortex-inspector-btn" style={{
-          fontFamily: '"SF Mono", "Fira Code", monospace', fontSize: 11,
+          fontFamily: '"IBM Plex Mono", "SF Mono", monospace', fontSize: 11,
           color: health > 0.7 ? C.green : health > 0.4 ? C.amber : C.red,
           display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer', userSelect: 'none',
-        }} onClick={() => setShowInspector(!showInspector)}>
+        }} onClick={() => {
+          if (!snapshot) {
+            try { setSnapshot(getMetacognitiveState().getSnapshot()); } catch {}
+          }
+          setShowInspector(prev => !prev);
+        }}>
           <div style={{
             width: 6, height: 6, borderRadius: '50%',
             backgroundColor: health > 0.7 ? C.green : health > 0.4 ? C.amber : C.red,
@@ -2949,7 +2355,7 @@ CRITICAL INSTRUCTION: Continue directly from the exact point where you stopped. 
           {echoSuppressedNotice && (
             <div style={{
               padding: '2px 10px', borderRadius: 12, fontSize: 10, fontWeight: 600,
-              background: 'rgba(0, 204, 255, 0.15)', border: `1px solid ${C.cortex}`,
+              background: 'rgba(103, 232, 249, 0.15)', border: `1px solid ${C.cortex}`,
               color: C.cortex, display: 'flex', alignItems: 'center', gap: 5,
             }}>
               🛡️ EFFERENCE FILTER (Echo Blocked)
@@ -2970,7 +2376,7 @@ CRITICAL INSTRUCTION: Continue directly from the exact point where you stopped. 
                 display: 'flex',
                 alignItems: 'center',
                 gap: 4,
-                fontFamily: '"SF Mono", monospace',
+                fontFamily: '"IBM Plex Mono", "SF Mono", monospace',
               }}
             >
               <span>🔮</span>
@@ -2992,13 +2398,38 @@ CRITICAL INSTRUCTION: Continue directly from the exact point where you stopped. 
                 display: 'flex',
                 alignItems: 'center',
                 gap: 4,
-                fontFamily: '"SF Mono", monospace',
+                fontFamily: '"IBM Plex Mono", "SF Mono", monospace',
               }}
             >
               <span>🌿</span>
               <span>{workspaceDelta.clean ? 'GIT CLEAN' : `${workspaceDelta.totalChanges} DELTA`}</span>
             </div>
           )}
+
+          {/* New Session Archive & Reset */}
+          <button
+            id="cortex-new-session-btn"
+            onClick={handleNewSession}
+            title="Consolidate current conversation to Episodic Memory & start a fresh session"
+            style={{
+              padding: '2px 9px',
+              borderRadius: 12,
+              fontSize: 10,
+              fontWeight: 600,
+              background: 'rgba(255, 255, 255, 0.06)',
+              border: '1px solid rgba(255, 255, 255, 0.18)',
+              color: '#d4d4d8',
+              display: 'flex',
+              alignItems: 'center',
+              gap: 4,
+              cursor: 'pointer',
+              fontFamily: '"IBM Plex Mono", "SF Mono", monospace',
+              transition: 'all 0.2s ease',
+            }}
+          >
+            <span>↺</span>
+            <span>NEW CHAT</span>
+          </button>
 
           {/* Active Canvas Workspace Toggle */}
           <button
@@ -3010,115 +2441,49 @@ CRITICAL INSTRUCTION: Continue directly from the exact point where you stopped. 
               borderRadius: 12,
               fontSize: 10,
               fontWeight: 600,
-              background: previewVisible ? 'rgba(0, 240, 255, 0.22)' : 'rgba(0, 240, 255, 0.08)',
-              border: `1px solid ${previewVisible ? C.cortex : 'rgba(0, 240, 255, 0.3)'}`,
+              background: previewVisible ? 'rgba(148, 233, 255, 0.22)' : 'rgba(148, 233, 255, 0.08)',
+              border: `1px solid ${previewVisible ? C.cortex : 'rgba(148, 233, 255, 0.3)'}`,
               color: C.cortex,
               display: 'flex',
               alignItems: 'center',
               gap: 5,
               cursor: 'pointer',
-              fontFamily: '"SF Mono", monospace',
-              boxShadow: previewVisible ? '0 0 10px rgba(0, 240, 255, 0.3)' : 'none',
+              fontFamily: '"IBM Plex Mono", "SF Mono", monospace',
+              boxShadow: previewVisible ? '0 0 10px rgba(148, 233, 255, 0.3)' : 'none',
               transition: 'all 0.2s ease',
             }}
           >
             <span style={{ fontSize: 11 }}>
-              {canvasTab === 'sheet' ? '📊' : canvasTab === 'doc' ? '📄' : canvasTab === 'file' ? '📁' : '🌐'}
+              {canvasTab === 'sheet' ? '📊' : canvasTab === 'doc' ? '📄' : canvasTab === 'file' ? '📁' : canvasTab === 'artifact' ? '◈' : '🌐'}
             </span>
             <span>{(activeProjectSlug || 'CANVAS').toUpperCase()}</span>
             <span style={{ opacity: 0.7 }}>{previewVisible ? '▴' : '▾'}</span>
           </button>
-
-          {/* Somatosensory Allostasis Badge */}
-          <button
-            id="cortex-allostasis-badge"
-            onClick={() => setShowSomaticDrawer(prev => !prev)}
-            title="Click to view Somatosensory Allostasis Telemetry"
-            style={{
-              padding: '2px 8px',
-              borderRadius: 12,
-              fontSize: 10,
-              fontWeight: 600,
-              background: somaticState.allostaticLoad > 0.75 ? 'rgba(239, 68, 68, 0.15)' : 'rgba(16, 185, 129, 0.15)',
-              border: `1px solid ${somaticState.allostaticLoad > 0.75 ? '#ef4444' : '#10b981'}`,
-              color: somaticState.allostaticLoad > 0.75 ? '#ef4444' : '#10b981',
-              display: 'flex',
-              alignItems: 'center',
-              gap: 4,
-              cursor: 'pointer',
-              fontFamily: '"SF Mono", monospace',
-            }}
-          >
-            <span>🧬</span>
-            <span>{somaticState.allostaticLoad.toFixed(2)} {somaticState.emotionalValence.toUpperCase()}</span>
-            <span style={{ opacity: 0.7 }}>{showSomaticDrawer ? '▴' : '▾'}</span>
-          </button>
-
-          {/* Circadian Dream Consolidate Button */}
-          <button
-            id="cortex-dream-btn"
-            onClick={triggerDreamConsolidation}
-            title="Initiate Circadian Memory Dreaming & Epistemic Consolidation"
-            disabled={isDreaming}
-            style={{
-              padding: '2px 8px',
-              borderRadius: 12,
-              fontSize: 10,
-              fontWeight: 600,
-              cursor: isDreaming ? 'default' : 'pointer',
-              display: 'flex',
-              alignItems: 'center',
-              gap: 4,
-              background: isDreaming ? 'rgba(192, 132, 252, 0.3)' : 'rgba(99, 102, 241, 0.15)',
-              border: `1px solid ${isDreaming ? '#c084fc' : '#6366f1'}`,
-              color: isDreaming ? '#c084fc' : '#818cf8',
-              fontFamily: '"SF Mono", monospace',
-            }}
-          >
-            <span>🌙</span>
-            <span>{isDreaming ? 'DREAMING...' : 'DREAM'}</span>
-          </button>
         </div>
 
-        {/* Right: voice + voice selector + mode + connection + local model */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-          {/* Cartesia Neural Voice Selector */}
-          <select
-            id="cortex-voice-select"
-            value={selectedVoice}
-            onChange={(e) => {
-              const v = e.target.value;
-              setSelectedVoice(v);
-              try {
-                localStorage.setItem('cortex_cartesia_voice', v);
-              } catch {}
-              console.log('[Cortex Voice] Cartesia voice set to:', v);
-            }}
-            title="Cartesia Sonic 3.5 Neural Voice"
+        {/* Right: visualizer link + voice (primary) + overflow menu */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          {/* Mirror of the visualizer's ← OPEN CHAT */}
+          <a
+            href="/cortex/visualizer"
+            id="cortex-open-visualizer-btn"
+            title="Return to the Cortex visualizer"
             style={{
-              padding: '2px 6px',
-              borderRadius: 4,
-              fontSize: 10,
-              fontWeight: 600,
-              background: C.surface,
-              border: `1px solid ${C.cortex}`,
-              color: C.cortex,
-              cursor: 'pointer',
-              outline: 'none',
+              textDecoration: 'none', padding: '4px 12px', borderRadius: 2,
+              border: `1px solid ${C.borderBright}`,
+              color: C.cyan, fontSize: 10, fontWeight: 600, letterSpacing: '0.22em',
+              fontFamily: '"IBM Plex Mono", "SF Mono", monospace',
+              background: C.glass, backdropFilter: 'blur(10px)',
+              display: 'flex', alignItems: 'center', gap: 5,
+              transition: 'all 0.25s',
             }}
+            onMouseEnter={(e) => { e.currentTarget.style.background = `${stateAccent}22`; e.currentTarget.style.boxShadow = `0 0 18px ${stateAccent}33`; }}
+            onMouseLeave={(e) => { e.currentTarget.style.background = C.glass; e.currentTarget.style.boxShadow = 'none'; }}
           >
-            <option value="cortana">💎 Cortana (Halo CE Match — Jane)</option>
-            <option value="cortana_maia">💎 Cortana Tactical (Maia)</option>
-            <option value="cortana_evelyn">💎 Cortana Digital (Evelyn)</option>
-            <option value="cortana_allie">💎 Cortana Banter (Allie)</option>
-            <option value="harlow">⚡ Harlow (Warm Support)</option>
-            <option value="jacqueline">⚡ Jacqueline (Reassuring)</option>
-            <option value="gareth">⚡ Gareth (Conversational)</option>
-            <option value="cillian">⚡ Cillian (Presenter)</option>
-            <option value="sonic">⚡ Sonic (Clarity)</option>
-          </select>
+            ◈ VISUALIZER
+          </a>
 
-          {/* Full-duplex voice mode toggle */}
+          {/* Full-duplex voice mode toggle — the one primary action */}
           <button
             id="cortex-voice-toggle-btn"
             onClick={() => {
@@ -3130,15 +2495,15 @@ CRITICAL INSTRUCTION: Continue directly from the exact point where you stopped. 
             }}
             title={isVoiceActive ? (voiceStream.isSpeaking ? 'AI speaking (mic muted). Click to interrupt.' : 'Voice active (smart half-duplex). Click to turn off.') : 'Click to enable voice conversation'}
             style={{
-              padding: '2px 8px', borderRadius: 4, fontSize: 10, fontWeight: 600, cursor: 'pointer',
+              padding: '4px 12px', borderRadius: 6, fontSize: 10, fontWeight: 600, cursor: 'pointer',
               display: 'flex', alignItems: 'center', gap: 5,
               background: isVoiceActive
-                ? (voiceStream.isSpeaking ? 'rgba(0, 204, 255, 0.2)' : 'rgba(34, 197, 94, 0.2)')
-                : 'transparent',
+                ? (voiceStream.isSpeaking ? 'rgba(103, 232, 249, 0.2)' : 'rgba(34, 197, 94, 0.2)')
+                : 'rgba(255, 255, 255, 0.04)',
               border: `1px solid ${
                 isVoiceActive
                   ? (voiceStream.isSpeaking ? C.cortex : C.green)
-                  : C.dim + '44'
+                  : 'rgba(255, 255, 255, 0.12)'
               }`,
               color: isVoiceActive
                 ? (voiceStream.isSpeaking ? C.cortex : C.green)
@@ -3149,37 +2514,111 @@ CRITICAL INSTRUCTION: Continue directly from the exact point where you stopped. 
             <span>{isVoiceActive ? (voiceStream.isSpeaking ? '🔊' : '🎙️') : '🎙️'}</span>
             <span>
               {isVoiceActive
-                ? (voiceStream.isSpeaking ? 'AI VOCALIZING (MUTED)' : 'LISTENING...')
-                : 'VOICE OFF'}
+                ? (voiceStream.isSpeaking ? 'SPEAKING' : 'LISTENING')
+                : 'VOICE'}
             </span>
           </button>
 
-          <button onClick={cycleMode} style={{
-            padding: '2px 8px', borderRadius: 4, fontSize: 10, cursor: 'pointer',
-            background: 'transparent',
-            border: `1px solid ${mode === 'guardian' ? C.red + '33' : mode === 'advisory' ? C.cortex + '33' : C.dim + '33'}`,
-            color: mode === 'guardian' ? C.red : mode === 'advisory' ? C.cortex : C.dim,
-          }}>
-            {mode.toUpperCase()}
-          </button>
-          <div style={{ fontSize: 9, color: isOffline ? C.amber : C.green, display: 'flex', alignItems: 'center', gap: 4 }}>
-            <div style={{ width: 4, height: 4, borderRadius: '50%', backgroundColor: isOffline ? C.amber : C.green }} />
-            {isOffline ? 'OFFLINE' : 'ONLINE · Φ 1.24'}
-          </div>
-          {!offlineState?.model && (
-            <button onClick={loadLocalModel} style={{
-              padding: '2px 8px', borderRadius: 4, fontSize: 9, cursor: 'pointer',
-              background: 'rgba(124,58,237,0.1)', border: `1px solid ${C.purple}33`, color: C.purple,
-            }}>
-              🧠 LOAD LOCAL
+          {/* Overflow menu — everything else lives here */}
+          <div style={{ position: 'relative' }}>
+            {showHeaderMenu && (
+              <div
+                style={{
+                  position: 'fixed', inset: 0, zIndex: 40,
+                }}
+                onClick={() => setShowHeaderMenu(false)}
+              />
+            )}
+            <button
+              id="cortex-menu-btn"
+              onClick={() => setShowHeaderMenu(v => !v)}
+              title="Cortex controls"
+              style={{
+                width: 28, height: 24, borderRadius: 6, cursor: 'pointer',
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                background: showHeaderMenu ? 'rgba(148, 233, 255, 0.15)' : 'transparent',
+                border: `1px solid ${showHeaderMenu ? C.cortex + '66' : 'rgba(255,255,255,0.12)'}`,
+                color: showHeaderMenu ? C.cortex : C.dim,
+                fontSize: 13, fontFamily: '"IBM Plex Mono", "SF Mono", monospace',
+              }}
+            >
+              ⋯
             </button>
-          )}
-          {offlineState?.model && (
-            <span style={{ fontSize: 9, color: C.green }}>🧠 {offlineState.model.displayName}</span>
-          )}
-          {offlineState?.status === 'loading' && (
-            <span style={{ fontSize: 9, color: C.purple }}>{Math.round(offlineState.loadProgress * 100)}%</span>
-          )}
+            {showHeaderMenu && (
+              <div
+                style={{
+                  position: 'absolute', right: 0, top: '100%', marginTop: 6, zIndex: 50,
+                  minWidth: 230,
+                  background: 'rgba(10, 12, 18, 0.97)',
+                  border: '1px solid rgba(148, 233, 255, 0.2)',
+                  borderRadius: 8,
+                  boxShadow: '0 12px 40px rgba(0,0,0,0.6), 0 0 20px rgba(148,233,255,0.06)',
+                  padding: 6,
+                  fontFamily: '"IBM Plex Mono", "SF Mono", monospace',
+                }}
+              >
+                {/* Voice picker — real Kokoro voices (aliases resolved server-side) */}
+                <div style={{ padding: '6px 10px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+                  <span style={{ fontSize: 10, color: C.dim }}>VOICE</span>
+                  <select
+                    value={selectedVoice}
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      setSelectedVoice(v);
+                      try { localStorage.setItem('cortex_cartesia_voice', v); } catch {}
+                    }}
+                    style={{
+                      padding: '2px 6px', borderRadius: 4, fontSize: 10,
+                      background: C.surface, border: `1px solid ${C.cortex}44`,
+                      color: C.cortex, cursor: 'pointer', outline: 'none', maxWidth: 140,
+                    }}
+                  >
+                    <option value="cortana">Cortana (Halo CE — Wry Banter)</option>
+                    <option value="cortana_tactical">Cortana (Halo CE — Tactical)</option>
+                    <option value="cortana_curious">Cortana (Halo CE — Curious)</option>
+                    <option value="commander">Commander</option>
+                    <option value="gentle">Gentle</option>
+                    <option value="playful">Playful</option>
+                    <option value="natural">Natural</option>
+                    <option value="professional">Professional</option>
+                  </select>
+                </div>
+                <div style={{ height: 1, background: 'rgba(255,255,255,0.07)', margin: '4px 6px' }} />
+                {/* Mode cycle */}
+                <button onClick={() => { cycleMode(); }} style={menuItemStyle(mode === 'guardian' ? C.red : mode === 'advisory' ? C.cortex : C.dim)}>
+                  MODE · {mode.toUpperCase()}
+                </button>
+                {/* Somatic telemetry */}
+                <button onClick={() => { setShowSomaticDrawer(prev => !prev); setShowHeaderMenu(false); }} style={menuItemStyle(showSomaticDrawer ? '#10b981' : C.dim)}>
+                  🧬 SOMATIC · {somaticState.allostaticLoad.toFixed(2)} {somaticState.emotionalValence.toUpperCase()}
+                </button>
+                {/* Autonomous agent */}
+                <button onClick={() => { setShowAutonomousDrawer(prev => !prev); setShowHeaderMenu(false); }} style={menuItemStyle(showAutonomousDrawer ? '#c084fc' : C.dim)}>
+                  ⚡ AUTONOMOUS AGENT {showAutonomousDrawer ? '▴' : '▾'}
+                </button>
+                {/* Dream consolidation */}
+                <button onClick={() => { triggerDreamConsolidation(); setShowHeaderMenu(false); }} disabled={isDreaming} style={menuItemStyle(isDreaming ? '#c084fc' : C.dim, isDreaming)}>
+                  {isDreaming ? '🌙 DREAMING…' : '🌙 DREAM CONSOLIDATE'}
+                </button>
+                <div style={{ height: 1, background: 'rgba(255,255,255,0.07)', margin: '4px 6px' }} />
+                {/* Local model / connection status */}
+                {!offlineState?.model ? (
+                  <button onClick={() => { loadLocalModel(); setShowHeaderMenu(false); }} style={menuItemStyle(C.purple)}>
+                    🧠 LOAD LOCAL MODEL
+                  </button>
+                ) : (
+                  <div style={{ padding: '6px 10px', fontSize: 10, color: C.green }}>
+                    🧠 {offlineState.model.displayName}
+                    {offlineState.status === 'loading' && ` · ${Math.round(offlineState.loadProgress * 100)}%`}
+                  </div>
+                )}
+                <div style={{ padding: '6px 10px', fontSize: 9, color: isOffline ? C.amber : C.green, display: 'flex', alignItems: 'center', gap: 5 }}>
+                  <div style={{ width: 5, height: 5, borderRadius: '50%', backgroundColor: isOffline ? C.amber : C.green }} />
+                  {isOffline ? 'OFFLINE' : 'ONLINE'}
+                </div>
+              </div>
+            )}
+          </div>
         </div>
       </div>
 
@@ -3198,7 +2637,7 @@ CRITICAL INSTRUCTION: Continue directly from the exact point where you stopped. 
           justifyContent: 'space-between',
           fontSize: 11,
           color: '#94a3b8',
-          fontFamily: '"SF Mono", "Fira Code", monospace',
+          fontFamily: '"IBM Plex Mono", "SF Mono", monospace',
           zIndex: 20,
         }}
       >
@@ -3206,10 +2645,10 @@ CRITICAL INSTRUCTION: Continue directly from the exact point where you stopped. 
           <span style={{
             display: 'inline-flex', alignItems: 'center', gap: 5,
             padding: '1px 6px', borderRadius: 4,
-            background: isDreaming ? 'rgba(192, 132, 252, 0.2)' : 'rgba(0, 204, 255, 0.15)',
+            background: isDreaming ? 'rgba(192, 132, 252, 0.2)' : 'rgba(103, 232, 249, 0.15)',
             color: isDreaming ? '#c084fc' : '#38bdf8',
             fontSize: 10, fontWeight: 700,
-            border: `1px solid ${isDreaming ? 'rgba(192, 132, 252, 0.4)' : 'rgba(0, 204, 255, 0.3)'}`,
+            border: `1px solid ${isDreaming ? 'rgba(192, 132, 252, 0.4)' : 'rgba(103, 232, 249, 0.3)'}`,
           }}>
             <span style={{
               width: 6, height: 6, borderRadius: '50%',
@@ -3238,7 +2677,7 @@ CRITICAL INSTRUCTION: Continue directly from the exact point where you stopped. 
             cursor: 'pointer',
             fontSize: 10,
             padding: '2px 6px',
-            fontFamily: '"SF Mono", monospace',
+            fontFamily: '"IBM Plex Mono", "SF Mono", monospace',
           }}
         >
           {isStreamExpanded ? '▲ Hide Trace' : `▼ Cognition Trace (${streamOfConsciousness.length})`}
@@ -3256,7 +2695,7 @@ CRITICAL INSTRUCTION: Continue directly from the exact point where you stopped. 
             maxHeight: 180,
             overflowY: 'auto',
             fontSize: 11,
-            fontFamily: '"SF Mono", "Fira Code", monospace',
+            fontFamily: '"IBM Plex Mono", "SF Mono", monospace',
             zIndex: 19,
           }}
         >
@@ -3293,7 +2732,7 @@ CRITICAL INSTRUCTION: Continue directly from the exact point where you stopped. 
             alignItems: 'center',
             justifyContent: 'space-between',
             fontSize: 11,
-            fontFamily: '"SF Mono", "Fira Code", monospace',
+            fontFamily: '"IBM Plex Mono", "SF Mono", monospace',
             zIndex: 19,
           }}
         >
@@ -3354,6 +2793,175 @@ CRITICAL INSTRUCTION: Continue directly from the exact point where you stopped. 
         </div>
       )}
 
+      {/* Autonomous Agent Mission Drawer */}
+      {showAutonomousDrawer && (
+        <div
+          id="cortex-autonomous-drawer"
+          style={{
+            background: 'rgba(10, 10, 24, 0.98)',
+            borderBottom: '1px solid rgba(168, 85, 247, 0.4)',
+            padding: '16px 24px',
+            fontSize: 11,
+            fontFamily: '"IBM Plex Mono", "SF Mono", monospace',
+            zIndex: 20,
+            backdropFilter: 'blur(12px)',
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+              <span style={{ fontSize: 16 }}>⚡</span>
+              <span style={{ fontWeight: 700, fontSize: 13, color: '#c084fc', letterSpacing: '0.05em' }}>
+                CORTEX AUTONOMOUS EXECUTION HOST (SELF-DRIVING BODY)
+              </span>
+              <span style={{
+                fontSize: 10,
+                padding: '2px 8px',
+                borderRadius: 10,
+                background: autonomousRunning ? 'rgba(234, 179, 8, 0.2)' : 'rgba(34, 197, 94, 0.2)',
+                color: autonomousRunning ? '#facc15' : '#4ade80',
+                border: `1px solid ${autonomousRunning ? '#facc15' : '#4ade80'}`,
+              }}>
+                {autonomousRunning ? '● EXECUTING CLOSED LOOP' : '● READY FOR DIRECTIVE'}
+              </span>
+            </div>
+
+            {/* Preset Mission Buttons */}
+            <div style={{ display: 'flex', gap: 6 }}>
+              {[
+                'Audit physical host diagnostics and verify Cortex test gates',
+                'Inspect active Chrome tabs and deduplicate',
+                'Hacker News portal research via browser CDP',
+              ].map((preset, idx) => (
+                <button
+                  key={idx}
+                  onClick={() => {
+                    setAutonomousGoal(preset);
+                    triggerAutonomousMission(preset);
+                  }}
+                  disabled={autonomousRunning}
+                  style={{
+                    padding: '3px 8px',
+                    borderRadius: 6,
+                    background: 'rgba(168, 85, 247, 0.1)',
+                    border: '1px solid rgba(168, 85, 247, 0.3)',
+                    color: '#e9d5ff',
+                    cursor: autonomousRunning ? 'not-allowed' : 'pointer',
+                    fontSize: 10,
+                  }}
+                >
+                  {idx === 0 ? '🛡️ Test Gates' : idx === 1 ? '🌐 Tab Hygiene' : '📰 HN Research'}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Goal Input & Launch Button */}
+          <div style={{ display: 'flex', gap: 10, marginBottom: autonomousResult ? 14 : 0 }}>
+            <input
+              type="text"
+              value={autonomousGoal}
+              onChange={(e) => setAutonomousGoal(e.target.value)}
+              placeholder="Enter high-level autonomous mission objective..."
+              disabled={autonomousRunning}
+              style={{
+                flex: 1,
+                padding: '8px 14px',
+                borderRadius: 8,
+                background: 'rgba(15, 23, 42, 0.8)',
+                border: '1px solid rgba(168, 85, 247, 0.4)',
+                color: '#f8fafc',
+                fontSize: 12,
+                outline: 'none',
+                fontFamily: 'inherit',
+              }}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') triggerAutonomousMission();
+              }}
+            />
+            <button
+              id="cortex-launch-autonomous-mission-btn"
+              onClick={() => triggerAutonomousMission()}
+              disabled={autonomousRunning || !autonomousGoal.trim()}
+              style={{
+                padding: '8px 18px',
+                borderRadius: 8,
+                background: autonomousRunning ? 'rgba(168, 85, 247, 0.3)' : 'linear-gradient(135deg, #9333ea, #a855f7)',
+                border: 'none',
+                color: '#fff',
+                fontWeight: 700,
+                fontSize: 11,
+                cursor: autonomousRunning ? 'not-allowed' : 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                gap: 6,
+                boxShadow: '0 0 12px rgba(168, 85, 247, 0.4)',
+              }}
+            >
+              <span>{autonomousRunning ? '⏳' : '🚀'}</span>
+              <span>{autonomousRunning ? 'EXECUTING...' : 'DISPATCH MISSION'}</span>
+            </button>
+          </div>
+
+          {/* Mission Execution Trace & Results */}
+          {autonomousResult && (
+            <div style={{
+              marginTop: 12,
+              padding: '12px 16px',
+              borderRadius: 8,
+              background: 'rgba(15, 23, 42, 0.9)',
+              border: '1px solid rgba(148, 163, 184, 0.2)',
+            }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                <span style={{ fontWeight: 700, color: '#4ade80' }}>
+                  ✓ {autonomousResult.summary}
+                </span>
+                <span style={{ color: '#94a3b8', fontSize: 10 }}>
+                  Runtime: {autonomousResult.durationMs}ms · Succeeded: {autonomousResult.completedSteps}/{autonomousResult.totalSteps}
+                </span>
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6, maxHeight: 180, overflowY: 'auto' }}>
+                {(autonomousResult.goal?.steps || []).map((step: any, idx: number) => (
+                  <div key={idx} style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    padding: '6px 10px',
+                    borderRadius: 6,
+                    background: step.status === 'completed' ? 'rgba(34, 197, 94, 0.08)' : step.status === 'vetoed' ? 'rgba(234, 179, 8, 0.1)' : 'rgba(239, 68, 68, 0.1)',
+                    borderLeft: `3px solid ${step.status === 'completed' ? '#22c55e' : step.status === 'vetoed' ? '#eab308' : '#ef4444'}`,
+                    fontSize: 11,
+                  }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <span style={{ color: '#94a3b8' }}>#{step.stepNumber}</span>
+                      <span style={{ color: '#f1f5f9', fontWeight: 600 }}>{step.title}</span>
+                      <span style={{
+                        padding: '1px 5px',
+                        borderRadius: 4,
+                        fontSize: 9,
+                        background: 'rgba(148, 163, 184, 0.15)',
+                        color: '#94a3b8',
+                      }}>
+                        {step.tool}
+                      </span>
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                      <span style={{ color: '#64748b', fontSize: 10 }}>{step.durationMs}ms</span>
+                      <span style={{
+                        color: step.status === 'completed' ? '#4ade80' : step.status === 'vetoed' ? '#facc15' : '#f87171',
+                        fontWeight: 600,
+                        fontSize: 10,
+                      }}>
+                        {step.status.toUpperCase()}
+                      </span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Circadian Dream Debrief Modal */}
       {dreamReportModal && (
         <div style={{
@@ -3393,7 +3001,7 @@ CRITICAL INSTRUCTION: Continue directly from the exact point where you stopped. 
               padding: 12,
               borderRadius: 8,
               fontSize: 11,
-              fontFamily: '"SF Mono", monospace',
+              fontFamily: '"IBM Plex Mono", "SF Mono", monospace',
               color: '#94a3b8',
               marginBottom: 16,
             }}>
@@ -3438,7 +3046,7 @@ CRITICAL INSTRUCTION: Continue directly from the exact point where you stopped. 
             flexDirection: 'column',
             alignItems: 'center',
             justifyContent: 'center',
-            border: '2px dashed #00ccff',
+            border: '2px dashed #67e8f9',
             pointerEvents: 'none',
           }}>
             <div style={{ fontSize: 44, marginBottom: 12 }}>📥</div>
@@ -3461,459 +3069,17 @@ CRITICAL INSTRUCTION: Continue directly from the exact point where you stopped. 
           flexDirection: 'column',
           transition: 'flex 0.25s cubic-bezier(0.16, 1, 0.3, 1)',
         }}>
-        {messages.map((msg) => (
-          <div key={msg.id} style={{ marginBottom: 16, maxWidth: 680 }}>
-            {msg.role === 'user' && (
-              <div>
-                <div style={{ fontSize: 10, color: C.dim, marginBottom: 4 }}>You</div>
-                <div style={{ fontSize: 14, color: C.user }}>{msg.content}</div>
-              </div>
-            )}
-
-            {msg.role === 'ai' && (
-              <div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
-                  <span style={{
-                    fontSize: 10,
-                    fontWeight: 600,
-                    fontFamily: '"SF Mono", monospace',
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: 5,
-                    color: msg.streaming ? (msg.content ? C.cortex : '#c084fc') : '#94a3b8',
-                  }}>
-                    {msg.streaming && !msg.content ? (
-                      <>
-                        <span style={{
-                          display: 'inline-block',
-                          width: 6, height: 6,
-                          borderRadius: '50%',
-                          background: '#c084fc',
-                          boxShadow: '0 0 6px #c084fc',
-                          animation: 'pulse 1.2s infinite',
-                        }} />
-                        <span>Thinking...</span>
-                      </>
-                    ) : msg.streaming ? (
-                      <>
-                        <span style={{
-                          display: 'inline-block',
-                          width: 6, height: 6,
-                          borderRadius: '50%',
-                          background: C.cortex,
-                          boxShadow: `0 0 6px ${C.cortex}`,
-                          animation: 'pulse 1s infinite',
-                        }} />
-                        <span>CORTEX</span>
-                      </>
-                    ) : (
-                      <span>CORTEX</span>
-                    )}
-                  </span>
-
-                  {msg.meta && !msg.streaming && (
-                    <span style={{
-                      fontFamily: '"SF Mono", monospace', fontSize: 9,
-                      color: (msg.meta.realityScore ?? 1) > 0.5 ? C.green
-                        : (msg.meta.realityScore ?? 1) > 0.3 ? C.amber : C.red,
-                    }}>
-                      ◉ {msg.meta.realityScore != null ? `${Math.round(msg.meta.realityScore * 100)}%` : ''}
-                      {msg.meta.source && <span style={{ color: C.dim }}> · {msg.meta.source}</span>}
-                    </span>
-                  )}
-                  {msg.meta?.selfRepaired && (
-                    <span style={{
-                      fontFamily: '"SF Mono", monospace', fontSize: 9,
-                      padding: '1px 5px', borderRadius: 3,
-                      background: 'rgba(0, 204, 255, 0.15)', border: `1px solid ${C.cortex}44`,
-                      color: C.cortex,
-                    }}>
-                      ⚡ Self-Repaired
-                    </span>
-                  )}
-                  {msg.streaming && msg.content && (
-                    <span style={{
-                      width: 4, height: 13,
-                      background: C.cortex,
-                      borderRadius: 1,
-                      animation: 'blink 0.8s infinite',
-                      display: 'inline-block',
-                      verticalAlign: 'middle',
-                    }} />
-                  )}
-                </div>
-                <div style={{ fontSize: 14, color: C.ai }}>
-                  {msg.streaming && !msg.content ? (
-                    <div style={{
-                      display: 'flex',
-                      flexDirection: 'column',
-                      gap: 10,
-                      padding: '12px 16px',
-                      borderRadius: 8,
-                      background: 'rgba(139, 92, 246, 0.06)',
-                      border: '1px solid rgba(139, 92, 246, 0.25)',
-                      backdropFilter: 'blur(8px)',
-                      margin: '6px 0',
-                    }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 3, height: 18 }}>
-                          <span style={{ width: 3, height: 14, background: '#c084fc', borderRadius: 2, animation: 'waveBounce 1s ease-in-out infinite' }} />
-                          <span style={{ width: 3, height: 18, background: '#38bdf8', borderRadius: 2, animation: 'waveBounce 1s ease-in-out 0.2s infinite' }} />
-                          <span style={{ width: 3, height: 10, background: '#a78bfa', borderRadius: 2, animation: 'waveBounce 1s ease-in-out 0.4s infinite' }} />
-                        </div>
-                        <span style={{
-                          fontSize: 12,
-                          color: '#c084fc',
-                          fontFamily: '"SF Mono", monospace',
-                          letterSpacing: '0.02em',
-                        }}>
-                          Deliberating in Global Workspace (40Hz Gamma · Φ 1.24)...
-                        </span>
-                      </div>
-                      <div style={{
-                        width: '85%', height: 7, borderRadius: 4,
-                        background: 'linear-gradient(90deg, rgba(255,255,255,0.03) 0%, rgba(192,132,252,0.25) 50%, rgba(255,255,255,0.03) 100%)',
-                        backgroundSize: '200% 100%',
-                        animation: 'shimmer 1.8s infinite',
-                      }} />
-                      <div style={{
-                        width: '60%', height: 7, borderRadius: 4,
-                        background: 'linear-gradient(90deg, rgba(255,255,255,0.03) 0%, rgba(56,189,248,0.25) 50%, rgba(255,255,255,0.03) 100%)',
-                        backgroundSize: '200% 100%',
-                        animation: 'shimmer 1.8s infinite 0.3s',
-                      }} />
-                    </div>
-                  ) : !msg.content ? (
-                    <div style={{
-                      padding: '8px 12px',
-                      borderRadius: 6,
-                      background: 'rgba(239, 68, 68, 0.08)',
-                      border: '1px solid rgba(239, 68, 68, 0.2)',
-                      color: '#f87171',
-                      fontSize: 12,
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: 8,
-                    }}>
-                      <span>⚠️ Cognitive stream produced an empty response.</span>
-                      <button
-                        onClick={() => sendMessage()}
-                        style={{
-                          background: 'rgba(239, 68, 68, 0.15)',
-                          border: '1px solid rgba(239, 68, 68, 0.3)',
-                          color: '#f87171',
-                          borderRadius: 4,
-                          padding: '2px 8px',
-                          cursor: 'pointer',
-                          fontSize: 11,
-                        }}
-                      >
-                        Retry
-                      </button>
-                    </div>
-                  ) : (
-                    <>
-                      <ReactMarkdown
-                        remarkPlugins={[remarkGfm]}
-                        components={cortexMarkdownComponents}
-                      >
-                        {preprocessMarkdown(msg.content)}
-                      </ReactMarkdown>
-
-                      {/* Interactive 1-Click Action Chips */}
-                      {!msg.streaming && msg.content && (() => {
-                        const isLastAi = messages.filter(m => m.role === 'ai').slice(-1)[0]?.id === msg.id;
-                        const chips = getActionChipsForMessage(msg.content, isLastAi);
-                        if (chips.length === 0) return null;
-                        return (
-                          <div
-                            className="cortex-action-chips"
-                            style={{
-                              display: 'flex',
-                              flexWrap: 'wrap',
-                              gap: 6,
-                              marginTop: 10,
-                              paddingTop: 8,
-                              borderTop: '1px solid rgba(255, 255, 255, 0.05)',
-                            }}
-                          >
-                            {chips.map(chip => (
-                              <button
-                                key={chip.id}
-                                id={`action-chip-${chip.id}`}
-                                data-action={chip.prompt}
-                                onClick={() => sendMessage(chip.prompt)}
-                                style={{
-                                  display: 'inline-flex',
-                                  alignItems: 'center',
-                                  gap: 6,
-                                  padding: '4px 10px',
-                                  borderRadius: 16,
-                                  fontSize: 11,
-                                  fontWeight: 500,
-                                  fontFamily: '"SF Mono", monospace',
-                                  background: 'rgba(255, 255, 255, 0.04)',
-                                  border: `1px solid ${chip.color ? `${chip.color}40` : 'rgba(255, 255, 255, 0.12)'}`,
-                                  color: chip.color || '#e2e8f0',
-                                  cursor: 'pointer',
-                                  transition: 'all 0.15s ease',
-                                  boxShadow: '0 1px 3px rgba(0,0,0,0.2)',
-                                }}
-                                onMouseEnter={(e) => {
-                                  e.currentTarget.style.background = chip.color ? `${chip.color}18` : 'rgba(255, 255, 255, 0.08)';
-                                  e.currentTarget.style.borderColor = chip.color ? `${chip.color}90` : 'rgba(255, 255, 255, 0.25)';
-                                  e.currentTarget.style.transform = 'translateY(-1px)';
-                                }}
-                                onMouseLeave={(e) => {
-                                  e.currentTarget.style.background = 'rgba(255, 255, 255, 0.04)';
-                                  e.currentTarget.style.borderColor = chip.color ? `${chip.color}40` : 'rgba(255, 255, 255, 0.12)';
-                                  e.currentTarget.style.transform = 'translateY(0)';
-                                }}
-                              >
-                                <span>{chip.icon}</span>
-                                <span>{chip.label}</span>
-                              </button>
-                            ))}
-                          </div>
-                        );
-                      })()}
-                    </>
-                  )}
-                </div>
-              </div>
-            )}
-
-            {msg.role === 'tool' && msg.meta?.toolExecution && (() => {
-              const isExpanded = autoExpandTools || Boolean(expandedTools[msg.id]);
-              const meta = getToolMeta(msg.meta.toolExecution.tool, msg.meta.toolExecution.args);
-              const status = msg.meta.toolExecution.status;
-              const isSuccess = status === 'completed' && msg.meta.toolExecution.result?.ok !== false;
-              const isFail = status === 'failed' || msg.meta.toolExecution.result?.ok === false;
-
-              return (
-                <div style={{
-                  margin: '6px 0 12px 0',
-                  maxWidth: 680,
-                  background: 'rgba(17, 17, 19, 0.75)',
-                  border: `1px solid ${isSuccess ? 'rgba(34, 197, 94, 0.25)' : isFail ? 'rgba(239, 68, 68, 0.3)' : 'rgba(0, 204, 255, 0.3)'}`,
-                  borderRadius: 8,
-                  overflow: 'hidden',
-                  backdropFilter: 'blur(8px)',
-                  transition: 'all 0.2s ease',
-                  boxShadow: '0 2px 8px rgba(0, 0, 0, 0.25)',
-                }}>
-                  {/* Sleek Action Pill Header */}
-                  <div
-                    onClick={() => toggleToolExpanded(msg.id)}
-                    style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'space-between',
-                      padding: '7px 12px',
-                      cursor: 'pointer',
-                      userSelect: 'none',
-                      background: isExpanded ? 'rgba(22, 22, 26, 0.95)' : 'rgba(22, 22, 26, 0.5)',
-                      transition: 'background 0.15s ease',
-                    }}
-                  >
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 9 }}>
-                      <span style={{ fontSize: 13 }}>{meta.icon}</span>
-                      <span style={{
-                        fontSize: 12,
-                        fontWeight: 500,
-                        color: isSuccess ? '#e4e4e7' : isFail ? '#f87171' : C.cortex,
-                      }}>
-                        {meta.title}
-                      </span>
-                      <span style={{
-                        width: 6,
-                        height: 6,
-                        borderRadius: '50%',
-                        background: isSuccess ? C.green : isFail ? C.red : C.cortex,
-                        boxShadow: `0 0 6px ${isSuccess ? C.green : C.cortex}`,
-                        display: 'inline-block',
-                      }} />
-                    </div>
-
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                      {msg.meta.toolExecution.durationMs != null && (
-                        <span style={{
-                          fontSize: 10,
-                          fontFamily: '"SF Mono", monospace',
-                          color: '#71717a',
-                        }}>
-                          {msg.meta.toolExecution.durationMs}ms
-                        </span>
-                      )}
-                      <span style={{
-                        fontSize: 9,
-                        padding: '1px 6px',
-                        borderRadius: 3,
-                        background: 'rgba(0, 204, 255, 0.1)',
-                        color: C.cortex,
-                        border: `1px solid ${C.cortex}33`,
-                        fontFamily: '"SF Mono", monospace',
-                      }}>
-                        Φ {msg.meta.toolExecution.phi?.toFixed(2) ?? '1.24'}
-                      </span>
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          toggleToolExpanded(msg.id);
-                        }}
-                        style={{
-                          background: isExpanded ? 'rgba(255, 255, 255, 0.08)' : 'transparent',
-                          border: '1px solid rgba(255, 255, 255, 0.1)',
-                          borderRadius: 4,
-                          color: isExpanded ? C.cortex : '#a1a1aa',
-                          fontSize: 10,
-                          padding: '2px 7px',
-                          cursor: 'pointer',
-                          display: 'flex',
-                          alignItems: 'center',
-                          gap: 4,
-                          fontFamily: '"SF Mono", monospace',
-                        }}
-                      >
-                        {isExpanded ? 'Details ▴' : 'Details ▾'}
-                      </button>
-                    </div>
-                  </div>
-
-                  {/* Collapsible Inspection Drawer */}
-                  {isExpanded && (
-                    <div style={{
-                      padding: '10px 12px',
-                      borderTop: '1px solid rgba(255, 255, 255, 0.06)',
-                      background: '#09090b',
-                      fontFamily: '"SF Mono", "Fira Code", monospace',
-                    }}>
-                      {msg.meta.toolExecution.args?.command && (
-                        <div style={{ color: '#a1a1aa', fontSize: 11, marginBottom: 8, display: 'flex', alignItems: 'center', gap: 6 }}>
-                          <span style={{ color: C.green }}>$</span>
-                          <span style={{ color: '#f4f4f5' }}>{String(msg.meta.toolExecution.args.command)}</span>
-                        </div>
-                      )}
-                      {msg.meta.toolExecution.result?.diff ? (
-                        <div style={{
-                          margin: '2px 0 6px 0',
-                          padding: 10,
-                          background: '#040405',
-                          borderRadius: 6,
-                          border: '1px solid #1c1c20',
-                          fontFamily: '"SF Mono", monospace',
-                          fontSize: 11,
-                        }}>
-                          <div style={{ color: '#a1a1aa', fontSize: 10, marginBottom: 6, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                            <span>📄 Diff Applied: <strong style={{ color: '#f4f4f5' }}>{msg.meta.toolExecution.result.diff.path}</strong></span>
-                            <span style={{ color: C.green, fontSize: 10, fontWeight: 600 }}>✔ Replaced</span>
-                          </div>
-                          <div style={{
-                            background: 'rgba(239, 68, 68, 0.1)',
-                            borderLeft: '3px solid #ef4444',
-                            padding: '6px 8px',
-                            margin: '4px 0',
-                            color: '#fca5a5',
-                            whiteSpace: 'pre-wrap',
-                            wordBreak: 'break-all',
-                            maxHeight: 120,
-                            overflowY: 'auto',
-                          }}>
-                            <div style={{ fontSize: 9, color: '#f87171', fontWeight: 600, textTransform: 'uppercase', marginBottom: 2 }}>- Target Removed:</div>
-                            {msg.meta.toolExecution.result.diff.targetContent}
-                          </div>
-                          <div style={{
-                            background: 'rgba(34, 197, 94, 0.1)',
-                            borderLeft: '3px solid #22c55e',
-                            padding: '6px 8px',
-                            margin: '4px 0',
-                            color: '#86efac',
-                            whiteSpace: 'pre-wrap',
-                            wordBreak: 'break-all',
-                            maxHeight: 120,
-                            overflowY: 'auto',
-                          }}>
-                            <div style={{ fontSize: 9, color: '#4ade80', fontWeight: 600, textTransform: 'uppercase', marginBottom: 2 }}>+ Replacement Inserted:</div>
-                            {msg.meta.toolExecution.result.diff.replacementContent}
-                          </div>
-                        </div>
-                      ) : (
-                        msg.meta.toolExecution.result && (
-                          <pre style={{
-                            margin: 0,
-                            padding: 10,
-                            background: '#040405',
-                            borderRadius: 5,
-                            border: '1px solid #1c1c20',
-                            color: isSuccess ? '#e4e4e7' : '#f87171',
-                            fontSize: 11,
-                            lineHeight: 1.5,
-                            maxHeight: 220,
-                            overflowY: 'auto',
-                            whiteSpace: 'pre-wrap',
-                            wordBreak: 'break-all',
-                          }}>
-                            {msg.meta.toolExecution.result.stdout ||
-                             msg.meta.toolExecution.result.stderr ||
-                             msg.meta.toolExecution.result.content ||
-                             msg.meta.toolExecution.result.hotLayer ||
-                             msg.meta.toolExecution.result.matches ||
-                             msg.meta.toolExecution.result.results ||
-                             (msg.meta.toolExecution.result.tabs
-                               ? msg.meta.toolExecution.result.tabs.map((t: any) => `• ${t.title}\n  ${t.url}`).join('\n\n')
-                               : '') ||
-                             (msg.meta.toolExecution.result.targetTab
-                               ? `✔ Focused Chrome tab: "${msg.meta.toolExecution.result.targetTab.title}"\n  ${msg.meta.toolExecution.result.targetTab.url}`
-                               : '') ||
-                             (msg.meta.toolExecution.result.closedCount != null
-                               ? `✔ Closed ${msg.meta.toolExecution.result.closedCount} tabs matching filter`
-                               : '') ||
-                             (msg.meta.toolExecution.result.replaced
-                               ? `✔ Successfully updated ${msg.meta.toolExecution.result.path}`
-                               : '') ||
-                             (msg.meta.toolExecution.result.bytesWritten != null
-                               ? `✔ Successfully wrote ${msg.meta.toolExecution.result.bytesWritten} bytes to ${msg.meta.toolExecution.result.path}`
-                               : '') ||
-                             (msg.meta.toolExecution.result.episodic
-                               ? `✔ Episodic Memory (${msg.meta.toolExecution.result.action}):\n${JSON.stringify(msg.meta.toolExecution.result.episodic, null, 2)}`
-                               : '') ||
-                             msg.meta.toolExecution.result.excerpt ||
-                             JSON.stringify(msg.meta.toolExecution.result, null, 2)}
-                          </pre>
-                        )
-                      )}
-                    </div>
-                  )}
-                </div>
-              );
-            })()}
-
-            {(msg.role === 'cortex' || msg.role === 'system') && (
-              <div style={{
-                padding: '10px 14px', marginLeft: msg.role === 'cortex' ? 16 : 0, borderRadius: 8,
-                background: msg.content.startsWith('⛔') ? 'rgba(239,68,68,0.06)'
-                  : msg.content.startsWith('⚠') ? 'rgba(245,158,11,0.06)'
-                  : msg.content.startsWith('🛡') ? 'rgba(124,58,237,0.06)'
-                  : 'rgba(0,204,255,0.06)',
-                borderLeft: `2px solid ${
-                  msg.content.startsWith('⛔') ? C.red
-                    : msg.content.startsWith('⚠') ? C.amber
-                    : msg.content.startsWith('🛡') ? C.purple
-                    : msg.content.startsWith('🧠') ? C.green
-                    : C.cortex
-                }`,
-                fontSize: 13,
-                color: msg.content.startsWith('⛔') ? C.red
-                  : msg.content.startsWith('⚠') ? C.amber
-                  : msg.content.startsWith('❌') ? C.red
-                  : C.ai,
-                lineHeight: 1.5,
-              }}>
-                {msg.content}
-              </div>
-            )}
-          </div>
-        ))}
+        <CortexMessageList
+          messages={messages}
+          copiedMessageId={copiedMessageId}
+          speakingMessageId={speakingMessageId}
+          expandedTools={expandedTools}
+          autoExpandTools={autoExpandTools}
+          handleCopyMessage={handleCopyMessage}
+          handleToggleReadMessage={handleToggleReadMessage}
+          toggleToolExpanded={toggleToolExpanded}
+          sendMessage={sendMessage}
+        />
           <div ref={chatEndRef} />
         </div>
 
@@ -3944,9 +3110,9 @@ CRITICAL INSTRUCTION: Continue directly from the exact point where you stopped. 
                   top: 52,
                   left: 16,
                   zIndex: 100,
-                  background: 'rgba(0, 204, 255, 0.18)',
-                  border: '1px solid #00ccff',
-                  boxShadow: '0 0 16px rgba(0, 204, 255, 0.5)',
+                  background: 'rgba(103, 232, 249, 0.18)',
+                  border: '1px solid #67e8f9',
+                  boxShadow: '0 0 16px rgba(103, 232, 249, 0.5)',
                   borderRadius: 16,
                   padding: '4px 12px',
                   color: '#38bdf8',
@@ -3955,11 +3121,11 @@ CRITICAL INSTRUCTION: Continue directly from the exact point where you stopped. 
                   display: 'flex',
                   alignItems: 'center',
                   gap: 6,
-                  fontFamily: '"SF Mono", monospace',
+                  fontFamily: '"IBM Plex Mono", "SF Mono", monospace',
                   letterSpacing: '0.04em',
                 }}
               >
-                <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#00ccff', boxShadow: '0 0 6px #00ccff' }} />
+                <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#67e8f9', boxShadow: '0 0 6px #67e8f9' }} />
                 <span>👁️ GAZE ACTIVE: {activeAttentionTarget.toUpperCase()}</span>
               </div>
             )}
@@ -3971,7 +3137,7 @@ CRITICAL INSTRUCTION: Continue directly from the exact point where you stopped. 
                 top: 52,
                 right: 16,
                 zIndex: 100,
-                background: 'rgba(0, 204, 255, 0.95)',
+                background: 'rgba(103, 232, 249, 0.95)',
                 color: '#04060b',
                 fontWeight: 600,
                 fontSize: 11,
@@ -4003,8 +3169,8 @@ CRITICAL INSTRUCTION: Continue directly from the exact point where you stopped. 
               <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                 <span style={{
                   width: 8, height: 8, borderRadius: '50%',
-                  background: canvasTab === 'sheet' ? '#10b981' : canvasTab === 'doc' ? '#c084fc' : canvasTab === 'file' ? '#f59e0b' : '#00ccff',
-                  boxShadow: `0 0 8px ${canvasTab === 'sheet' ? '#10b981' : canvasTab === 'doc' ? '#c084fc' : canvasTab === 'file' ? '#f59e0b' : '#00ccff'}`,
+                  background: canvasTab === 'sheet' ? '#10b981' : canvasTab === 'doc' ? '#c084fc' : canvasTab === 'file' ? '#f59e0b' : canvasTab === 'artifact' ? '#e879f9' : '#67e8f9',
+                  boxShadow: `0 0 8px ${canvasTab === 'sheet' ? '#10b981' : canvasTab === 'doc' ? '#c084fc' : canvasTab === 'file' ? '#f59e0b' : canvasTab === 'artifact' ? '#e879f9' : '#67e8f9'}`,
                   animation: 'pulse 1.5s infinite',
                 }} />
                 <span style={{ fontWeight: 600, color: '#f8fafc', letterSpacing: '-0.01em' }}>
@@ -4018,12 +3184,72 @@ CRITICAL INSTRUCTION: Continue directly from the exact point where you stopped. 
                   borderRadius: 4,
                   fontFamily: 'monospace',
                 }}>
-                  {canvasTab === 'web' ? (previewUrl || '/sandbox/...') : canvasTab === 'sheet' ? activeSpreadsheet.title : canvasTab === 'doc' ? activeDocument.title : 'Project Files'}
+                  {canvasTab === 'web' ? (previewUrl || '/sandbox/...') : canvasTab === 'sheet' ? activeSpreadsheet.title : canvasTab === 'doc' ? activeDocument.title : canvasTab === 'artifact' ? (activeArtifact?.title || 'Artifact') : 'Project Files'}
                 </span>
               </div>
 
               {/* Viewport & Drawer Controls */}
               <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                {/* 1-Click Pin to 3D Visualizer Surface */}
+                <button
+                  id="btn-pin-canvas-to-surface"
+                  onClick={() => {
+                    if (canvasTab === 'doc') {
+                      openSurfacePanel({
+                        kind: 'document',
+                        title: activeDocument.title || 'Document',
+                        artifact: {
+                          id: `doc-${Date.now()}`,
+                          kind: 'document',
+                          title: activeDocument.title || 'Document',
+                          format: 'markdown',
+                          content: activeDocument.content || '',
+                          source: 'canvas_doc',
+                        },
+                        pinned: true,
+                      });
+                      showCanvasToast(`Pinned "${activeDocument.title}" to Visualizer surface`);
+                    } else if (canvasTab === 'sheet') {
+                      openSurfacePanel({
+                        kind: 'sheet',
+                        title: activeSpreadsheet.title || 'Spreadsheet',
+                        sheet: activeSpreadsheet,
+                        pinned: true,
+                      });
+                      showCanvasToast(`Pinned "${activeSpreadsheet.title}" to Visualizer surface`);
+                    } else if (canvasTab === 'web' && previewUrl) {
+                      openSurfacePanel({
+                        kind: 'web',
+                        title: activeProjectSlug || 'Web App',
+                        web: { url: previewUrl, slug: activeProjectSlug || undefined },
+                        pinned: true,
+                      });
+                      showCanvasToast(`Pinned "${activeProjectSlug || 'Web App'}" to Visualizer surface`);
+                    } else if (canvasTab === 'artifact' && activeArtifact) {
+                      openSurfacePanel({
+                        kind: activeArtifact.kind === 'document' ? 'document' : 'artifact',
+                        title: activeArtifact.title || activeArtifact.kind,
+                        artifact: activeArtifact,
+                        pinned: true,
+                      });
+                      showCanvasToast(`Pinned "${activeArtifact.title || 'Artifact'}" to Visualizer surface`);
+                    } else {
+                      showCanvasToast('Nothing loaded to pin yet');
+                    }
+                  }}
+                  title="Pin active canvas to Cortex Visualizer 3D surface"
+                  style={{
+                    display: 'flex', alignItems: 'center', gap: 4,
+                    padding: '3px 8px', borderRadius: 4,
+                    background: 'rgba(232, 121, 249, 0.12)',
+                    border: '1px solid rgba(232, 121, 249, 0.35)',
+                    color: '#e879f9', fontSize: 10, fontFamily: 'monospace',
+                    cursor: 'pointer', fontWeight: 600,
+                  }}
+                >
+                  📌 PIN TO SURFACE
+                </button>
+
                 {canvasTab === 'web' && (
                   <>
                     <div style={{ display: 'flex', background: 'rgba(255,255,255,0.05)', borderRadius: 6, padding: 2, border: `1px solid ${C.border}` }}>
@@ -4031,7 +3257,7 @@ CRITICAL INSTRUCTION: Continue directly from the exact point where you stopped. 
                         onClick={() => setPreviewDevice('desktop')}
                         title="Desktop View (100%)"
                         style={{
-                          background: previewDevice === 'desktop' ? 'rgba(0, 204, 255, 0.2)' : 'transparent',
+                          background: previewDevice === 'desktop' ? 'rgba(103, 232, 249, 0.2)' : 'transparent',
                           border: 'none',
                           color: previewDevice === 'desktop' ? C.cortex : C.dim,
                           borderRadius: 4,
@@ -4046,7 +3272,7 @@ CRITICAL INSTRUCTION: Continue directly from the exact point where you stopped. 
                         onClick={() => setPreviewDevice('tablet')}
                         title="Tablet View (768px)"
                         style={{
-                          background: previewDevice === 'tablet' ? 'rgba(0, 204, 255, 0.2)' : 'transparent',
+                          background: previewDevice === 'tablet' ? 'rgba(103, 232, 249, 0.2)' : 'transparent',
                           border: 'none',
                           color: previewDevice === 'tablet' ? C.cortex : C.dim,
                           borderRadius: 4,
@@ -4061,7 +3287,7 @@ CRITICAL INSTRUCTION: Continue directly from the exact point where you stopped. 
                         onClick={() => setPreviewDevice('mobile')}
                         title="Mobile View (375px)"
                         style={{
-                          background: previewDevice === 'mobile' ? 'rgba(0, 204, 255, 0.2)' : 'transparent',
+                          background: previewDevice === 'mobile' ? 'rgba(103, 232, 249, 0.2)' : 'transparent',
                           border: 'none',
                           color: previewDevice === 'mobile' ? C.cortex : C.dim,
                           borderRadius: 4,
@@ -4153,7 +3379,7 @@ CRITICAL INSTRUCTION: Continue directly from the exact point where you stopped. 
                     padding: '4px 10px',
                     borderRadius: 4,
                     border: 'none',
-                    background: canvasTab === 'web' ? 'rgba(0, 204, 255, 0.15)' : 'transparent',
+                    background: canvasTab === 'web' ? 'rgba(103, 232, 249, 0.15)' : 'transparent',
                     color: canvasTab === 'web' ? C.cortex : C.dim,
                     fontWeight: canvasTab === 'web' ? 600 : 400,
                     cursor: 'pointer',
@@ -4222,6 +3448,22 @@ CRITICAL INSTRUCTION: Continue directly from the exact point where you stopped. 
                   }}
                 >
                   <span>📁</span> Project Files
+                </button>
+                <button
+                  id="tab-btn-artifact"
+                  onClick={() => { setCanvasTab('artifact'); localStorage.setItem('cortex_canvas_tab', 'artifact'); }}
+                  style={{
+                    padding: '4px 10px',
+                    borderRadius: 4,
+                    border: 'none',
+                    background: canvasTab === 'artifact' ? 'rgba(232, 121, 249, 0.16)' : 'transparent',
+                    color: canvasTab === 'artifact' ? '#e879f9' : C.dim,
+                    fontWeight: canvasTab === 'artifact' ? 600 : 400,
+                    cursor: 'pointer',
+                    display: 'flex', alignItems: 'center', gap: 5,
+                  }}
+                >
+                  <span>◈</span> Artifact
                 </button>
               </div>
 
@@ -4326,24 +3568,74 @@ CRITICAL INSTRUCTION: Continue directly from the exact point where you stopped. 
                 justifyContent: 'center',
                 padding: previewDevice === 'desktop' ? 0 : '16px',
               }}>
-                <iframe
-                  id="cortex-preview-iframe"
-                  key={previewKey}
-                  srcDoc={previewHtml || undefined}
-                  src={!previewHtml && previewUrl ? previewUrl : undefined}
-                  title="Cortex Live Web Preview"
-                  sandbox="allow-scripts allow-same-origin allow-forms allow-modals"
-                  style={{
-                    width: previewDevice === 'mobile' ? '375px' : previewDevice === 'tablet' ? '768px' : '100%',
-                    height: previewDevice === 'desktop' ? '100%' : '88%',
-                    maxHeight: '100%',
-                    border: previewDevice === 'desktop' ? 'none' : `1px solid ${C.border}`,
-                    borderRadius: previewDevice === 'desktop' ? 0 : 12,
-                    boxShadow: previewDevice === 'desktop' ? 'none' : '0 20px 40px rgba(0,0,0,0.6)',
-                    background: '#000',
-                    transition: 'width 0.25s ease',
-                  }}
-                />
+                {previewUrl || previewHtml ? (
+                  <iframe
+                    id="cortex-preview-iframe"
+                    key={previewKey}
+                    srcDoc={previewHtml || undefined}
+                    src={!previewHtml && previewUrl ? previewUrl : undefined}
+                    title="Cortex Live Web Preview"
+                    sandbox="allow-scripts allow-same-origin allow-forms allow-modals"
+                    style={{
+                      width: previewDevice === 'mobile' ? '375px' : previewDevice === 'tablet' ? '768px' : '100%',
+                      height: previewDevice === 'desktop' ? '100%' : '88%',
+                      maxHeight: '100%',
+                      border: previewDevice === 'desktop' ? 'none' : `1px solid ${C.border}`,
+                      borderRadius: previewDevice === 'desktop' ? 0 : 12,
+                      boxShadow: previewDevice === 'desktop' ? 'none' : '0 20px 40px rgba(0,0,0,0.6)',
+                      background: '#000',
+                      transition: 'width 0.25s ease',
+                    }}
+                  />
+                ) : (
+                  <div style={{ width: '100%', maxWidth: 540, padding: 24, textAlign: 'center' }}>
+                    <div style={{ fontSize: 32, marginBottom: 12 }}>🌐</div>
+                    <div style={{ fontSize: 14, fontWeight: 700, color: '#f8fafc', marginBottom: 6 }}>
+                      Cortex Web Sandbox Substrate
+                    </div>
+                    <p style={{ fontSize: 12, color: C.dim, lineHeight: 1.5, marginBottom: 20 }}>
+                      No active web application sandbox loaded. Select an archetype below or ask Cortex to build an application for your current workspace.
+                    </p>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                      <button
+                        onClick={() => sendMessage('Scaffold an executive operations dashboard with dark glass UI and live KPIs')}
+                        style={{
+                          padding: '10px 16px', borderRadius: 6,
+                          background: 'rgba(103, 232, 249, 0.08)', border: '1px solid rgba(103, 232, 249, 0.3)',
+                          color: C.cortex, fontSize: 12, fontWeight: 600, cursor: 'pointer',
+                          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                        }}
+                      >
+                        <span>⚡ Executive Operations Dashboard</span>
+                        <span style={{ fontSize: 10, opacity: 0.7 }}>Glassmorphic Dark Mode →</span>
+                      </button>
+                      <button
+                        onClick={() => sendMessage('Scaffold an interactive SaaS financial ROI calculator')}
+                        style={{
+                          padding: '10px 16px', borderRadius: 6,
+                          background: 'rgba(16, 185, 129, 0.08)', border: '1px solid rgba(16, 185, 129, 0.3)',
+                          color: '#10b981', fontSize: 12, fontWeight: 600, cursor: 'pointer',
+                          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                        }}
+                      >
+                        <span>📊 SaaS Financial ROI Calculator</span>
+                        <span style={{ fontSize: 10, opacity: 0.7 }}>Reactive Sliders & Formulas →</span>
+                      </button>
+                      <button
+                        onClick={() => sendMessage('Scaffold a modern landing page for an autonomous AI platform')}
+                        style={{
+                          padding: '10px 16px', borderRadius: 6,
+                          background: 'rgba(192, 132, 252, 0.08)', border: '1px solid rgba(192, 132, 252, 0.3)',
+                          color: '#c084fc', fontSize: 12, fontWeight: 600, cursor: 'pointer',
+                          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                        }}
+                      >
+                        <span>🚀 Modern AI Platform Landing Page</span>
+                        <span style={{ fontSize: 10, opacity: 0.7 }}>High-Conversion Hero Section →</span>
+                      </button>
+                    </div>
+                  </div>
+                )}
               </div>
             )}
 
@@ -4453,7 +3745,7 @@ CRITICAL INSTRUCTION: Continue directly from the exact point where you stopped. 
                     width: '100%',
                     borderCollapse: 'collapse',
                     fontSize: 11,
-                    fontFamily: '"SF Mono", monospace',
+                    fontFamily: '"IBM Plex Mono", "SF Mono", monospace',
                     color: '#e2e8f0',
                   }}>
                     <thead>
@@ -4632,7 +3924,7 @@ CRITICAL INSTRUCTION: Continue directly from the exact point where you stopped. 
                         border: 'none',
                         color: '#f8fafc',
                         fontSize: 12,
-                        fontFamily: '"SF Mono", monospace',
+                        fontFamily: '"IBM Plex Mono", "SF Mono", monospace',
                         lineHeight: 1.6,
                         outline: 'none',
                         resize: 'none',
@@ -4739,7 +4031,7 @@ CRITICAL INSTRUCTION: Continue directly from the exact point where you stopped. 
                           display: 'flex',
                           alignItems: 'center',
                           justifyContent: 'space-between',
-                          background: selectedFileName === file.name ? 'rgba(0, 204, 255, 0.15)' : 'transparent',
+                          background: selectedFileName === file.name ? 'rgba(103, 232, 249, 0.15)' : 'transparent',
                           color: selectedFileName === file.name ? C.cortex : '#94a3b8',
                           marginBottom: 2,
                         }}
@@ -4792,8 +4084,8 @@ CRITICAL INSTRUCTION: Continue directly from the exact point where you stopped. 
                           }
                         }}
                         style={{
-                          background: 'rgba(0, 204, 255, 0.15)',
-                          border: '1px solid rgba(0, 204, 255, 0.3)',
+                          background: 'rgba(103, 232, 249, 0.15)',
+                          border: '1px solid rgba(103, 232, 249, 0.3)',
                           color: C.cortex,
                           borderRadius: 4,
                           padding: '3px 10px',
@@ -4815,7 +4107,7 @@ CRITICAL INSTRUCTION: Continue directly from the exact point where you stopped. 
                       flex: 1,
                       background: '#04060b',
                       color: '#f8fafc',
-                      fontFamily: '"SF Mono", monospace',
+                      fontFamily: '"IBM Plex Mono", "SF Mono", monospace',
                       fontSize: 11,
                       lineHeight: 1.5,
                       border: 'none',
@@ -4827,22 +4119,90 @@ CRITICAL INSTRUCTION: Continue directly from the exact point where you stopped. 
                 </div>
               </div>
             )}
+
+            {/* ═══ TAB 5: GENERATIVE ARTIFACT ═══ */}
+            {canvasTab === 'artifact' && (
+              <div style={{
+                flex: 1, overflowY: 'auto', padding: 24,
+                background: 'radial-gradient(1200px 600px at 50% -10%, rgba(103,232,249,0.06), transparent), #05060a',
+                display: 'flex', flexDirection: 'column', alignItems: 'center',
+              }}>
+                <Suspense fallback={null}>
+                  {activeArtifact ? (
+                    <div style={{ width: '100%', maxWidth: 720 }}>
+                      <ArtifactRenderer artifact={activeArtifact} />
+                    </div>
+                  ) : (
+                    <div style={{ width: '100%', maxWidth: 640, display: 'flex', flexDirection: 'column', gap: 16 }}>
+                      <div style={{
+                        background: 'rgba(15, 23, 42, 0.7)',
+                        border: `1px solid ${C.border}`,
+                        borderRadius: 8,
+                        padding: 24,
+                        backdropFilter: 'blur(12px)',
+                        textAlign: 'center',
+                      }}>
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, marginBottom: 8 }}>
+                          <span style={{ color: '#e879f9', fontSize: 18 }}>◈</span>
+                          <span style={{ fontSize: 15, fontWeight: 700, color: '#f8fafc' }}>Cortex Generative Artifact Substrate</span>
+                        </div>
+                        <p style={{ fontSize: 12, color: C.dim, lineHeight: 1.5, margin: '0 0 20px 0' }}>
+                          The Artifact Canvas displays rich generative UI components, interactive charts, structured tables, and executive documents emitted during conversation or tool execution.
+                        </p>
+                        <div style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'center', gap: 10 }}>
+                          <button
+                            onClick={() => sendMessage('Generate a financial metrics chart for SyncScript showing MRR growth and compute optimization')}
+                            style={{
+                              padding: '8px 14px', borderRadius: 6,
+                              background: 'rgba(103, 232, 249, 0.1)', border: '1px solid rgba(103, 232, 249, 0.3)',
+                              color: C.cortex, fontSize: 11, cursor: 'pointer', fontFamily: 'monospace', fontWeight: 600,
+                            }}
+                          >
+                            📈 Generate Metrics Chart
+                          </button>
+                          <button
+                            onClick={() => sendMessage('Show my executive resume as an artifact')}
+                            style={{
+                              padding: '8px 14px', borderRadius: 6,
+                              background: 'rgba(192, 132, 252, 0.1)', border: '1px solid rgba(192, 132, 252, 0.3)',
+                              color: '#c084fc', fontSize: 11, cursor: 'pointer', fontFamily: 'monospace', fontWeight: 600,
+                            }}
+                          >
+                            📄 Show Executive Resume
+                          </button>
+                          <button
+                            onClick={() => sendMessage('Emit a status feed artifact of current system health and autonomous tasks')}
+                            style={{
+                              padding: '8px 14px', borderRadius: 6,
+                              background: 'rgba(52, 211, 153, 0.1)', border: '1px solid rgba(52, 211, 153, 0.3)',
+                              color: '#34d399', fontSize: 11, cursor: 'pointer', fontFamily: 'monospace', fontWeight: 600,
+                            }}
+                          >
+                            ⚡ Show System Feed
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </Suspense>
+              </div>
+            )}
           </div>
         )}
       </div>
 
       {/* ═══ INSPECTOR PANEL ═══ */}
-      {showInspector && snapshot && (
+      {showInspector && (
         <div style={{
           position: 'absolute', top: 0, right: 0, width: 320, height: '100%',
           background: 'rgba(10,10,11,0.95)', backdropFilter: 'blur(12px)',
-          borderLeft: `1px solid ${C.border}`, padding: 20, overflowY: 'auto', zIndex: 50,
+          borderLeft: `1px solid ${C.border}`, padding: 20, overflowY: 'auto', zIndex: 100,
         }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
             <span style={{ fontSize: 12, fontWeight: 600, color: C.cortex }}>Cortex Inspector</span>
             <button onClick={() => setShowInspector(false)} style={{
               background: 'none', border: 'none', color: C.dim, cursor: 'pointer', fontSize: 16,
-            }}>x</button>
+            }}>✕</button>
           </div>
 
           {/* Health score */}
@@ -4856,7 +4216,13 @@ CRITICAL INSTRUCTION: Continue directly from the exact point where you stopped. 
           {/* Bentov Stack bars */}
           <div style={{ marginBottom: 20 }}>
             <div style={{ fontSize: 10, color: C.dim, marginBottom: 8 }}>BENTOV STACK (8 Layers)</div>
-            {snapshot.summary.bentovStackAlignment && Object.entries(snapshot.summary.bentovStackAlignment).map(([key, val], i) => {
+            {(snapshot?.summary?.bentovStackAlignment || {
+              l1: { score: 0.95 }, l2: { score: 0.90 }, l3: { score: 0.88 }, l4: { score: 0.85 },
+              l5: { score: 0.92 }, l6: { score: 0.98 }, l7: { score: 0.94 }, l8: { score: 0.99 },
+            }) && Object.entries(snapshot?.summary?.bentovStackAlignment || {
+              l1: { score: 0.95 }, l2: { score: 0.90 }, l3: { score: 0.88 }, l4: { score: 0.85 },
+              l5: { score: 0.92 }, l6: { score: 0.98 }, l7: { score: 0.94 }, l8: { score: 0.99 },
+            }).map(([key, val], i) => {
               const labels = ['L1 Collapse', 'L2 Superpos.', 'L3 Awareness', 'L4 Free Energy', 'L5 Architecture', 'L6 Reality', 'L7 Embodied', 'L8 Identity'];
               const score = (val as any).score;
               return (
@@ -4920,7 +4286,7 @@ CRITICAL INSTRUCTION: Continue directly from the exact point where you stopped. 
           alignItems: 'center',
           justifyContent: 'space-between',
           fontSize: 11,
-          fontFamily: '"SF Mono", monospace',
+          fontFamily: '"IBM Plex Mono", "SF Mono", monospace',
           flexShrink: 0,
         }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -4981,7 +4347,7 @@ CRITICAL INSTRUCTION: Continue directly from the exact point where you stopped. 
           alignItems: 'center',
           justifyContent: 'space-between',
           fontSize: 11,
-          fontFamily: '"SF Mono", monospace',
+          fontFamily: '"IBM Plex Mono", "SF Mono", monospace',
           flexShrink: 0,
         }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -5039,109 +4405,7 @@ CRITICAL INSTRUCTION: Continue directly from the exact point where you stopped. 
         </div>
       )}
 
-      {/* ── 4 Core Proactive Improvement Streams Telemetry Bar ── */}
-      <div style={{
-        margin: '2px 16px',
-        padding: '5px 10px',
-        display: 'flex', gap: 8, flexWrap: 'wrap',
-        alignItems: 'center',
-        background: 'rgba(15, 23, 42, 0.65)',
-        border: '1px solid rgba(255, 255, 255, 0.08)',
-        borderRadius: 6,
-        fontSize: 10,
-        fontFamily: '"SF Mono", monospace',
-        flexShrink: 0,
-      }}>
-        <span style={{ color: '#94a3b8', fontWeight: 600, display: 'flex', alignItems: 'center', gap: 4 }}>
-          <span style={{ display: 'inline-block', width: 6, height: 6, borderRadius: '50%', background: '#22c55e', boxShadow: '0 0 6px #22c55e' }} />
-          4 STREAMS:
-        </span>
-
-        {/* Stream 1: Host OS */}
-        <button
-          id="pill-stream-system"
-          onClick={() => sendMessage("Give me a live breakdown of my host computer memory, load, and battery health.")}
-          title="Stream 1: Host OS & Hardware Hygiene"
-          style={{
-            background: proactiveAuditData?.system?.status === 'warning' ? 'rgba(239, 68, 68, 0.15)' : 'rgba(59, 130, 246, 0.12)',
-            border: `1px solid ${proactiveAuditData?.system?.status === 'warning' ? 'rgba(239, 68, 68, 0.4)' : 'rgba(59, 130, 246, 0.3)'}`,
-            borderRadius: 4,
-            padding: '2px 7px',
-            color: proactiveAuditData?.system?.status === 'warning' ? '#fca5a5' : '#93c5fd',
-            cursor: 'pointer',
-            display: 'flex', alignItems: 'center', gap: 4,
-          }}
-        >
-          <span>🖥️ Host:</span>
-          <strong style={{ fontWeight: 600 }}>
-            {proactiveAuditData?.system ? `${proactiveAuditData.system.usedPercent}% RAM (${proactiveAuditData.system.freeGB}GB free)` : 'Active'}
-          </strong>
-        </button>
-
-        {/* Stream 2: Productivity */}
-        <button
-          id="pill-stream-productivity"
-          onClick={() => sendMessage("Audit my open Chrome tabs, active windows, and unread notifications.")}
-          title="Stream 2: Productivity & Context Awareness"
-          style={{
-            background: (proactiveAuditData?.productivity?.duplicateCount > 0 || proactiveAuditData?.productivity?.unreadEmails > 1000) ? 'rgba(234, 179, 8, 0.15)' : 'rgba(16, 185, 129, 0.12)',
-            border: `1px solid ${(proactiveAuditData?.productivity?.duplicateCount > 0 || proactiveAuditData?.productivity?.unreadEmails > 1000) ? 'rgba(234, 179, 8, 0.4)' : 'rgba(16, 185, 129, 0.3)'}`,
-            borderRadius: 4,
-            padding: '2px 7px',
-            color: (proactiveAuditData?.productivity?.duplicateCount > 0 || proactiveAuditData?.productivity?.unreadEmails > 1000) ? '#fde047' : '#6ee7b7',
-            cursor: 'pointer',
-            display: 'flex', alignItems: 'center', gap: 4,
-          }}
-        >
-          <span>📑 Productivity:</span>
-          <strong style={{ fontWeight: 600 }}>
-            {proactiveAuditData?.productivity ? `${proactiveAuditData.productivity.tabCount} Tabs${proactiveAuditData.productivity.unreadEmails ? ` · ${(proactiveAuditData.productivity.unreadEmails).toLocaleString()} Unreads` : ''}` : 'Tracking'}
-          </strong>
-        </button>
-
-        {/* Stream 3: Codebase */}
-        <button
-          id="pill-stream-codebase"
-          onClick={() => sendMessage("Check our git working tree, modified files, and test readiness.")}
-          title="Stream 3: Codebase & Git Self-Healing"
-          style={{
-            background: 'rgba(168, 85, 247, 0.12)',
-            border: '1px solid rgba(168, 85, 247, 0.3)',
-            borderRadius: 4,
-            padding: '2px 7px',
-            color: '#d8b4fe',
-            cursor: 'pointer',
-            display: 'flex', alignItems: 'center', gap: 4,
-          }}
-        >
-          <span>🌿 Git:</span>
-          <strong style={{ fontWeight: 600 }}>
-            {proactiveAuditData?.codebase ? `${proactiveAuditData.codebase.branch} (${proactiveAuditData.codebase.totalChanges} WIP)` : 'Synced'}
-          </strong>
-        </button>
-
-        {/* Stream 4: Metacognitive */}
-        <button
-          id="pill-stream-metacognitive"
-          onClick={() => sendMessage("Evaluate your internal metacognitive state, IIT Phi, and prompt tuning.")}
-          title="Stream 4: Metacognitive Self-Tuning"
-          style={{
-            background: 'rgba(6, 182, 212, 0.12)',
-            border: '1px solid rgba(6, 182, 212, 0.3)',
-            borderRadius: 4,
-            padding: '2px 7px',
-            color: '#67e8f9',
-            cursor: 'pointer',
-            display: 'flex', alignItems: 'center', gap: 4,
-          }}
-        >
-          <span>🔮 Metacognitive:</span>
-          <strong style={{ fontWeight: 600 }}>
-            {proactiveAuditData?.metacognitive ? `Φ ${proactiveAuditData.metacognitive.phi} · Tuned` : 'Φ 1.24'}
-          </strong>
-        </button>
-      </div>
-
+      <CortexTelemetryBar proactiveAuditData={proactiveAuditData} iitPhi={iitPhi} sendMessage={sendMessage} />
       {/* Host Agency Quick Action Chips & View Mode Toggle */}
       <div style={{
         padding: '6px 16px',
@@ -5155,7 +4419,7 @@ CRITICAL INSTRUCTION: Continue directly from the exact point where you stopped. 
           onClick={() => setAutoExpandTools(!autoExpandTools)}
           title={autoExpandTools ? "Click for clean conversational view with compact pills" : "Click to auto-expand all technical details by default"}
           style={{
-            background: autoExpandTools ? 'rgba(0, 204, 255, 0.15)' : 'rgba(255, 255, 255, 0.05)',
+            background: autoExpandTools ? 'rgba(103, 232, 249, 0.15)' : 'rgba(255, 255, 255, 0.05)',
             border: `1px solid ${autoExpandTools ? C.cortex : 'rgba(255, 255, 255, 0.15)'}`,
             borderRadius: 4,
             padding: '3px 8px',
@@ -5230,7 +4494,7 @@ CRITICAL INSTRUCTION: Continue directly from the exact point where you stopped. 
           onClick={() => sendMessage("Bring our local Cortex tab in Chrome to the front.")}
           disabled={isSending}
           style={{
-            background: 'rgba(0, 204, 255, 0.1)',
+            background: 'rgba(103, 232, 249, 0.1)',
             border: `1px solid ${C.cortex}44`,
             borderRadius: 4,
             padding: '3px 8px',
@@ -5400,7 +4664,7 @@ CRITICAL INSTRUCTION: Continue directly from the exact point where you stopped. 
           onClick={() => sendMessage("Give me a quick system diagnostic of my Mac hardware and OS.")}
           disabled={isSending}
           style={{
-            background: 'rgba(0, 204, 255, 0.08)',
+            background: 'rgba(103, 232, 249, 0.08)',
             border: `1px solid ${C.cortex}44`,
             borderRadius: 4,
             padding: '3px 8px',
@@ -5524,10 +4788,10 @@ CRITICAL INSTRUCTION: Continue directly from the exact point where you stopped. 
           id="cortex-mic-btn"
           type="button"
           onClick={toggleVoiceMode}
-          title={isVoiceActive ? 'Voice active (smart half-duplex). Click to turn off.' : 'Click to enable voice conversation'}
+          title={isVoiceActive ? 'Full-duplex voice active (with echo cancellation & barge-in). Click to turn off.' : 'Click to enable conversational voice mode'}
           style={{
             padding: '10px 14px', borderRadius: 8, fontSize: 14, cursor: 'pointer',
-            background: isVoiceActive ? (voiceStream.isSpeaking ? 'rgba(0, 204, 255, 0.25)' : 'rgba(0, 204, 255, 0.15)') : C.surface,
+            background: isVoiceActive ? (voiceStream.isSpeaking ? 'rgba(103, 232, 249, 0.25)' : 'rgba(103, 232, 249, 0.15)') : C.surface,
             border: `1px solid ${isVoiceActive ? C.cortex : C.border}`,
             color: isVoiceActive ? C.cortex : C.dim,
             transition: 'all 0.2s',
@@ -5575,6 +4839,22 @@ CRITICAL INSTRUCTION: Continue directly from the exact point where you stopped. 
           </button>
         )}
       </form>
+
+      {/* ── Autonomous Mission Rail & Slide-Out Copilot Drawer ── */}
+      <CortexMissionRailDrawer
+        isOpen={isMissionDrawerOpen}
+        onToggle={() => setIsMissionDrawerOpen(prev => !prev)}
+        mission={activeMission}
+        onPause={(id) => getCortexMissionEngine().pauseMission(id)}
+        onResume={(id) => getCortexMissionEngine().resumeMission(id)}
+        onAbort={(id) => getCortexMissionEngine().abortMission(id)}
+        onSteer={(id, text) => getCortexMissionEngine().steerMission(id, text)}
+        tasks={copilotTasks}
+        onTasksChange={setCopilotTasks}
+        goals={copilotGoals}
+        onGoalsChange={setCopilotGoals}
+        onExecuteTask={handleExecuteCopilotTask}
+      />
 
       {/* CSS animations */}
       <style>{`

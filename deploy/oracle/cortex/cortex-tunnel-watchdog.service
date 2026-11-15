@@ -1,0 +1,7 @@
+[Unit]
+Description=Publish Cortex tunnel URL to state file
+
+[Service]
+Type=oneshot
+User=ubuntu
+ExecStart=/home/ubuntu/cortex-oracle/cortex-watchdog.sh

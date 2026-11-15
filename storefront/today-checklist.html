@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Today's Ops — Cortex</title>
+<style>
+  :root { --cyan:#67e8f9; --magenta:#e879f9; --dim:rgba(148,163,184,.6); --bg:#020408; --panel:#0a0f1c; --green:#34d399; --amber:#fb923c; --red:#fb7185; }
+  * { box-sizing: border-box; margin: 0; }
+  body { background: var(--bg); color: #e0f2fe; font: 12px/1.5 'IBM Plex Mono', ui-monospace, monospace; padding: 10px; }
+  h1 { font-size: 13px; letter-spacing: .18em; color: var(--cyan); }
+  h1 span { color: var(--dim); font-weight: 400; letter-spacing: .06em; }
+  h2 { font-size: 10px; letter-spacing: .14em; color: var(--dim); text-transform: uppercase; margin: 12px 0 6px; }
+  .card { background: var(--panel); border: 1px solid rgba(103,232,249,.15); border-radius: 6px; padding: 8px 10px; margin-bottom: 8px; }
+  .item { display: flex; gap: 8px; align-items: flex-start; padding: 3px 0; }
+  .item input { margin-top: 3px; accent-color: var(--cyan); }
+  .done label { color: var(--dim); text-decoration: line-through; }
+  .badge { font-size: 9px; padding: 1px 6px; border-radius: 8px; border: 1px solid rgba(255,255,255,.15); white-space: nowrap; }
+  .completed { color: var(--green); border-color: rgba(52,211,153,.4); }
+  .running, .working { color: var(--amber); border-color: rgba(251,146,60,.4); }
+  .failed { color: var(--red); border-color: rgba(251,113,133,.4); }
+  .queued, .pending { color: var(--dim); }
+  table { width: 100%; border-collapse: collapse; font-size: 11px; }
+  td, th { text-align: left; padding: 2px 6px; border-bottom: 1px solid rgba(255,255,255,.06); }
+  th { color: var(--dim); font-weight: 400; font-size: 9px; letter-spacing: .1em; }
+  .prog { height: 3px; background: rgba(255,255,255,.08); border-radius: 2px; margin-top: 3px; overflow: hidden; }
+  .prog i { display: block; height: 100%; background: var(--cyan); transition: width .4s; }
+  .empty { color: var(--dim); font-style: italic; }
+  #ts { color: var(--dim); font-size: 10px; }
+  .summary { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 4px; }
+  .summary b { color: var(--cyan); }
+</style>
+</head>
+<body>
+<h1>TODAY'S OPS <span id="ts"></span></h1>
+<div class="card"><div class="summary" id="summary"></div></div>
+
+<div class="card"><h2>Manual Checklist</h2><div id="manual"><span class="empty">loading…</span></div></div>
+<div class="card"><h2>Live Agent Tasks</h2><div id="tasks"><span class="empty">loading…</span></div></div>
+<div class="card"><h2>Distribution Queue</h2><div id="queue"><span class="empty">loading…</span></div></div>
+
+<script>
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const LSKEY = 'cortex-today-checks-v1';
+let checks = {};
+try { checks = JSON.parse(localStorage.getItem(LSKEY) || '{}'); } catch {}
+const saveChecks = () => localStorage.setItem(LSKEY, JSON.stringify(checks));
+
+async function refresh() {
+  $('ts').textContent = new Date().toLocaleDateString('en-US',{weekday:'short',month:'short',day:'numeric'}) + ' · ' + new Date().toLocaleTimeString();
+  // Manual checklist
+  try {
+    const cl = await (await fetch('/storefront/today-checklist.json', {cache:'no-store'})).json();
+    $('manual').innerHTML = cl.items.map(it => {
+      const done = checks[it.id] !== undefined ? checks[it.id] : !!it.done;
+      return `<div class="item ${done?'done':''}"><input type="checkbox" ${done?'checked':''} onchange="toggle('${it.id}',this.checked)"><label>${esc(it.label)}</label></div>`;
+    }).join('');
+  } catch { $('manual').innerHTML = '<span class="empty">checklist file unavailable</span>'; }
+
+  // Live tasks + queue
+  try {
+    const [snap, dist] = await Promise.all([
+      fetch('/api/cortex/agents/state', {cache:'no-store'}).then(r=>r.json()).catch(()=>null),
+      fetch('/api/cortex/distribution/status', {cache:'no-store'}).then(r=>r.json()).catch(()=>null),
+    ]);
+    const tasks = (snap?.tasks || []).filter(t => t.agentId === 'distributor' || t.status === 'running' || t.status === 'queued').slice(0, 15);
+    $('tasks').innerHTML = tasks.length
+      ? '<table><tr><th>agent</th><th>kind</th><th>status</th><th>title</th></tr>' +
+        tasks.map(t => `<tr><td>${esc(t.agentId)}</td><td>${esc(t.kind)}</td><td><span class="badge ${esc(t.status)}">${esc(t.status)}</span></td><td>${esc(t.title).slice(0,38)}${t.progress!=null?`<div class="prog"><i style="width:${Math.round(t.progress*100)}%"></i></div>`:''}</td></tr>`).join('') + '</table>'
+      : '<span class="empty">no active tasks</span>';
+
+    const c = dist?.queue?.counts || {};
+    $('queue').innerHTML = dist
+      ? `<div class="summary">${Object.entries(c).map(([k,v])=>`<span><b>${v}</b> ${esc(k)}</span>`).join('') || '<span class="empty">queue empty</span>'}</div>` +
+        (dist.queue?.recent||[]).slice().reverse().map(i =>
+          `<div class="item"><span class="badge ${esc(i.status)}">${esc(i.status)}</span><span>${esc(i.type)}</span></div>`).join('')
+      : '<span class="empty">status unavailable</span>';
+
+    const agents = (snap?.agents || []).filter(a => a.status !== 'offline');
+    $('summary').innerHTML = agents.map(a =>
+      `<span><b>${esc(a.id)}</b> ${esc(a.status)}</span>`).join('') +
+      (dist?.distributor ? `<span><b>DIST</b> ${dist.distributor.tasksCompleted}✓ ${dist.distributor.tasksFailed}✗</span>` : '');
+  } catch { $('tasks').innerHTML = '<span class="empty">runtime unreachable</span>'; }
+}
+window.toggle = (id, val) => { checks[id] = val; saveChecks(); refresh(); };
+refresh();
+setInterval(refresh, 15000);
+</script>
+</body>
+</html>

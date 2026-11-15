@@ -1,0 +1,337 @@
+import { useState, useEffect, useRef, useCallback } from 'react';
+import { useVoiceStream } from './useVoiceStream';
+import {
+  VoiceEngineState,
+  VoiceEngineStatus,
+  STTResult,
+  TTSRequest,
+  TTSModel,
+  EmotionLabel,
+} from '../types/voice-engine';
+
+// Cortana Voice Intelligence — mood, wake word, energy match, wit (optional)
+
+export interface CortanaVoiceOptions {
+  language?: string;
+  continuous?: boolean;
+  interimResults?: boolean;
+  ttsModel?: TTSModel;
+  ttsVoice?: string;
+  ttsRate?: number;
+  ttsPitch?: number;
+  wakeWord?: string;
+  onWakeWord?: () => void;
+  onTranscript?: (result: STTResult) => void;
+  onStatusChange?: (status: VoiceEngineStatus) => void;
+  onError?: (error: string) => void;
+  onSpeechEnd?: () => void;
+  onMoodChange?: (mood: 'idle' | 'listening' | 'speaking' | 'thinking' | 'alert' | 'urgent') => void;
+  onWitToggle?: () => void;
+  onProactiveNudge?: () => void;
+  onEnergyMatch?: (userEnergy: number) => void;
+}
+
+export interface CortanaVoiceState extends VoiceEngineState {
+  mood: 'idle' | 'listening' | 'speaking' | 'thinking' | 'alert' | 'urgent';
+  witToggle: boolean;
+  urgencyMode: boolean;
+  publicSpeakingNudge: boolean;
+  userEnergy: number;
+  lastUserActivity: number;
+  isWakeWordDetected: boolean;
+}
+
+function mapMoodToEmotion(mood: CortanaVoiceState['mood']): EmotionLabel {
+  switch (mood) {
+    case 'urgent':
+    case 'alert':
+      return 'stressed';
+    case 'thinking':
+      return 'calm';
+    case 'speaking':
+      return 'happy';
+    default:
+      return 'neutral';
+  }
+}
+
+function applyCortanaWit(text: string): string {
+  const wittyAdditions = [
+    ' Consider it handled.',
+    ' Done.',
+    ' On it.',
+  ];
+  return text + wittyAdditions[Math.floor(Math.random() * wittyAdditions.length)];
+}
+
+export function useCortanaVoice(options: CortanaVoiceOptions = {}) {
+  const {
+    language = 'en-US',
+    continuous = true,
+    interimResults = true,
+    ttsModel = 'kokoro',
+    ttsVoice = 'cortana',
+    ttsRate = 1.0,
+    ttsPitch = 1.0,
+    wakeWord = 'cortana',
+    onWakeWord,
+    onTranscript,
+    onStatusChange,
+    onError,
+    onSpeechEnd,
+    onMoodChange,
+    onWitToggle,
+    onProactiveNudge,
+    onEnergyMatch,
+  } = options;
+
+  const optionsRef = useRef({
+    wakeWord,
+    onWakeWord,
+    onTranscript,
+    onStatusChange,
+    onError,
+    onSpeechEnd,
+    onMoodChange,
+    onWitToggle,
+    onProactiveNudge,
+    onEnergyMatch,
+  });
+  optionsRef.current = {
+    wakeWord,
+    onWakeWord,
+    onTranscript,
+    onStatusChange,
+    onError,
+    onSpeechEnd,
+    onMoodChange,
+    onWitToggle,
+    onProactiveNudge,
+    onEnergyMatch,
+  };
+
+  const lastUserActivityRef = useRef(Date.now());
+  const wakeWordBufferRef = useRef('');
+  const energyRef = useRef(0);
+  const lastWitToggleRef = useRef(0);
+  const lastProactiveNudgeRef = useRef(0);
+  const wakeWordTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const witToggleRef = useRef(false);
+  const urgencyModeRef = useRef(false);
+  const moodRef = useRef<CortanaVoiceState['mood']>('idle');
+
+  const handleTranscript = useCallback((result: STTResult) => {
+    const transcriptLower = result.text.toLowerCase().trim();
+    const now = Date.now();
+    lastUserActivityRef.current = now;
+
+    const userEnergy = Math.min(1, transcriptLower.length / 50);
+    energyRef.current = userEnergy;
+    optionsRef.current.onEnergyMatch?.(userEnergy);
+
+    setCortanaState((prev) => ({
+      ...prev,
+      lastUserActivity: now,
+      userEnergy,
+    }));
+
+    wakeWordBufferRef.current += ` ${transcriptLower}`;
+    if (wakeWordBufferRef.current.length > 100) {
+      wakeWordBufferRef.current = wakeWordBufferRef.current.slice(-50);
+    }
+
+    const ww = optionsRef.current.wakeWord.toLowerCase();
+    if (result.isFinal && wakeWordBufferRef.current.includes(ww)) {
+      setCortanaState((prev) => ({ ...prev, isWakeWordDetected: true }));
+      wakeWordBufferRef.current = '';
+
+      if (wakeWordTimeoutRef.current) clearTimeout(wakeWordTimeoutRef.current);
+      wakeWordTimeoutRef.current = setTimeout(() => {
+        setCortanaState((prev) => ({ ...prev, isWakeWordDetected: false }));
+      }, 2000);
+
+      optionsRef.current.onWakeWord?.();
+    }
+
+    const timeSinceLastWit = now - lastWitToggleRef.current;
+    const shouldWit =
+      timeSinceLastWit > 90000 && Math.random() > 0.7 && moodRef.current === 'listening';
+
+    if (shouldWit) {
+      witToggleRef.current = true;
+      setCortanaState((prev) => ({ ...prev, witToggle: true }));
+      lastWitToggleRef.current = now;
+      optionsRef.current.onWitToggle?.();
+      setTimeout(() => {
+        setCortanaState((prev) => ({ ...prev, witToggle: false }));
+      }, 3000);
+    }
+
+    optionsRef.current.onTranscript?.(result);
+  }, []);
+
+  const handleStatusChange = useCallback((status: VoiceEngineStatus) => {
+    let mood: CortanaVoiceState['mood'] = 'idle';
+    switch (status) {
+      case 'listening':
+        mood = 'listening';
+        break;
+      case 'speaking':
+        mood = 'speaking';
+        break;
+      case 'processing':
+        mood = 'thinking';
+        break;
+      default:
+        mood = 'idle';
+    }
+    moodRef.current = mood;
+    setCortanaState((prev) => ({ ...prev, mood }));
+    optionsRef.current.onMoodChange?.(mood);
+    optionsRef.current.onStatusChange?.(status);
+  }, []);
+
+  const voiceStream = useVoiceStream({
+    language,
+    continuous,
+    interimResults,
+    ttsModel,
+    ttsVoice,
+    ttsRate,
+    ttsPitch,
+    onTranscript: handleTranscript,
+    onStatusChange: handleStatusChange,
+    onError,
+    onSpeechEnd,
+  });
+
+  const [cortanaState, setCortanaState] = useState<CortanaVoiceState>({
+    ...voiceStream.state,
+    mood: 'idle',
+    witToggle: false,
+    urgencyMode: false,
+    publicSpeakingNudge: false,
+    userEnergy: 0,
+    lastUserActivity: Date.now(),
+    isWakeWordDetected: false,
+  });
+
+  useEffect(() => {
+    setCortanaState((prev) => ({
+      ...prev,
+      ...voiceStream.state,
+      transcript: voiceStream.transcript,
+      interimText: voiceStream.interimText,
+    }));
+  }, [voiceStream.state, voiceStream.transcript, voiceStream.interimText]);
+
+  // Proactive silence nudge — runs on a timer, not on transcript
+  useEffect(() => {
+    const id = setInterval(() => {
+      const now = Date.now();
+      const silentMs = now - lastUserActivityRef.current;
+      const shouldNudge =
+        silentMs > 120000 &&
+        now - lastProactiveNudgeRef.current > 300000 &&
+        moodRef.current === 'idle';
+
+      if (shouldNudge) {
+        lastProactiveNudgeRef.current = now;
+        setCortanaState((prev) => ({ ...prev, publicSpeakingNudge: true }));
+        optionsRef.current.onProactiveNudge?.();
+        setTimeout(() => {
+          setCortanaState((prev) => ({ ...prev, publicSpeakingNudge: false }));
+        }, 5000);
+      }
+    }, 15000);
+    return () => clearInterval(id);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (wakeWordTimeoutRef.current) clearTimeout(wakeWordTimeoutRef.current);
+    };
+  }, []);
+
+  const speakCortana = useCallback(
+    async (request: TTSRequest): Promise<void> => {
+      const speed = (request.config?.speed ?? ttsRate) * (0.5 + energyRef.current * 0.5);
+      const text = witToggleRef.current ? applyCortanaWit(request.text) : request.text;
+
+      if (witToggleRef.current) {
+        witToggleRef.current = false;
+        setCortanaState((prev) => ({ ...prev, witToggle: false }));
+      }
+
+      const enhancedRequest: TTSRequest = {
+        ...request,
+        text,
+        config: {
+          model: request.config?.model ?? ttsModel,
+          voice: request.config?.voice ?? ttsVoice,
+          speed,
+          pitch: request.config?.pitch ?? ttsPitch,
+          emotionTags: request.config?.emotionTags,
+        },
+        emotion: {
+          primary: mapMoodToEmotion(moodRef.current),
+          confidence: request.emotion?.confidence ?? 0.7,
+          valence: request.emotion?.valence ?? 0,
+          arousal: request.emotion?.arousal ?? 0.4,
+          timestamp: Date.now(),
+        },
+      };
+
+      return voiceStream.speak(enhancedRequest);
+    },
+    [voiceStream, ttsRate, ttsModel, ttsVoice, ttsPitch],
+  );
+
+  const startListening = useCallback(() => {
+    moodRef.current = 'listening';
+    setCortanaState((prev) => ({ ...prev, mood: 'listening' }));
+    return voiceStream.startListening();
+  }, [voiceStream]);
+
+  const stopListening = useCallback(() => {
+    moodRef.current = 'idle';
+    setCortanaState((prev) => ({
+      ...prev,
+      mood: 'idle',
+      isWakeWordDetected: false,
+    }));
+    return voiceStream.stopListening();
+  }, [voiceStream]);
+
+  const activateThinkingMode = useCallback(() => {
+    moodRef.current = 'thinking';
+    setCortanaState((prev) => ({ ...prev, mood: 'thinking' }));
+  }, []);
+
+  const activateAlertMode = useCallback(() => {
+    moodRef.current = 'alert';
+    urgencyModeRef.current = true;
+    setCortanaState((prev) => ({ ...prev, mood: 'alert', urgencyMode: true }));
+    setTimeout(() => {
+      urgencyModeRef.current = false;
+      setCortanaState((prev) => ({ ...prev, urgencyMode: false }));
+    }, 5000);
+  }, []);
+
+  return {
+    ...voiceStream,
+    cortanaState,
+    startListening,
+    stopListening,
+    speak: speakCortana,
+    stopSpeaking: voiceStream.stopSpeaking,
+    activateThinkingMode,
+    activateAlertMode,
+    getIsWakeWordDetected: () => cortanaState.isWakeWordDetected,
+    getUserEnergy: () => cortanaState.userEnergy,
+    getWitToggle: () => cortanaState.witToggle,
+    getUrgencyMode: () => cortanaState.urgencyMode,
+    getPublicSpeakingNudge: () => cortanaState.publicSpeakingNudge,
+    getMood: () => cortanaState.mood,
+  };
+}

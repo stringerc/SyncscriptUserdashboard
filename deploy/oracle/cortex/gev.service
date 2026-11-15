@@ -1,0 +1,19 @@
+[Unit]
+Description=God's Eye View globe (GEV) — sibling app for Cortex visualizer
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/opt/gods-eye-view
+Environment=NODE_ENV=development
+Environment=GEV_EMBED_FRAME_ANCESTORS=*
+ExecStart=/usr/bin/npm run preview -- --host 127.0.0.1 --port 5180 --strictPort
+Restart=always
+RestartSec=10
+StandardOutput=append:/home/ubuntu/cortex-oracle/gev.log
+StandardError=append:/home/ubuntu/cortex-oracle/gev.log
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,16 @@
+[Unit]
+Description=Cloudflare quick tunnel for God's Eye View globe
+After=gev.service network-online.target
+Wants=gev.service
+
+[Service]
+Type=simple
+User=ubuntu
+ExecStart=/usr/local/bin/cloudflared tunnel --url http://127.0.0.1:5180 --no-autoupdate --http-host-header localhost
+Restart=always
+RestartSec=10
+StandardOutput=append:/home/ubuntu/cortex-oracle/gev-tunnel.log
+StandardError=append:/home/ubuntu/cortex-oracle/gev-tunnel.log
+
+[Install]
+WantedBy=multi-user.target

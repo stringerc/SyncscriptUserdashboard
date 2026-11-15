@@ -1,0 +1,17 @@
+  </div><!-- end content -->
+</div><!-- end main -->
+<script>
+const pages=['dashboard','ai','projects','calendar','energy','cortex','scripts','financials','team','analytics','settings'];
+const titles={dashboard:'Dashboard',ai:'AI',projects:'Projects',calendar:'Calendar',energy:'Energy',cortex:'Cortex',scripts:'Scripts',financials:'Financials',team:'Team',analytics:'Analytics',settings:'Settings'};
+function showPage(p){
+  pages.forEach(x=>{
+    const el=document.getElementById('page-'+x);
+    if(el) el.classList.toggle('active',x===p);
+    const nav=document.querySelector('.sidebar-item[data-page="'+x+'"]');
+    if(nav) nav.classList.toggle('active',x===p);
+  });
+  document.getElementById('pageTitle').textContent=titles[p]||p;
+}
+</script>
+</body>
+</html>

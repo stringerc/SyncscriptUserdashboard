@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SyncScript Distribution Deck</title>
+<style>
+  :root { --cyan:#67e8f9; --magenta:#e879f9; --dim:rgba(148,163,184,.6); --bg:#020408; --panel:#0a0f1c; }
+  * { box-sizing: border-box; margin: 0; }
+  body { background: var(--bg); color: #e0f2fe; font: 12px/1.5 'IBM Plex Mono', ui-monospace, monospace; padding: 10px; }
+  h1 { font-size: 13px; letter-spacing: .18em; color: var(--cyan); margin-bottom: 8px; }
+  h1 span { color: var(--dim); letter-spacing: .08em; font-weight: 400; }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .card { background: var(--panel); border: 1px solid rgba(103,232,249,.15); border-radius: 6px; padding: 8px 10px; }
+  .card h2 { font-size: 10px; letter-spacing: .14em; color: var(--dim); margin-bottom: 6px; text-transform: uppercase; }
+  .wide { grid-column: 1 / -1; }
+  .stat { display: inline-block; margin-right: 14px; }
+  .stat b { color: var(--cyan); font-size: 15px; }
+  .pill { display: inline-block; padding: 1px 7px; border-radius: 8px; font-size: 10px; margin: 1px 3px 1px 0; border: 1px solid rgba(255,255,255,.15); }
+  .pill.done { border-color: rgba(52,211,153,.5); color: #34d399; }
+  .pill.pending { border-color: rgba(251,146,60,.5); color: #fb923c; }
+  .pill.failed, .pill.running { border-color: rgba(251,113,133,.5); color: #fb7185; }
+  table { width: 100%; border-collapse: collapse; font-size: 11px; }
+  td, th { text-align: left; padding: 2px 6px; border-bottom: 1px solid rgba(255,255,255,.06); }
+  th { color: var(--dim); font-weight: 400; font-size: 9px; letter-spacing: .1em; }
+  .shot { width: 100%; border: 1px solid rgba(255,255,255,.08); border-radius: 6px; display: block; }
+  .shotwrap { position: relative; }
+  .shotwrap .tag { position: absolute; top: 6px; left: 6px; background: rgba(2,4,8,.8); padding: 2px 8px; border-radius: 4px; font-size: 9px; color: var(--cyan); letter-spacing: .12em; }
+  .empty { color: var(--dim); font-style: italic; }
+  a { color: var(--magenta); }
+  #ts { color: var(--dim); font-size: 10px; }
+  pre { white-space: pre-wrap; word-break: break-word; font-size: 10px; color: var(--dim); max-height: 180px; overflow: auto; }
+</style>
+</head>
+<body>
+<h1>DISTRIBUTION DECK <span id="ts"></span></h1>
+<div class="grid">
+  <div class="card"><h2>Queue</h2><div id="queue">…</div></div>
+  <div class="card"><h2>DISTRIBUTOR AGENT</h2><div id="agent">…</div></div>
+  <div class="card"><h2>Recent Tasks</h2><div id="tasks">…</div></div>
+  <div class="card"><h2>Launch Log</h2><pre id="log"></pre></div>
+  <div class="card wide"><h2>Live Browser — automation Chrome</h2>
+    <div class="shotwrap"><span class="tag">CDP FEED</span><img class="shot" id="shot" alt="browser shot"></div>
+  </div>
+</div>
+<script>
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+
+async function refresh() {
+  try {
+    const s = await (await fetch('/api/cortex/distribution/status', {cache:'no-store'})).json();
+    $('ts').textContent = '· ' + new Date(s.checkedAt).toLocaleTimeString();
+
+    const c = s.queue?.counts || {};
+    $('queue').innerHTML = s.queue?.recent?.length
+      ? Object.entries(c).map(([k,v]) => `<span class="stat"><b>${v}</b> ${esc(k)}</span>`).join('') +
+        '<table style="margin-top:6px"><tr><th>item</th><th>type</th><th>status</th></tr>' +
+        s.queue.recent.slice().reverse().map(i =>
+          `<tr><td>${esc(i.id).slice(0,22)}</td><td>${esc(i.type)}</td><td><span class="pill ${esc(i.status)}">${esc(i.status)}</span></td></tr>`).join('') +
+        '</table>'
+      : '<span class="empty">queue empty — DISTRIBUTOR idle</span>';
+
+    const d = s.distributor;
+    $('agent').innerHTML = d
+      ? `<span class="stat"><b>${esc(d.status)}</b> status</span><span class="stat"><b>${d.tasksCompleted}</b> done</span><span class="stat"><b>${d.tasksFailed}</b> failed</span>`
+      : '<span class="empty">distributor not registered yet (restart dev server)</span>';
+
+    $('tasks').innerHTML = s.tasks?.length
+      ? '<table><tr><th>kind</th><th>status</th><th>title</th></tr>' +
+        s.tasks.map(t => `<tr><td>${esc(t.kind)}</td><td><span class="pill ${esc(t.status)}">${esc(t.status)}</span></td><td>${esc(t.title).slice(0,42)}</td></tr>`).join('') + '</table>'
+      : '<span class="empty">no distributor tasks yet</span>';
+
+    $('log').textContent = (s.launchLogTail || 'no launch log yet').slice(-2500);
+    if (s.browserShot) $('shot').title = s.browserShot;
+  } catch (e) {
+    $('ts').textContent = '· status endpoint unreachable';
+  }
+  // Screenshot refresh with cache-bust
+  const img = $('shot');
+  img.src = '/api/cortex/browser-shot.png?t=' + Date.now();
+  img.onerror = () => { img.style.display = 'none'; };
+  img.onload = () => { img.style.display = 'block'; };
+}
+refresh();
+setInterval(refresh, 15000);
+</script>
+</body>
+</html>

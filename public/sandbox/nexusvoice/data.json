@@ -1,0 +1,49 @@
+{
+  "title": "Financial Model & Unit Economics",
+  "columns": [
+    "Metric",
+    "Q1 Target",
+    "Q2 Target",
+    "Growth %",
+    "Status"
+  ],
+  "rows": [
+    [
+      "Active Users",
+      1250,
+      2400,
+      "92%",
+      "On Track"
+    ],
+    [
+      "MRR ($)",
+      95000,
+      81600,
+      "92%",
+      "Exceeding"
+    ],
+    [
+      "Compute Cost ($)",
+      8200,
+      14300,
+      "74%",
+      "Optimized"
+    ],
+    [
+      "Gross Profit ($)",
+      34300,
+      67300,
+      "96%",
+      "Strong"
+    ],
+    [
+      "Burn Multiple",
+      0.85,
+      0.62,
+      "-27%",
+      "Sustainable"
+    ]
+  ],
+  "description": "Q1-Q2 operational scale.",
+  "updatedAt": 1793374288766
+}

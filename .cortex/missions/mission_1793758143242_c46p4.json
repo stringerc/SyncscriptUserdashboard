@@ -1,0 +1,60 @@
+{
+  "id": "mission_1793758143242_c46p4",
+  "title": "Salvation Army Application Discovery & Form Assistance",
+  "objective": "Enumerate open Salvation Army tabs, extract eligibility requirements and form structures, and draft assistance responses.",
+  "riskClass": "low",
+  "status": "queued",
+  "overallProgress": 0,
+  "createdAt": 1793758143242,
+  "updatedAt": 1793758143242,
+  "milestones": [
+    {
+      "id": "m1",
+      "title": "Discover & Inspect Open Tabs",
+      "weight": 0.25,
+      "progress": 0,
+      "status": "pending",
+      "activeTool": "chrome_control"
+    },
+    {
+      "id": "m2",
+      "title": "Extract Eligibility & Form Schema",
+      "weight": 0.3,
+      "progress": 0,
+      "status": "pending",
+      "activeTool": "inspect_visual_canvas"
+    },
+    {
+      "id": "m3",
+      "title": "Synthesize Application Draft & Mapping",
+      "weight": 0.25,
+      "progress": 0,
+      "status": "pending",
+      "activeTool": "create_document"
+    },
+    {
+      "id": "m4",
+      "title": "Visual CDP Proof & Review Package",
+      "weight": 0.2,
+      "progress": 0,
+      "status": "pending",
+      "activeTool": "probe_physical_grounding"
+    }
+  ],
+  "telemetry": {
+    "phi": 1.24,
+    "freeEnergy": 0.22,
+    "currentStep": 0,
+    "maxSteps": 45,
+    "elapsedMs": 0,
+    "etaMs": 180000,
+    "activeTool": "chrome_control",
+    "neuromodulatoryTone": {
+      "dopamine": 0.92,
+      "noradrenaline": 0.45,
+      "serotonin": 0.88
+    }
+  },
+  "steerInstructions": [],
+  "executionTrace": []
+}

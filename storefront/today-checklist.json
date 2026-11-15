@@ -1,0 +1,15 @@
+{
+  "date": "2026-11-15",
+  "items": [
+    { "id": "publish-3", "label": "Publish products #1-3 on Gumroad (images + files + covers)", "done": true },
+    { "id": "pins-3", "label": "Post Pinterest pins for live products", "done": true },
+    { "id": "pinterest-brand", "label": "Rebrand Pinterest to SyncScript — AI Tools & Templates", "done": true },
+    { "id": "distributor-agent", "label": "Stand up DISTRIBUTOR agent + routines in Cortex", "done": true },
+    { "id": "dreamina-burn", "label": "Burn expiring Dreamina credits on pin variants", "done": false },
+    { "id": "calendar-cadence", "label": "Post Google Calendar cadence events via agent", "done": false },
+    { "id": "pin-new-variants", "label": "Enqueue pinterest_pin items for verified new images", "done": false },
+    { "id": "reddit-comments", "label": "Draft + post organic Reddit comments from scan results", "done": false },
+    { "id": "content-4-6", "label": "Content packs for products #4-6", "done": false },
+    { "id": "first-sale", "label": "First off-platform sale (kill/pivot review at day 30)", "done": false }
+  ]
+}

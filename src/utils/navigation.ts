@@ -2,19 +2,28 @@
 // Update these URLs to point to your actual destinations
 
 export const navigationLinks = {
+  // Main routes
+  landing: '/',
+  
   // Sidebar Navigation
   sidebar: {
-    dashboard: '/',
+    dashboard: '/dashboard',
     tasks: '/tasks',
     calendar: '/calendar',
+    financials: '/financials',
     ai: '/ai',
     energy: '/energy',
+    resonance: '/resonance-engine',
+    brain: '/brain',
     team: '/team',
     analytics: '/analytics',
     gaming: '/gaming',
     integrations: '/integrations',
+    email: '/email',
+    library: '/library',
     enterprise: '/enterprise',
     scripts: '/scripts-templates',
+    teamScripts: '/team-scripts',
     allFeatures: '/all-features',
     settings: '/settings',
   },
@@ -64,10 +73,14 @@ export const navigationLinks = {
 };
 
 // Navigation helper functions
+// NOTE: These are kept for backward compatibility with external links
+// For internal navigation, components should use React Router's useNavigate hook
 export const navigate = (path: string, external = false) => {
   if (external) {
     window.open(path, '_blank', 'noopener,noreferrer');
   } else {
+    // For internal navigation, this will be replaced by React Router
+    // This fallback is for non-router contexts
     window.location.href = path;
   }
 };

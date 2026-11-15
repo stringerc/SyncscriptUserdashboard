@@ -1,0 +1,406 @@
+{
+  "meta": {
+    "version": 2,
+    "created": "2026-11-15",
+    "strategy": "Demand-first slate replacing the failed 500-pack batch. Every product names a specific buyer and the outcome they pay for. Top 3 have full listing kits; the rest have launch-ready copy pending content production.",
+    "killCriteria": {
+      "views14d_lt_200": "kill or reprice",
+      "views_no_conversion": "rewrite listing before blaming product",
+      "sales_gte_3": "iterate and clone the format"
+    }
+  },
+  "products": [
+    {
+      "rank": 1,
+      "slug": "agentic-coding-starter-system",
+      "tier": "full-kit",
+      "name": "Ship 10x Faster: The Agentic Coding Starter System (Claude Code, Cursor, MCP)",
+      "price": 39,
+      "summary": "The exact system for running Claude Code/Cursor agents like a senior engineer \u2014 subagent configs, MCP wiring, rules files, and the workflows that keep agents from freelancing.",
+      "description": "Stop babysitting AI. This is the production system for running coding agents like a senior engineer \u2014 not a prompt pack, a working setup.\n\nWHAT'S INSIDE\n\u2022 4 production-tested subagent configs (reviewer, test-runner, debugger, docs) with copy-paste setup for Claude Code\n\u2022 CLAUDE.md + .cursorrules templates \u2014 the rules-file patterns that keep agents honest about what \"done\" means\n\u2022 MCP server wiring guide \u2014 connect agents to GitHub, databases, docs, and browsers (read-only first)\n\u2022 The debugging playbook for when agents loop, hallucinate file paths, or \"finish\" without verifying\n\u2022 Task decomposition patterns: how to give agents work that survives contact with reality\n\u2022 Real anonymized before/after transcripts showing agent runs that shipped vs. runs that flailed\n\nWHO IT'S FOR\nDevelopers already using Claude Code, Cursor, or similar tools who are stuck at \"it writes code but I can't trust it to finish jobs.\" If you've ever had an agent claim success on broken code, this fixes that.\n\nPROOF\nEvery config in this kit comes from a system running daily agent workloads \u2014 not theory.",
+      "bullets": [
+        "12 production-tested agent configs (subagents, reviewers, test-runners, debuggers)",
+        "MCP server wiring guide \u2014 GitHub, databases, docs, browsers",
+        "Rules files that work (.cursorrules, CLAUDE.md, agent instructions)",
+        "Debugging playbook for agent loops, hallucinated paths, false 'done' states",
+        "Task decomposition patterns for reliable agent runs",
+        "Real before/after transcripts: shipped vs. flailed runs"
+      ],
+      "samplePreview": "Free PDF: 'The 5 Agentic Coding Mistakes Killing Your Velocity'",
+      "heroPrompt": "Professional digital product hero banner, dark charcoal background, bold condensed white typography 'AGENTIC CODING SYSTEM', floating UI panels showing terminal, config file, GitHub PR card with green merge checks, cyan and violet neon glow, premium software box-art style",
+      "tags": [
+        "claude code",
+        "cursor",
+        "ai agents",
+        "mcp",
+        "developer tools",
+        "productivity",
+        "coding"
+      ],
+      "traffic": {
+        "primary": "Reddit \u2014 r/ClaudeAI, r/cursor, r/ChatGPTCoding (answer-first, no link-dropping)",
+        "secondary": "Twitter/X build-in-public thread + Pinterest pin of the hero image",
+        "angle": "Show a real agent run transcript \u2014 the artifact sells, not the pitch"
+      },
+      "heroImage": "assets/hero-agentic-coding-starter-system.png",
+      "files": [
+        "products/agentic-coding-starter-system.zip"
+      ],
+      "deliverable": "zip",
+      "heroImageAlt": "assets/alt-hero-agentic-coding-starter-system.png"
+    },
+    {
+      "rank": 2,
+      "slug": "ai-voice-agent-starter-kit",
+      "tier": "full-kit",
+      "name": "Build a Real Voice AI Agent: STT\u2192LLM\u2192TTS Pipeline + Turn-Taking Kit",
+      "price": 49,
+      "summary": "The production voice-agent pipeline \u2014 streaming STT, interruption handling, natural TTS, and the latency budget that makes it feel alive instead of robotic.",
+      "description": "Chatbots are easy. Voice agents that don't sound like robots are not. This is the production pipeline architecture \u2014 streaming STT, interruption handling, natural TTS, and the latency budget that makes it feel alive.\n\nWHAT'S INSIDE\n\u2022 Complete working pipeline code (voice_agent.py): streaming speech-to-text \u2192 LLM \u2192 text-to-speech, with barge-in/interruption handling and per-stage timeouts\n\u2022 The latency budget breakdown: where the 800ms goes and how to win it \u2014 STT endpointing, LLM time-to-first-token, sentence-level TTS\n\u2022 Turn-taking logic: endpointing, interruption detection, and the cancel-propagation pattern that makes conversation feel natural\n\u2022 5 production pitfalls documented: barge-in failures, background-noise phantom turns, echo loops, context loss, timeout cascades\n\u2022 Provider selection guide: STT/LLM/TTS options compared on latency, quality, and cost\n\nWHO IT'S FOR\nDevelopers building voice interfaces for assistants, kiosks, games, or accessibility tools who have hit the \"it works in the demo but sounds awful in production\" wall.\n\nPROOF\nThis kit documents a pipeline architecture proven in production \u2014 including the failure modes that already cost real debugging time.",
+      "bullets": [
+        "Complete working pipeline: streaming STT \u2192 LLM \u2192 TTS with barge-in handling",
+        "Voice cloning setup from a clean audio sample",
+        "Latency budget breakdown \u2014 get under 800ms",
+        "Turn-taking logic: endpointing, backchannels, pause detection",
+        "5 production pitfalls documented with fixes",
+        "Cost-per-minute breakdown and model recommendations per stage"
+      ],
+      "samplePreview": "Free one-pager: 'The Voice Agent Latency Budget' + audio demo",
+      "heroPrompt": "Professional digital product hero banner, deep navy background, bold white typography 'VOICE AGENT KIT', glowing cyan audio waveform morphing into chat bubble and microphone icon, teal and magenta accents, futuristic audio-visualizer aesthetic, premium software box-art style",
+      "tags": [
+        "voice ai",
+        "tts",
+        "stt",
+        "ai agent",
+        "python",
+        "real-time",
+        "conversational ai"
+      ],
+      "traffic": {
+        "primary": "YouTube/TikTok demo video of the voice agent working (audio IS the product)",
+        "secondary": "Reddit r/LocalLLaMA, r/singularity, Indie Hackers",
+        "angle": "The demo audio sells \u2014 post a 30-second clip of natural conversation"
+      },
+      "heroImage": "assets/hero-ai-voice-agent-starter-kit.png",
+      "files": [
+        "products/ai-voice-agent-starter-kit.zip"
+      ],
+      "deliverable": "zip",
+      "heroImageAlt": "assets/alt-hero-ai-voice-agent-starter-kit.png"
+    },
+    {
+      "rank": 3,
+      "slug": "real-estate-ai-listing-kit",
+      "tier": "full-kit",
+      "name": "AI Listing Descriptions That Convert: 100+ Real Estate Prompts + Rewrite System",
+      "price": 24,
+      "summary": "100+ prompts engineered for real estate \u2014 MLS-ready descriptions, seller reports, CMAs, and follow-up sequences that get replies.",
+      "description": "Generic AI descriptions get scrolled past. This kit gives agents 100+ prompts built for the actual job \u2014 descriptions that sound like a top producer wrote them, not a bot.\n\nWHAT'S INSIDE\n\u2022 100 prompts organized by job: listing descriptions, follow-up sequences, expired/FSBO prospecting, CMAs & pricing, negotiations, reviews, social content, transactions, open houses, niche markets (luxury, relocation, investment, VA loans), and database nurture\n\u2022 The \"AI tells\" list \u2014 phrases that instantly mark copy as machine-generated\n\u2022 The rewrite checklist: run every output through it before it touches a client\n\u2022 Rapid-fire fill-in-the-blank prompts for one-off needs\n\nWHO IT'S FOR\nReal estate agents, teams, and ISAs who want AI leverage without the \"sounds like ChatGPT\" problem. If you've ever posted a listing description that got zero calls, this fixes the copy.\n\nPROOF\nEvery prompt is written around a real estate outcome \u2014 inquiries, showings, offers \u2014 not generic \"write me a description.\"",
+      "bullets": [
+        "100+ vertical prompts: descriptions, follow-ups, CMAs, scripts, reviews",
+        "MLS-compliant description framework",
+        "Rewrite system: rough draft \u2192 conversion-optimized listing",
+        "Pricing scripts and objection handlers",
+        "Notion-ready copy-paste dashboard",
+        "30-day review-response templates"
+      ],
+      "samplePreview": "Free 10-prompt sampler covering listing descriptions + follow-ups",
+      "heroPrompt": "Professional digital product hero banner, warm cream and deep green background, elegant serif typography 'LISTINGS THAT SELL', split composition of modern house exterior and a before/after listing description document, gold accents, premium real estate marketing aesthetic",
+      "tags": [
+        "real estate",
+        "ai prompts",
+        "notion template",
+        "chatgpt",
+        "selling",
+        "real estate agent"
+      ],
+      "traffic": {
+        "primary": "Pinterest \u2014 listing-description pins are proven search traffic in this niche",
+        "secondary": "Facebook groups for agents, BiggerPockets forums, LinkedIn",
+        "angle": "Before/after listing description graphics \u2014 the transformation IS the ad"
+      },
+      "heroImage": "assets/hero-real-estate-ai-listing-kit.png",
+      "files": [
+        "products/real-estate-ai-listing-kit.zip"
+      ],
+      "deliverable": "zip",
+      "heroImageAlt": "assets/alt-hero-real-estate-ai-listing-kit.png"
+    },
+    {
+      "rank": 4,
+      "slug": "cold-outreach-ai-system",
+      "tier": "copy-ready",
+      "name": "Cold Outreach That Gets Replies: The AI Sequence System",
+      "price": 39,
+      "summary": "Email and LinkedIn sequences, follow-up logic, and personalization prompts that turn cold outreach from spam into booked calls.",
+      "description": "Cold email isn't dead \u2014 bad cold email is. This system gives you the sequence architecture, the personalization prompts, and the follow-up logic that actually books calls.",
+      "bullets": [
+        "Complete 5-touch email + LinkedIn sequence templates",
+        "Personalization prompt system \u2014 research \u2192 relevant opener \u2192 value pitch",
+        "Follow-up logic that doesn't feel desperate",
+        "Objection handlers and meeting-booking CTAs",
+        "A/B testing framework for subject lines and hooks"
+      ],
+      "samplePreview": "Free: the 5-touch sequence skeleton",
+      "tags": [
+        "cold email",
+        "outreach",
+        "sales",
+        "linkedin",
+        "b2b",
+        "ai prompts"
+      ],
+      "traffic": {
+        "primary": "Twitter/X + LinkedIn \u2014 founders and sales people live there",
+        "secondary": "Reddit r/sales, r/entrepreneur",
+        "angle": "Show a real reply-rate improvement story"
+      },
+      "heroPrompt": "Professional digital product hero banner, dark slate blue background, bold white typography 'COLD OUTREACH SYSTEM', floating email sequence cards and LinkedIn message bubbles with green reply-checkmarks and open-rate graphs, orange and cyan accents, premium sales-tool box-art style",
+      "heroImage": "assets/hero-cold-outreach-ai-system.png",
+      "heroImageAlt": "assets/alt-hero-cold-outreach-ai-system.png"
+    },
+    {
+      "rank": 5,
+      "slug": "faceless-content-pipeline",
+      "tier": "copy-ready",
+      "name": "The Faceless Content Pipeline: Script \u2192 Voiceover \u2192 Edit in One System",
+      "price": 39,
+      "summary": "The complete system for running a faceless YouTube/TikTok channel \u2014 scripting prompts, voiceover workflow, editing SOPs, and the posting cadence that grows.",
+      "description": "Faceless channels print money for people who systemize. This is the full pipeline \u2014 not 'use AI for everything' but the specific prompts, tools, and SOPs that produce a postable video daily.",
+      "bullets": [
+        "Niche selection framework + validation prompts",
+        "Script-generation prompts for retention-optimized structure",
+        "Voiceover workflow (TTS or cloned voice) with pronunciation fixes",
+        "Editing SOPs and b-roll sourcing system",
+        "30-day content calendar template + analytics tracking"
+      ],
+      "samplePreview": "Free: niche validation prompt pack",
+      "tags": [
+        "faceless",
+        "youtube",
+        "tiktok",
+        "content creation",
+        "ai video",
+        "automation"
+      ],
+      "traffic": {
+        "primary": "YouTube/TikTok \u2014 show the pipeline working",
+        "secondary": "Reddit r/NewTubers, r/PartneredYoutube",
+        "angle": "Screen-record the full pipeline producing one video"
+      },
+      "heroPrompt": "Professional digital product hero banner, deep purple background, bold white typography 'FACELESS CONTENT PIPELINE', cinematic video timeline showing script document morphing into voiceover waveform and edited video frames, magenta and cyan neon glow, premium creator-economy box-art style",
+      "heroImage": "assets/hero-faceless-content-pipeline.png",
+      "heroImageAlt": "assets/alt-hero-faceless-content-pipeline.png"
+    },
+    {
+      "rank": 6,
+      "slug": "freelancer-os-notion",
+      "tier": "copy-ready",
+      "name": "Freelancer OS: The Notion Command Center for Proposals, Clients & Invoices",
+      "price": 29,
+      "summary": "Notion template + AI prompt system for running a freelance business \u2014 proposals, scope control, client onboarding, invoicing, and the scripts that prevent scope creep.",
+      "description": "The freelancer tax is disorganization. This is the operating system \u2014 client portal, proposal templates, scope-creep scripts, invoice tracking, and AI prompts for every client conversation.",
+      "bullets": [
+        "Client portal database with onboarding sequence",
+        "Proposal + contract templates with scope protection",
+        "Invoice tracking and late-payment follow-up scripts",
+        "AI prompts for discovery calls, revisions, and tough conversations",
+        "Weekly review dashboard for pipeline + revenue"
+      ],
+      "samplePreview": "Free: the client onboarding template",
+      "tags": [
+        "notion template",
+        "freelance",
+        "freelancer",
+        "proposal",
+        "invoicing",
+        "business"
+      ],
+      "traffic": {
+        "primary": "Pinterest + r/freelance, r/Notion",
+        "secondary": "Twitter build-in-public",
+        "angle": "Before/after: chaotic inbox vs. organized dashboard"
+      },
+      "heroPrompt": "Professional digital product hero banner, warm off-white and charcoal background, bold dark typography 'FREELANCER OS', elegant Notion-style dashboard mockup with proposal, invoice, and client pipeline cards arranged in a clean grid, coral and navy accents, premium productivity-template box-art style",
+      "heroImage": "assets/hero-freelancer-os-notion.png",
+      "heroImageAlt": "assets/alt-hero-freelancer-os-notion.png"
+    },
+    {
+      "rank": 7,
+      "slug": "job-application-ai-kit",
+      "tier": "copy-ready",
+      "name": "The Job Application AI Kit: Resumes, Cover Letters & Recruiter Outreach That Get Interviews",
+      "price": 19,
+      "summary": "Tailor any resume and cover letter to any job description in minutes \u2014 plus the outreach prompts that get recruiter replies.",
+      "description": "Applying to 50 jobs with the same resume is why you hear nothing. This kit tailors every application to the actual job description \u2014 and gives you the outreach sequences that bypass the ATS black hole.",
+      "bullets": [
+        "Resume-tailoring prompts matched to job-description keywords",
+        "Cover-letter generator with voice calibration",
+        "Recruiter outreach + follow-up sequences",
+        "LinkedIn profile optimization prompts",
+        "Interview-prep prompt system (STAR stories, likely questions)"
+      ],
+      "samplePreview": "Free: 5 job-description tailoring prompts",
+      "tags": [
+        "job search",
+        "resume",
+        "cover letter",
+        "ai prompts",
+        "career",
+        "interview"
+      ],
+      "traffic": {
+        "primary": "Reddit r/jobs, r/careerguidance, r/RecruitmentHub",
+        "secondary": "Pinterest + TikTok 'job search tips'",
+        "angle": "Show a real before/after resume transformation"
+      },
+      "heroPrompt": "Professional digital product hero banner, confident navy and gold background, bold white typography 'JOB APPLICATION KIT', floating resume document, cover letter page, and recruiter message cards with golden checkmark badges, professional career-coach aesthetic, premium job-search box-art style",
+      "heroImage": "assets/hero-job-application-ai-kit.png",
+      "heroImageAlt": "assets/alt-hero-job-application-ai-kit.png"
+    },
+    {
+      "rank": 8,
+      "slug": "meeting-intelligence-kit",
+      "tier": "copy-ready",
+      "name": "Meeting Intelligence Kit: Transcripts \u2192 Decisions \u2192 Action Items on Autopilot",
+      "price": 29,
+      "summary": "The system for turning meeting recordings into searchable decisions, action items, and CRM updates \u2014 without watching the replay.",
+      "description": "Meetings produce more decisions than your team acts on. This kit turns recordings into structured outputs \u2014 summaries, decisions, action items with owners, and CRM-ready notes \u2014 using a prompt system you control.",
+      "bullets": [
+        "Transcript-to-decision prompt chain",
+        "Action-item extractor with owner + deadline detection",
+        "CRM update formatter (Salesforce/HubSpot/Notion)",
+        "Weekly meeting digest generator",
+        "Searchable meeting archive template"
+      ],
+      "samplePreview": "Free: transcript-to-summary prompt",
+      "tags": [
+        "meetings",
+        "productivity",
+        "notion template",
+        "ai prompts",
+        "crm",
+        "automation"
+      ],
+      "traffic": {
+        "primary": "LinkedIn + r/productivity, r/Office365",
+        "secondary": "Twitter threads on meeting overload",
+        "angle": "The 'I never watch meeting replays' pitch"
+      },
+      "heroPrompt": "Professional digital product hero banner, dark teal background, bold white typography 'MEETING INTELLIGENCE', audio waveform transforming into organized summary cards and action-item checklists, cyan and lime accents, premium productivity box-art style",
+      "heroImage": "assets/hero-meeting-intelligence-kit.png",
+      "heroImageAlt": "assets/alt-hero-meeting-intelligence-kit.png"
+    },
+    {
+      "rank": 9,
+      "slug": "etsy-seller-ai-kit",
+      "tier": "copy-ready",
+      "name": "Etsy Seller AI Kit: Listings, Tags, Reviews & Launch Sequences That Convert",
+      "price": 24,
+      "summary": "The prompt system for Etsy sellers \u2014 listing titles and tags that rank, descriptions that convert, review responses, and launch sequences.",
+      "description": "Etsy SEO is a game of keywords + conversion. This kit gives you the prompt system for titles, tags, descriptions, review responses, and product-launch sequences \u2014 built for the Etsy algorithm, not generic e-commerce.",
+      "bullets": [
+        "Listing title + tag generator optimized for Etsy search",
+        "Description prompts that convert browsers to buyers",
+        "Review-response templates (positive + negative)",
+        "Product-launch sequence prompts (social + email)",
+        "Pricing + photography prompt system for listings"
+      ],
+      "samplePreview": "Free: Etsy title/tag optimizer prompt",
+      "tags": [
+        "etsy",
+        "ecommerce",
+        "ai prompts",
+        "selling",
+        "seo",
+        "small business"
+      ],
+      "traffic": {
+        "primary": "Pinterest + r/Etsy, r/EtsySellers",
+        "secondary": "TikTok 'Etsy seller tips'",
+        "angle": "Show an actual listing ranking improvement"
+      },
+      "heroPrompt": "Professional digital product hero banner, warm cream and terracotta background, bold dark typography 'ETSY SELLER KIT', product listing mockups with tag clouds, star ratings, and shop dashboard cards, handmade-craft aesthetic with modern polish, premium seller-tool box-art style",
+      "heroImage": "assets/hero-etsy-seller-ai-kit.png",
+      "heroImageAlt": "assets/alt-hero-etsy-seller-ai-kit.png"
+    },
+    {
+      "rank": 10,
+      "slug": "cursor-power-user-pack",
+      "tier": "copy-ready",
+      "name": "Cursor Power-User Pack: Rules, MCP Configs & Agent Workflows That Ship",
+      "price": 29,
+      "summary": "The .cursorrules, MCP configurations, and agent workflow playbooks that turn Cursor from autocomplete into an engineering teammate.",
+      "description": "Cursor's default setup gets you 10% of its value. This pack gives you the rules files, MCP configs, and workflow patterns that make it behave like a senior engineer on your codebase.",
+      "bullets": [
+        "Production .cursorrules files for different project types",
+        "MCP server configs for GitHub, databases, docs, browsers",
+        "Agent workflow playbooks: plan \u2192 execute \u2192 review \u2192 ship",
+        "Context management: what to include, what to exclude",
+        "Debugging patterns for agent loops and false completions"
+      ],
+      "samplePreview": "Free: the base .cursorrules starter",
+      "tags": [
+        "cursor",
+        "ai coding",
+        "mcp",
+        "developer tools",
+        "vscode",
+        "productivity"
+      ],
+      "traffic": {
+        "primary": "Reddit r/cursor, r/ChatGPTCoding, Twitter",
+        "secondary": "Dev.to articles",
+        "angle": "Show a real Cursor session shipping a feature"
+      },
+      "heroPrompt": "Professional digital product hero banner, dark editor-themed background, bold white typography 'CURSOR POWER-USER', IDE interface mockup with rules file, MCP config panel, and agent workflow diagram glowing in green and purple, premium developer-tools box-art style",
+      "heroImage": "assets/hero-cursor-power-user-pack.png",
+      "heroImageAlt": "assets/alt-hero-cursor-power-user-pack.png"
+    }
+  ],
+  "launchOrder": [
+    "agentic-coding-starter-system",
+    "ai-voice-agent-starter-kit",
+    "real-estate-ai-listing-kit",
+    "cold-outreach-ai-system",
+    "faceless-content-pipeline",
+    "freelancer-os-notion",
+    "job-application-ai-kit",
+    "meeting-intelligence-kit",
+    "etsy-seller-ai-kit",
+    "cursor-power-user-pack"
+  ],
+  "postingWindows": {
+    "rationale": "Gumroad Discover is gated until ~$10 in sales + risk review (~3 weeks) + category + ratings. Early traffic must come from Pinterest/Reddit/niche communities. Posting windows target US audience peaks: weekday mornings (commute/browse), lunch, evening; weekend mornings for Pinterest/Reddit.",
+    "windows": [
+      {
+        "days": [
+          "mon",
+          "tue",
+          "wed",
+          "thu",
+          "fri"
+        ],
+        "times": [
+          "09:30",
+          "13:30",
+          "19:30"
+        ],
+        "timezone": "America/New_York"
+      },
+      {
+        "days": [
+          "sat",
+          "sun"
+        ],
+        "times": [
+          "10:00",
+          "16:00"
+        ],
+        "timezone": "America/New_York"
+      }
+    ],
+    "perDay": 3,
+    "note": "2-3 posts/day max. Gumroad's 10/day upload limit is an API constraint, not a best practice \u2014 spacing posts across windows matches when buyers actually browse."
+  }
+}

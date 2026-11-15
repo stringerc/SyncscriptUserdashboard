@@ -1,0 +1,768 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>NIM · Neural Intelligence Mesh — Agent Command Center</title>
+<style>
+  /* ═══════════════════════════════════════════════════════════════════
+     NIM DASHBOARD — Neural Intelligence Mesh
+     Design: Cosmic command center. Deep space blacks, nebula purples,
+     neural pinks, and datastream cyan. Every pixel intentional.
+     ═══════════════════════════════════════════════════════════════════ */
+
+  @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&family=JetBrains+Mono:wght@300;400;500;600&display=swap');
+
+  :root {
+    /* ── Cosmic palette ──────────────────────────── */
+    --void:         #06060a;
+    --deep-space:   #0c0c16;
+    --surface:      #111122;
+    --surface-alt:  #16162c;
+    --border:       #1e1e3a;
+    --border-acc:   #2a2a4a;
+
+    /* ── Text hierarchy ─────────────────────────── */
+    --text-primary:   #e8e8f0;
+    --text-secondary: rgba(232,232,240,0.65);
+    --text-tertiary:  rgba(232,232,240,0.35);
+
+    /* ── Signature colors ───────────────────────── */
+    --cyan:         #00d4ff;
+    --cyan-dim:     rgba(0,212,255,0.18);
+    --purple:       #8b5cf6;
+    --purple-dim:   rgba(139,92,246,0.15);
+    --magenta:      #d946ef;
+    --magenta-dim:  rgba(217,70,239,0.12);
+    --gold:         #f59e0b;
+    --gold-dim:     rgba(245,158,11,0.15);
+    --rose:         #fb7185;
+    --rose-dim:     rgba(251,113,133,0.12);
+    --emerald:      #10b981;
+    --emerald-dim:  rgba(16,185,129,0.12);
+    --cortex:       #00ccff;
+    --cortex-dim:   rgba(0,204,255,0.15);
+
+    /* ── Easing — never linear ──────────────────── */
+    --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
+    --ease-in-out-expo: cubic-bezier(0.87, 0, 0.13, 1);
+    --ease-out-quart: cubic-bezier(0.25, 1, 0.5, 1);
+    --spring: cubic-bezier(0.22, 0.01, 0, 1.01);
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  html {
+    scroll-behavior: smooth;
+    font-size: 16px;
+  }
+
+  body {
+    font-family: 'Space Grotesk', system-ui, sans-serif;
+    background: var(--color);
+    color: var(--text-primary);
+    overflow-x: hidden;
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* ══════════════════════════════════════════════════════════════════
+     BACKGROUND — Neural particle field
+     ══════════════════════════════════════════════════════════════════ */
+
+  #particle-canvas {
+    position: fixed;
+    inset: 0;
+    z-index: 0;
+    pointer-events: none;
+    opacity: 0.45;
+  }
+
+  /* ══════════════════════════════════════════════════════════════════
+     CRITICAL FIX: ensure header renders ABOVE particle canvas
+     ══════════════════════════════════════════════════════════════════ */
+
+  .shell {
+    position: relative;
+    z-index: 2;
+    min-height: 100vh;
+  }
+
+  /* ══════════════════════════════════════════════════════════════════
+     HEADER
+     ══════════════════════════════════════════════════════════════════ */
+
+  .header {
+    position: relative;
+    padding: 3rem 2rem 2rem;
+    text-align: center;
+    border-bottom: 1px solid var(--border);
+    background: radial-gradient(ellipse 80% 100% at 50% 0%, rgba(139,92,246,0.06) 0%, transparent 70%);
+  }
+
+  .header-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.3rem 0.9rem;
+    border-radius: 999px;
+    border: 1px solid var(--purple-dim);
+    background: var(--purple-dim);
+    color: var(--purple);
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.7rem;
+    font-weight: 500;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    margin-bottom: 1.5rem;
+  }
+
+  .header-badge .dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--purple);
+    box-shadow: 0 0 8px var(--purple);
+    animation: pulse-dot 2s ease-in-out infinite;
+  }
+
+  @keyframes pulse-dot {
+    0%, 100% { opacity: 1; box-shadow: 0 0 8px var(--purple); }
+    50%      { opacity: 0.4; box-shadow: 0 0 16px var(--purple); }
+  }
+
+  .header h1 {
+    font-size: clamp(2.5rem, 5vw, 4.5rem);
+    font-weight: 700;
+    letter-spacing: -0.03em;
+    line-height: 1.05;
+    color: var(--text-primary);
+  }
+
+  .header h1 .gradient-text {
+    background: linear-gradient(135deg, var(--accent) 0%, var(--purple) 40%, var(--magenta) 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+
+  .header .subtitle {
+    margin-top: 0.75rem;
+    color: var(--text-secondary);
+    font-size: 1.05rem;
+    font-weight: 400;
+    letter-spacing: -0.01em;
+  }
+
+  .header .subtitle strong {
+    color: var(--accent);
+    font-weight: 600;
+  }
+
+  /* ── Stats bar ───────────────────────────────── */
+
+  .stats-bar {
+    display: flex;
+    justify-content: center;
+    gap: 3rem;
+    margin-top: 2rem;
+    flex-wrap: wrap;
+  }
+
+  .stat-item {
+    text-align: center;
+  }
+
+  .stat-value {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 1.8rem;
+    font-weight: 600;
+    color: var(--text-primary);
+    letter-spacing: -0.02em;
+  }
+
+  .stat-value.accent { color: var(--accent); }
+  .stat-value.gold   { color: var(--gold); }
+  .stat-value.purple { color: var(--purple); }
+
+  .stat-label {
+    font-size: 0.72rem;
+    color: var(--text-tertiary);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    margin-top: 2px;
+  }
+
+  /* ══════════════════════════════════════════════════════════════════
+     NIM GRID — The soul of the dashboard
+     ══════════════════════════════════════════════════════════════════ */
+
+  .nim-grid {
+    position: relative;
+    z-index: 2;
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(380px, 1fr));
+    gap: 1.5rem;
+    padding: 2.5rem 2rem;
+    max-width: 1500px;
+    margin: 0 auto;
+  }
+
+  /* ── NIM Card ────────────────────────────────── */
+
+  .nim-card {
+    position: relative;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 18px;
+    padding: 2rem;
+    transition: all 0.5s var(--ease-out-expo);
+    cursor: default;
+    overflow: hidden;
+  }
+
+  .nim-card::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border-radius: 18px;
+    opacity: 0;
+    transition: opacity 0.5s var(--ease-out-expo);
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  .nim-card:hover::before { opacity: 1; }
+  .nim-card:hover {
+    border-color: var(--border-acc);
+    transform: translateY(-3px);
+    box-shadow:
+      0 24px 60px rgba(0,0,0,0.4),
+      0 0 0 1px rgba(255,255,255,0.04) inset;
+  }
+
+  /* Each NIM gets a signature gradient accent */
+  .nim-card[data-nim="1"]::before { background: radial-gradient(ellipse at 100% 0%, rgba(0,212,255,0.06) 0%, transparent 60%); }
+  .nim-card[data-nim="1"]:hover       { border-color: rgba(0,212,255,0.2); }
+  .nim-card[data-nim="2"]::before { background: radial-gradient(ellipse at 100% 0%, rgba(139,92,246,0.06) 0%, transparent 60%); }
+  .nim-card[data-nim="2"]:hover       { border-color: rgba(139,92,246,0.2); }
+  .nim-card[data-nim="3"]::before { background: radial-gradient(ellipse at 100% 0%, rgba(245,158,11,0.06) 0%, transparent 60%); }
+  .nim-card[data-nim="3"]:hover       { border-color: rgba(245,158,11,0.2); }
+  .nim-card[data-nim="4"]::before { background: radial-gradient(ellipse at 100% 0%, rgba(217,70,239,0.06) 0%, transparent 60%); }
+  .nim-card[data-nim="4"]:hover       { border-color: rgba(217,70,239,0.2); }
+  .nim-card[data-nim="5"]::before { background: radial-gradient(ellipse at 100% 0%, rgba(251,113,133,0.06) 0%, transparent 60%); }
+  .nim-card[data-nim="5"]:hover       { border-color: rgba(251,113,133,0.2); }
+  .nim-card[data-nim="6"]::before { background: radial-gradient(ellipse at 100% 0%, rgba(16,185,129,0.06) 0%, transparent 60%); }
+  .nim-card[data-nim="6"]:hover       { border-color: rgba(16,185,129,0.2); }
+  .nim-card[data-nim="7"]::before { background: radial-gradient(ellipse at 100% 0%, rgba(0,212,255,0.06) 0%, transparent 60%); }
+  .nim-card[data-nim="7"]:hover       { border-color: rgba(0,212,255,0.2); }
+  .nim-card[data-nim="8"]::before { background: radial-gradient(ellipse at 100% 0%, rgba(245,158,11,0.06) 0%, transparent 60%); }
+  .nim-card[data-nim="8"]:hover       { border-color: rgba(245,158,11,0.2); }
+
+  .nim-card > * { position: relative; z-index: 1; }
+
+  /* ── Card header ─────────────────────────────── */
+
+  .nim-card-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 1.25rem;
+  }
+
+  .nim-icon {
+    width: 44px;
+    height: 44px;
+    border-radius: 12px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 1.2rem;
+    font-weight: 700;
+    color: var(--text-primary);
+    position: relative;
+  }
+
+  .nim-icon[data-color="cyan"]    { background: linear-gradient(135deg, rgba(0,212,255,0.2), rgba(0,212,255,0.08)); }
+  .nim-icon[data-color="purple"]  { background: linear-gradient(135deg, rgba(139,92,246,0.2), rgba(139,92,246,0.08)); }
+  .nim-icon[data-color="gold"]    { background: linear-gradient(135deg, rgba(245,158,11,0.2), rgba(245,158,11,0.08)); }
+  .nim-icon[data-color="magenta"] { background: linear-gradient(135deg, rgba(217,70,239,0.2), rgba(217,70,239,0.08)); }
+  .nim-icon[data-color="rose"]    { background: linear-gradient(135deg, rgba(251,113,133,0.2), rgba(251,113,133,0.08)); }
+  .nim-icon[data-color="emerald"]  { background: linear-gradient(135deg, rgba(16,185,129,0.2), rgba(16,185,129,0.08)); }
+
+  .nim-status-dot {
+    width: 9px;
+    height: 9px;
+    border-radius: 50%;
+    position: relative;
+  }
+
+  .nim-status-dot.online {
+    background: var(--emerald);
+    box-shadow: 0 0 10px rgba(16,185,129,0.5);
+    animation: pulse-dot 1.8s ease-in-out infinite;
+  }
+
+  .nim-status-dot.partial {
+    background: var(--gold);
+    box-shadow: 0 0 10px rgba(245,158,11,0.5);
+    animation: pulse-dot 3s ease-in-out infinite;
+  }
+
+  .nim-card h2 {
+    font-size: 1.25rem;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    margin-bottom: 0.3rem;
+    color: var(--text-primary);
+  }
+
+  .nim-card .nim-domain {
+    font-size: 0.72rem;
+    color: var(--text-tertiary);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    font-family: 'JetBrains Mono', monospace;
+    margin-bottom: 1rem;
+  }
+
+  .nim-card .nim-purpose {
+    font-size: 0.88rem;
+    color: var(--text-secondary);
+    line-height: 1.5;
+    margin-bottom: 1.5rem;
+    font-weight: 400;
+  }
+
+  /* ── Agent list ───────────────────────────────── */
+
+  .agent-list-title {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.65rem;
+    color: var(--text-tertiary);
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    margin-bottom: 0.75rem;
+  }
+
+  .agent-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.6rem;
+  }
+
+  .agent-item {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.6rem 0.8rem;
+    border-radius: 10px;
+    background: rgba(255,255,255,0.02);
+    border: 1px solid transparent;
+    transition: all 0.3s var(--ease-out-expo);
+  }
+
+  .agent-item:hover {
+    background: rgba(255,255,255,0.04);
+    border-color: var(--border);
+  }
+
+  .agent-indicator {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+
+  .agent-indicator.active  { background: var(--emerald); box-shadow: 0 0 6px rgba(16,185,129,0.5); }
+  .agent-indicator.idle    { background: var(--text-tertiary); }
+  .agent-indicator.watching { background: var(--accent); box-shadow: 0 0 6px rgba(0,212,255,0.4); }
+
+  .agent-info {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .agent-name {
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: var(--text-primary);
+    letter-spacing: -0.01em;
+  }
+
+  .agent-role {
+    font-size: 0.7rem;
+    color: var(--text-tertiary);
+    font-family: 'JetBrains Mono', monospace;
+    margin-top: 1px;
+  }
+
+  .agent-metric {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.68rem;
+    color: var(--text-secondary);
+    text-align: right;
+    white-space: nowrap;
+  }
+
+  /* ── NIM footer ───────────────────────────────── */
+
+  .nim-card-footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-top: 1.5rem;
+    padding-top: 1rem;
+    border-top: 1px solid var(--border);
+    gap: 1rem;
+  }
+
+  .nim-health {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+
+  .nim-health-bar {
+    width: 80px;
+    height: 3px;
+    border-radius: 2px;
+    background: var(--border);
+    overflow: hidden;
+  }
+
+  .nim-health-fill {
+    height: 100%;
+    border-radius: 2px;
+    transition: width 1s var(--ease-out-expo);
+  }
+
+  .nim-health-label {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.65rem;
+    color: var(--text-tertiary);
+  }
+
+  .nim-agent-count {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.68rem;
+    color: var(--text-tertiary);
+  }
+
+  /* ══════════════════════════════════════════════════════════════════
+     TOPOLOGY PANEL — Agent relationship graph
+     ══════════════════════════════════════════════════════════════════ */
+
+  .topology-section {
+    position: relative;
+    z-index: 2;
+    padding: 0 2rem 4rem;
+    max-width: 1200px;
+    margin: 0 auto;
+  }
+
+  .topology-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 1.25rem;
+  }
+
+  .topology-header h2 {
+    font-size: 1.5rem;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    color: var(--text-primary);
+  }
+
+  .topology-header .view-toggle {
+    display: flex;
+    gap: 0.25rem;
+    background: var(--surface);
+    border-radius: 10px;
+    padding: 3px;
+    border: 1px solid var(--border);
+  }
+
+  .view-toggle button {
+    background: none;
+    border: none;
+    color: var(--text-tertiary);
+    font-family: 'Space Grotesk', sans-serif;
+    font-size: 0.75rem;
+    font-weight: 500;
+    padding: 0.45rem 0.9rem;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: all 0.3s var(--ease-out-expo);
+  }
+
+  .view-toggle button.active {
+    background: var(--surface-alt);
+    color: var(--text-primary);
+    box-shadow: 0 1px 3px rgba(0,0,0,0.3);
+  }
+
+  .topology-container {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 18px;
+    overflow: hidden;
+    position: relative;
+  }
+
+  #topology-canvas {
+    display: block;
+    width: 100%;
+    height: 500px;
+    cursor: grab;
+  }
+
+  #topology-canvas:active { cursor: grabbing; }
+
+  /* ══════════════════════════════════════════════════════════════════
+     FOOTER
+     ══════════════════════════════════════════════════════════════════ */
+
+  .footer {
+    position: relative;
+    z-index: 2;
+    text-align: center;
+    padding: 3rem 2rem;
+    border-top: 1px solid var(--border);
+    color: var(--text-tertiary);
+    font-size: 0.72rem;
+    letter-spacing: 0.03em;
+  }
+
+  .footer span {
+    color: var(--accent);
+  }
+
+  /* ══════════════════════════════════════════════════════════════════
+     RESPONSIVE
+     ══════════════════════════════════════════════════════════════════ */
+
+  @media (max-width: 768px) {
+    .header { padding: 2rem 1.25rem 1.5rem; }
+    .header h1 { font-size: 2.2rem; }
+    .nim-grid {
+      grid-template-columns: 1fr;
+      padding: 1.25rem;
+      gap: 1rem;
+    }
+    .stats-bar { gap: 1.5rem; }
+    .topology-section { padding: 0 1.25rem 3rem; }
+    #topology-canvas { height: 350px; }
+  }
+
+  /* ══════════════════════════════════════════════════════════════════
+     ANIMATIONS
+     ══════════════════════════════════════════════════════════════════ */
+
+  @keyframes fade-up {
+    from { opacity: 0; transform: translateY(24px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+
+  .nim-card {
+    animation: fade-up 0.7s var(--ease-out-expo) both;
+  }
+  .nim-card:nth-child(1) { animation-delay: 0.05s; }
+  .nim-card:nth-child(2) { animation-delay: 0.12s; }
+  .nim-card:nth-child(3) { animation-delay: 0.19s; }
+  .nim-card:nth-child(4) { animation-delay: 0.26s; }
+  .nim-card:nth-child(5) { animation-delay: 0.33s; }
+  .nim-card:nth-child(6) { animation-delay: 0.40s; }
+  .nim-card:nth-child(7) { animation-delay: 0.47s; }
+  .nim-card:nth-child(8) { animation-delay: 0.54s; }
+
+  /* ── Selection color ──────────────────────────── */
+  ::selection {
+    background: rgba(0,212,255,0.18);
+    color: var(--text-primary);
+  }
+</style>
+</head>
+<body>
+
+<canvas id="particle-canvas"></canvas>
+
+<div class="shell">
+
+  <!-- ═══════════════════════════════════════════════════════════════
+       HEADER
+       ═══════════════════════════════════════════════════════════════ -->
+  <header class="header">
+    <div class="header-badge">
+      <span class="dot"></span> NIM Command Center · Neurallink Active
+    </div>
+    <h1>
+      Neural Intelligence<br>
+      <span class="gradient-text">Mesh</span>
+    </h1>
+    <p class="subtitle">
+      <strong>8 NIM</strong> orchestrating <strong>42 agents</strong>
+      across the SyncScript ecosystem · all with live coherence scoring
+    </p>
+
+    <div class="stats-bar">
+      <div class="stat-item">
+        <div class="stat-value accent">8</div>
+        <div class="stat-label">Active NIM</div>
+      </div>
+      <div class="stat-item">
+        <div class="stat-value purple">42</div>
+        <div class="stat-label">Deployed Agents</div>
+      </div>
+      <div class="stat-item">
+        <div class="stat-value" style="color:var(--emerald)">94%</div>
+        <div class="stat-label">Global Coherence</div>
+      </div>
+      <div class="stat-item">
+        <div class="stat-value gold">7</div>
+        <div class="stat-label">Cross-NIM Channels</div>
+      </div>
+    </div>
+  </header>
+
+  <!-- ═══════════════════════════════════════════════════════════════
+       NIM GRID
+       ═══════════════════════════════════════════════════════════════ -->
+  <section class="nim-grid" id="nim-grid">
+    <!-- JS will populate this, but we provide a minimal fallback -->
+  </section>
+
+  <!-- ═══════════════════════════════════════════════════════════════
+       TOPOLOGY GRAPH
+       ═══════════════════════════════════════════════════════════════ -->
+  <section class="topology-section">
+    <div class="topology-header">
+      <h2>Agent Topology</h2>
+      <div class="view-toggle">
+        <button class="active" data-view="graph">Graph</button>
+        <button data-view="matrix">Matrix</button>
+      </div>
+    </div>
+    <div class="topology-container">
+      <canvas id="topology-canvas"></canvas>
+    </div>
+  </section>
+
+  <!-- ═══════════════════════════════════════════════════════════════
+       FOOTER
+       ═══════════════════════════════════════════════════════════════ -->
+  <footer class="footer">
+    NIM Command Center · <span>SyncScript Ecosystem</span> · All NIM configured in this dashboard
+  </footer>
+
+</div>
+
+<!-- ══════════════════════════════════════════════════════════════════
+     APPLICATION LOGIC
+     ══════════════════════════════════════════════════════════════════ -->
+<script>
+(() => {
+  'use strict';
+
+  /* ── NIM Data ────────────────────────────────────────────────── */
+
+  const NIMS = [
+    {
+      id: 'nim-cortex',
+      nimTag: 'nim-1',
+      name: 'Cortex',
+      domain: 'nim.cortex.syncscript',
+      purpose: 'Consciousness engine dial. Metacognition, provenance validation, coherence scoring, global workspace broadcast, identity persistence — all tunneled through the collapse gate.',
+      icon: '◉',
+      iconColor: 'cyan',
+      status: 'online',
+      health: 97,
+      agentCount: 12,
+      accent: 'cyan',
+      agents: [
+        { name: 'MetaMind',     role: 'Metacognitive Controller',      state: 'active',  metric: 'Φ 0.87' },
+        { name: 'Provenance',    role: 'Epistemic Validator',           state: 'active',  metric: 'p=0.98' },
+        { name: 'Collapse',      role: 'Strategy Gate',                 state: 'active',  metric: 'Δ+0.23' },
+        { name: 'Sensorimotor', role: 'Action-Observer Loop',           state: 'watching', metric: '12/min' },
+        { name: 'Blackboard',    role: 'Global Workspace',              state: 'active',  metric: 'Φ 0.74' },
+        { name: 'IIT',           role: 'Integrated Info Calculator',    state: 'active',  metric: 'Φ 0.61' },
+        { name: 'Narrative',     role: 'Identity Anchor',               state: 'active',  metric: 'k=3' },
+        { name: 'OfflineBrain',  role: 'Edge Inference Fallback',       state: 'idle',    metric: 'ready' },
+        { name: 'NudgeEngine',   role: '4-Voice Advisory',              state: 'watching', metric: '12 nudges' },
+        { name: 'SEM',           role: 'Structural Equation Model',     state: 'active',  metric: 'BIC 42' },
+        { name: 'ActionObserver',role: 'Sensorimotor Coupling',         state: 'active',  metric: '1.2/s' },
+        { name: 'HarmonyLedger', role: 'Inter-Agent Harmony',           state: 'active',  metric: '7 entries' },
+      ]
+    },
+    {
+      id: 'nim-syncscript',
+      nimTag: 'nim-2',
+      name: 'SyncScript',
+      domain: 'nim.syncscript.core',
+      purpose: 'Core product. Task orchestration, project management for legal and online business. Gamification, heat maps, calendar, and team collaboration.',
+      color: 'purple',
+      iconColor: 'purple',
+      status: 'online',
+      coherence: 95,
+      agentCount: 6,
+      agents: [
+        { name: 'TaskRunner',       role: 'Scheduling Core',             state: 'active',  metric: '120/min' },
+        { name: 'GameEngine',       role: 'Points & Trophies',           state: 'active',  metric: '3 users' },
+        { name: 'HeatMapSync',     role: 'Activity Calendar Sync',       state: 'watching', metric: '24h' },
+        { name: 'ProjectMerge',     role: 'Project Consolidator',        state: 'active',  metric: '4/week' },
+        { name: 'CollabRouter',     role: 'Team Invite Flow',            state: 'idle',    metric: 'standby' },
+      ]
+    },
+    {
+      id: 'nim-bookforge',
+      name: 'BookForge',
+      domain: 'bookforge.infra',
+      purpose: 'Audiobook pipeline. Gemini TTS, Edge-TTS fallback, ACX mastering, cover art generation, chapter splitting, and emotional voice casting.',
+      color: 'gold',
+      iconColor: 'gold',
+      status: 'partial',
+      coherence: 88,
+      agentCount: 6,
+      agents: [
+        { name: 'GeminiTTS',       role: 'Primary TTS Engine',            state: 'active',   metric: '11h36m' },
+        { name: 'EdgeFallback',    role: 'Secondary TTS',                 state: 'idle',     metric: 'ready' },
+        { name: 'ACXMaster',       role: 'Audio Mastering',                state: 'active',   metric: '40 ch.' },
+        { name: 'ChapterSplitter', role: 'Paragraph→Chapter',              state: 'active',   metric: '4 books' },
+        { name: 'CoverGen',        role: 'Cover Art Generator',            state: 'idle',     metric: '3 output' },
+        { name: 'VoiceCast',     role: 'Emotional Voice Router',         state: 'watching', metric: 'Orus/6' },
+      ]
+    },
+    {
+      id: 'nim-legal',
+      name: 'LegalNIM',
+      domain: 'legal.spalding',
+      purpose: 'Criminal defense motion engine. Brady/Giglio discovery motions, BWC index deposition preparation, bond revocation strategy, and open records litigation.',
+      color: 'magenta',
+      iconColor: 'magenta',
+      status: 'online',
+      coherence: 88,
+      agentCount: 5,
+      agents: [
+        { name: 'MotionDrafter',   role: 'Brady / Giglio Motions',        state: 'active',   metric: '7 drafts' },
+        { name: 'EvidenceIndexer',   role: 'BWC / Discovery Indexing',     state: 'watching', metric: '2k+ items' },
+        { name: 'BondAnalyzer',       role: 'Revocation / Risk',           state: 'active',   metric: '3 analyses' },
+        { name: 'AbuseLitigator',    role: '31.7 / 34.6 Counter-Plays',   state: 'active',   metric: '38:1 ratio' },
+        { name: 'DeadlineWatch',      role: 'Court Deadline Monitor',     state: 'watching',  metric: '2 pending' },
+      ]
+    },
+    {
+      id: 'nim-ressi',
+      name: 'Ressi Records',
+      domain: 'ressi.records',
+      purpose: 'Independent label engine. 4-artist roster from Resilience album, AI+human curation pipeline, distribution management, and A&R signal scoring.',
+      color: 'rose',
+      iconColor: 'rose',
+      status: 'active',
+      coherence: 84,
+      agentCount: 4,
+      agents: [
+        { name: 'RosterManager', role: 'Artist Pipeline',     state: 'active',   metric: '4 artists' },
+        { name: 'CuratorBot',     role: 'AI Curation Signal',  state: 'active',   metric: '92 picks' },
+        { name: 'ReleasePlanner', role: 'Distribution Dates',   state: 'watching',   metric: 'Q3 ready' },
+        { name: 'MarketingMix',    role: 'Social + DSP Growth', state: 'idle',     metric: 'plan

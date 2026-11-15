@@ -1,0 +1,215 @@
+import { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router';
+import { motion } from 'motion/react';
+import { AIFocusSection } from '../AIFocusSection';
+import { TodaySection } from '../TodaySection';
+import { ResourceHubSection } from '../ResourceHubSection';
+import { DashboardBriefing } from '../DashboardBriefing';
+import { IntelligentDashboardView } from '../IntelligentDashboardView';
+import { WelcomeModal } from '../WelcomeModal';
+import { InteractiveHotspot, ONBOARDING_HOTSPOTS } from '../InteractiveHotspot';
+import { useAuth } from '../../contexts/AuthContext';
+import { generateFirstTimeUserData } from '../../utils/first-time-user-data';
+
+// Toggle the new intelligent dashboard view.
+// Set to true for the revolutionary energy-first experience.
+const USE_INTELLIGENT_DASHBOARD = true;
+
+/**
+ * DASHBOARD PAGE - First-Time User Experience Integration
+ *
+ * Research-backed onboarding flow:
+ * 1. Welcome modal on first visit (shows value proposition)
+ * 2. Sample data pre-populated (demonstrates features)
+ * 3. Interactive hotspot guides to first action
+ * 4. Progressive tooltips introduce features
+ *
+ * Expected results:
+ * - 80%+ complete first energy log
+ * - < 30 seconds time-to-value
+ * - 70%+ Day 1 retention
+ */
+export function DashboardPage() {
+  const { user } = useAuth();
+  const navigate = useNavigate();
+  const userScope = user?.id || 'anonymous';
+  const sampleSeenKey = `ss_onboarding_sample_seen_${userScope}`;
+  const welcomeSeenKey = `ss_onboarding_welcome_seen_${userScope}`;
+
+  const hasSeenSampleDataForUser = () => localStorage.getItem(sampleSeenKey) === 'true';
+  const hasSeenWelcomeForUser = () => localStorage.getItem(welcomeSeenKey) === 'true';
+  const markSampleSeenForUser = () => localStorage.setItem(sampleSeenKey, 'true');
+  const markWelcomeSeenForUser = () => localStorage.setItem(welcomeSeenKey, 'true');
+
+  // First-time experience should be per-user and shown once.
+  // Tier 0 A fix: lock isFirstTime once at mount so the value doesn't flip to
+  // false mid-render after `markSampleSeenForUser` writes localStorage during
+  // the boot effect. Previously this caused first-time UI to dismount itself
+  // before it finished teaching.
+  const [isFirstTime] = useState<boolean>(() =>
+    Boolean(user?.isFirstTime && !user?.hasLoggedEnergy) && !hasSeenSampleDataForUser()
+  );
+
+  // Sample data state (for first-time users)
+  const [sampleData, setSampleData] = useState<any>(null);
+
+  // Onboarding UI state
+  const [showWelcome, setShowWelcome] = useState(false);
+  const [showHotspot, setShowHotspot] = useState(false);
+  const [currentHotspot, setCurrentHotspot] = useState('ENERGY_METER');
+
+  // Initialize sample data for first-time users
+  useEffect(() => {
+    if (isFirstTime) {
+      // Generate sample data
+      const data = generateFirstTimeUserData();
+      setSampleData(data);
+      markSampleSeenForUser();
+
+      // Show welcome modal after brief delay (let page render first)
+      setTimeout(() => {
+        if (!hasSeenWelcomeForUser()) {
+          setShowWelcome(true);
+        }
+      }, 800);
+    }
+  }, [isFirstTime, sampleSeenKey, welcomeSeenKey]);
+
+  // WAS north-star metric: track dashboard view
+  useEffect(() => {
+    import('../../observability/analytics').then((m) => {
+      m.Events.dashboardViewed();
+    }).catch(() => {});
+  }, []);
+
+  // Handle welcome modal - Quick Start
+  function handleWelcomeGetStarted() {
+    setShowWelcome(false);
+    markWelcomeSeenForUser();
+
+    // Show hotspot on energy meter after modal closes
+    setTimeout(() => {
+      setShowHotspot(true);
+      setCurrentHotspot('ENERGY_METER');
+    }, 600);
+  }
+
+  // Handle welcome modal - Set Up Profile
+  function handleCustomizeProfile() {
+    setShowWelcome(false);
+    markWelcomeSeenForUser();
+
+    // Navigate to onboarding wizard
+    navigate('/onboarding');
+  }
+
+  // Handle hotspot progression
+  function handleHotspotDismiss() {
+    setShowHotspot(false);
+
+    // Progress to next hotspot after delay
+    const hotspotSequence = ['ENERGY_METER', 'AI_SUGGESTIONS', 'SCRIPTS_TAB', 'ROYGBIV_RING'];
+    const currentIndex = hotspotSequence.indexOf(currentHotspot);
+
+    if (currentIndex < hotspotSequence.length - 1 && isFirstTime) {
+      setTimeout(() => {
+        setCurrentHotspot(hotspotSequence[currentIndex + 1]);
+        setShowHotspot(true);
+      }, 10000); // Show next hotspot after 10 seconds
+    }
+  }
+
+  return (
+    <>
+      {/* Welcome modal and hotspot onboarding (both views) */}
+      <WelcomeModal
+        show={showWelcome}
+        onClose={() => {
+          setShowWelcome(false);
+          markWelcomeSeenForUser();
+        }}
+        onGetStarted={handleWelcomeGetStarted}
+        onCustomizeProfile={handleCustomizeProfile}
+        userName={user?.name}
+      />
+
+      {isFirstTime && (
+        <InteractiveHotspot
+          show={showHotspot}
+          {...ONBOARDING_HOTSPOTS[currentHotspot as keyof typeof ONBOARDING_HOTSPOTS]}
+          onDismiss={handleHotspotDismiss}
+        />
+      )}
+
+      {USE_INTELLIGENT_DASHBOARD ? (
+        /* ═══ Intelligent Dashboard — Energy as the hero ═══ */
+        <IntelligentDashboardView />
+      ) : (
+        /* ═══ Classic three-column dashboard (legacy fallback) ═══ */
+        <motion.div
+          className="min-w-0 max-w-full flex-1 overflow-y-auto overflow-x-hidden hide-scrollbar p-4 sm:p-6 space-y-4 sm:space-y-6"
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.3 }}
+        >
+          <DashboardBriefing />
+
+          {/* Sample Data Indicator for first-time users */}
+          {isFirstTime && sampleData && (
+            <motion.div
+              initial={{ opacity: 0, y: -10 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="max-w-[1600px] mx-auto mb-4"
+            >
+              <div className="bg-indigo-500/10 border border-indigo-400/30 rounded-lg p-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <div className="flex items-center gap-3 min-w-0">
+                  <motion.div
+                    animate={{ rotate: [0, 10, -10, 0] }}
+                    transition={{ duration: 2, repeat: Infinity }}
+                    className="text-2xl"
+                  >
+                    ✨
+                  </motion.div>
+                  <div>
+                    <div className="text-sm font-semibold text-indigo-300">
+                      {/* EX-046-MOCK-ALLOWED: Onboarding sample data indicator for first-time users */}
+                      You're viewing sample data
+                    </div>
+                    <div className="text-xs text-indigo-400/70">
+                      Your real journey starts when you log your first energy level
+                    </div>
+                  </div>
+                </div>
+                <div className="text-xs text-indigo-400/50 font-mono shrink-0">
+                  {sampleData.stats.totalLogs} sample logs • {sampleData.stats.streak} day streak
+                </div>
+              </div>
+            </motion.div>
+          )}
+
+          {/* md+: three columns */}
+          <div className="mx-auto flex min-h-0 w-full min-w-0 max-w-[1600px] flex-col gap-8 md:h-full md:min-h-0 md:flex-row md:gap-6">
+            <div
+              id="ai-suggestions"
+              className="min-h-0 w-full min-w-0 md:h-full md:w-auto md:min-w-0 md:flex-1 md:overflow-y-auto md:overscroll-contain hide-scrollbar"
+            >
+              <AIFocusSection />
+            </div>
+            <div
+              id="energy-meter"
+              className="min-h-0 w-full min-w-0 md:h-full md:w-auto md:min-w-0 md:flex-1 md:overflow-y-auto md:overscroll-contain hide-scrollbar"
+            >
+              <TodaySection />
+            </div>
+            <div
+              id="roygbiv-ring"
+              className="min-h-0 w-full min-w-0 md:h-full md:w-auto md:min-w-0 md:flex-1 md:overflow-y-auto md:overscroll-contain hide-scrollbar"
+            >
+              <ResourceHubSection />
+            </div>
+          </div>
+        </motion.div>
+      )}
+    </>
+  );
+}

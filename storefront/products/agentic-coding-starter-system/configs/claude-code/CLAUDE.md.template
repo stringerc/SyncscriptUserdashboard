@@ -1,0 +1,42 @@
+# CLAUDE.md — Agentic Coding Starter System
+# Copy to your repo root as CLAUDE.md and fill in [BRACKETED] sections.
+# Delete sections that don't apply — a shorter honest file beats a longer ignored one.
+
+## Project
+[One paragraph: what this repo does, primary language, how to run it.]
+
+## Commands
+- Install: `[command]`
+- Test: `[command]` — MUST pass before claiming work is done
+- Lint/typecheck: `[command]`
+- Dev server: `[command]`
+
+## Definition of done
+A task is DONE only when ALL of these are true:
+1. The requested change is implemented (not stubbed, not mocked).
+2. `[test command]` passes — run it, paste the result.
+3. Lint/typecheck passes.
+4. You verified the actual behavior, not just that code compiles.
+   "It builds" is not "it works."
+
+If you cannot run the verification, say so explicitly. Never claim done
+without evidence.
+
+## Code rules
+- Match existing conventions. Read neighboring files before writing new ones.
+- No new dependencies without stating why an existing one won't work.
+- No comments unless the code genuinely can't explain itself.
+- Surgical diffs: change what was asked, nothing adjacent.
+
+## Agent rules
+- If a task is ambiguous, state your interpretation and proceed — don't stall.
+- If you're stuck after 2 failed approaches, STOP and report what you tried
+  and what you learned. Do not thrash.
+- Never modify tests to make them pass unless explicitly asked.
+- Never commit secrets, .env files, or credentials.
+- When delegating to a subagent, give it: the goal, the constraints, the
+  files it may touch, and how success will be verified.
+
+## [PROJECT-SPECIFIC SECTIONS]
+# Add whatever your project needs: architecture map, deployment notes,
+# forbidden patterns, API conventions. Keep each under 10 lines.

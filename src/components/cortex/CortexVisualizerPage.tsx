@@ -1,0 +1,1857 @@
+"use client";
+
+import React, { useEffect, useRef, useState } from 'react';
+import { cortexSignalBus, CortexVisualizer, type VisualizerFace, type CortexSignalBusPayload, type CortexVoiceState } from './CortexVisualizer';
+import { CortexAgentsScene } from './CortexAgentsScene';
+import { CortexCoreScene, agentScreenAnchors } from './CortexCoreScene';
+import { useVisualizerVoice } from './useVisualizerVoice';
+import { startInitiativeSensor } from '../../lib/cortex-initiative-sensor';
+import { CortexChatDrawer } from './CortexChatDrawer';
+import { CortexSurfaceLayer } from './CortexSurfaceLayer';
+import { useSurfaceFocusMode, setSurfaceFocusMode, useSurfacePanels, openSurfacePanel } from '../../lib/cortex-surfaces';
+import { getCortexProactiveInitiative } from '../../lib/cortex-proactive-initiative';
+import { agentsClient } from '../../lib/cortex-agents-client';
+import { cortexSpeak } from '../../lib/cortex-speech';
+import { getGlobeEmbedUrl, configureGlobeBase, GLOBE_MODE_EVENT, setGlobeAvailable } from '../../lib/cortex-globe';
+import { CORTEX_COLORS, CORTEX_STATE_THEME, CORTEX_TYPOGRAPHY, CORTEX_ANIMATION } from '../../lib/cortex-design-tokens';
+
+export type ActiveScene = 'core' | 'agents' | VisualizerFace;
+
+const STATE_STYLE: Record<CortexVoiceState, { color: string; label: string }> = {
+  idle:      { color: CORTEX_STATE_THEME.idle.color, label: CORTEX_STATE_THEME.idle.label },
+  listening: { color: CORTEX_STATE_THEME.listening.color, label: CORTEX_STATE_THEME.listening.label },
+  thinking:  { color: CORTEX_STATE_THEME.thinking.color, label: CORTEX_STATE_THEME.thinking.label },
+  speaking:  { color: CORTEX_STATE_THEME.speaking.color, label: CORTEX_STATE_THEME.speaking.label },
+  working:   { color: CORTEX_STATE_THEME.working.color, label: CORTEX_STATE_THEME.working.label },
+};
+
+const HUD_CSS = `
+  @keyframes cx-face-fade {
+    from { opacity: 0; transform: scale(0.985); filter: blur(3px); }
+    to   { opacity: 1; transform: scale(1); filter: blur(0); }
+  }
+  .cx-face-transition {
+    animation: cx-face-fade 320ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  }
+  @keyframes cx-fade-up {
+    from { opacity: 0; transform: translateY(18px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+  @keyframes cx-letter-in {
+    from { opacity: 0; transform: translateY(0.55em) skewY(4deg); filter: blur(6px); }
+    to   { opacity: 1; transform: translateY(0) skewY(0); filter: blur(0); }
+  }
+  @keyframes cx-blink {
+    0%, 49% { opacity: 1; }
+    50%, 100% { opacity: 0; }
+  }
+  @keyframes cx-scan-drift {
+    from { background-position: 0 0; }
+    to   { background-position: 0 120px; }
+  }
+  @keyframes cx-pulse-dot {
+    0%, 100% { box-shadow: 0 0 6px currentColor, 0 0 14px currentColor; }
+    50%      { box-shadow: 0 0 12px currentColor, 0 0 26px currentColor; }
+  }
+  @keyframes cx-bar-fill {
+    from { transform: scaleX(0); }
+    to   { transform: scaleX(1); }
+  }
+  @keyframes cx-caret {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.15; }
+  }
+  @keyframes cx-marquee {
+    from { transform: translateX(0); }
+    to   { transform: translateX(-50%); }
+  }
+  @keyframes cx-think-bounce {
+    0%, 80%, 100% { transform: translateY(0); opacity: 0.35; }
+    40%           { transform: translateY(-4px); opacity: 1; }
+  }
+  .cx-think-dot {
+    display: inline-block;
+    width: 4px; height: 4px; border-radius: 50%;
+    background: currentColor;
+    animation: cx-think-bounce 1.2s ease-in-out infinite;
+  }
+  @keyframes cx-shimmer {
+    from { background-position: 0% 50%; }
+    to   { background-position: 200% 50%; }
+  }
+  @keyframes cx-busy-slide {
+    0%   { transform: translateX(-100%); }
+    100% { transform: translateX(360%); }
+  }
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.4; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .cx-letter, .cx-hud-in, .cx-think-dot, .cx-pulse-dot, .cx-busy-slide,
+    .cx-scan-drift, .cx-marquee, .cx-bar-fill, .cx-fade-up, .cx-shimmer { animation: none !important; }
+    .cx-think-dot { opacity: 0.8; }
+    .cx-caret { animation: none !important; opacity: 1; }
+  }
+  .cx-letter { display: inline-block; animation: cx-letter-in 0.9s cubic-bezier(0.16,1,0.3,1) both; }
+  .cx-hud-in  { animation: cx-fade-up 0.9s cubic-bezier(0.16,1,0.3,1) both; }
+  .cx-caret   { display: inline-block; animation: cx-caret 1.1s steps(1) infinite; }
+`;
+
+function Corner({ pos }: { pos: 'tl' | 'tr' | 'bl' | 'br' }) {
+  const base: React.CSSProperties = {
+    position: 'absolute', width: 34, height: 34, zIndex: 15,
+    borderColor: 'rgba(148,233,255,0.4)', borderStyle: 'solid', borderWidth: 0,
+    pointerEvents: 'none',
+  };
+  const map: Record<string, React.CSSProperties> = {
+    tl: { top: 14, left: 14, borderTopWidth: 1.5, borderLeftWidth: 1.5 },
+    tr: { top: 14, right: 14, borderTopWidth: 1.5, borderRightWidth: 1.5 },
+    bl: { bottom: 14, left: 14, borderBottomWidth: 1.5, borderLeftWidth: 1.5 },
+    br: { bottom: 14, right: 14, borderBottomWidth: 1.5, borderRightWidth: 1.5 },
+  };
+  return <div style={{ ...base, ...map[pos] }} />;
+}
+
+/** Minimal render-cost overlay: rAF frame delta + FPS, averaged over 500ms.
+ *  Toggle with the backquote (`) key. No fabricated metrics — measures
+ *  actual frame pacing only. */
+function PerfHud() {
+  const [stats, setStats] = useState({ fps: 0, ms: 0 });
+  useEffect(() => {
+    let raf = 0;
+    let frames = 0;
+    let windowStart = performance.now();
+    let lastFrame = windowStart;
+    let lastSet = windowStart;
+    const tick = (now: number) => {
+      frames += 1;
+      const frameMs = now - lastFrame;
+      lastFrame = now;
+      if (now - lastSet >= 500) {
+        lastSet = now;
+        setStats({
+          fps: Math.round((frames * 1000) / Math.max(1, now - windowStart)),
+          ms: frames ? frameMs : 0,
+        });
+        frames = 0;
+        windowStart = now;
+      }
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, []);
+  return (
+    <div style={{
+      position: 'absolute', top: 14, left: '50%', transform: 'translateX(-50%)', zIndex: 30,
+      padding: '5px 12px', border: '1px solid rgba(52,211,153,0.35)', borderRadius: 3,
+      background: 'rgba(2,6,10,0.72)', backdropFilter: 'blur(6px)',
+      fontSize: 9, letterSpacing: '0.18em', color: 'rgba(110,231,183,0.85)',
+      fontFamily: "'IBM Plex Mono', monospace", pointerEvents: 'none',
+    }}>
+      {stats.fps} FPS · {stats.ms.toFixed(1)}ms · ` to hide
+    </div>
+  );
+}
+
+/** Reveals text character-by-character (~0.6s max) whenever it changes. */
+function Typewriter({ text, accent }: { text: string; accent: string }) {
+    const [out, setOut] = useState('');
+    const shownRef = useRef('');
+  useEffect(() => {
+    if (!text) { setOut(''); shownRef.current = ''; return; }
+    // Interim STT partials usually extend the previous caption — resume
+    // typing from the common prefix instead of restarting the whole line
+    // (kills the visible retype-flicker while listening).
+    const prev = shownRef.current;
+    let k = 0;
+    while (k < prev.length && k < text.length && prev[k] === text[k]) k++;
+    const resume = prev.length > 12 && k >= Math.floor(prev.length * 0.6) ? k : 0;
+    let i = resume;
+    setOut(text.slice(0, i));
+    const step = Math.max(1, Math.ceil((text.length - i) / 48));
+    const id = setInterval(() => {
+      i = Math.min(text.length, i + step);
+      setOut(text.slice(0, i));
+      shownRef.current = text.slice(0, i);
+      if (i >= text.length) clearInterval(id);
+    }, 16);
+    return () => clearInterval(id);
+  }, [text]);
+  if (!text) {
+    return <span style={{ color: 'rgba(148,233,255,0.35)' }}>Awaiting signal<span className="cx-caret">▌</span></span>;
+  }
+  return <span>{out}<span className="cx-caret" style={{ color: accent }}>▌</span></span>;
+}
+
+export default function CortexVisualizerPage() {
+  const [micOn, setMicOn] = useState(() => {
+    if (typeof window === 'undefined') return true;
+    try {
+      const saved = localStorage.getItem('cortex_viz_mic_on');
+      // Microphone active by default for direct full-duplex conversational voice
+      return saved === null ? true : saved !== 'false';
+    } catch {
+      return true;
+    }
+  });
+  const [micLive, setMicLive] = useState(false);
+  const [chatOpen, setChatOpen] = useState(false);
+  const [faceMode, setFaceMode] = useState<ActiveScene>(() => {
+    if (typeof window === 'undefined') return 'core';
+    const param = new URLSearchParams(window.location.search).get('face')?.toLowerCase();
+    if (param && ['board', 'radial', 'neural', 'matrix', 'core', 'agents'].includes(param)) {
+      return param as ActiveScene;
+    }
+    const saved = localStorage.getItem('cortex_visualizer_face');
+    if (saved && ['board', 'radial', 'neural', 'matrix', 'core', 'agents'].includes(saved)) {
+      return saved as ActiveScene;
+    }
+    return 'core';
+  });
+  const [mapMode, setMapMode] = useState(() =>
+    new URLSearchParams(window.location.search).get('map') === '1');
+  const [globeUp, setGlobeUp] = useState(false);
+  const [globeReady, setGlobeReady] = useState(false);
+  const [globeFailed, setGlobeFailed] = useState(false);
+  const [globeRetry, setGlobeRetry] = useState(0);
+  const focusMode = useSurfaceFocusMode();
+  const panelCount = useSurfacePanels().length;
+  const focusModeRef = useRef(focusMode);
+  focusModeRef.current = focusMode;
+  const [reducedMotion, setReducedMotion] = useState(() =>
+    typeof window !== 'undefined' && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+  const [narrow, setNarrow] = useState(() => typeof window !== 'undefined' && window.innerWidth < 900);
+  const [geoLabel, setGeoLabel] = useState<string | null>(null);
+  const [uptimeSec, setUptimeSec] = useState(0);
+  const mountedAtRef = useRef(Date.now());
+  const [goveeSync, setGoveeSync] = useState(() => {
+    try { return localStorage.getItem('cortex_govee_sync') !== 'false'; } catch { return true; }
+  });
+  const goveeSyncRef = useRef(goveeSync);
+  goveeSyncRef.current = goveeSync;
+
+  // Proactive Intelligence: Ambient macOS Context & Variational Vigilance
+  const [ambientContext, setAmbientContext] = useState<{
+    app: string;
+    title: string;
+    category: string;
+    label: string;
+    suggestions: string[];
+  } | null>(null);
+
+  const [vigilanceData, setVigilanceData] = useState<{
+    report: any;
+    uncommittedFiles: number;
+    speculativeResolution: any;
+  } | null>(null);
+
+  const [showVigilanceDetails, setShowVigilanceDetails] = useState(false);
+  const [showPerfHud, setShowPerfHud] = useState(false);
+  const [vaultSyncNotice, setVaultSyncNotice] = useState<string | null>(null);
+
+  // Watchdog: mapMode on → wait for gev:ready; 20s silent → offer retry.
+  // gev:boot / gev:error from the iframe tell us WHICH layer failed:
+  // no boot = iframe/server unreachable; boot but no ready = app hung or GPU;
+  // error = WebGL context lost or render failure inside the globe.
+  const globeReadyRef = useRef(false);
+  const globeBootedRef = useRef(false);
+  const [globeError, setGlobeError] = useState<string | null>(null);
+  useEffect(() => {
+    if (!mapMode) {
+      globeReadyRef.current = false; globeBootedRef.current = false;
+      setGlobeReady(false); setGlobeFailed(false); setGlobeError(null); return;
+    }
+    globeReadyRef.current = false; globeBootedRef.current = false;
+    setGlobeReady(false); setGlobeFailed(false); setGlobeError(null);
+    const t = setTimeout(() => { if (!globeReadyRef.current) setGlobeFailed(true); }, 20000);
+    return () => clearTimeout(t);
+  }, [mapMode, globeRetry]);
+  const [payload, setPayload] = useState<CortexSignalBusPayload>({
+    state: 'idle', level: 0, text: '', agentName: 'CORTEX',
+  });
+
+  useVisualizerVoice(micOn, setMicLive);
+
+  // Proactive Initiative Sensor Bus: polls /api/cortex/initiative/sense on a
+  // visibility-gated cadence and feeds live host signals into the proposal engine.
+  useEffect(() => {
+    const sensor = startInitiativeSensor();
+    return () => sensor.stop();
+  }, []);
+
+  // Initiative HUD badge + one-time auto-open: the first proposal of a session
+  // surfaces the Inbox once; afterwards the badge keeps count visible without
+  // interrupting (restraint).
+  const [initiativeCount, setInitiativeCount] = useState(0);
+  const initiativeAutoOpenedRef = useRef(false);
+  useEffect(() => {
+    const engine = getCortexProactiveInitiative();
+    const update = () => {
+      const active = engine.getPendingProposals().length
+        + engine.getActiveProposals().filter(p => p.status === 'accepted').length;
+      setInitiativeCount(active);
+      if (active > 0 && !initiativeAutoOpenedRef.current) {
+        initiativeAutoOpenedRef.current = true;
+        openSurfacePanel({ kind: 'initiative', title: 'Initiative Inbox', customSize: { w: 460, h: 480 }, pinned: true });
+      }
+    };
+    update();
+    return engine.subscribe(update);
+  }, []);
+
+  // Distribution Deck: pin the live revenue-engine dashboard once per session
+  // so the Gumroad pipeline is always visible on the space. Dedup is handled
+  // by openSurfacePanel (same kind+title+url → repin, never duplicate).
+  const distDeckOpenedRef = useRef(false);
+  useEffect(() => {
+    if (distDeckOpenedRef.current) return;
+    distDeckOpenedRef.current = true;
+    openSurfacePanel({
+      kind: 'web',
+      title: 'Distribution Deck',
+      web: { url: '/storefront/distribution-dashboard.html', slug: 'distribution-deck' },
+      pinned: true,
+      customSize: { w: 560, h: 480 },
+    });
+    openSurfacePanel({
+      kind: 'web',
+      title: "Today's Ops",
+      web: { url: '/storefront/today-checklist.html', slug: 'today-ops' },
+      pinned: true,
+      customSize: { w: 520, h: 460 },
+    });
+  }, []);
+
+  // Bridge: agent.spawn_proposed runtime events → Initiative Inbox proposals.
+  // Spawn approval is always tier-2 (typed ACCEPT) — the governor stays central.
+  const bridgedSpawnsRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    agentsClient.start(); // ensure SSE feed is live even if Foundry never opens
+    const engine = getCortexProactiveInitiative();
+    const scan = () => {
+      for (const e of agentsClient.events) {
+        if (e.type !== 'agent.spawn_proposed') continue;
+        const p = e.proposal as any;
+        if (!p?.id || bridgedSpawnsRef.current.has(p.id)) continue;
+        bridgedSpawnsRef.current.add(p.id);
+        const spec = p.spec || {};
+        engine.submitProposal({
+          id: `spawn-${p.id}`,
+          category: 'system_resonance',
+          title: `Spawn agent ${spec.callSign || '?'} — ${spec.role || 'ephemeral'}`,
+          summary: `${spec.mission || ''} Scope: ${(spec.tools || []).join('/')}. TTL ${spec.ttlHours}h, budget ${spec.dailyBudget}/day. Proposed by ${p.proposedBy}.`,
+          urgency: 'medium',
+          suggestedTool: 'cortex_agents',
+          suggestedArgs: { action: 'approve_spawn', proposalId: p.id },
+          requiresApproval: true,
+          autonomyTier: 2,
+          epistemicConfidence: 0.7,
+          source: 'engine',
+          dedupeKey: `spawn:${p.id}`,
+          why: (p.evidence || []).map((ev: any) => `${ev.kind}: ${ev.summary}`).join(' · ') || 'recurring capability gap',
+        });
+      }
+    };
+    scan();
+    return agentsClient.subscribe(scan);
+  }, []);
+
+  // Agent crew presence — live fleet snapshot for the right-rail indicator,
+  // left telemetry column, mission log, and event ticker.
+  const [agentCrew, setAgentCrew] = useState(agentsClient.snapshot);
+  const [agentEvents, setAgentEvents] = useState(agentsClient.events);
+  const [missionExpanded, setMissionExpanded] = useState(false);
+  const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
+  const agentCardRef = useRef<HTMLDivElement | null>(null);
+  // Ride the agent's orbital position: the card tracks the mote's projected
+  // screen anchor each frame; falls back to the right-rail spot when the
+  // agent is behind the camera or anchors aren't live yet.
+  useEffect(() => {
+    if (!selectedAgentId) return;
+    let raf = 0;
+    const tick = () => {
+      const el = agentCardRef.current;
+      if (el) {
+        const anchor = agentScreenAnchors[selectedAgentId];
+        if (anchor && !anchor.behind) {
+          el.style.left = `${Math.max(170, Math.min(window.innerWidth - 170, anchor.x))}px`;
+          el.style.top = `${Math.max(90, Math.min(window.innerHeight - 80, anchor.y - 14))}px`;
+          el.style.right = 'auto';
+          el.style.transform = 'translate(-50%, -100%)';
+          el.style.opacity = '1';
+        } else {
+          el.style.left = 'auto';
+          el.style.right = '64px';
+          el.style.top = '24%';
+          el.style.transform = 'none';
+          el.style.opacity = anchor ? '0.35' : '1';
+        }
+      }
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [selectedAgentId]);
+
+  // Click-anywhere-off-card closes it. A short suppression window keeps the
+  // mote's own click→select event from instantly reopening what we just shut.
+  const suppressAgentSelect = useRef(0);
+  useEffect(() => {
+    if (!selectedAgentId) return;
+    const onDown = (e: PointerEvent) => {
+      if (agentCardRef.current?.contains(e.target as Node)) return;
+      setSelectedAgentId(null);
+      suppressAgentSelect.current = Date.now() + 300;
+    };
+    window.addEventListener('pointerdown', onDown, true);
+    return () => window.removeEventListener('pointerdown', onDown, true);
+  }, [selectedAgentId]);
+  useEffect(() => {
+    if (!missionExpanded) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setMissionExpanded(false); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [missionExpanded]);
+  useEffect(() => agentsClient.subscribe(() => {
+    setAgentCrew(agentsClient.snapshot);
+    setAgentEvents([...agentsClient.events]);
+  }), []);
+
+  useEffect(() => {
+    // Test/demo hook: lets tooling & the chat page drive the bus directly
+    (window as unknown as { __cortexSignalBus?: typeof cortexSignalBus }).__cortexSignalBus = cortexSignalBus;
+    // Clean initial bus state if lingering from prior session
+    const curBus = cortexSignalBus.getState();
+    if (curBus.state === 'idle' && (curBus.missionProgress !== undefined && curBus.missionProgress >= 0)) {
+      cortexSignalBus.publish({ state: 'idle', level: 0, text: '', missionProgress: -1, missionTitle: '' });
+    }
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('voice') === '1' || params.get('voice') === 'true') {
+      cortexSignalBus.publish({ state: 'listening', level: 0.5, text: 'Voice line active — speak into your microphone' });
+    }
+
+    const onVoiceInitiated = () => {
+      setMicOn(true);
+      try { localStorage.setItem('cortex_viz_mic_on', 'true'); } catch {}
+    };
+    window.addEventListener('cortex-voice-initiated', onVoiceInitiated);
+
+    let goveeSyncTimer: ReturnType<typeof setTimeout> | null = null;
+    let lastSyncedMood = '';
+
+    const unsub = cortexSignalBus.subscribe((p) => {
+      setPayload(p);
+      if (goveeSyncRef.current && p.state && p.state !== lastSyncedMood) {
+        lastSyncedMood = p.state;
+        if (goveeSyncTimer) clearTimeout(goveeSyncTimer);
+        goveeSyncTimer = setTimeout(() => {
+          fetch('/api/cortex/lights/sync', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ mood: p.state }),
+          }).catch(() => {});
+        }, 2000);
+      }
+    });
+
+    // Voice-driven map mode ("bring up Tokyo on the map" / "close the map")
+    const onGlobeMode = (e: Event) => {
+      const m = (e as CustomEvent).detail;
+      if (m === 'globe') setMapMode(true);
+      else if (m === 'core') setMapMode(false);
+    };
+    window.addEventListener(GLOBE_MODE_EVENT, onGlobeMode);
+
+    // Voice & UI driven face switching ("switch to matrix face" / "neural visualizer")
+    const onFaceMode = (e: Event) => {
+      const mode = (e as CustomEvent).detail;
+      if (mode && ['core', 'board', 'radial', 'neural', 'matrix', 'agents'].includes(mode)) {
+        setFaceMode(mode as ActiveScene);
+        try { localStorage.setItem('cortex_visualizer_face', mode); } catch {}
+      }
+    };
+    window.addEventListener('cortex-face-mode', onFaceMode);
+    // Agent mote click on the core scene → inspect card (stays on this face).
+    const onAgentSelect = (e: Event) => {
+      if (Date.now() < suppressAgentSelect.current) return;
+      const id = (e as CustomEvent).detail;
+      if (typeof id === 'string') setSelectedAgentId((cur) => (cur === id ? null : id));
+    };
+    window.addEventListener('cortex-agent-select', onAgentSelect);
+    // Resolve the globe origin: /api/cortex/gev-url returns the Oracle tunnel
+    // URL when deployed there; locally it 404s/nulls → Mac :5180 default.
+    let probeTimer: ReturnType<typeof setTimeout> | undefined;
+    (async () => {
+      let origin = 'http://127.0.0.1:5180';
+      try {
+        const r = await fetch('/api/cortex/gev-url', { cache: 'no-store' });
+        const j = await r.json();
+        if (j?.url) { origin = new URL(j.url).origin; configureGlobeBase(origin); }
+      } catch {}
+      setGevOrigin(origin);
+      // Probe the sibling globe app — hide MAP controls where it isn't running.
+      // Preferred: /api/gev/ping is a CORS-readable identity check (any old
+      // HTTP server fails it). Fallback: opaque no-cors probe for GEV builds
+      // that predate the endpoint.
+      probeTimer = setTimeout(() => {
+        fetch(origin + '/api/gev/ping', { cache: 'no-store' })
+          .then((r) => r.json())
+          .then((j) => {
+            if (j?.app === 'gods-eye-view') { setGlobeAvailable(true); setGlobeUp(true); return; }
+            throw new Error('not gev');
+          })
+          .catch(() =>
+            fetch(origin + '/', { mode: 'no-cors', cache: 'no-store' })
+              .then(() => { setGlobeAvailable(true); setGlobeUp(true); })
+              .catch(() => {}));
+      }, 800);
+    })();
+    const onKey = (e: KeyboardEvent) => {
+      const tag = (e.target as HTMLElement | null)?.tagName;
+      const typing = tag === 'INPUT' || tag === 'TEXTAREA' || (e.target as HTMLElement | null)?.isContentEditable;
+      if (e.key === 'Escape') {
+        setMapMode(false); setChatOpen(false);
+        if (focusModeRef.current) setSurfaceFocusMode(false);
+      }
+      if (typing) return;
+      // Mission-control hotkeys: i/a = interrupt/barge-in (no-ops when idle),
+      // ` = perf HUD.
+      if (e.key === 'i' || e.key === 'I' || e.key === 'a' || e.key === 'A') {
+        e.preventDefault();
+        window.dispatchEvent(new CustomEvent('cortex-viz-interrupt'));
+      } else if (e.key === '`') {
+        e.preventDefault();
+        setShowPerfHud((p) => !p);
+      }
+    };
+    window.addEventListener('keydown', onKey);
+
+    // Globe handshake: gev:ready from the iframe marks it live; gev:boot and
+    // gev:error diagnose where the boot chain broke.
+    const onGlobeMsg = (e: MessageEvent) => {
+      if (e.data?.type === 'gev:ready') { globeReadyRef.current = true; setGlobeReady(true); setGlobeFailed(false); }
+      else if (e.data?.type === 'gev:boot') { globeBootedRef.current = true; }
+      else if (e.data?.type === 'gev:error') {
+        setGlobeError(e.data.reason === 'webgl-context-lost'
+          ? 'GPU context lost — the browser reclaimed the graphics context.'
+          : `Globe render error: ${String(e.data.message || e.data.reason || 'unknown').slice(0, 120)}`);
+      }
+    };
+    window.addEventListener('message', onGlobeMsg);
+
+    let lastTs = 0;
+    const poll = async () => {
+      try {
+        const res = await fetch('/api/cortex/bus/state', { cache: 'no-store' });
+        if (!res.ok) return;
+        const data = await res.json();
+        if (data && data.ts && data.ts !== lastTs) {
+          lastTs = data.ts;
+          if (data.state === 'idle' && (data.missionProgress >= 0 || data.thought || data.tool)) {
+            data.missionProgress = -1;
+            data.missionTitle = '';
+            delete data.thought;
+            delete data.tool;
+            delete data.stage;
+          }
+          cortexSignalBus.ingestRemote(data);
+        }
+      } catch {}
+    };
+    poll();
+    const interval = setInterval(poll, 800);
+
+    const pollAmbientAndVigilance = async () => {
+      try {
+        const [ambRes, vigRes] = await Promise.all([
+          fetch('/api/cortex/ambient/context', { cache: 'no-store' }),
+          fetch('/api/cortex/vigilance/status', { cache: 'no-store' }),
+        ]);
+        if (ambRes.ok) {
+          const ambJson = await ambRes.json();
+          if (ambJson.ok) setAmbientContext(ambJson);
+        }
+        if (vigRes.ok) {
+          const vigJson = await vigRes.json();
+          if (vigJson.ok) setVigilanceData(vigJson);
+        }
+      } catch {}
+    };
+    pollAmbientAndVigilance();
+    const ambientInterval = setInterval(pollAmbientAndVigilance, 4000);
+
+    return () => {
+      if (goveeSyncTimer) clearTimeout(goveeSyncTimer);
+      unsub();
+      clearInterval(interval);
+      clearInterval(ambientInterval);
+      window.removeEventListener(GLOBE_MODE_EVENT, onGlobeMode);
+      window.removeEventListener('cortex-face-mode', onFaceMode);
+      window.removeEventListener('cortex-agent-select', onAgentSelect);
+      window.removeEventListener('cortex-voice-initiated', onVoiceInitiated);
+      window.removeEventListener('keydown', onKey);
+      window.removeEventListener('message', onGlobeMsg);
+      clearTimeout(probeTimer);
+    };
+  }, []);
+
+  // Reduced-motion + viewport tracking (inline styles can't use media queries).
+  useEffect(() => {
+    const mq = window.matchMedia('(prefers-reduced-motion: reduce)');
+    const onMq = () => setReducedMotion(mq.matches);
+    mq.addEventListener('change', onMq);
+    const onResize = () => setNarrow(window.innerWidth < 900);
+    window.addEventListener('resize', onResize);
+    return () => { mq.removeEventListener('change', onMq); window.removeEventListener('resize', onResize); };
+  }, []);
+
+  // Real coordinates for the sovereignty tag — never fabricate a location.
+  useEffect(() => {
+    if (!navigator.geolocation) return;
+    navigator.geolocation.getCurrentPosition(
+      (pos) => setGeoLabel(`${pos.coords.latitude.toFixed(4)}° ${pos.coords.latitude >= 0 ? 'N' : 'S'} // ${Math.abs(pos.coords.longitude).toFixed(4)}° ${pos.coords.longitude >= 0 ? 'E' : 'W'}`),
+      () => setGeoLabel(null),
+      { timeout: 8000, maximumAge: 300000 },
+    );
+  }, []);
+
+  // Session uptime — honest value for the rail (was hardcoded '∞').
+  useEffect(() => {
+    const id = setInterval(() => setUptimeSec(Math.floor((Date.now() - mountedAtRef.current) / 1000)), 1000);
+    return () => clearInterval(id);
+  }, []);
+
+  const st = STATE_STYLE[payload.state] ?? STATE_STYLE.idle;
+  const level = Math.max(0, Math.min(1, payload.level ?? 0));
+  const accent = st.color;
+  const agent = (payload.agentName || 'CORTEX').toUpperCase();
+  const channel = (payload.channel || '').toUpperCase();
+  const channelLabel = channel ? `CH·${channel}` : '';
+  const phi = payload.phi;
+  const missionProgress = payload.missionProgress;
+  const missionTitle = payload.missionTitle || '';
+  const queueDepth = payload.queueDepth ?? 0;
+
+  // ── Mission Console: busy is a first-class, persistent signal ──
+  const busy = payload.state !== 'idle' && (
+    payload.state === 'working' || payload.state === 'thinking' || queueDepth > 0 ||
+    (typeof missionProgress === 'number' && missionProgress >= 0 && !!missionTitle)
+  );
+  const [busyElapsed, setBusyElapsed] = useState(0);
+  const busySinceRef = useRef<number | null>(null);
+  const prevStateRef = useRef(payload.state);
+  const tickCtxRef = useRef<AudioContext | null>(null);
+
+  const [escalating, setEscalating] = useState(false);
+  const [escalationNotice, setEscalationNotice] = useState<string | null>(null);
+
+  const handleEscalateToAntigravity = async (reason: string, isAuto = false) => {
+    if (escalating) return;
+    setEscalating(true);
+    setEscalationNotice(isAuto ? 'Deadlock guard: Escalating to Antigravity IDE...' : 'Escalating to Antigravity IDE...');
+    try {
+      const res = await fetch('/api/cortex/escalate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          problemDescription: `Visualizer Cognitive Task: ${reason}. Mission: ${missionTitle || payload.text || 'Task'}. Tool: ${payload.tool || 'none'}. State: ${payload.state}. Duration: ${busyElapsed}s.`,
+          primaryTarget: 'antigravity',
+          dryRun: false,
+          autoDeploy: false,
+        }),
+      });
+      const data = await res.json();
+      setEscalationNotice(data?.ok ? 'Dispatched incident to Antigravity IDE' : 'Escalation logged to incident ledger');
+    } catch {
+      setEscalationNotice('Escalation request failed to dispatch');
+    } finally {
+      setEscalating(false);
+      if (isAuto) {
+        window.dispatchEvent(new CustomEvent('cortex-viz-interrupt'));
+        cortexSignalBus.publish({ state: 'idle', level: 0, text: 'Deadlock guard: turn interrupted & reset to idle', missionProgress: -1 });
+      }
+    }
+  };
+
+  // Automated 180s Deadlock Safeguard
+  useEffect(() => {
+    if (busyElapsed >= 180 && (payload.state === 'working' || payload.state === 'thinking') && !escalating) {
+      handleEscalateToAntigravity('Watchdog deadlock threshold exceeded (180s without completion)', true);
+    }
+  }, [busyElapsed, payload.state, escalating]);
+
+  useEffect(() => {
+    if (busy) {
+      if (busySinceRef.current === null) busySinceRef.current = Date.now();
+      const id = setInterval(() => {
+        if (busySinceRef.current !== null) {
+          setBusyElapsed(Math.floor((Date.now() - busySinceRef.current) / 1000));
+        }
+      }, 1000);
+      return () => clearInterval(id);
+    }
+    busySinceRef.current = null;
+    setBusyElapsed(0);
+  }, [busy]);
+
+  // Subtle "engaged" tick when Cortex enters working — once per transition.
+  useEffect(() => {
+    const was = prevStateRef.current;
+    prevStateRef.current = payload.state;
+    if (was !== 'working' && payload.state === 'working') {
+      try {
+        if (!tickCtxRef.current) tickCtxRef.current = new AudioContext();
+        const ctx = tickCtxRef.current;
+        if (ctx.state === 'suspended') { ctx.resume().catch(() => {}); return; }
+        const o = ctx.createOscillator();
+        const g = ctx.createGain();
+        o.type = 'sine'; o.frequency.value = 196;
+        g.gain.setValueAtTime(0.0001, ctx.currentTime);
+        g.gain.exponentialRampToValueAtTime(0.045, ctx.currentTime + 0.012);
+        g.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.1);
+        o.connect(g); g.connect(ctx.destination);
+        o.start(); o.stop(ctx.currentTime + 0.11);
+      } catch {}
+    }
+  }, [payload.state]);
+
+  const fmtElapsed = (s: number) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+  const [gevOrigin, setGevOrigin] = useState('http://127.0.0.1:5180');
+  const voiceBusy = payload.state === 'thinking' || payload.state === 'working' || queueDepth > 0;
+
+  return (
+    <div style={{ position: 'fixed', inset: 0, background: '#03040a', overflow: 'hidden', fontFamily: "'IBM Plex Mono', ui-monospace, monospace" }}>
+      <style>{HUD_CSS}</style>
+
+      {/* God's Eye View globe — unmounts the R3F core to keep GPU headroom */}
+      {mapMode ? (
+        <>
+        <iframe
+          key={globeRetry}
+          data-gev-globe=""
+          src={getGlobeEmbedUrl()}
+          title="God's Eye View — live globe"
+          style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, zIndex: 4, border: 'none', background: '#000', width: '100%', height: '100%' }}
+          allow="fullscreen"
+        />
+        {globeUp && !globeReady && !globeFailed && (
+          <div style={{
+            position: 'absolute', top: 120, left: '50%', transform: 'translateX(-50%)',
+            zIndex: 6, padding: '6px 18px',
+            border: '1px solid rgba(103,232,249,0.35)', borderRadius: 2,
+            background: 'rgba(4,8,14,0.6)', backdropFilter: 'blur(8px)',
+            color: '#67e8f9', fontSize: 9, letterSpacing: '0.34em',
+            animation: reducedMotion ? 'none' : 'cx-pulse-dot 1.6s ease-in-out infinite',
+          }}>
+            ◌ ESTABLISHING UPLINK…
+          </div>
+        )}
+        {globeFailed && (
+          <div style={{
+            position: 'absolute', inset: 0, zIndex: 6,
+            display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 14,
+            background: 'radial-gradient(ellipse at center, rgba(4,8,16,0.55), rgba(2,3,8,0.92))',
+          }}>
+            <div style={{ fontSize: 10, letterSpacing: '0.5em', color: 'rgba(148,233,255,0.5)' }}>SATELLITE UPLINK LOST</div>
+            <div style={{ fontSize: 12, color: 'rgba(232,251,255,0.75)', letterSpacing: '0.1em', maxWidth: 520, textAlign: 'center', lineHeight: 1.7 }}>
+              {globeError || (globeBootedRef.current
+                ? 'The globe app booted but never came up — its graphics may be suspended. Try RETRY UPLINK, or reload this tab if your browser’s GPU is wedged.'
+                : "The globe app isn't answering — is gods-eye-view running on port 5180?")}
+            </div>
+            <button
+              onClick={() => setGlobeRetry(v => v + 1)}
+              style={{
+                marginTop: 8, cursor: 'pointer', padding: '10px 26px',
+                border: '1px solid rgba(103,232,249,0.5)', borderRadius: 2,
+                background: 'rgba(103,232,249,0.08)', color: '#67e8f9',
+                fontSize: 11, fontWeight: 700, letterSpacing: '0.3em',
+                fontFamily: "'IBM Plex Mono', monospace",
+              }}
+            >
+              ↻ RETRY UPLINK
+            </button>
+          </div>
+        )}
+        </>
+      ) : faceMode === 'core' ? (
+        <div key="face-core" className="cx-face-transition" style={{ position: 'absolute', inset: 0, zIndex: 4 }}>
+          <CortexCoreScene />
+        </div>
+      ) : faceMode === 'agents' ? (
+        <div key="face-agents" className="cx-face-transition" style={{ position: 'absolute', inset: 0, zIndex: 4 }}>
+          <CortexAgentsScene />
+        </div>
+      ) : (
+        <div key={`face-${faceMode}`} className="cx-face-transition" style={{ position: 'absolute', inset: 0, zIndex: 4 }}>
+          <CortexVisualizer face={faceMode} isFullScreen={true} hideOverlay={true} />
+        </div>
+      )}
+
+      {/* Film treatment: scanlines + edge vignette */}
+      <div style={{
+        position: 'absolute', inset: 0, zIndex: 10, pointerEvents: 'none',
+        background: 'repeating-linear-gradient(0deg, rgba(255,255,255,0.014) 0px, rgba(255,255,255,0.014) 1px, transparent 1px, transparent 3px)',
+        animation: reducedMotion ? 'none' : 'cx-scan-drift 9s linear infinite',
+      }} />
+      <div style={{
+        position: 'absolute', inset: 0, zIndex: 10, pointerEvents: 'none',
+        background: 'radial-gradient(ellipse at center, transparent 52%, rgba(0,0,5,0.55) 100%)',
+      }} />
+
+      {/* HUD chrome */}
+      <Corner pos="tl" /><Corner pos="tr" /><Corner pos="bl" /><Corner pos="br" />
+
+      {/* Top-left: wordmark */}
+      <div style={{ position: 'absolute', top: 34, left: 64, zIndex: 20 }} className="cx-hud-in" >
+        <div style={{ display: 'flex', alignItems: 'baseline', gap: 14 }}>
+          {agent.split('').map((ch, i) => (
+            <span key={i} className="cx-letter" style={{
+              animationDelay: `${0.15 + i * 0.055}s`,
+              fontFamily: "'DM Sans', ui-sans-serif, system-ui, sans-serif",
+              fontWeight: 700,
+              fontSize: 'clamp(34px, 4.2vw, 58px)',
+              letterSpacing: '0.06em',
+              lineHeight: 1,
+              color: '#f2fdff',
+              textShadow: `0 0 24px ${accent}66, 0 0 60px ${accent}33`,
+              transition: 'text-shadow 0.6s',
+            }}>{ch}</span>
+          ))}
+        </div>
+        <div style={{
+          marginTop: 8, fontSize: 10, letterSpacing: '0.42em',
+          color: 'rgba(148,233,255,0.55)', textTransform: 'uppercase',
+          animation: 'cx-fade-up 0.9s 0.7s cubic-bezier(0.16,1,0.3,1) both',
+        }}>
+          Sovereign Core // Neural Sanctum
+        </div>
+      </div>
+
+      {/* Top-center: marquee ticker */}
+      <div style={{
+        position: 'absolute', top: 42, left: '50%', transform: 'translateX(-50%)',
+        width: '42vw', overflow: 'hidden', zIndex: 15, pointerEvents: 'none',
+        maskImage: 'linear-gradient(90deg, transparent, black 12%, black 88%, transparent)',
+        WebkitMaskImage: 'linear-gradient(90deg, transparent, black 12%, black 88%, transparent)',
+      }}>
+        <div style={{
+          display: 'inline-flex', whiteSpace: 'nowrap',
+          animation: reducedMotion ? 'none' : 'cx-marquee 36s linear infinite',
+          fontSize: 10, letterSpacing: '0.5em', color: 'rgba(148,233,255,0.4)',
+          textTransform: 'uppercase',
+        }}>
+          {Array(2).fill(0).map((_, i) => (
+            <span key={i} style={{ paddingRight: '4em' }}>
+              Cortex // Sovereign Core // Neural Sanctum // Self-Hosted // Auditable // Always-On //&nbsp;
+            </span>
+          ))}
+        </div>
+      </div>
+
+      {/* Proactive Ambient & Vigilance HUD Bar */}
+      <div style={{
+        position: 'absolute', top: busy ? 116 : 68, left: '50%', transform: 'translateX(-50%)',
+        zIndex: 21, display: 'flex', alignItems: 'center', gap: 10,
+        pointerEvents: 'auto',
+        transition: 'top 0.3s cubic-bezier(0.16,1,0.3,1)',
+      }} className="cx-hud-in">
+        {/* Ambient macOS App & Context Sensor */}
+        {ambientContext && (
+          <div
+            title={`Active macOS Context: ${ambientContext.app} — ${ambientContext.label}`}
+            style={{
+              display: 'flex', alignItems: 'center', gap: 6,
+              padding: '3px 10px', borderRadius: 12,
+              background: 'rgba(168,85,247,0.14)', border: '1px solid rgba(168,85,247,0.35)',
+              color: '#d8b4fe', fontSize: 9, fontFamily: "'IBM Plex Mono', monospace",
+              letterSpacing: '0.12em', backdropFilter: 'blur(8px)',
+              boxShadow: '0 0 14px rgba(168,85,247,0.15)',
+            }}
+          >
+            <span style={{
+              width: 5, height: 5, borderRadius: '50%', background: '#c084fc',
+              boxShadow: '0 0 6px #c084fc',
+              animation: reducedMotion ? 'none' : 'cx-pulse-dot 1.4s ease-in-out infinite',
+            }} />
+            <span>AMBIENT: {ambientContext.app.toUpperCase()}</span>
+            <span style={{ color: 'rgba(216,180,254,0.6)', fontSize: 8 }}>· {ambientContext.category.toUpperCase()}</span>
+          </div>
+        )}
+
+        {/* Speculative Pre-Computation & Vigilance Badge */}
+        {vigilanceData && (
+          <div
+            data-vigilance-badge="true"
+            onClick={() => setShowVigilanceDetails(v => !v)}
+            title="Click to toggle Variational Free Energy F & Speculative Resolution"
+            style={{
+              display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer',
+              padding: '3px 10px', borderRadius: 12,
+              background: vigilanceData.speculativeResolution?.readyToCommit ? 'rgba(34,197,94,0.12)' : 'rgba(56,189,248,0.12)',
+              border: `1px solid ${vigilanceData.speculativeResolution?.readyToCommit ? 'rgba(34,197,94,0.35)' : 'rgba(56,189,248,0.35)'}`,
+              color: vigilanceData.speculativeResolution?.readyToCommit ? '#4ade80' : '#38bdf8',
+              fontSize: 9, fontFamily: "'IBM Plex Mono', monospace",
+              letterSpacing: '0.12em', backdropFilter: 'blur(8px)',
+              boxShadow: `0 0 14px ${vigilanceData.speculativeResolution?.readyToCommit ? 'rgba(34,197,94,0.15)' : 'rgba(56,189,248,0.15)'}`,
+            }}
+          >
+            <span style={{
+              width: 5, height: 5, borderRadius: '50%',
+              background: vigilanceData.speculativeResolution?.readyToCommit ? '#4ade80' : '#38bdf8',
+              boxShadow: `0 0 6px ${vigilanceData.speculativeResolution?.readyToCommit ? '#4ade80' : '#38bdf8'}`,
+            }} />
+            <span>✦ VIGILANCE: F={vigilanceData.report?.freeEnergy?.totalFreeEnergy !== undefined ? vigilanceData.report.freeEnergy.totalFreeEnergy.toFixed(2) : 'NOMINAL'}</span>
+            {vigilanceData.speculativeResolution?.readyToCommit && (
+              <span style={{
+                padding: '1px 5px', borderRadius: 3, background: 'rgba(34,197,94,0.25)',
+                fontSize: 8, fontWeight: 700, color: '#bbf7d0',
+              }}>
+                AUTO-READY
+              </span>
+            )}
+          </div>
+        )}
+
+        {/* Initiative Inbox badge — pending + in-flight proposals */}
+        {initiativeCount > 0 && (
+          <div
+            onClick={() => {
+              cortexSpeak('Opening your initiative inbox.');
+              openSurfacePanel({ kind: 'initiative', title: 'Initiative Inbox', customSize: { w: 460, h: 480 }, pinned: true });
+            }}
+            title="Proactive initiatives awaiting review — click to open the Initiative Inbox"
+            style={{
+              display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer',
+              padding: '3px 10px', borderRadius: 12,
+              background: 'rgba(251,191,36,0.12)', border: '1px solid rgba(251,191,36,0.4)',
+              color: '#fcd34d', fontSize: 9, fontFamily: "'IBM Plex Mono', monospace",
+              letterSpacing: '0.12em', backdropFilter: 'blur(8px)',
+              boxShadow: '0 0 14px rgba(251,191,36,0.18)',
+            }}
+          >
+            <span style={{
+              width: 5, height: 5, borderRadius: '50%', background: '#fbbf24',
+              boxShadow: '0 0 6px #fbbf24',
+              animation: reducedMotion ? 'none' : 'cx-pulse-dot 1.4s ease-in-out infinite',
+            }} />
+            <span>◈ {initiativeCount} INITIATIVE{initiativeCount === 1 ? '' : 'S'}</span>
+          </div>
+        )}
+      </div>
+
+      {/* Free Energy Epistemic Telemetry Popover */}
+      {showVigilanceDetails && vigilanceData && (
+        <div style={{
+          position: 'absolute', top: busy ? 150 : 102, left: '50%', transform: 'translateX(-50%)',
+          zIndex: 25, width: 340, padding: '12px 14px', borderRadius: 6,
+          background: 'rgba(4,8,16,0.92)', border: '1px solid rgba(56,189,248,0.35)',
+          backdropFilter: 'blur(16px)', boxShadow: '0 8px 32px rgba(0,0,0,0.6)',
+          fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, color: '#e0f2fe',
+        }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8, borderBottom: '1px solid rgba(56,189,248,0.2)', paddingBottom: 4 }}>
+            <span style={{ fontWeight: 700, color: '#38bdf8', letterSpacing: '0.1em' }}>VARIATIONAL FREE ENERGY (F)</span>
+            <button
+              onClick={() => setShowVigilanceDetails(false)}
+              style={{ background: 'transparent', border: 'none', color: '#94a3b8', cursor: 'pointer', fontSize: 11 }}
+            >
+              ✕
+            </button>
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+              <span style={{ color: '#94a3b8' }}>Status:</span>
+              <span style={{ color: '#38bdf8', fontWeight: 600 }}>{vigilanceData.report?.equilibriumStatus?.replace(/_/g, ' ').toUpperCase()}</span>
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+              <span style={{ color: '#94a3b8' }}>Total Free Energy (F):</span>
+              <span style={{ color: '#4ade80', fontWeight: 700 }}>{vigilanceData.report?.freeEnergy?.totalFreeEnergy?.toFixed(3)}</span>
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+              <span style={{ color: '#94a3b8' }}>Host Pressure:</span>
+              <span>{Math.round((vigilanceData.report?.freeEnergy?.hostPressure || 0) * 100)}%</span>
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+              <span style={{ color: '#94a3b8' }}>Browser Bloat:</span>
+              <span>{Math.round((vigilanceData.report?.freeEnergy?.browserBloat || 0) * 100)}%</span>
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+              <span style={{ color: '#94a3b8' }}>Working Tree Drift:</span>
+              <span>{vigilanceData.uncommittedFiles} uncommitted files</span>
+            </div>
+            <div style={{ marginTop: 6, paddingTop: 6, borderTop: '1px solid rgba(148,233,255,0.15)' }}>
+              <span style={{ color: '#38bdf8', fontWeight: 600 }}>Speculative Pre-Computation:</span>
+              <div style={{ marginTop: 3, fontSize: 9, color: '#f8fafc', lineHeight: 1.4 }}>
+                {vigilanceData.speculativeResolution?.summary}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Obsidian Vault Sync Toast */}
+      {vaultSyncNotice && (
+        <div style={{
+          position: 'absolute', bottom: 95, left: narrow ? 16 : 64, zIndex: 30,
+          padding: '6px 14px', borderRadius: 4,
+          background: 'rgba(15,23,42,0.95)', border: '1px solid rgba(167,139,250,0.4)',
+          color: '#c4b5fd', fontSize: 10, fontFamily: "'IBM Plex Mono', monospace",
+          letterSpacing: '0.12em', backdropFilter: 'blur(12px)',
+          boxShadow: '0 4px 20px rgba(0,0,0,0.5)',
+          animation: 'cx-fade-up 0.3s cubic-bezier(0.16,1,0.3,1) both',
+        }}>
+          ✦ {vaultSyncNotice}
+        </div>
+      )}
+
+      {/* Mission Console: persistent busy chyron */}
+      {busy && (
+        <div style={{
+          position: 'absolute', top: 68, left: '50%', transform: 'translateX(-50%)',
+          zIndex: 22, display: 'flex', alignItems: 'center', gap: 14,
+          padding: '8px 16px', maxWidth: 'min(620px, 78vw)',
+          border: '1px solid rgba(232,121,249,0.35)', borderRadius: 3,
+          background: 'rgba(10,4,18,0.72)', backdropFilter: 'blur(12px)',
+          boxShadow: '0 0 32px rgba(232,121,249,0.15), inset 0 0 18px rgba(232,121,249,0.05)',
+          animation: 'cx-fade-up 0.4s cubic-bezier(0.16,1,0.3,1) both',
+        }} className="cx-hud-in">
+          <span style={{
+            width: 7, height: 7, borderRadius: '50%', background: '#e879f9', flexShrink: 0,
+            animation: reducedMotion ? 'none' : 'cx-pulse-dot 1.1s ease-in-out infinite',
+            boxShadow: '0 0 10px #e879f9',
+          }} />
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 4, minWidth: 0, flex: 1 }}>
+            <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 10, minWidth: 0 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0, overflow: 'hidden' }}>
+                <span style={{
+                  fontSize: 8.5, letterSpacing: '0.24em',
+                  color: payload.state === 'thinking' ? '#38bdf8' : '#e879f9',
+                  fontWeight: 700, flexShrink: 0,
+                  padding: '1px 5px', borderRadius: 2,
+                  background: payload.state === 'thinking' ? 'rgba(56,189,248,0.12)' : 'rgba(232,121,249,0.12)',
+                  border: `1px solid ${payload.state === 'thinking' ? 'rgba(56,189,248,0.35)' : 'rgba(232,121,249,0.35)'}`,
+                }}>
+                  {payload.stage === 'analyzing'
+                    ? '◈ INTENT'
+                    : payload.stage === 'recalling'
+                      ? '◈ RECALL'
+                      : payload.stage === 'executing'
+                        ? '◈ EXEC'
+                        : payload.stage === 'synthesizing'
+                          ? '◈ SYNTHESIS'
+                          : payload.state === 'working'
+                            ? '◈ EXEC'
+                            : '◈ COGNITION'}
+                </span>
+                {payload.tool && (
+                  <span style={{
+                    fontSize: 8, padding: '1px 5px', borderRadius: 2,
+                    background: 'rgba(232,121,249,0.18)', border: '1px solid rgba(232,121,249,0.45)',
+                    color: '#f0abfc', fontFamily: "'IBM Plex Mono', monospace", letterSpacing: '0.08em', flexShrink: 0,
+                  }}>
+                    {payload.tool}()
+                  </span>
+                )}
+                <span style={{
+                  fontSize: 11, letterSpacing: '0.06em', color: '#f2fdff',
+                  overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                }}>
+                  {missionTitle || payload.text || (payload.state === 'thinking' ? 'Synthesizing response…' : 'Processing…')}
+                </span>
+              </div>
+              <span style={{ fontSize: 9.5, color: 'rgba(148,233,255,0.7)', fontVariantNumeric: 'tabular-nums', fontFamily: "'IBM Plex Mono', monospace", flexShrink: 0 }}>
+                {fmtElapsed(busyElapsed)}
+              </span>
+            </div>
+
+            {/* Real-time Thought Stream Ticker */}
+            {payload.thought && (
+              <div style={{
+                display: 'flex', alignItems: 'center', gap: 6,
+                fontSize: 9, color: '#bae6fd', fontFamily: "'IBM Plex Mono', monospace",
+                background: 'rgba(2, 6, 23, 0.7)', padding: '2px 8px', borderRadius: 2,
+                border: '1px solid rgba(56, 189, 248, 0.25)', maxWidth: '100%',
+                overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+              }}>
+                <span style={{ color: '#38bdf8', fontWeight: 700, letterSpacing: '0.12em' }}>THOUGHT:</span>
+                <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{payload.thought}</span>
+                <span className="cx-caret" style={{ color: '#38bdf8' }}>▮</span>
+              </div>
+            )}
+
+            {/* Cognitive Multi-Stage Progress Bar */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <div style={{
+                flex: 1, height: 4, background: 'rgba(15,23,42,0.85)', borderRadius: 2,
+                border: '1px solid rgba(148,233,255,0.15)', overflow: 'hidden',
+              }}>
+                {typeof missionProgress === 'number' && missionProgress >= 0 ? (
+                  <div style={{
+                    width: `${Math.round(missionProgress * 100)}%`, height: '100%',
+                    background: 'linear-gradient(90deg, #38bdf8, #818cf8, #e879f9)',
+                    boxShadow: '0 0 8px rgba(56,189,248,0.5)',
+                    transition: 'width 0.4s cubic-bezier(0.16,1,0.3,1)',
+                  }} />
+                ) : (
+                  <div style={{
+                    width: '40%', height: '100%',
+                    background: 'linear-gradient(90deg, transparent, #38bdf8, #e879f9, transparent)',
+                    animation: reducedMotion ? 'none' : 'cx-busy-slide 1.2s ease-in-out infinite',
+                  }} />
+                )}
+              </div>
+              <span style={{
+                fontSize: 9, fontWeight: 700,
+                color: payload.state === 'thinking' ? '#38bdf8' : '#e879f9',
+                fontVariantNumeric: 'tabular-nums', fontFamily: "'IBM Plex Mono', monospace",
+                flexShrink: 0,
+              }}>
+                {typeof missionProgress === 'number' && missionProgress >= 0
+                  ? `${Math.round(missionProgress * 100)}%`
+                  : payload.state === 'working' ? '70%' : '35%'}
+              </span>
+            </div>
+          </div>
+          {queueDepth > 0 && (
+            <span style={{
+              fontSize: 9, letterSpacing: '0.22em', color: '#fbbf24', fontWeight: 700, flexShrink: 0,
+              padding: '3px 8px', border: '1px solid rgba(251,191,36,0.4)', borderRadius: 2,
+              background: 'rgba(251,191,36,0.08)',
+            }}>
+              +{queueDepth} QUEUED
+            </span>
+          )}
+          {payload.channel === 'voice' && (
+            <button
+              onClick={() => window.dispatchEvent(new CustomEvent('cortex-viz-interrupt'))}
+              style={{
+                flexShrink: 0, cursor: 'pointer', padding: '4px 10px',
+                border: '1px solid rgba(251,113,133,0.5)', borderRadius: 2,
+                background: 'rgba(251,113,133,0.10)', color: '#fb7185',
+                fontSize: 9, fontWeight: 700, letterSpacing: '0.24em',
+                fontFamily: "'IBM Plex Mono', monospace",
+              }}
+              title="Stop current task and take input"
+            >
+              INTERRUPT
+            </button>
+          )}
+          {busyElapsed >= 30 && (
+            <button
+              onClick={() => handleEscalateToAntigravity('Manual operator escalation from HUD', false)}
+              disabled={escalating}
+              style={{
+                flexShrink: 0, cursor: 'pointer', padding: '4px 10px',
+                border: '1px solid rgba(245,158,11,0.6)', borderRadius: 2,
+                background: 'rgba(245,158,11,0.12)', color: '#fbbf24',
+                fontSize: 9, fontWeight: 700, letterSpacing: '0.18em',
+                fontFamily: "'IBM Plex Mono', monospace",
+                transition: 'all 0.2s ease',
+              }}
+              title="Flag hung/long task directly to Antigravity IDE"
+            >
+              {escalating ? 'ESCALATING…' : '⚡ ESCALATE'}
+            </button>
+          )}
+          <button
+            onClick={() => {
+              cortexSignalBus.publish({
+                state: 'idle', level: 0, text: '', missionProgress: -1, missionTitle: '',
+              });
+              cortexSpeak('Task aborted.');
+              setEscalationNotice('Task aborted by operator');
+              setTimeout(() => setEscalationNotice(null), 3000);
+            }}
+            style={{
+              flexShrink: 0, cursor: 'pointer', padding: '4px 8px',
+              border: '1px solid rgba(239,68,68,0.5)', borderRadius: 2,
+              background: 'rgba(239,68,68,0.10)', color: '#f87171',
+              fontSize: 9, fontWeight: 700, letterSpacing: '0.18em',
+              fontFamily: "'IBM Plex Mono', monospace",
+            }}
+            title="Abort current task and return to idle"
+          >
+            ✕ ABORT
+          </button>
+          {escalationNotice && (
+            <div style={{
+              position: 'absolute', top: '100%', left: 0, marginTop: 4,
+              fontSize: 8.5, color: '#38bdf8', background: 'rgba(2,6,23,0.92)',
+              border: '1px solid rgba(56,189,248,0.3)', borderRadius: 2, padding: '3px 8px',
+              fontFamily: "'IBM Plex Mono', monospace", letterSpacing: '0.1em',
+              whiteSpace: 'nowrap',
+            }}>
+              {escalationNotice}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Top-right: state telemetry */}
+      <div style={{ position: 'absolute', top: 34, right: 64, zIndex: 20, textAlign: 'right' }} className="cx-hud-in">
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 10 }}>
+          <span style={{
+            width: 8, height: 8, borderRadius: '50%', background: accent, color: accent,
+            display: 'inline-block', animation: reducedMotion ? 'none' : 'cx-pulse-dot 1.6s ease-in-out infinite',
+          }} />
+          <span style={{ color: accent, fontSize: 15, fontWeight: 600, letterSpacing: '0.34em' }}>
+            {st.label}
+          </span>
+          {(payload.state === 'thinking' || payload.state === 'working') && (
+            <span style={{ color: accent, fontSize: 13, letterSpacing: '0.2em', display: 'inline-flex', gap: 4, alignItems: 'center' }}>
+              <span className="cx-think-dot" style={{ animationDelay: '0s' }} />
+              <span className="cx-think-dot" style={{ animationDelay: '0.15s' }} />
+              <span className="cx-think-dot" style={{ animationDelay: '0.3s' }} />
+            </span>
+          )}
+        </div>
+        <div style={{ marginTop: 10, fontSize: 10, letterSpacing: '0.2em', color: 'rgba(148,233,255,0.45)' }}>
+          SIGNAL STRENGTH
+        </div>
+        <div style={{
+          marginTop: 4, fontFamily: "'DM Sans', sans-serif", fontWeight: 700,
+          fontSize: 30, color: '#e8fbff', fontVariantNumeric: 'tabular-nums',
+          textShadow: `0 0 18px ${accent}55`,
+        }}>
+          {String(Math.round(level * 100)).padStart(3, '0')}<span style={{ fontSize: 14, color: accent }}>%</span>
+        </div>
+        {channelLabel && (
+          <div style={{ marginTop: 8, fontSize: 9, letterSpacing: '0.3em', color: 'rgba(148,233,255,0.5)' }}>
+            {channelLabel}
+            {payload.event ? ` // ${payload.event.replace('proactive:', 'AUTO·').toUpperCase()}` : ''}
+          </div>
+        )}
+      </div>
+
+      {/* Left column: Nexus Foundry telemetry — sentinel rotation, model
+          lanes, probation pool. Sits above the MODE/UPTIME rail. */}
+      {!narrow && agentCrew.runtime && (
+        <div style={{
+          position: 'absolute', left: 64, top: '17%', zIndex: 20,
+          fontFamily: "'IBM Plex Mono', monospace", fontSize: 8, letterSpacing: '0.18em',
+          color: 'rgba(148,233,255,0.4)', lineHeight: 2.1,
+        }} className="cx-hud-in">
+          <div style={{ color: 'rgba(165,243,252,0.55)', letterSpacing: '0.28em', marginBottom: 4 }}>FOUNDRY TELEMETRY</div>
+          <div>SENTINEL ROTATION: LIVE</div>
+          <div>PROBATION POOL: {(agentCrew.models || []).filter(m => m.status === 'unknown').length}</div>
+          <div>MODELS: {(agentCrew.models || []).filter(m => m.status === 'healthy').length}/{(agentCrew.models || []).length} VERIFIED</div>
+          <div>LANES: {Object.entries(agentCrew.matrix || {}).map(([k, v]) => `${k.toUpperCase()} ${Array.isArray(v) ? v.length : 0}`).join(' · ')}</div>
+          <div>UPTIME: {fmtElapsed(Math.max(0, Math.floor((Date.now() - agentCrew.runtime.startedAt) / 1000)))}</div>
+        </div>
+      )}
+
+      {/* Left rail: telemetry column — hidden on narrow viewports where it
+          would collide with the panel grid's left column */}
+      {!narrow && <div style={{
+        position: 'absolute', left: 64, top: '50%', transform: 'translateY(-50%)',
+        zIndex: 20, display: 'flex', flexDirection: 'column', gap: 14,
+      }} className="cx-hud-in">
+        {[
+          ['MODE', payload.state.toUpperCase()],
+          ['UPTIME', uptimeSec >= 3600 ? `${Math.floor(uptimeSec / 3600)}h ${String(Math.floor((uptimeSec % 3600) / 60)).padStart(2, '0')}m` : `${Math.floor(uptimeSec / 60)}m ${String(uptimeSec % 60).padStart(2, '0')}s`],
+          ['HOST', typeof window !== 'undefined' ? window.location.hostname : '—'],
+          ['NET', typeof window !== 'undefined' && window.location.protocol === 'https:' ? 'TLS' : 'LOCAL'],
+        ].map(([k, v], i) => (
+          <div key={k} style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+            <span style={{ fontSize: 8, letterSpacing: '0.3em', color: 'rgba(148,233,255,0.4)' }}>{k}</span>
+            <span style={{ fontSize: 11, letterSpacing: '0.14em', color: 'rgba(232,251,255,0.8)' }}>{v}</span>
+            <div style={{
+              width: 52, height: 2, background: 'rgba(148,233,255,0.12)', marginTop: 2,
+              transformOrigin: 'left',
+              animation: `cx-bar-fill 1.1s ${0.5 + i * 0.12}s cubic-bezier(0.16,1,0.3,1) both`,
+            }}>
+              <div style={{ width: `${[20, 88, 46, 100][i]}%`, height: '100%', background: accent, opacity: 0.7 }} />
+            </div>
+          </div>
+        ))}
+        {typeof phi === 'number' && phi > 0 && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 3, marginTop: 6 }}>
+            <span style={{ fontSize: 8, letterSpacing: '0.3em', color: 'rgba(148,233,255,0.4)' }}>Φ IIT</span>
+            <span style={{ fontSize: 11, letterSpacing: '0.14em', color: 'rgba(232,251,255,0.8)', fontVariantNumeric: 'tabular-nums' }}>
+              {phi.toFixed(2)}
+            </span>
+            <div style={{ width: 52, height: 2, background: 'rgba(148,233,255,0.12)', marginTop: 2 }}>
+              <div style={{ width: `${Math.min(100, (phi / 1.5) * 100)}%`, height: '100%', background: '#a78bfa', opacity: 0.8 }} />
+            </div>
+          </div>
+        )}
+        {typeof missionProgress === 'number' && missionProgress >= 0 && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 3, marginTop: 6 }}>
+            <span style={{ fontSize: 8, letterSpacing: '0.3em', color: 'rgba(148,233,255,0.4)' }}>MISSION</span>
+            <span style={{
+              fontSize: 10, letterSpacing: '0.1em', color: 'rgba(232,251,255,0.8)',
+              maxWidth: 120, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+            }} title={missionTitle}>
+              {missionTitle || 'ACTIVE'} · {Math.round(missionProgress * 100)}%
+            </span>
+            <div style={{ width: 52, height: 2, background: 'rgba(148,233,255,0.12)', marginTop: 2 }}>
+              <div style={{ width: `${Math.round(missionProgress * 100)}%`, height: '100%', background: '#e879f9', opacity: 0.85 }} />
+            </div>
+          </div>
+        )}
+      </div>}
+
+      {/* Right rail: agent crew presence — appears only while agents work */}
+      {!narrow && (() => {
+        const AGENT_HUES: Record<string, string> = { sentinel: '#67e8f9', scout: '#e879f9', librarian: '#fbbf24', builder: '#34d399', reviewer: '#fb7185', runner: '#a3e635', warden: '#818cf8' };
+        const active = (agentCrew.agents || []).filter(a => a.status === 'working' || a.status === 'queued');
+        if (!active.length) return null;
+        const runningTasks = (agentCrew.tasks || []).filter(t => t.status === 'running' || t.status === 'queued');
+        return (
+          <div
+            onClick={() => { setFaceMode('agents'); try { localStorage.setItem('cortex_visualizer_face', 'agents'); } catch {} }}
+            title="Agent crew active — open the Nexus Foundry"
+            style={{
+              position: 'absolute', right: 64, top: '50%', transform: 'translateY(-50%)',
+              zIndex: 20, display: 'flex', flexDirection: 'column', gap: 10, alignItems: 'flex-end',
+              cursor: 'pointer',
+            }} className="cx-hud-in">
+            <span style={{ fontSize: 8, letterSpacing: '0.3em', color: 'rgba(148,233,255,0.4)' }}>
+              AGENT CREW · {active.length}
+            </span>
+            {active.slice(0, 4).map(a => {
+              const col = AGENT_HUES[a.id] || '#a78bfa';
+              const task = runningTasks.find(t => t.agentId === a.id);
+              return (
+                <div key={a.id} style={{ display: 'flex', alignItems: 'center', gap: 8, flexDirection: 'row-reverse' }}>
+                  <span style={{
+                    width: 6, height: 6, borderRadius: '50%', background: col, flexShrink: 0,
+                    boxShadow: `0 0 8px ${col}`,
+                    animation: reducedMotion ? 'none' : 'cx-pulse-dot 1.2s ease-in-out infinite',
+                  }} />
+                  <div style={{ textAlign: 'right' }}>
+                    <div style={{ fontSize: 10, letterSpacing: '0.12em', color: 'rgba(232,251,255,0.85)' }}>{a.name}</div>
+                    {task && (
+                      <div style={{ fontSize: 8, letterSpacing: '0.08em', color: 'rgba(148,233,255,0.5)', maxWidth: 180, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {task.title}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+            {active.length > 4 && (
+              <span style={{ fontSize: 8, letterSpacing: '0.2em', color: 'rgba(148,233,255,0.4)' }}>+{active.length - 4} MORE</span>
+            )}
+          </div>
+        );
+      })()}
+
+      {/* Agent inspect card — right side, above the crew rail. Appears when a
+          core-scene agent mote is clicked; stays on the core face. */}
+      {!narrow && selectedAgentId && (() => {
+        const a = (agentCrew.agents || []).find(x => x.id === selectedAgentId);
+        if (!a) return null;
+        const AGENT_HUES: Record<string, string> = { sentinel: '#67e8f9', scout: '#e879f9', librarian: '#fbbf24', builder: '#34d399', reviewer: '#fb7185', runner: '#a3e635', warden: '#818cf8' };
+        const col = AGENT_HUES[a.id] || (a.spawnSpec ? `hsl(${(() => { let h = 0; for (const ch of a.id) h = (h * 31 + ch.charCodeAt(0)) >>> 0; return h % 360; })()} 85% 68%)` : '#94a3b8');
+        const recent = (agentCrew.tasks || []).filter(t => t.agentId === a.id).slice(0, 5);
+        const current = recent.find(t => t.status === 'running' || t.status === 'queued');
+        const agentTasks = (agentCrew.tasks || []).filter(t => t.agentId === a.id && (t.status === 'completed' || t.status === 'failed'));
+        const tsr = agentTasks.length ? Math.round((agentTasks.filter(t => t.status === 'completed').length / agentTasks.length) * 100) : null;
+        return (
+          <div ref={agentCardRef} style={{
+            position: 'absolute', right: 64, top: '24%', zIndex: 25, width: 320,
+            background: 'linear-gradient(165deg, rgba(8,14,24,0.92), rgba(5,8,15,0.88))',
+            border: `1px solid ${col}59`, borderRadius: 3, padding: '12px 16px',
+            backdropFilter: 'blur(14px)', boxShadow: `0 0 40px ${col}26`,
+            fontFamily: "'IBM Plex Mono', monospace",
+          }} className="cx-hud-in">
+            <div style={{ position: 'absolute', top: -1, left: -1, width: 8, height: 8, borderTop: `1px solid ${col}`, borderLeft: `1px solid ${col}` }} />
+            <div style={{ position: 'absolute', bottom: -1, right: -1, width: 8, height: 8, borderBottom: `1px solid ${col}`, borderRight: `1px solid ${col}` }} />
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
+              <span style={{ fontSize: 11, letterSpacing: '0.3em', color: col, fontWeight: 700 }}>{a.name}</span>
+              <button onClick={() => setSelectedAgentId(null)} style={{ background: 'none', border: 'none', color: 'rgba(148,163,184,0.6)', fontSize: 12, cursor: 'pointer', fontFamily: 'inherit' }}>✕</button>
+            </div>
+            <div style={{ fontSize: 8, color: 'rgba(148,163,184,0.55)', letterSpacing: '0.14em', margin: '2px 0 6px' }}>{(a.role || '').toUpperCase()}</div>
+            <div style={{ fontSize: 9, color: 'rgba(203,213,225,0.65)', marginBottom: 8, lineHeight: 1.5 }}>{a.blurb}</div>
+            <div style={{ display: 'flex', gap: 14, fontSize: 8, color: 'rgba(148,233,255,0.55)', marginBottom: 8 }}>
+              <span>{a.status.toUpperCase()}</span>
+              <span>{a.tasksCompleted} DONE</span>
+              <span>{a.tasksFailed} FAILED</span>
+              {tsr !== null && <span title="Task success rate over retained history">TSR {tsr}%</span>}
+              <span>PIN {(a.modelPin?.tier || 'NONE').toUpperCase()}</span>
+            </div>
+            {current && (
+              <div style={{ borderTop: '1px solid rgba(148,163,184,0.12)', paddingTop: 7, marginBottom: 7 }}>
+                <div style={{ fontSize: 9, color: 'rgba(226,232,240,0.9)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{current.title}</div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 4 }}>
+                  <div style={{ flex: 1, height: 3, background: 'rgba(148,163,184,0.14)', borderRadius: 2, overflow: 'hidden' }}>
+                    <div style={{ width: `${Math.round((current.progress ?? 0) * 100)}%`, height: '100%', background: col, boxShadow: `0 0 8px ${col}`, transition: 'width 0.4s' }} />
+                  </div>
+                  <span style={{ fontSize: 8, color: 'rgba(148,233,255,0.6)', whiteSpace: 'nowrap' }}>
+                    {current.status === 'queued' ? 'QUEUED' : `${Math.round((current.progress ?? 0) * 100)}%`}
+                    {current.model && <span style={{ color: col }}> · {String(current.model).split('/').pop()?.slice(0, 18)}</span>}
+                  </span>
+                </div>
+              </div>
+            )}
+            {recent.filter(t => t !== current).slice(0, 4).map(t => (
+              <div key={t.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 8, padding: '3px 0', borderTop: '1px solid rgba(148,163,184,0.08)' }}>
+                <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 200, color: t.status === 'failed' ? '#f87171' : 'rgba(203,213,225,0.7)' }}>{t.title}</span>
+                <span style={{ color: 'rgba(148,163,184,0.5)', whiteSpace: 'nowrap', marginLeft: 10 }}>
+                  {t.status.toUpperCase()}{t.finishedAt && t.startedAt ? ` · ${fmtElapsed(Math.round((t.finishedAt - t.startedAt) / 1000))}` : ''}
+                  {t.status === 'failed' && t.telemetry?.failureClass ? ` · ${String(t.telemetry.failureClass).toUpperCase()}` : ''}
+                </span>
+              </div>
+            ))}
+            {!recent.length && <div style={{ fontSize: 8, color: 'rgba(148,163,184,0.45)' }}>NO TASK HISTORY — AWAITING FIRST ASSIGNMENT</div>}
+            <button
+              onClick={() => { setFaceMode('agents'); try { localStorage.setItem('cortex_visualizer_face', 'agents'); } catch {} }}
+              style={{
+                marginTop: 10, width: '100%', padding: '7px 0', cursor: 'pointer',
+                background: 'none', border: `1px solid ${col}44`, borderRadius: 2,
+                color: col, fontSize: 9, letterSpacing: '0.28em', fontFamily: 'inherit',
+              }}
+            >OPEN FOUNDRY →</button>
+          </div>
+        );
+      })()}
+
+      {/* Bottom-left: nav */}
+      <div style={{ position: 'absolute', bottom: 40, left: narrow ? 16 : 64, zIndex: 20, display: 'flex', gap: narrow ? 6 : 10, flexWrap: narrow ? 'wrap' : 'nowrap', maxWidth: narrow ? '46vw' : 'none' }} className="cx-hud-in">
+        <a href="/cortex/chat" style={{
+          textDecoration: 'none', padding: narrow ? '7px 12px' : '9px 20px',
+          border: `1px solid ${accent}55`, borderRadius: 2,
+          color: accent, fontSize: 11, fontWeight: 600, letterSpacing: '0.26em',
+          fontFamily: "'IBM Plex Mono', monospace",
+          background: 'rgba(4,8,14,0.55)', backdropFilter: 'blur(10px)',
+          transition: 'all 0.25s',
+        }}
+        onMouseEnter={(e) => { e.currentTarget.style.background = `${accent}22`; e.currentTarget.style.boxShadow = `0 0 24px ${accent}33`; }}
+        onMouseLeave={(e) => { e.currentTarget.style.background = 'rgba(4,8,14,0.55)'; e.currentTarget.style.boxShadow = 'none'; }}
+        >
+          ← OPEN CHAT
+        </a>
+        {(globeUp || mapMode) && (
+        <button
+          onClick={() => setMapMode(v => !v)}
+          style={{
+            textDecoration: 'none', padding: narrow ? '7px 12px' : '9px 20px', cursor: 'pointer',
+            border: `1px solid ${mapMode ? '#e879f9' : 'rgba(148,233,255,0.18)'}`, borderRadius: 2,
+            color: mapMode ? '#e879f9' : 'rgba(148,233,255,0.6)', fontSize: narrow ? 9 : 11, fontWeight: 600, letterSpacing: narrow ? '0.18em' : '0.26em',
+            fontFamily: "'IBM Plex Mono', monospace",
+            background: mapMode ? 'rgba(232,121,249,0.10)' : 'rgba(4,8,14,0.4)', backdropFilter: 'blur(10px)',
+            transition: 'all 0.25s',
+          }}
+        >
+          {mapMode ? '◉ GLOBE · ESC' : '◈ MAP'}
+        </button>
+        )}
+        <button
+          onClick={() => {
+            const next = faceMode === 'agents' ? 'core' : 'agents';
+            setFaceMode(next);
+            try { localStorage.setItem('cortex_visualizer_face', next); } catch {}
+            cortexSpeak(next === 'agents' ? 'Opening the Nexus Foundry.' : 'Returning to core visualizer.');
+          }}
+          title="Nexus Foundry — live agent fleet command deck"
+          style={{
+            textDecoration: 'none', padding: narrow ? '7px 12px' : '9px 20px', cursor: 'pointer',
+            border: `1px solid ${faceMode === 'agents' ? '#67e8f9' : 'rgba(148,233,255,0.18)'}`, borderRadius: 2,
+            color: faceMode === 'agents' ? '#67e8f9' : 'rgba(148,233,255,0.6)', fontSize: narrow ? 9 : 11, fontWeight: 600, letterSpacing: narrow ? '0.18em' : '0.26em',
+            fontFamily: "'IBM Plex Mono', monospace",
+            background: faceMode === 'agents' ? 'rgba(103,232,249,0.12)' : 'rgba(4,8,14,0.4)', backdropFilter: 'blur(10px)',
+            transition: 'all 0.25s',
+          }}
+        >
+          {faceMode === 'agents' ? '◉ FOUNDRY' : '◈ AGENTS'}
+        </button>
+        <button
+          onClick={() => {
+            setGoveeSync(v => {
+              const next = !v;
+              try { localStorage.setItem('cortex_govee_sync', String(next)); } catch {}
+              cortexSpeak(next ? 'Room lights synced to my mood.' : 'Light sync disabled.');
+              if (next && payload.state) {
+                fetch('/api/cortex/lights/sync', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ mood: payload.state }),
+                }).catch(() => {});
+              }
+              return next;
+            });
+          }}
+          title={goveeSync ? 'Govee smart lights dynamically syncing to Cortex mood' : 'Click to enable Govee room lights sync'}
+          style={{
+            textDecoration: 'none', padding: narrow ? '7px 12px' : '9px 20px', cursor: 'pointer',
+            border: `1px solid ${goveeSync ? '#eab308' : 'rgba(148,233,255,0.18)'}`, borderRadius: 2,
+            color: goveeSync ? '#eab308' : 'rgba(148,233,255,0.6)', fontSize: narrow ? 9 : 11, fontWeight: 600, letterSpacing: narrow ? '0.18em' : '0.26em',
+            fontFamily: "'IBM Plex Mono', monospace",
+            background: goveeSync ? 'rgba(234,179,8,0.12)' : 'rgba(4,8,14,0.4)', backdropFilter: 'blur(10px)',
+            transition: 'all 0.25s',
+          }}
+        >
+          {goveeSync ? '✦ LIGHTS: SYNCED' : '✧ LIGHTS'}
+        </button>
+        <button
+          data-toggle-chat-drawer="true"
+          onClick={() => setChatOpen(v => !v)}
+          style={{
+            textDecoration: 'none', padding: narrow ? '7px 12px' : '9px 20px', cursor: 'pointer',
+            border: `1px solid ${chatOpen ? accent : 'rgba(148,233,255,0.18)'}`, borderRadius: 2,
+            color: chatOpen ? accent : 'rgba(148,233,255,0.6)', fontSize: narrow ? 9 : 11, fontWeight: 600, letterSpacing: narrow ? '0.18em' : '0.26em',
+            fontFamily: "'IBM Plex Mono', monospace",
+            background: chatOpen ? `${accent}1a` : 'rgba(4,8,14,0.4)', backdropFilter: 'blur(10px)',
+            transition: 'all 0.25s',
+          }}
+        >
+          {chatOpen ? '◉ CHAT · ESC' : '◈ CHAT'}
+        </button>
+        <button
+          onClick={async () => {
+            try {
+              setVaultSyncNotice('Auto-organizing Obsidian Knowledge Graph…');
+              const res = await fetch('/api/cortex/tools/execute', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ tool: 'cortex_memory', args: { action: 'vault_auto_organize' } }),
+              });
+              const data = await res.json();
+              if (data?.ok && data?.report) {
+                const msg = `Graph organized — ${data.report.notesAnalyzed} notes, ${data.report.linksResolved} wikilinks resolved.`;
+                setVaultSyncNotice(`Graph Organized · ${data.report.notesAnalyzed} Notes · ${data.report.linksResolved} Wikilinks`);
+                cortexSpeak(msg);
+              } else {
+                setVaultSyncNotice('Vault sync completed');
+                cortexSpeak('Vault sync complete.');
+              }
+              setTimeout(() => setVaultSyncNotice(null), 3500);
+            } catch {
+              setVaultSyncNotice('Vault sync error');
+              setTimeout(() => setVaultSyncNotice(null), 3000);
+            }
+          }}
+          title="Auto-organize Obsidian Knowledge Graph (Letta/MemGPT hierarchical memory synthesis)"
+          style={{
+            textDecoration: 'none', padding: narrow ? '7px 12px' : '9px 20px', cursor: 'pointer',
+            border: '1px solid rgba(167,139,250,0.3)', borderRadius: 2,
+            color: '#c4b5fd', fontSize: narrow ? 9 : 11, fontWeight: 600, letterSpacing: narrow ? '0.18em' : '0.26em',
+            fontFamily: "'IBM Plex Mono', monospace",
+            background: 'rgba(139,92,246,0.12)', backdropFilter: 'blur(10px)',
+            transition: 'all 0.25s',
+          }}
+        >
+          ◈ VAULT
+        </button>
+        <button
+          onClick={() => {
+            const next = !micOn;
+            setMicOn(next);
+            try { localStorage.setItem('cortex_viz_mic_on', String(next)); } catch {}
+            cortexSpeak(next ? 'Voice enabled — I can hear you now.' : 'Microphone muted.');
+          }}
+          title={
+            !micOn
+              ? 'Microphone muted — click to enable voice'
+              : 'Voice active — click to mute microphone'
+          }
+          style={{
+            textDecoration: 'none', padding: narrow ? '7px 12px' : '9px 20px', cursor: 'pointer',
+            border: `1px solid ${
+              micLive ? '#a78bfa'
+                : micOn
+                  ? '#34d399'
+                  : 'rgba(148,233,255,0.18)'
+            }`,
+            borderRadius: 2,
+            color: micLive ? '#c4b5fd'
+              : micOn
+                ? '#34d399'
+                : 'rgba(148,233,255,0.6)',
+            fontSize: narrow ? 9 : 11, fontWeight: 600, letterSpacing: narrow ? '0.18em' : '0.26em',
+            fontFamily: "'IBM Plex Mono', monospace",
+            background: micLive ? 'rgba(167,139,250,0.12)'
+              : micOn
+                ? 'rgba(52,211,153,0.10)'
+                : 'rgba(4,8,14,0.4)',
+            backdropFilter: 'blur(10px)',
+            boxShadow: micOn ? '0 0 16px rgba(52,211,153,0.28)' : 'none',
+            transition: 'all 0.25s',
+          }}
+        >
+          {micLive ? '◉ SPEAKING'
+            : !micOn
+              ? '○ VOICE MUTED'
+              : queueDepth > 0 ? `◌ +${queueDepth} QUEUED` : voiceBusy ? '◌ BUSY · TAP TO QUEUE' : '◉ VOICE ACTIVE · LISTENING'}
+        </button>
+      </div>
+
+      {/* Mission Log — always-on feed of real agent tasks, above the nav rail.
+          Click expands to a centered full feed. */}
+      {(() => {
+        const AGENT_HUES: Record<string, string> = { sentinel: '#67e8f9', scout: '#e879f9', librarian: '#fbbf24', builder: '#34d399', reviewer: '#fb7185', runner: '#a3e635', warden: '#818cf8' };
+        const STATUS_COLORS: Record<string, string> = { running: '#67e8f9', queued: '#fbbf24', completed: '#34d399', failed: '#f87171', cancelled: '#64748b' };
+        const tasks = (agentCrew.tasks || []).slice(0, 10);
+        const names = new Map((agentCrew.agents || []).map(a => [a.id, a.name]));
+        const fmtTok = (n: number) => n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n);
+        const taskRow = (t: any, compact = false) => {
+          const col = STATUS_COLORS[t.status] || '#64748b';
+          const agentCol = AGENT_HUES[t.agentId] || '#a78bfa';
+          const elapsed = t.status === 'running' || t.status === 'queued'
+            ? '' : t.finishedAt && t.startedAt
+              ? ` · ${Math.max(1, Math.round((t.finishedAt - t.startedAt) / 1000))}s`
+              : '';
+          return (
+            <div key={t.id} style={{
+              padding: compact ? '5px 10px' : '8px 14px',
+              borderBottom: '1px solid rgba(148,233,255,0.05)',
+              display: 'flex', gap: 8, alignItems: 'baseline',
+              background: t.status === 'running' ? 'rgba(103,232,249,0.04)' : 'transparent',
+            }}>
+              <span style={{
+                width: compact ? 5 : 7, height: compact ? 5 : 7, borderRadius: '50%', background: col, flexShrink: 0, alignSelf: 'center',
+                boxShadow: t.status === 'running' ? `0 0 6px ${col}` : 'none',
+              }} />
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ color: 'rgba(224,242,254,0.88)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', fontSize: compact ? 8 : 10 }}>{t.title}</div>
+                <div style={{ color: 'rgba(148,233,255,0.42)', marginTop: 2, display: 'flex', gap: 5, fontSize: compact ? 8 : 9 }}>
+                  <span style={{ color: agentCol }}>{names.get(t.agentId) || t.agentId}</span>
+                  <span>·</span><span style={{ color: col }}>{t.status.toUpperCase()}</span>
+                  {t.kind && <><span>·</span><span>{String(t.kind).toUpperCase()}</span></>}
+                  {t.model && <><span>·</span><span style={{ color: 'rgba(196,181,253,0.55)' }}>{String(t.model).split(':').pop()?.slice(0, 22)}</span></>}
+                  {elapsed && <span style={{ color: 'rgba(148,233,255,0.3)' }}>{elapsed}</span>}
+                  {(t.telemetry?.tokensIn ?? 0) + (t.telemetry?.tokensOut ?? 0) > 0 && (
+                    <><span>·</span><span style={{ color: 'rgba(196,181,253,0.45)' }}>{fmtTok(t.telemetry.tokensIn + t.telemetry.tokensOut)} TOK</span></>
+                  )}
+                  {(t.telemetry?.toolCalls ?? 0) > 0 && (
+                    <><span>·</span><span style={{ color: 'rgba(148,233,255,0.35)' }}>{t.telemetry.toolCalls} TOOL{t.telemetry.toolCalls === 1 ? '' : 'S'}</span></>
+                  )}
+                  {t.status === 'failed' && t.telemetry?.failureClass && (
+                    <><span>·</span><span style={{ color: 'rgba(248,113,113,0.6)' }}>{String(t.telemetry.failureClass).toUpperCase()}</span></>
+                  )}
+                </div>
+                {!compact && t.error && <div style={{ color: 'rgba(248,113,113,0.6)', marginTop: 2, fontSize: 9 }}>{String(t.error).slice(0, 120)}</div>}
+              </div>
+            </div>
+          );
+        };
+        return (
+          <div
+            onClick={() => { setMissionExpanded(true); cortexSpeak('Expanding mission log.'); }}
+            title="Click to expand the full mission log"
+            style={{
+              position: 'absolute', left: narrow ? 16 : 64, bottom: 112, zIndex: 20, width: narrow ? '60vw' : 300,
+              fontFamily: "'IBM Plex Mono', monospace", fontSize: 8, letterSpacing: '0.1em',
+              background: 'rgba(4,8,18,0.66)', border: '1px solid rgba(103,232,249,0.14)',
+              borderRadius: 4, backdropFilter: 'blur(6px)', overflow: 'hidden', cursor: 'pointer',
+            }} className="cx-hud-in">
+            <div style={{
+              padding: '6px 10px', borderBottom: '1px solid rgba(103,232,249,0.12)',
+              color: 'rgba(165,243,252,0.7)', fontWeight: 700, letterSpacing: '0.28em', fontSize: 8,
+              display: 'flex', justifyContent: 'space-between',
+            }}>
+              <span>MISSION LOG</span>
+              <span style={{ color: 'rgba(148,233,255,0.35)' }}>
+                {tasks.filter(t => t.status === 'running' || t.status === 'queued').length} ACTIVE · CLICK TO EXPAND
+              </span>
+            </div>
+            <div style={{ maxHeight: 168, overflowY: 'auto', scrollbarWidth: 'thin' }}>
+              {tasks.length === 0 && (
+                <div style={{ padding: '12px 10px', color: 'rgba(148,233,255,0.3)', letterSpacing: '0.15em' }}>NO TASKS THIS SESSION</div>
+              )}
+              {tasks.map(t => taskRow(t, true))}
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* Expanded mission log — centered modal feed */}
+      {missionExpanded && (
+        <div
+          onClick={() => setMissionExpanded(false)}
+          style={{
+            position: 'fixed', inset: 0, zIndex: 60,
+            background: 'rgba(2,3,8,0.78)', backdropFilter: 'blur(8px)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+          }}>
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              width: 'min(680px, 88vw)', height: 'min(520px, 74vh)',
+              background: 'rgba(4,8,18,0.92)', border: '1px solid rgba(103,232,249,0.25)',
+              borderRadius: 6, display: 'flex', flexDirection: 'column', overflow: 'hidden',
+              boxShadow: '0 0 60px rgba(103,232,249,0.12)',
+            }}>
+            <div style={{
+              padding: '12px 16px', borderBottom: '1px solid rgba(103,232,249,0.15)',
+              display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexShrink: 0,
+            }}>
+              <span style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, letterSpacing: '0.3em', color: 'rgba(165,243,252,0.85)', fontWeight: 700 }}>
+                ◈ MISSION LOG — FULL FEED
+              </span>
+              <button
+                onClick={() => setMissionExpanded(false)}
+                style={{
+                  background: 'none', border: '1px solid rgba(148,233,255,0.25)', borderRadius: 3,
+                  color: 'rgba(148,233,255,0.7)', fontFamily: "'IBM Plex Mono', monospace",
+                  fontSize: 9, letterSpacing: '0.2em', padding: '4px 10px', cursor: 'pointer',
+                }}
+              >ESC / CLOSE</button>
+            </div>
+            <div style={{ flex: 1, overflowY: 'auto', scrollbarWidth: 'thin' }}>
+              {(agentCrew.tasks || []).length === 0 && (
+                <div style={{ padding: '30px', textAlign: 'center', fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, letterSpacing: '0.2em', color: 'rgba(148,233,255,0.35)' }}>
+                  NO TASKS RECORDED — THE FLEET IS IDLE
+                </div>
+              )}
+              {(agentCrew.tasks || []).slice(0, 40).map(t => {
+                const AGENT_HUES: Record<string, string> = { sentinel: '#67e8f9', scout: '#e879f9', librarian: '#fbbf24', builder: '#34d399', reviewer: '#fb7185', runner: '#a3e635', warden: '#818cf8' };
+                const STATUS_COLORS: Record<string, string> = { running: '#67e8f9', queued: '#fbbf24', completed: '#34d399', failed: '#f87171', cancelled: '#64748b' };
+                const names = new Map((agentCrew.agents || []).map(a => [a.id, a.name]));
+                const col = STATUS_COLORS[t.status] || '#64748b';
+                const agentCol = AGENT_HUES[t.agentId] || '#a78bfa';
+                const dur = t.finishedAt && t.startedAt ? `${Math.max(1, Math.round((t.finishedAt - t.startedAt) / 1000))}s` : '';
+                return (
+                  <div key={t.id} style={{
+                    padding: '9px 16px', borderBottom: '1px solid rgba(148,233,255,0.05)',
+                    display: 'flex', gap: 10, alignItems: 'baseline',
+                    background: t.status === 'running' ? 'rgba(103,232,249,0.04)' : 'transparent',
+                  }}>
+                    <span style={{
+                      width: 7, height: 7, borderRadius: '50%', background: col, flexShrink: 0, alignSelf: 'center',
+                      boxShadow: t.status === 'running' ? `0 0 7px ${col}` : 'none',
+                    }} />
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ color: 'rgba(224,242,254,0.9)', fontSize: 11, fontFamily: "'IBM Plex Mono', monospace" }}>{t.title}</div>
+                      <div style={{ color: 'rgba(148,233,255,0.45)', marginTop: 3, display: 'flex', gap: 6, fontSize: 9, fontFamily: "'IBM Plex Mono', monospace", flexWrap: 'wrap' }}>
+                        <span style={{ color: agentCol }}>{names.get(t.agentId) || t.agentId}</span>
+                        <span>·</span><span style={{ color: col }}>{t.status.toUpperCase()}</span>
+                        {t.kind && <><span>·</span><span>{String(t.kind).toUpperCase()}</span></>}
+                        {t.model && <><span>·</span><span style={{ color: 'rgba(196,181,253,0.6)' }}>{t.model}</span></>}
+                        {dur && <span style={{ color: 'rgba(148,233,255,0.3)' }}>{dur}</span>}
+                        {(t.telemetry?.tokensIn ?? 0) + (t.telemetry?.tokensOut ?? 0) > 0 && (
+                          <span style={{ color: 'rgba(196,181,253,0.5)' }}>{((t.telemetry.tokensIn + t.telemetry.tokensOut) >= 1000 ? `${((t.telemetry.tokensIn + t.telemetry.tokensOut) / 1000).toFixed(1)}k` : String(t.telemetry.tokensIn + t.telemetry.tokensOut))} TOK</span>
+                        )}
+                        {(t.telemetry?.toolCalls ?? 0) > 0 && (
+                          <span style={{ color: 'rgba(148,233,255,0.4)' }}>{t.telemetry.toolCalls} TOOL{t.telemetry.toolCalls === 1 ? '' : 'S'}{(t.telemetry.toolFailures ?? 0) > 0 ? ` (${t.telemetry.toolFailures} FAIL)` : ''}</span>
+                        )}
+                        {t.status === 'failed' && t.telemetry?.failureClass && (
+                          <span style={{ color: 'rgba(248,113,113,0.65)' }}>{String(t.telemetry.failureClass).toUpperCase()}</span>
+                        )}
+                      </div>
+                      {t.error && <div style={{ color: 'rgba(248,113,113,0.65)', marginTop: 3, fontSize: 9, fontFamily: "'IBM Plex Mono', monospace" }}>{String(t.error).slice(0, 160)}</div>}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Model/event ticker — sits to the left of LIVE TRANSMISSION */}
+      {!narrow && agentEvents.length > 0 && (
+        <div style={{
+          position: 'absolute', bottom: 44, left: '50%',
+          transform: 'translateX(calc(-50% - 345px))', width: 310, zIndex: 15,
+          fontFamily: "'IBM Plex Mono', monospace", fontSize: 8, letterSpacing: '0.1em',
+          color: 'rgba(165,243,252,0.5)', textAlign: 'right', lineHeight: 1.9,
+          pointerEvents: 'none',
+        }}>
+          {agentEvents.slice(-4).reverse().map((e, i) => {
+            const t = new Date(e.at).toLocaleTimeString('en-US', { hour12: false });
+            let msg = `${e.type}`;
+            if (e.type === 'agent.status') msg = `${String(e.agentId).toUpperCase()} → ${String(e.status).toUpperCase()}`;
+            else if (e.type === 'task.transition') { const tk = e.task as any; msg = `${String(tk?.agentId || '?').toUpperCase()} ${String(tk?.status || '').toUpperCase()} — ${String(tk?.title || '').slice(0, 30)}`; }
+            else if (e.type === 'model.health') { const m = e.model as any; msg = `MODEL ${String(m?.status || '?').toUpperCase()} ${String(m?.id || '').split('/').pop()?.slice(0, 24)}`; }
+            else if (e.type === 'model.discovered') { const m = e.model as any; msg = `DISCOVERED ${String(m?.id || '').split('/').pop()?.slice(0, 26)}`; }
+            else if (e.type === 'agent.spawned') msg = `SPAWNED ${(e.spec as any)?.callSign || String(e.agentId)}`;
+            return <div key={`${e.at}-${i}`} style={{ opacity: 1 - i * 0.22 }}>{t} {msg}</div>;
+          })}
+        </div>
+      )}
+
+      {/* Bottom-center: live caption */}
+      <div style={{
+        position: 'absolute', bottom: 40, left: '50%', transform: 'translateX(-50%)',
+        width: 'min(640px, 72vw)', zIndex: 20, textAlign: 'center',
+      }} className="cx-hud-in">
+        <div style={{ fontSize: 9, letterSpacing: '0.4em', color: 'rgba(148,233,255,0.4)', marginBottom: 10 }}>
+          ── LIVE TRANSMISSION ──
+        </div>
+        <div style={{
+          color: '#e8fbff', fontSize: 15, lineHeight: 1.65,
+          fontFamily: "'IBM Plex Mono', monospace", minHeight: 26,
+          textShadow: `0 0 22px ${accent}44`,
+        }}>
+          <Typewriter text={payload.text ?? ''} accent={accent} />
+        </div>
+      </div>
+
+      {/* Screen-reader live region announcing cognitive state transitions & live captions */}
+      <div
+        role="status"
+        aria-live="polite"
+        aria-atomic="true"
+        className="sr-only"
+        data-cortex-a11y-live=""
+        style={{
+          position: 'absolute',
+          width: 1,
+          height: 1,
+          padding: 0,
+          margin: -1,
+          overflow: 'hidden',
+          clip: 'rect(0, 0, 0, 0)',
+          whiteSpace: 'nowrap',
+          border: 0,
+        }}
+      >
+        {`Cortex: ${st.label}${payload.text ? ` - ${payload.text}` : ''}`}
+      </div>
+
+      {/* Slide-over transcript — same conversation as /cortex/chat.
+          Composer dispatches cortex-viz-turn so text turns run the full
+          voice pipeline (LLM → tools → TTS) without leaving the page. */}
+      <CortexChatDrawer
+        open={chatOpen}
+        onClose={() => setChatOpen(false)}
+        payload={payload}
+        onSubmitText={(text) => {
+          window.dispatchEvent(new CustomEvent('cortex-viz-turn', { detail: text }));
+        }}
+      />
+
+      {/* Dockable generative-UI surface panels (Phase 2) */}
+      <CortexSurfaceLayer drawerOpen={chatOpen} />
+
+      {/* Focus mode chip — visible state + click-to-exit (ESC also exits) */}
+      {focusMode && (
+        <button
+          onClick={() => setSurfaceFocusMode(false)}
+          title="Exit focus mode (Esc)"
+          style={{
+            position: 'absolute', bottom: 104, right: narrow ? 16 : 64,
+            zIndex: 21, cursor: 'pointer', padding: '7px 16px',
+            border: '1px solid rgba(232,121,249,0.5)', borderRadius: 2,
+            background: 'rgba(232,121,249,0.10)', color: '#e879f9',
+            fontSize: 9, fontWeight: 700, letterSpacing: '0.3em',
+            fontFamily: "'IBM Plex Mono', monospace",
+          }}
+        >
+          ◉ FOCUS · ESC
+        </button>
+      )}
+
+      {/* Perf HUD — toggled with ` (backquote). Real rAF frame timing only. */}
+      {showPerfHud && <PerfHud />}
+
+      {/* Bottom-right: sovereignty tag */}
+      <div style={{ position: 'absolute', bottom: 40, right: narrow ? 16 : 64, zIndex: 20, textAlign: 'right' }} className="cx-hud-in">
+        <div style={{ fontSize: 9, letterSpacing: '0.34em', color: 'rgba(148,233,255,0.4)', lineHeight: 2 }}>
+          SELF-HOSTED<br />AUDITABLE<br />ALWAYS-ON
+        </div>
+        <div style={{ marginTop: 10, fontSize: 9, letterSpacing: '0.2em', color: 'rgba(148,233,255,0.25)' }}>
+          {geoLabel ?? 'POSITION UNKNOWN'}
+        </div>
+        {panelCount > 0 && (
+          <div style={{ marginTop: 8, fontSize: 9, letterSpacing: '0.24em', color: 'rgba(232,121,249,0.55)' }}>
+            PANELS {String(panelCount).padStart(2, '0')}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}

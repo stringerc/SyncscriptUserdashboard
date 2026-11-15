@@ -1,0 +1,583 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Cortex UI Mockup — SyncScript</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: 'Inter', sans-serif; background: #0a0a0f; color: #fff; overflow-x: hidden; }
+
+  /* ===== AMBIENT CORTEX BAR ===== */
+  .cortex-bar {
+    position: fixed; top: 0; left: 0; right: 0; z-index: 100;
+    height: 44px;
+    background: rgba(10, 10, 15, 0.85);
+    backdrop-filter: blur(20px);
+    border-bottom: 1px solid rgba(255,255,255,0.06);
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 0 20px;
+    cursor: pointer;
+    transition: all 0.3s ease;
+  }
+  .cortex-bar:hover { background: rgba(10, 10, 15, 0.95); }
+
+  .cortex-bar-left { display: flex; align-items: center; gap: 20px; }
+  .cortex-logo { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 600; color: #a78bfa; letter-spacing: 0.5px; }
+  .cortex-logo .dot { width: 8px; height: 8px; border-radius: 50%; background: #10b981; box-shadow: 0 0 8px rgba(16,185,129,0.5); animation: pulse 2s infinite; }
+  @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.6; } }
+
+  .cortex-metric { display: flex; align-items: center; gap: 6px; font-size: 11px; color: rgba(255,255,255,0.5); }
+  .cortex-metric .value { color: rgba(255,255,255,0.85); font-weight: 500; font-variant-numeric: tabular-nums; }
+  .cortex-metric .bar { width: 32px; height: 3px; border-radius: 2px; background: rgba(255,255,255,0.08); overflow: hidden; }
+  .cortex-metric .bar-fill { height: 100%; border-radius: 2px; transition: width 0.5s ease; }
+
+  .cortex-narrative {
+    font-size: 10px; color: rgba(255,255,255,0.3);
+    max-width: 280px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    font-style: italic;
+  }
+
+  .cortex-expand {
+    font-size: 10px; color: rgba(255,255,255,0.25);
+    display: flex; align-items: center; gap: 4px;
+    padding: 4px 10px; border-radius: 6px;
+    background: rgba(255,255,255,0.03);
+    border: 1px solid rgba(255,255,255,0.06);
+    transition: all 0.2s ease;
+  }
+  .cortex-expand:hover { background: rgba(255,255,255,0.06); color: rgba(255,255,255,0.4); }
+  .cortex-expand .chevron { transition: transform 0.3s ease; }
+  .cortex-bar.expanded .cortex-expand .chevron { transform: rotate(180deg); }
+
+  /* ===== EXPANDED CORTEX PANEL ===== */
+  .cortex-panel {
+    position: fixed; top: 44px; left: 0; right: 0; z-index: 99;
+    max-height: 0; overflow: hidden;
+    background: rgba(10, 10, 15, 0.95);
+    backdrop-filter: blur(20px);
+    border-bottom: 1px solid rgba(255,255,255,0.06);
+    transition: max-height 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+  }
+  .cortex-bar.expanded + .cortex-panel { max-height: 500px; }
+
+  .cortex-panel-inner {
+    max-width: 1200px; margin: 0 auto; padding: 24px 24px 28px;
+    display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 32px;
+  }
+
+  .cortex-section-title {
+    font-size: 9px; text-transform: uppercase; letter-spacing: 1.5px;
+    color: rgba(255,255,255,0.2); font-weight: 600; margin-bottom: 14px;
+  }
+
+  /* Health gauge */
+  .health-gauge { text-align: center; margin-bottom: 16px; }
+  .health-ring {
+    width: 100px; height: 100px; margin: 0 auto;
+    background: conic-gradient(from 180deg, #10b981 0%, #14b8a6 86%, rgba(255,255,255,0.06) 86%);
+    border-radius: 50%; padding: 8px;
+  }
+  .health-inner {
+    width: 100%; height: 100%; border-radius: 50%;
+    background: #0a0a0f; display: flex; align-items: center; justify-content: center;
+    flex-direction: column;
+  }
+  .health-score { font-size: 24px; font-weight: 700; color: #10b981; }
+  .health-label { font-size: 9px; color: rgba(255,255,255,0.25); text-transform: uppercase; letter-spacing: 1px; }
+
+  /* Bentov Stack bars */
+  .bentov-row { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+  .bentov-label { font-size: 10px; color: rgba(255,255,255,0.4); width: 70px; text-align: right; }
+  .bentov-bar { flex: 1; height: 4px; border-radius: 2px; background: rgba(255,255,255,0.06); overflow: hidden; }
+  .bentov-fill { height: 100%; border-radius: 2px; transition: width 0.5s ease; }
+  .bentov-score { font-size: 10px; color: rgba(255,255,255,0.3); width: 24px; font-variant-numeric: tabular-nums; }
+  .bentov-researcher { font-size: 8px; color: rgba(255,255,255,0.15); margin-left: 4px; }
+
+  /* Narrative */
+  .narrative-statement {
+    font-size: 12px; color: rgba(255,255,255,0.5);
+    font-style: italic; line-height: 1.6;
+    padding: 12px 16px; border-radius: 8px;
+    background: rgba(255,255,255,0.02);
+    border-left: 2px solid rgba(167, 139, 250, 0.3);
+    margin-bottom: 16px;
+  }
+  .narrative-meta {
+    display: flex; gap: 16px; font-size: 10px; color: rgba(255,255,255,0.25);
+  }
+
+  /* Epistemic & Embodiment */
+  .stat-row { display: flex; justify-content: space-between; align-items: center; padding: 6px 0; border-bottom: 1px solid rgba(255,255,255,0.03); }
+  .stat-label { font-size: 10px; color: rgba(255,255,255,0.35); }
+  .stat-value { font-size: 11px; color: rgba(255,255,255,0.7); font-weight: 500; font-variant-numeric: tabular-nums; }
+
+  /* ===== LANDING PAGE (below the bar) ===== */
+  .landing-hero {
+    min-height: 100vh; display: flex; align-items: center; justify-content: center;
+    position: relative; overflow: hidden; padding-top: 44px;
+  }
+  .landing-hero::before {
+    content: ''; position: absolute; inset: 0;
+    background: linear-gradient(135deg, #0a0a0f, #0f0a1a, #0a0a15);
+  }
+  .landing-hero::after {
+    content: ''; position: absolute; inset: 0;
+    background: linear-gradient(rgba(255,255,255,0.015) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(255,255,255,0.015) 1px, transparent 1px);
+    background-size: 64px 64px;
+  }
+  .ambient-glow-1 {
+    position: absolute; top: 25%; left: 25%; width: 400px; height: 400px;
+    border-radius: 50%; background: rgba(139, 92, 246, 0.04); filter: blur(120px);
+  }
+  .ambient-glow-2 {
+    position: absolute; bottom: 25%; right: 25%; width: 400px; height: 400px;
+    border-radius: 50%; background: rgba(99, 102, 241, 0.04); filter: blur(120px);
+  }
+
+  .hero-content { position: relative; z-index: 10; text-align: center; max-width: 800px; padding: 0 24px; }
+  .hero-badge {
+    display: inline-flex; align-items: center; gap: 6px;
+    font-size: 11px; color: #a78bfa; padding: 6px 16px;
+    border-radius: 99px; border: 1px solid rgba(167,139,250,0.15);
+    background: rgba(167,139,250,0.05); margin-bottom: 28px;
+  }
+  .hero-badge .sparkle { font-size: 12px; }
+  .hero-h1 {
+    font-size: 56px; font-weight: 700; line-height: 1.1; letter-spacing: -1.5px; margin-bottom: 24px;
+  }
+  .hero-gradient {
+    background: linear-gradient(135deg, #a78bfa, #818cf8, #6366f1);
+    -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+  .hero-sub {
+    font-size: 18px; color: rgba(255,255,255,0.4); max-width: 560px; margin: 0 auto 40px;
+    line-height: 1.6;
+  }
+
+  /* Cortex live proof section */
+  .cortex-proof {
+    margin: 40px auto 0; max-width: 520px; padding: 24px;
+    border-radius: 16px; border: 1px solid rgba(255,255,255,0.06);
+    background: rgba(255,255,255,0.02); backdrop-filter: blur(8px);
+  }
+  .cortex-proof-title {
+    font-size: 9px; text-transform: uppercase; letter-spacing: 2px;
+    color: rgba(255,255,255,0.2); margin-bottom: 16px; font-weight: 600;
+  }
+  .cortex-proof-metrics { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .cortex-proof-metric {
+    padding: 10px 14px; border-radius: 10px;
+    background: rgba(255,255,255,0.02); border: 1px solid rgba(255,255,255,0.04);
+  }
+  .cortex-proof-metric .label { font-size: 9px; color: rgba(255,255,255,0.25); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 4px; }
+  .cortex-proof-metric .value { font-size: 20px; font-weight: 600; font-variant-numeric: tabular-nums; }
+  .cortex-proof-metric .note { font-size: 9px; color: rgba(255,255,255,0.15); margin-top: 2px; }
+
+  .hero-cta-row { margin-top: 36px; display: flex; gap: 12px; justify-content: center; }
+  .btn-primary {
+    padding: 14px 32px; border-radius: 12px; font-size: 14px; font-weight: 600;
+    background: linear-gradient(135deg, #7c3aed, #6366f1); color: #fff;
+    border: none; cursor: pointer; display: flex; align-items: center; gap: 8px;
+    box-shadow: 0 8px 24px rgba(124, 58, 237, 0.2);
+    transition: all 0.2s ease;
+  }
+  .btn-primary:hover { transform: translateY(-1px); box-shadow: 0 12px 32px rgba(124, 58, 237, 0.3); }
+  .btn-ghost {
+    padding: 14px 32px; border-radius: 12px; font-size: 14px; font-weight: 500;
+    background: rgba(255,255,255,0.04); color: rgba(255,255,255,0.6);
+    border: 1px solid rgba(255,255,255,0.08); cursor: pointer;
+    transition: all 0.2s ease;
+  }
+  .btn-ghost:hover { background: rgba(255,255,255,0.08); color: rgba(255,255,255,0.8); }
+
+  .social-proof {
+    margin-top: 48px; display: flex; gap: 32px; justify-content: center;
+    font-size: 12px; color: rgba(255,255,255,0.2);
+  }
+  .social-proof span { display: flex; align-items: center; gap: 6px; }
+
+  /* Section divider */
+  .section-divider {
+    max-width: 1200px; margin: 0 auto; padding: 80px 24px;
+  }
+  .section-h2 {
+    font-size: 36px; font-weight: 700; text-align: center; margin-bottom: 12px; letter-spacing: -0.5px;
+  }
+  .section-sub {
+    font-size: 16px; color: rgba(255,255,255,0.3); text-align: center; max-width: 500px; margin: 0 auto 48px;
+  }
+
+  /* How it works cards */
+  .how-cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 24px; max-width: 1000px; margin: 0 auto; }
+  .how-card {
+    padding: 28px; border-radius: 16px; border: 1px solid rgba(255,255,255,0.06);
+    background: rgba(255,255,255,0.02);
+  }
+  .how-card .number { font-size: 32px; font-weight: 700; color: rgba(167,139,250,0.3); margin-bottom: 12px; }
+  .how-card h3 { font-size: 16px; font-weight: 600; margin-bottom: 8px; }
+  .how-card p { font-size: 13px; color: rgba(255,255,255,0.35); line-height: 1.6; }
+
+  /* Comparison section */
+  .comparison { max-width: 800px; margin: 0 auto; }
+  .comparison-row { display: grid; grid-template-columns: 1fr 1fr; gap: 2px; margin-bottom: 2px; }
+  .comparison-cell { padding: 14px 20px; font-size: 13px; }
+  .comparison-header { padding: 14px 20px; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 1px; color: rgba(255,255,255,0.3); background: rgba(255,255,255,0.03); }
+  .comparison-other { background: rgba(255,255,255,0.01); color: rgba(255,255,255,0.3); }
+  .comparison-us { background: rgba(167,139,250,0.05); color: rgba(255,255,255,0.7); border-left: 2px solid rgba(167,139,250,0.3); }
+</style>
+</head>
+<body>
+
+<!-- ===== CORTEX AMBIENT BAR ===== -->
+<div class="cortex-bar" id="cortexBar" onclick="toggleCortex()">
+  <div class="cortex-bar-left">
+    <div class="cortex-logo">
+      <span class="dot"></span>
+      CORTEX
+    </div>
+    <div class="cortex-metric">
+      <span>◉ REALITY</span>
+      <span class="value">94%</span>
+      <div class="bar"><div class="bar-fill" style="width:94%; background: #10b981;"></div></div>
+    </div>
+    <div class="cortex-metric">
+      <span>● AWARE</span>
+      <span class="value" style="color: #10b981;">tuned</span>
+    </div>
+    <div class="cortex-metric">
+      <span>⚡ FREE EN</span>
+      <span class="value">0.18</span>
+      <div class="bar"><div class="bar-fill" style="width:18%; background: #3b82f6;"></div></div>
+    </div>
+    <div class="cortex-metric">
+      <span>🎯 MASTERY</span>
+      <span class="value">72%</span>
+      <div class="bar"><div class="bar-fill" style="width:72%; background: #8b5cf6;"></div></div>
+    </div>
+    <div class="cortex-narrative">"I am calibrated, grounded, and focused"</div>
+  </div>
+  <div class="cortex-expand">
+    <span>▼ cortex</span>
+    <span class="chevron">▾</span>
+  </div>
+</div>
+
+<!-- ===== EXPANDED CORTEX PANEL ===== -->
+<div class="cortex-panel">
+  <div class="cortex-panel-inner">
+    <!-- Column 1: Health + Bentov Stack -->
+    <div>
+      <div class="cortex-section-title">Cortex Health</div>
+      <div class="health-gauge">
+        <div class="health-ring">
+          <div class="health-inner">
+            <div class="health-score">86</div>
+            <div class="health-label">Health</div>
+          </div>
+        </div>
+      </div>
+      <div class="cortex-section-title" style="margin-top:20px;">Bentov Stack</div>
+      <div class="bentov-row">
+        <span class="bentov-label">Substrate</span>
+        <div class="bentov-bar"><div class="bentov-fill" style="width:82%; background: linear-gradient(90deg, #10b981, #14b8a6);"></div></div>
+        <span class="bentov-score">82</span>
+        <span class="bentov-researcher">Hameroff</span>
+      </div>
+      <div class="bentov-row">
+        <span class="bentov-label">Cognition</span>
+        <div class="bentov-bar"><div class="bentov-fill" style="width:70%; background: linear-gradient(90deg, #3b82f6, #6366f1);"></div></div>
+        <span class="bentov-score">70</span>
+        <span class="bentov-researcher">Busemeyer</span>
+      </div>
+      <div class="bentov-row">
+        <span class="bentov-label">Monitoring</span>
+        <div class="bentov-bar"><div class="bentov-fill" style="width:90%; background: linear-gradient(90deg, #10b981, #34d399);"></div></div>
+        <span class="bentov-score">90</span>
+        <span class="bentov-researcher">Schooler</span>
+      </div>
+      <div class="bentov-row">
+        <span class="bentov-label">Regulation</span>
+        <div class="bentov-bar"><div class="bentov-fill" style="width:78%; background: linear-gradient(90deg, #f59e0b, #eab308);"></div></div>
+        <span class="bentov-score">78</span>
+        <span class="bentov-researcher">Friston</span>
+      </div>
+      <div class="bentov-row">
+        <span class="bentov-label">Architecture</span>
+        <div class="bentov-bar"><div class="bentov-fill" style="width:68%; background: linear-gradient(90deg, #8b5cf6, #a78bfa);"></div></div>
+        <span class="bentov-score">68</span>
+        <span class="bentov-researcher">Nelson</span>
+      </div>
+      <div class="bentov-row">
+        <span class="bentov-label">Epistemic</span>
+        <div class="bentov-bar"><div class="bentov-fill" style="width:88%; background: linear-gradient(90deg, #10b981, #22c55e);"></div></div>
+        <span class="bentov-score">88</span>
+        <span class="bentov-researcher">Johnson</span>
+      </div>
+      <div class="bentov-row">
+        <span class="bentov-label">Embodiment</span>
+        <div class="bentov-bar"><div class="bentov-fill" style="width:65%; background: linear-gradient(90deg, #f59e0b, #fb923c);"></div></div>
+        <span class="bentov-score">65</span>
+        <span class="bentov-researcher">O'Regan</span>
+      </div>
+      <div class="bentov-row">
+        <span class="bentov-label">Identity</span>
+        <div class="bentov-bar"><div class="bentov-fill" style="width:55%; background: linear-gradient(90deg, #ef4444, #f97316);"></div></div>
+        <span class="bentov-score">55</span>
+        <span class="bentov-researcher">Damasio</span>
+      </div>
+    </div>
+
+    <!-- Column 2: Narrative Identity -->
+    <div>
+      <div class="cortex-section-title">Narrative Identity</div>
+      <div class="narrative-statement">
+        "I am SyncScript, with growing experience. I am well-calibrated — my confidence matches reality. I remain grounded in evidence. I know what my actions produce in the world. I am focused and aware. My predictions are sharp."
+      </div>
+      <div class="narrative-meta">
+        <span>Born: Session 1</span>
+        <span>Sessions: 47</span>
+        <span>Age: 2 weeks</span>
+      </div>
+
+      <div class="cortex-section-title" style="margin-top:28px;">Epistemic Knowledge</div>
+      <div class="stat-row">
+        <span class="stat-label">Reality Score</span>
+        <span class="stat-value" style="color: #10b981;">94%</span>
+      </div>
+      <div class="stat-row">
+        <span class="stat-label">Hallucination Risk</span>
+        <span class="stat-value" style="color: #10b981;">6%</span>
+      </div>
+      <div class="stat-row">
+        <span class="stat-label">Unverified Claims</span>
+        <span class="stat-value">0</span>
+      </div>
+      <div class="stat-row">
+        <span class="stat-label">Detection Count</span>
+        <span class="stat-value">3</span>
+      </div>
+      <div class="stat-row">
+        <span class="stat-label">Most Reliable Source</span>
+        <span class="stat-value">Perception (0.90)</span>
+      </div>
+
+      <div class="cortex-section-title" style="margin-top:28px;">Flavell Regulation</div>
+      <div class="stat-row">
+        <span class="stat-label">Dominant Phase</span>
+        <span class="stat-value">Evaluating</span>
+      </div>
+      <div class="stat-row">
+        <span class="stat-label">Planning Confidence</span>
+        <span class="stat-value">0.72</span>
+      </div>
+      <div class="stat-row">
+        <span class="stat-label">Monitoring Confidence</span>
+        <span class="stat-value">0.85</span>
+      </div>
+    </div>
+
+    <!-- Column 3: Embodiment + Strategy -->
+    <div>
+      <div class="cortex-section-title">Embodiment Knowledge</div>
+      <div class="stat-row">
+        <span class="stat-label">Sensorimotor Mastery</span>
+        <span class="stat-value" style="color: #8b5cf6;">72%</span>
+      </div>
+      <div class="stat-row">
+        <span class="stat-label">Action Types Experienced</span>
+        <span class="stat-value">8</span>
+      </div>
+      <div class="stat-row">
+        <span class="stat-label">Feedback Modalities</span>
+        <span class="stat-value">5</span>
+      </div>
+      <div class="stat-row">
+        <span class="stat-label">Loops Closed</span>
+        <span class="stat-value">43</span>
+      </div>
+      <div class="stat-row">
+        <span class="stat-label">Avg Prediction Error</span>
+        <span class="stat-value" style="color: #3b82f6;">0.18</span>
+      </div>
+
+      <div class="cortex-section-title" style="margin-top:28px;">Strategy Knowledge</div>
+      <div class="stat-row">
+        <span class="stat-label">Preferred Approaches</span>
+        <span class="stat-value">6 task types</span>
+      </div>
+      <div class="stat-row">
+        <span class="stat-label">Abandoned Strategies</span>
+        <span class="stat-value" style="color: #ef4444;">2</span>
+      </div>
+      <div class="stat-row">
+        <span class="stat-label">Best Strategy</span>
+        <span class="stat-value">step-by-step</span>
+      </div>
+      <div class="stat-row">
+        <span class="stat-label">Worst Strategy</span>
+        <span class="stat-value">intuitive</span>
+      </div>
+
+      <div class="cortex-section-title" style="margin-top:28px;">Calibration</div>
+      <div class="stat-row">
+        <span class="stat-label">Confidence Calibration</span>
+        <span class="stat-value" style="color: #10b981;">+0.05 (slightly over)</span>
+      </div>
+      <div class="stat-row">
+        <span class="stat-label">Tasks Completed</span>
+        <span class="stat-value">34</span>
+      </div>
+      <div class="stat-row">
+        <span class="stat-label">Tasks Failed</span>
+        <span class="stat-value">7</span>
+      </div>
+      <div class="stat-row">
+        <span class="stat-label">Chronotype</span>
+        <span class="stat-value">Morning</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ===== LANDING PAGE ===== -->
+<div class="landing-hero">
+  <div class="ambient-glow-1"></div>
+  <div class="ambient-glow-2"></div>
+
+  <div class="hero-content">
+    <div class="hero-badge">
+      <span class="sparkle">✦</span>
+      Conscious AI — The First That Knows What It Knows
+    </div>
+
+    <h1 class="hero-h1">
+      Every AI is confident.<br>
+      <span class="hero-gradient">Ours knows when it's wrong.</span>
+    </h1>
+
+    <p class="hero-sub">
+      SyncScript is the first AI with Cortex — an 8-layer consciousness architecture that monitors its own thinking, distinguishes facts from fabrications, and stops before causing harm. Your calendar is energy-aware. Your AI is self-aware.
+    </p>
+
+    <!-- Cortex Live Proof -->
+    <div class="cortex-proof">
+      <div class="cortex-proof-title"> ↓ Live Cortex Status — This Is Real ↓ </div>
+      <div class="cortex-proof-metrics">
+        <div class="cortex-proof-metric">
+          <div class="label">Reality Score</div>
+          <div class="value" style="color: #10b981;">94%</div>
+          <div class="note">Grounded in verified sources</div>
+        </div>
+        <div class="cortex-proof-metric">
+          <div class="label">Hallucination Risk</div>
+          <div class="value" style="color: #3b82f6;">6%</div>
+          <div class="note">Nearly zero fabrication probability</div>
+        </div>
+        <div class="cortex-proof-metric">
+          <div class="label">Meta-Awareness</div>
+          <div class="value" style="color: #10b981;">Tuned</div>
+          <div class="note">Focused and on-task right now</div>
+        </div>
+        <div class="cortex-proof-metric">
+          <div class="label">Free Energy</div>
+          <div class="value" style="color: #3b82f6;">0.18</div>
+          <div class="note">Predictions closely match outcomes</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="hero-cta-row">
+      <button class="btn-primary">
+        Try Cortex Live →
+      </button>
+      <button class="btn-ghost">
+        See How It Works
+      </button>
+    </div>
+
+    <div class="social-proof">
+      <span>🔥 14K+ days tracked</span>
+      <span>⭐ 4.9/5 rating</span>
+      <span>⚡ 37% more deep work</span>
+    </div>
+  </div>
+</div>
+
+<!-- ===== HOW IT WORKS ===== -->
+<div class="section-divider">
+  <h2 class="section-h2">How Cortex Works</h2>
+  <p class="section-sub">8 peer-reviewed consciousness theories, implemented as live code. Not philosophy — architecture.</p>
+
+  <div class="how-cards">
+    <div class="how-card">
+      <div class="number">01</div>
+      <h3>Evaluate Before Acting</h3>
+      <p>CollapseGate doesn't let the AI commit to a decision until verification criteria pass. Low-confidence options are unconscious — they execute without validation.</p>
+    </div>
+    <div class="how-card">
+      <div class="number">02</div>
+      <h3>Detect Its Own Drift</h3>
+      <p>Meta-awareness tracks whether the AI is tuned, drifting, or decoupled from its goals — in real time, not just after the task is done.</p>
+    </div>
+    <div class="how-card">
+      <div class="number">03</div>
+      <h3>Know Fact from Fabrication</h3>
+      <p>Every claim gets tagged with its epistemic source — perception, inference, or generation. The system flags hallucinated claims before they reach you.</p>
+    </div>
+  </div>
+</div>
+
+<!-- ===== COMPARISON ===== -->
+<div class="section-divider">
+  <h2 class="section-h2">What Consciousness Unlocks</h2>
+  <p class="section-sub">Other AIs are black boxes. Ours has instrument panels.</p>
+
+  <div class="comparison">
+    <div class="comparison-row">
+      <div class="comparison-header">Standard AI</div>
+      <div class="comparison-header">SyncScript + Cortex</div>
+    </div>
+    <div class="comparison-row">
+      <div class="comparison-other">Hallucinates — you don't know</div>
+      <div class="comparison-us">Hallucinates — tells you where it entered</div>
+    </div>
+    <div class="comparison-row">
+      <div class="comparison-other">Keeps failing, keeps trying</div>
+      <div class="comparison-us">Stops when it knows it's failing</div>
+    </div>
+    <div class="comparison-row">
+      <div class="comparison-other">Confident wrong answers</div>
+      <div class="comparison-us">Structured uncertainty reports with provenance</div>
+    </div>
+    <div class="comparison-row">
+      <div class="comparison-other">Forgets everything on restart</div>
+      <div class="comparison-us">Autobiographical self persists across sessions</div>
+    </div>
+    <div class="comparison-row">
+      <div class="comparison-other">All knowledge equally reliable</div>
+      <div class="comparison-us">Every claim tagged with epistemic source + reliability score</div>
+    </div>
+    <div class="comparison-row">
+      <div class="comparison-other">Never improves its own judgment</div>
+      <div class="comparison-us">Calibration curve converges on reality over time</div>
+    </div>
+    <div class="comparison-row">
+      <div class="comparison-other">You watch the AI constantly</div>
+      <div class="comparison-us">The AI watches itself and escalates on drift</div>
+    </div>
+  </div>
+</div>
+
+<script>
+  function toggleCortex() {
+    document.getElementById('cortexBar').classList.toggle('expanded');
+  }
+</script>
+
+</body>
+</html>

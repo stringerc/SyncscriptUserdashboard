@@ -1,0 +1,42 @@
+<!-- SIDEBAR -->
+<div class="sidebar">
+  <div class="sidebar-logo">SyncScript<span>.</span></div>
+  <div class="sidebar-section">
+    <div class="sidebar-label">Main</div>
+    <a class="sidebar-item active" data-page="dashboard" onclick="showPage('dashboard')"><i class="icon">▣</i> Dashboard</a>
+    <a class="sidebar-item" data-page="ai" onclick="showPage('ai')"><i class="icon">◈</i> AI <span class="badge">3</span></a>
+    <a class="sidebar-item" data-page="projects" onclick="showPage('projects')"><i class="icon">◎</i> Projects</a>
+    <a class="sidebar-item" data-page="calendar" onclick="showPage('calendar')"><i class="icon">◳</i> Calendar</a>
+  </div>
+  <div class="sidebar-section">
+    <div class="sidebar-label">Intelligence</div>
+    <a class="sidebar-item" data-page="energy" onclick="showPage('energy')"><i class="icon">⚡</i> Energy</a>
+    <a class="sidebar-item" data-page="cortex" onclick="showPage('cortex')"><i class="icon">◈</i> Cortex <span class="badge green">live</span></a>
+    <a class="sidebar-item" data-page="scripts" onclick="showPage('scripts')"><i class="icon">⚞</i> Scripts</a>
+  </div>
+  <div class="sidebar-section">
+    <div class="sidebar-label">Tools</div>
+    <a class="sidebar-item" data-page="financials" onclick="showPage('financials')"><i class="icon">$</i> Financials</a>
+    <a class="sidebar-item" data-page="team" onclick="showPage('team')"><i class="icon">⋈</i> Team</a>
+    <a class="sidebar-item" data-page="analytics" onclick="showPage('analytics')"><i class="icon"> ↗</i> Analytics</a>
+  </div>
+  <div class="sidebar-spacer"></div>
+  <div class="sidebar-bottom">
+    <a class="sidebar-item" data-page="settings" onclick="showPage('settings')"><i class="icon">⚙</i> Settings</a>
+  </div>
+</div>
+
+<!-- MAIN -->
+<div class="main">
+  <div class="topbar">
+    <div class="topbar-left">
+      <div class="topbar-page-title" id="pageTitle">Dashboard</div>
+      <div class="topbar-cortex"><span class="live-dot"></span><span>reality 94 · tuned · 0.18</span></div>
+    </div>
+    <div class="topbar-right">
+      <input class="topbar-search" placeholder="Search projects, tasks, scripts…" />
+      <div class="topbar-avatar"></div>
+    </div>
+  </div>
+  <div class="content">
+
