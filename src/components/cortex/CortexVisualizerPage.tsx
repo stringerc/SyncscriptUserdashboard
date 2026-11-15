@@ -419,6 +419,40 @@ export default function CortexVisualizerPage() {
     setAgentEvents([...agentsClient.events]);
   }), []);
 
+  // Tier-1 forecast markers: poll the agent snapshot's forecast ledger and
+  // draw geolocated signals on the globe ambiently (no camera/layer changes).
+  const lastForecastSig = useRef('');
+  useEffect(() => {
+    let cancelled = false;
+    const poll = async () => {
+      try {
+        const res = await fetch('/api/cortex/agents/state', { cache: 'no-store' });
+        if (!res.ok || cancelled) return;
+        const data: any = await res.json();
+        const forecasts: any[] = Array.isArray(data?.forecasts) ? data.forecasts : [];
+        const cutoff = Date.now() - 12 * 3600_000;
+        const annotations = forecasts
+          .filter((f) => f?.geo?.length && Number(f?.at) > cutoff)
+          .flatMap((f) => f.geo.map((g: any) => ({
+            latitude: Number(g.lat), longitude: Number(g.lon),
+            label: `${f.domain}: ${String(g.label || f.claim || '').slice(0, 80)}`,
+            color: f.domain === 'weather' ? 'red' : 'amber',
+            type: 'pin',
+          })))
+          .filter((a: any) => Number.isFinite(a.latitude) && Number.isFinite(a.longitude))
+          .slice(0, 24);
+        const sig = JSON.stringify(annotations.map((a: any) => [a.latitude, a.longitude, a.label]));
+        if (sig === lastForecastSig.current) return;
+        lastForecastSig.current = sig;
+        const { globeForecast } = await import('../../lib/cortex-globe');
+        if (!cancelled) void globeForecast(annotations);
+      } catch { /* forecast markers are best-effort */ }
+    };
+    void poll();
+    const t = setInterval(poll, 60_000);
+    return () => { cancelled = true; clearInterval(t); };
+  }, []);
+
   useEffect(() => {
     // Test/demo hook: lets tooling & the chat page drive the bus directly
     (window as unknown as { __cortexSignalBus?: typeof cortexSignalBus }).__cortexSignalBus = cortexSignalBus;

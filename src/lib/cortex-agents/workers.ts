@@ -963,10 +963,33 @@ const forecasterWorker = (runtime: AgentRuntime): WorkerHandler => async (ctx) =
         const maxSeverity = hits
           .map((h) => String(h?.properties?.severity || 'Unknown'))
           .sort((a, b) => sevRank.indexOf(a) - sevRank.indexOf(b))[0] || 'Unknown';
+        // Tier-1 globe markers: centroid each alert's GeoJSON geometry.
+        const geos: { lat: number; lon: number; label: string }[] = [];
+        for (const h of hits) {
+          const geom = h?.geometry;
+          const rings = geom?.type === 'Polygon' ? [geom.coordinates?.[0]]
+            : geom?.type === 'MultiPolygon' ? (geom.coordinates || []).map((p: any) => p?.[0])
+            : [];
+          const ring = rings.find((r: any) => Array.isArray(r) && r.length > 2);
+          if (!ring) continue;
+          let sx = 0, sy = 0, n = 0;
+          for (const pt of ring) {
+            const lon = Number(pt?.[0]), lat = Number(pt?.[1]);
+            if (Number.isFinite(lat) && Number.isFinite(lon)) { sx += lon; sy += lat; n++; }
+          }
+          if (n > 2) {
+            geos.push({
+              lat: sy / n, lon: sx / n,
+              label: `${maxSeverity} · ${(h?.properties?.geocode?.UGC || [])[0] || 'alert'}`,
+            });
+          }
+          if (geos.length >= 8) break;
+        }
         return {
           count: hits.length,
           maxSeverity,
           regions: [...new Set(hits.flatMap((h) => (h?.properties?.geocode?.UGC || []).map(String)))],
+          geos,
         };
       } catch {
         return null;

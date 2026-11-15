@@ -1009,7 +1009,7 @@ if (typeof window !== 'undefined') {
         }
         w.finish(!!d.ok);
       }
-    } else if (d.type === 'gev:time-applied' || d.type === 'gev:cctv-applied' || d.type === 'gev:places-applied') {
+    } else if (d.type === 'gev:time-applied' || d.type === 'gev:cctv-applied' || d.type === 'gev:places-applied' || d.type === 'gev:forecast-applied') {
       cmdWaiters.get(`${d.type}:${d.id}`)?.(d);
     }
   });
@@ -1022,8 +1022,8 @@ const cmdWaiters = new Map<string, (msg: Record<string, unknown>) => void>();
 let cmdSeq = 0;
 
 function postGlobeCommand(
-  type: 'gev:time' | 'gev:cctv' | 'gev:places',
-  replyType: 'gev:time-applied' | 'gev:cctv-applied' | 'gev:places-applied',
+  type: 'gev:time' | 'gev:cctv' | 'gev:places' | 'gev:forecast',
+  replyType: 'gev:time-applied' | 'gev:cctv-applied' | 'gev:places-applied' | 'gev:forecast-applied',
   payload: Record<string, unknown>,
   timeoutMs = 15000,
 ): Promise<Record<string, unknown> | null> {
@@ -1090,6 +1090,25 @@ export function globePlaceDetails(
     action: 'details',
     ...opts,
   });
+}
+
+/** Ambient forecast markers — Tier-1 channel. Draws/clears annotation pins
+ *  on the globe WITHOUT touching layers, follow state, or the camera (unlike
+ *  flyGlobe). `clear:false` appends; default replaces the forecast set. */
+export function globeForecast(
+  annotations: { latitude: number; longitude: number; label?: string; color?: string; type?: string }[],
+  opts: { clear?: boolean } = {},
+): Promise<Record<string, unknown> | null> {
+  return postGlobeCommand('gev:forecast', 'gev:forecast-applied', {
+    annotations: annotations.map((a) => ({
+      type: a.type || 'pin',
+      latitude: a.latitude,
+      longitude: a.longitude,
+      ...(a.label ? { label: a.label.slice(0, 120) } : {}),
+      ...(a.color ? { color: a.color } : {}),
+    })),
+    ...(opts.clear === false ? { clear: false } : {}),
+  }, 15000);
 }
 
 /** CCTV camera control via GEV's own control_cctv action. */

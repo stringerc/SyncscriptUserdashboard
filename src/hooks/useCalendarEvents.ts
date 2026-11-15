@@ -87,6 +87,53 @@ function buildCommandContext(): ContractCommandContext {
   };
 }
 
+// ── Cortex calendar feed ──────────────────────────────────────────
+// Mirrors upcoming events to POST /api/cortex/calendar/upcoming so
+// FORECASTER's calendar probe and PREP handoffs see real events.
+// Debounced + payload-hash deduped; failures are silent (feed is best-effort).
+let lastFeedPayload = '';
+let feedTimer: ReturnType<typeof setTimeout> | null = null;
+
+function pushCalendarFeed(events: Event[]) {
+  if (typeof window === 'undefined') return;
+  if (feedTimer) clearTimeout(feedTimer);
+  feedTimer = setTimeout(() => {
+    try {
+      const now = Date.now();
+      const horizon = now + 48 * 3600_000;
+      const upcoming = (events || [])
+        .filter((e) => {
+          if ((e as any).archived || (e as any).completed) return false;
+          if ((e as any).isScheduled === false) return false;
+          const start = new Date((e as any).startTime).getTime();
+          return Number.isFinite(start) && start > now - 3600_000 && start <= horizon;
+        })
+        .slice(0, 50)
+        .map((e) => ({
+          id: String((e as any).id ?? ''),
+          title: String((e as any).title ?? ''),
+          start: new Date((e as any).startTime).getTime(),
+          end: new Date((e as any).endTime).getTime() || undefined,
+          attendees: Array.isArray((e as any).teamMembers) ? (e as any).teamMembers.length : 0,
+          attendeeNames: Array.isArray((e as any).teamMembers)
+            ? (e as any).teamMembers.map((m: any) => String(m?.email ?? m?.name ?? '')).filter(Boolean)
+            : [],
+        }))
+        .filter((e) => e.title && e.start > 0);
+      const payload = JSON.stringify(upcoming);
+      if (payload === lastFeedPayload) return;
+      lastFeedPayload = payload;
+      fetch('/api/cortex/calendar/upcoming', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ events: upcoming }),
+      }).catch(() => { lastFeedPayload = ''; });
+    } catch {
+      // feed is best-effort
+    }
+  }, 5000);
+}
+
 export function useCalendarEvents() {
   const [events, setEvents] = useState<Event[]>(loadPersistedEvents);
   const isInitialMount = useRef(true);
@@ -117,6 +164,10 @@ export function useCalendarEvents() {
     } catch {
       // Storage full or unavailable — silent fail
     }
+    // Mirror upcoming events to the Cortex server so FORECASTER's calendar
+    // probe + PREP handoffs have a real event source. Debounced; identical
+    // payloads are not re-pushed.
+    pushCalendarFeed(events);
   }, [events]);
 
   /** Hydrate server-backed in-app holds (MCP / Cursor / capture inbox) when signed in with a real JWT. */

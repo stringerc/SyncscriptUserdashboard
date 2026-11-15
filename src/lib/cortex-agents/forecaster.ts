@@ -54,6 +54,9 @@ export interface ForecastSignal {
    *  PREP task. Executed by the worker after routing, budget-gated by the
    *  target agent's own daily budget and submitTask dedupe. */
   handoff?: { agent: string; kind: string; title: string; input: Record<string, unknown> };
+  /** Geolocated points for Tier-1 globe rendering — forecast markers drawn
+   *  ambiently without touching camera or layers. */
+  geo?: { lat: number; lon: number; label?: string }[];
 }
 
 export interface ForecastProbe {
@@ -79,7 +82,10 @@ export interface ProbeDeps {
   /** Distribution queue status. */
   getDistributionStatus?: () => Promise<Record<string, any> | null>;
   /** Severe weather alerts near watched regions (NWS CAP feed). */
-  getWeatherAlerts?: () => Promise<{ count: number; maxSeverity: string; regions: string[] } | null>;
+  getWeatherAlerts?: () => Promise<{
+    count: number; maxSeverity: string; regions: string[];
+    geos?: { lat: number; lon: number; label?: string }[];
+  } | null>;
   base: string;
 }
 
@@ -499,6 +505,10 @@ export const weatherProbe: ForecastProbe = {
     if (!alerts || !alerts.count) return [];
     const severe = ['Extreme', 'Severe'].includes(String(alerts.maxSeverity));
     if (!severe) return [];
+    const geos = (alerts.geos || []).slice(0, 8).map((g: any) => ({
+      lat: Number(g.lat), lon: Number(g.lon),
+      label: String(g.label || alerts.maxSeverity).slice(0, 60),
+    })).filter((g: any) => Number.isFinite(g.lat) && Number.isFinite(g.lon));
     return [{
       id: `weather:${alerts.regions.join(',') || 'watched'}:severe`,
       domain: 'weather',
@@ -509,6 +519,7 @@ export const weatherProbe: ForecastProbe = {
       horizon: { notBefore: deps.now, notAfter: deps.now + 12 * 3600_000 },
       suggestedAction: 'Check the globe weather layers and defer outdoor-dependent plans.',
       urgency: 'interrupt',
+      ...(geos.length ? { geo: geos } : {}),
     }];
   },
 };
@@ -602,7 +613,24 @@ export async function runForecastCycle(
       id: r.id, domain: r.domain, claim: r.claim, tier: r.tier,
       confidence: r.confidence, routeScore: r.routeScore,
       demoted: r.demoted === true, evidence: r.evidence,
+      ...(r.geo?.length ? { geo: r.geo } : {}),
+      ...(r.urgency ? { urgency: r.urgency } : {}),
     });
+    // Tier-3 spoken channel: append to the ambient notice queue — clients
+    // drain it and apply voice policy (never speaks through this path
+    // directly). Same honesty contract: only routed, budgeted signals land.
+    if (r.tier === 3) {
+      try {
+        const ambientFile = path.join(process.cwd(), '.cache', 'cortex-ambient.jsonl');
+        fs.mkdirSync(path.dirname(ambientFile), { recursive: true });
+        fs.appendFileSync(ambientFile, JSON.stringify({
+          id: `${Date.now()}-fc-${r.id.slice(-12)}`,
+          ts: Date.now(),
+          kind: 'forecast',
+          text: `Forecast: ${r.claim}`.slice(0, 240),
+        }) + '\n');
+      } catch {}
+    }
     if (r.tier === 2 && opts.submitProposal) {
       try {
         const admitted = opts.submitProposal(r);

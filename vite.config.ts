@@ -9636,7 +9636,15 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
         }
         if (req.method !== 'GET') return next();
         agentCors(req, res);
-        res.end(JSON.stringify({ ok: true, ...agentRuntime.snapshot() }));
+        // Append the forecast ledger tail so clients can render Tier-1 globe
+        // markers and Tier-3 notices without a second poll.
+        let forecasts: unknown[] = [];
+        try {
+          const ledger = path.join(process.cwd(), '.cortex-runtime', 'forecasts.jsonl');
+          const lines = fsSync.readFileSync(ledger, 'utf8').split('\n').filter(Boolean).slice(-40);
+          forecasts = lines.map((l: string) => { try { return JSON.parse(l); } catch { return null; } }).filter(Boolean);
+        } catch {}
+        res.end(JSON.stringify({ ok: true, ...agentRuntime.snapshot(), forecasts }));
       });
 
       // GET /api/cortex/distribution/status — live revenue-engine state for the
@@ -9676,6 +9684,54 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
           res.writeHead(500, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ ok: false, error: String(e?.message || e) }));
         }
+      });
+
+      // GET/POST /api/cortex/calendar/upcoming — server-side mirror of the
+      // client's localStorage calendar so FORECASTER's calendar probe and
+      // PREP handoffs have a real event source. The client pushes its next
+      // 48h of events (POST); GET returns the normalized probe shape.
+      server.middlewares.use('/api/cortex/calendar/upcoming', (req: any, res: any, next: any) => {
+        if (req.method === 'OPTIONS') {
+          res.writeHead(204, { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Methods': 'GET, POST, OPTIONS', 'Access-Control-Allow-Headers': 'Content-Type' });
+          return res.end();
+        }
+        agentCors(req, res);
+        const file = path.join(process.cwd(), '.cortex-runtime', 'calendar-upcoming.json');
+        if (req.method === 'GET') {
+          try {
+            const raw = JSON.parse(fsSync.readFileSync(file, 'utf8'));
+            res.end(JSON.stringify({ ok: true, events: Array.isArray(raw?.events) ? raw.events : [], updatedAt: raw?.updatedAt || null }));
+          } catch {
+            res.end(JSON.stringify({ ok: true, events: [], updatedAt: null }));
+          }
+          return;
+        }
+        if (req.method !== 'POST') return next();
+        let body = '';
+        req.on('data', (c: Buffer) => { body += c.toString(); });
+        req.on('end', () => {
+          try {
+            const parsed = JSON.parse(body || '{}');
+            const events = (Array.isArray(parsed?.events) ? parsed.events : [])
+              .map((e: any) => ({
+                id: String(e?.id ?? ''),
+                title: String(e?.title ?? e?.summary ?? ''),
+                start: Number(e?.start ?? e?.startTime ?? 0),
+                end: Number.isFinite(Number(e?.end ?? e?.endTime)) ? Number(e?.end ?? e?.endTime) : undefined,
+                attendees: Array.isArray(e?.attendees) ? e.attendees.length : Number(e?.attendees) || 0,
+                attendeeNames: Array.isArray(e?.attendees)
+                  ? e.attendees.map((a: any) => String(a?.email ?? a?.name ?? a)).filter(Boolean)
+                  : Array.isArray(e?.attendeeNames) ? e.attendeeNames.map(String) : undefined,
+              }))
+              .filter((e: any) => e.title && e.start > 0);
+            fsSync.mkdirSync(path.dirname(file), { recursive: true });
+            fsSync.writeFileSync(file, JSON.stringify({ updatedAt: new Date().toISOString(), events }, null, 2));
+            res.end(JSON.stringify({ ok: true, stored: events.length }));
+          } catch (e: any) {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ ok: false, error: String(e?.message || e) }));
+          }
+        });
       });
 
       // GET /api/cortex/browser-shot.png — latest automation-Chrome screenshot
