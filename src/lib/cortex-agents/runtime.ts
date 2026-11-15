@@ -112,6 +112,15 @@ export const AGENT_SPECS: AgentSpec[] = [
     tier: 'enterprise',
   },
   {
+    id: 'prep',
+    name: 'PREP',
+    role: 'Meeting Ready-Writer',
+    blurb: 'Builds cited prep briefs before meetings — attendee history, open items, suggested agenda — local artifacts only, every claim sourced.',
+    concurrency: 1,
+    dailyBudget: 16,
+    modelPin: { tier: 'reason' },
+  },
+  {
     id: 'forecaster',
     name: 'FORECASTER',
     role: 'Anticipator',
@@ -319,7 +328,7 @@ export class AgentRuntime {
   // deterministic: it re-derives evidence from real task history and
   // rejects fabricated or duplicative requests before they reach a human.
 
-  private static BUILT_INS: ReadonlySet<string> = new Set(['sentinel', 'scout', 'librarian', 'builder', 'reviewer', 'runner', 'distributor', 'forecaster', 'warden']);
+  private static BUILT_INS: ReadonlySet<string> = new Set(['sentinel', 'scout', 'librarian', 'builder', 'reviewer', 'runner', 'distributor', 'forecaster', 'prep', 'warden']);
   private static MAX_SPAWNED = 4;
   private static MAX_PENDING_PROPOSALS = 10;
   private static SPAWN_PROPOSAL_TTL_MS = 72 * 3600_000;

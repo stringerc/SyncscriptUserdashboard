@@ -17,6 +17,7 @@ import type { SpawnSpec, ToolScope } from './types';
 import { registerWardenWorker } from './warden';
 import { registerDistributorWorker } from './distribution';
 import { runForecastCycle, type RoutedForecast, type ProbeDeps } from './forecaster';
+import { makePrepWorker } from './prep';
 import { getCortexProactiveInitiative } from '../cortex-proactive-initiative';
 import { cortexObsidianMemory } from '../cortex-obsidian-memory';
 
@@ -896,6 +897,70 @@ const forecasterWorker: WorkerHandler = async (ctx) => {
         return [];
       }
     },
+    getInboxSummary: async () => {
+      try {
+        const res = await fetch(`${BASE}/api/cortex/gmail/live-inbox`, { signal: AbortSignal.timeout(8000) });
+        if (!res.ok) return null;
+        return res.json();
+      } catch {
+        return null;
+      }
+    },
+    getSenseSnapshot: async () => {
+      try {
+        const res = await fetch(`${BASE}/api/cortex/initiative/sense`, { signal: AbortSignal.timeout(8000) });
+        if (!res.ok) return null;
+        const data: any = await res.json();
+        return data?.snapshot || data || null;
+      } catch {
+        return null;
+      }
+    },
+    getDistributionStatus: async () => {
+      try {
+        const res = await fetch(`${BASE}/api/cortex/distribution/status`, { signal: AbortSignal.timeout(8000) });
+        if (!res.ok) return null;
+        return res.json();
+      } catch {
+        return null;
+      }
+    },
+    getWeatherAlerts: async () => {
+      // NWS CAP feed — free, no key. Watches only configured regions
+      // (CORTEX_WATCH_ZONES, comma-separated state/zone codes); with none
+      // configured the probe stays silent rather than reporting national noise.
+      const zones = (process.env.CORTEX_WATCH_ZONES || '')
+        .split(',').map((z) => z.trim()).filter(Boolean);
+      if (!zones.length) return null;
+      try {
+        const res = await fetch('https://api.weather.gov/alerts/active?status=actual&message_type=alert', {
+          headers: { 'User-Agent': 'cortex-forecaster (personal)' },
+          signal: AbortSignal.timeout(10000),
+        });
+        if (!res.ok) return null;
+        const data: any = await res.json();
+        const features: any[] = Array.isArray(data?.features) ? data.features : [];
+        const hits = features.filter((f) => {
+          const areas = [
+            ...(f?.properties?.geocode?.UGC || []),
+            ...(f?.properties?.geocode?.SAME || []),
+          ].map(String);
+          return zones.some((z) => areas.includes(z));
+        });
+        if (!hits.length) return { count: 0, maxSeverity: 'None', regions: [] };
+        const sevRank = ['Extreme', 'Severe', 'Moderate', 'Minor', 'Unknown'];
+        const maxSeverity = hits
+          .map((h) => String(h?.properties?.severity || 'Unknown'))
+          .sort((a, b) => sevRank.indexOf(a) - sevRank.indexOf(b))[0] || 'Unknown';
+        return {
+          count: hits.length,
+          maxSeverity,
+          regions: [...new Set(hits.flatMap((h) => (h?.properties?.geocode?.UGC || []).map(String)))],
+        };
+      } catch {
+        return null;
+      }
+    },
   };
 
   const result = await runForecastCycle(deps, {
@@ -949,5 +1014,17 @@ export function registerAgentWorkers(runtime: AgentRuntime) {
   runtime.registerWorker('runner', runnerWorker);
   registerDistributorWorker(runtime);
   runtime.registerWorker('forecaster', forecasterWorker);
+  runtime.registerWorker('prep', makePrepWorker({
+    toolExecute: (name, args, timeoutMs, telemetry) => toolExecute(name, args, timeoutMs, telemetry),
+    fetchInbox: async () => {
+      try {
+        const res = await fetch(`${BASE}/api/cortex/gmail/live-inbox`, { signal: AbortSignal.timeout(8000) });
+        if (!res.ok) return null;
+        return res.json();
+      } catch {
+        return null;
+      }
+    },
+  }));
   registerWardenWorker(runtime);
 }

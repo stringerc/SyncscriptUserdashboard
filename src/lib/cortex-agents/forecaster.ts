@@ -66,6 +66,16 @@ export interface ProbeDeps {
   getAgentSnapshot?: () => Promise<unknown> | unknown;
   /** Upcoming calendar events — injected; default impl may be absent. */
   listUpcomingEvents?: () => Promise<ForecastCalendarEvent[]>;
+  /** Gmail live-inbox summary — injected; absent = probe stays silent. */
+  getInboxSummary?: () => Promise<{
+    found?: boolean; unreadCount?: number; threads?: any[];
+  } | null>;
+  /** Initiative sense snapshot (git/memory/free-energy signals). */
+  getSenseSnapshot?: () => Promise<Record<string, any> | null>;
+  /** Distribution queue status. */
+  getDistributionStatus?: () => Promise<Record<string, any> | null>;
+  /** Severe weather alerts near watched regions (NWS CAP feed). */
+  getWeatherAlerts?: () => Promise<{ count: number; maxSeverity: string; regions: string[] } | null>;
   base: string;
 }
 
@@ -313,9 +323,213 @@ export const calendarProbe: ForecastProbe = {
   },
 };
 
-/** Probe registry — v1 ships fleet + calendar; remaining domains register
- *  as their sensors come online (spec §Probe registry). */
-export const FORECAST_PROBES: ForecastProbe[] = [fleetProbe, calendarProbe];
+/** Comms probe: Gmail backlog growth — unread volume is a leading indicator
+ *  of dropped threads before they become missed commitments. */
+export const commsProbe: ForecastProbe = {
+  id: 'comms',
+  domain: 'comms',
+  description: 'Inbox backlog and thread decay signals.',
+  async run(deps) {
+    if (!deps.getInboxSummary) return [];
+    const inbox = await deps.getInboxSummary();
+    if (!inbox?.found) return [];
+    const unread = Number(inbox.unreadCount) || 0;
+    const threads: any[] = Array.isArray(inbox.threads) ? inbox.threads : [];
+    const out: ForecastSignal[] = [];
+    const now = deps.now;
+
+    if (unread >= 1000) {
+      out.push({
+        id: 'comms:backlog',
+        domain: 'comms',
+        claim: `${unread.toLocaleString()} unread threads in the live inbox — backlog is deep enough that replies are likely being missed.`,
+        evidence: [{ kind: 'gmail-live-inbox', ref: 'unread', label: `${unread} unread` }],
+        why: 'Unread volume at this scale means triage cadence has fallen behind arrival rate; important threads age out of view.',
+        confidence: 0.75,
+        personalRelevance: 0.8,
+        horizon: { notBefore: now, notAfter: now + 24 * 3600_000 },
+        suggestedAction: 'Run a gmail triage pass or delegate backlog reduction to an agent.',
+        urgency: 'proposal',
+      });
+    }
+    // Unread threads older than ~14d are likely dead conversations.
+    const staleUnread = threads.filter((t) => {
+      const age = t?.date ? now - new Date(t.date).getTime() : NaN;
+      return t?.unread === true && Number.isFinite(age) && age > 14 * 24 * 3600_000;
+    }).length;
+    if (staleUnread >= 10) {
+      out.push({
+        id: 'comms:stale-threads',
+        domain: 'comms',
+        claim: `${staleUnread} unread threads are older than two weeks — likely dead conversations or missed replies.`,
+        evidence: [{ kind: 'gmail-live-inbox', ref: 'threads', label: `${staleUnread} stale unread` }],
+        confidence: 0.7,
+        personalRelevance: 0.6,
+        horizon: { notBefore: now, notAfter: now + 72 * 3600_000 },
+        suggestedAction: 'Review stale unread for commitments that went unanswered.',
+        urgency: 'ambient',
+      });
+    }
+    return out;
+  },
+};
+
+/** Build probe: repo hygiene debt from the initiative sense bus — uncommitted
+ *  work and commit cadence are leading indicators of stalled builds. */
+export const buildProbe: ForecastProbe = {
+  id: 'build',
+  domain: 'build',
+  description: 'Git/CI hygiene signals from the sense snapshot.',
+  async run(deps) {
+    if (!deps.getSenseSnapshot) return [];
+    const snap = await deps.getSenseSnapshot();
+    if (!snap) return [];
+    const uncommitted = Number(snap.uncommittedFileCount) || 0;
+    const commits7d = Number(snap.commitsLast7d) || 0;
+    const out: ForecastSignal[] = [];
+    const now = deps.now;
+
+    if (uncommitted >= 50) {
+      out.push({
+        id: 'build:uncommitted-debt',
+        domain: 'build',
+        claim: `${uncommitted} uncommitted files — change debt is accumulating faster than it can be reviewed.`,
+        evidence: [{ kind: 'sense', ref: 'uncommittedFileCount', label: `${uncommitted} files` }],
+        why: 'Large uncommitted surfaces hide regressions and make every subsequent diff unauditable.',
+        confidence: 0.8,
+        personalRelevance: 0.7,
+        horizon: { notBefore: now, notAfter: now + 48 * 3600_000 },
+        suggestedAction: 'Have BUILDER/REVIEWER triage the dirty tree into commits or reverts.',
+        urgency: 'proposal',
+      });
+    }
+    if (uncommitted > 0 && commits7d === 0) {
+      out.push({
+        id: 'build:no-commits',
+        domain: 'build',
+        claim: `Zero commits in 7 days with ${uncommitted} uncommitted files — active work is not landing.`,
+        evidence: [
+          { kind: 'sense', ref: 'commitsLast7d', label: '0 commits/7d' },
+          { kind: 'sense', ref: 'uncommittedFileCount', label: `${uncommitted} files` },
+        ],
+        confidence: 0.85,
+        personalRelevance: 0.7,
+        horizon: { notBefore: now, notAfter: now + 72 * 3600_000 },
+        suggestedAction: 'Commit or stash outstanding work; check whether agents are blocked.',
+        urgency: 'proposal',
+      });
+    }
+    return out;
+  },
+};
+
+/** Distribution probe: queue health for the revenue engine — failed or
+ *  stalled distribution items are forecasts of lost launch windows. */
+export const distributionProbe: ForecastProbe = {
+  id: 'distribution',
+  domain: 'distribution',
+  description: 'Gumroad/Pinterest/Reddit queue health signals.',
+  async run(deps) {
+    if (!deps.getDistributionStatus) return [];
+    const status = await deps.getDistributionStatus();
+    if (!status) return [];
+    const counts: Record<string, number> = status?.queue?.counts || status?.counts || {};
+    const failed = Number(counts.failed) || 0;
+    const pending = Number(counts.pending) || 0;
+    const out: ForecastSignal[] = [];
+    const now = deps.now;
+
+    if (failed > 0) {
+      out.push({
+        id: 'distribution:failed-items',
+        domain: 'distribution',
+        claim: `${failed} distribution queue item(s) failed — launch assets are not reaching their channels.`,
+        evidence: [{ kind: 'distribution-status', ref: 'queue', label: `${failed} failed of ${pending + failed + (Number(counts.done) || 0)} total` }],
+        why: 'Failed queue items usually mean a provider auth, format, or rate-limit problem that will recur until fixed.',
+        confidence: 0.8,
+        personalRelevance: 0.7,
+        horizon: { notBefore: now, notAfter: now + 24 * 3600_000 },
+        suggestedAction: 'Inspect the failed items and requeue after fixing the cause.',
+        urgency: 'proposal',
+      });
+    }
+    if (pending >= 20) {
+      out.push({
+        id: 'distribution:backlog',
+        domain: 'distribution',
+        claim: `${pending} distribution items are queued — at current cadence the launch window is slipping.`,
+        evidence: [{ kind: 'distribution-status', ref: 'queue', label: `${pending} pending` }],
+        confidence: 0.65,
+        personalRelevance: 0.6,
+        horizon: { notBefore: now, notAfter: now + 72 * 3600_000 },
+        urgency: 'ambient',
+      });
+    }
+    return out;
+  },
+};
+
+/** Weather probe: severe-alert watch. Silent unless a watched region has
+ *  active alerts — national noise is not a forecast. */
+export const weatherProbe: ForecastProbe = {
+  id: 'weather',
+  domain: 'weather',
+  description: 'Severe weather alerts overlapping watched regions.',
+  async run(deps) {
+    if (!deps.getWeatherAlerts) return [];
+    const alerts = await deps.getWeatherAlerts();
+    if (!alerts || !alerts.count) return [];
+    const severe = ['Extreme', 'Severe'].includes(String(alerts.maxSeverity));
+    if (!severe) return [];
+    return [{
+      id: `weather:${alerts.regions.join(',') || 'watched'}:severe`,
+      domain: 'weather',
+      claim: `Severe weather alert active (${alerts.maxSeverity}) for ${alerts.regions.join(', ') || 'watched region'}.`,
+      evidence: [{ kind: 'nws-alerts', ref: alerts.regions.join(','), label: `${alerts.count} alerts, max ${alerts.maxSeverity}` }],
+      confidence: 0.9,
+      personalRelevance: 1.0,
+      horizon: { notBefore: deps.now, notAfter: deps.now + 12 * 3600_000 },
+      suggestedAction: 'Check the globe weather layers and defer outdoor-dependent plans.',
+      urgency: 'interrupt',
+    }];
+  },
+};
+
+/** Energy probe: resonance-calculus timing — surfaces when the user's
+ *  circadian window makes a forecast actionable vs. noise. */
+export const energyProbe: ForecastProbe = {
+  id: 'energy',
+  domain: 'energy',
+  description: 'Circadian/coherence timing advisories for forecast actions.',
+  async run(deps) {
+    // Minimal v1: flag when a high-urgency window (proposal-heavy hour)
+    // collides with typical low-circadian hours — defer non-urgent items.
+    const hour = new Date(deps.now).getHours();
+    const out: ForecastSignal[] = [];
+    // Circadian trough ~13-15h post-lunch and late night; peak ~9-11h.
+    const trough = (hour >= 13 && hour <= 15) || hour >= 22 || hour < 6;
+    if (trough) {
+      out.push({
+        id: `energy:trough:${new Date(deps.now).toISOString().slice(0, 10)}`,
+        domain: 'energy',
+        claim: `Low circadian window right now (~${hour}:00) — non-urgent forecast actions will land better after peak hours.`,
+        evidence: [{ kind: 'resonance', ref: `hour=${hour}`, label: 'circadian trough' }],
+        confidence: 0.6,
+        personalRelevance: 0.5,
+        horizon: { notBefore: deps.now, notAfter: deps.now + 4 * 3600_000 },
+        urgency: 'ambient',
+      });
+    }
+    return out;
+  },
+};
+
+/** Probe registry — v1 ships fleet + calendar + comms + build +
+ *  distribution + weather + energy; coverage grows by adding probes. */
+export const FORECAST_PROBES: ForecastProbe[] = [
+  fleetProbe, calendarProbe, commsProbe, buildProbe,
+  distributionProbe, weatherProbe, energyProbe,
+];
 
 // ── Runner ─────────────────────────────────────────────────────────
 
