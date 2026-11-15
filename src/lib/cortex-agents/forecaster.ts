@@ -599,6 +599,12 @@ export async function runForecastCycle(
     }
   }
 
+  // Calibration: each domain's track record adjusts probe confidence
+  // before routing (muted probes get demoted, proven ones get boosted).
+  for (const s of signals) {
+    s.confidence = Math.min(1, Math.max(0, s.confidence * calibrationFactor(s.domain)));
+  }
+
   const { routed, dropped, spokenRemaining } = routeSignals(signals, state, deps.now);
 
   // Persist spoken consumption: count Tier-3 signals that survived routing.
@@ -649,4 +655,49 @@ export async function runForecastCycle(
     probeErrors,
     proposalsFiled,
   };
+}
+
+// ── Calibration loop ───────────────────────────────────────────────
+// Probes earn trust: confirmed forecasts raise a domain's confidence
+// factor, misses lower it. Factor range 0.6–1.25 applied to probe-set
+// confidence before routing — a probe that cries wolf gets muted by its
+// own track record (spec §Calibration).
+
+const CALIBRATION_FILE = path.join(RUNTIME_DIR, 'forecast-calibration.json');
+
+export interface DomainCalibration { hits: number; misses: number; lastAt?: number }
+
+export function loadCalibration(): Record<string, DomainCalibration> {
+  try {
+    const raw = JSON.parse(fs.readFileSync(CALIBRATION_FILE, 'utf8'));
+    return raw && typeof raw === 'object' ? raw : {};
+  } catch { return {}; }
+}
+
+function saveCalibration(c: Record<string, DomainCalibration>) {
+  try {
+    fs.mkdirSync(RUNTIME_DIR, { recursive: true });
+    fs.writeFileSync(CALIBRATION_FILE, JSON.stringify(c, null, 2));
+  } catch {}
+}
+
+/** Multiplier applied to a domain's probe-assigned confidence.
+ *  Neutral (1.0) until a domain has ≥3 recorded outcomes. */
+export function calibrationFactor(domain: string): number {
+  const d = loadCalibration()[domain];
+  if (!d || (d.hits + d.misses) < 3) return 1.0;
+  const precision = d.hits / (d.hits + d.misses);
+  return Math.min(1.25, Math.max(0.6, 0.7 + 0.55 * precision));
+}
+
+/** Record a forecast outcome. `confirmed:true` = the predicted thing
+ *  happened / the proposal was acted on; false = dismissed as wrong. */
+export function recordForecastOutcome(domain: string, confirmed: boolean): DomainCalibration {
+  const c = loadCalibration();
+  const d = c[domain] || { hits: 0, misses: 0 };
+  if (confirmed) d.hits++; else d.misses++;
+  d.lastAt = Date.now();
+  c[domain] = d;
+  saveCalibration(c);
+  return d;
 }

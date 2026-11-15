@@ -15,6 +15,7 @@ import os from 'os';
 import { execSync, execFile } from 'child_process';
 import { timingSafeEqual } from 'crypto';
 import { cortexObsidianMemory } from './src/lib/cortex-obsidian-memory';
+import { recordForecastOutcome, loadCalibration } from './src/lib/cortex-agents/forecaster';
 import { getAutonomousVigilance } from './src/lib/cortex-autonomous-vigilance';
 import { deriveSomaticState, type SomaticSample } from './src/lib/cortex-somatic';
 import { getAgentRuntime } from './src/lib/cortex-agents/runtime';
@@ -9727,6 +9728,88 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
             fsSync.mkdirSync(path.dirname(file), { recursive: true });
             fsSync.writeFileSync(file, JSON.stringify({ updatedAt: new Date().toISOString(), events }, null, 2));
             res.end(JSON.stringify({ ok: true, stored: events.length }));
+          } catch (e: any) {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ ok: false, error: String(e?.message || e) }));
+          }
+        });
+      });
+
+      // POST/GET /api/cortex/geo/watch — client reports its location; server
+      // resolves NWS UGC zones via api.weather.gov/points and stores them so
+      // FORECASTER's weather probe knows what "local" means without env vars.
+      server.middlewares.use('/api/cortex/geo/watch', (req: any, res: any, next: any) => {
+        if (req.method === 'OPTIONS') {
+          res.writeHead(204, { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Methods': 'GET, POST, OPTIONS', 'Access-Control-Allow-Headers': 'Content-Type' });
+          return res.end();
+        }
+        agentCors(req, res);
+        const file = path.join(process.cwd(), '.cortex-runtime', 'watch-zones.json');
+        const readZones = () => { try { return JSON.parse(fsSync.readFileSync(file, 'utf8')); } catch { return null; } };
+        if (req.method === 'GET') {
+          res.end(JSON.stringify({ ok: true, ...(readZones() || { zones: [] }) }));
+          return;
+        }
+        if (req.method !== 'POST') return next();
+        let body = '';
+        req.on('data', (c: Buffer) => { body += c.toString(); });
+        req.on('end', async () => {
+          try {
+            const { lat, lon } = JSON.parse(body || '{}');
+            const la = Number(lat), lo = Number(lon);
+            if (!Number.isFinite(la) || !Number.isFinite(lo)) throw new Error('lat/lon required');
+            const prev = readZones();
+            // Skip re-resolution when coords haven't meaningfully moved.
+            if (prev?.lat === la && prev?.lon === lo && Array.isArray(prev?.zones) && prev.zones.length) {
+              return res.end(JSON.stringify({ ok: true, zones: prev.zones, cached: true }));
+            }
+            const pt = await fetch(`https://api.weather.gov/points/${la.toFixed(4)},${lo.toFixed(4)}`, {
+              headers: { 'User-Agent': 'cortex-forecaster (personal)' },
+              signal: AbortSignal.timeout(8000),
+            });
+            if (!pt.ok) throw new Error(`points HTTP ${pt.status}`);
+            const pdata: any = await pt.json();
+            const props = pdata?.properties || {};
+            const zones = [...new Set([
+              String(props.forecastZone || '').split('/').pop() || '',
+              String(props.county || '').split('/').pop() || '',
+              ...(Array.isArray(props.forecastZones) ? props.forecastZones : []),
+            ].filter((z) => /^[A-Z]{2}[A-Z0-9]{4}$/.test(z)))];
+            if (!zones.length) throw new Error('no NWS zones resolved for location');
+            const out = { lat: la, lon: lo, zones, updatedAt: new Date().toISOString() };
+            fsSync.mkdirSync(path.dirname(file), { recursive: true });
+            fsSync.writeFileSync(file, JSON.stringify(out, null, 2));
+            res.end(JSON.stringify({ ok: true, zones, updatedAt: out.updatedAt }));
+          } catch (e: any) {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ ok: false, error: String(e?.message || e) }));
+          }
+        });
+      });
+
+      // POST/GET /api/cortex/forecast/feedback — calibration loop. Clients
+      // report whether a forecast proved right; per-domain precision then
+      // adjusts probe confidence on subsequent cycles.
+      server.middlewares.use('/api/cortex/forecast/feedback', (req: any, res: any, next: any) => {
+        if (req.method === 'OPTIONS') {
+          res.writeHead(204, { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Methods': 'GET, POST, OPTIONS', 'Access-Control-Allow-Headers': 'Content-Type' });
+          return res.end();
+        }
+        agentCors(req, res);
+        if (req.method === 'GET') {
+          res.end(JSON.stringify({ ok: true, calibration: loadCalibration() }));
+          return;
+        }
+        if (req.method !== 'POST') return next();
+        let body = '';
+        req.on('data', (c: Buffer) => { body += c.toString(); });
+        req.on('end', () => {
+          try {
+            const { domain, confirmed } = JSON.parse(body || '{}');
+            if (typeof domain !== 'string' || !domain || typeof confirmed !== 'boolean')
+              throw new Error('domain (string) and confirmed (boolean) required');
+            const d = recordForecastOutcome(domain.slice(0, 40), confirmed);
+            res.end(JSON.stringify({ ok: true, domain, ...d }));
           } catch (e: any) {
             res.writeHead(400, { 'Content-Type': 'application/json' });
             res.end(JSON.stringify({ ok: false, error: String(e?.message || e) }));

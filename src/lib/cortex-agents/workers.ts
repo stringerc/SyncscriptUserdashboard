@@ -937,11 +937,19 @@ const forecasterWorker = (runtime: AgentRuntime): WorkerHandler => async (ctx) =
       }
     },
     getWeatherAlerts: async () => {
-      // NWS CAP feed — free, no key. Watches only configured regions
-      // (CORTEX_WATCH_ZONES, comma-separated state/zone codes); with none
-      // configured the probe stays silent rather than reporting national noise.
-      const zones = (process.env.CORTEX_WATCH_ZONES || '')
+      // NWS CAP feed — free, no key. Watches zones from CORTEX_WATCH_ZONES
+      // env or the client-reported location resolved via /api/cortex/geo/watch
+      // (stored in .cortex-runtime/watch-zones.json). Neither configured →
+      // silent rather than reporting national noise.
+      let zones = (process.env.CORTEX_WATCH_ZONES || '')
         .split(',').map((z) => z.trim()).filter(Boolean);
+      if (!zones.length) {
+        try {
+          const wf = path.join(process.cwd(), '.cortex-runtime', 'watch-zones.json');
+          const w = JSON.parse(fs.readFileSync(wf, 'utf8'));
+          if (Array.isArray(w?.zones)) zones = w.zones.map(String).filter(Boolean);
+        } catch {}
+      }
       if (!zones.length) return null;
       try {
         const res = await fetch('https://api.weather.gov/alerts/active?status=actual&message_type=alert', {

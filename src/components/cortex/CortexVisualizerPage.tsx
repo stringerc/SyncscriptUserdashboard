@@ -450,6 +450,17 @@ export default function CortexVisualizerPage() {
     };
     void poll();
     const t = setInterval(poll, 60_000);
+    // Report location once so FORECASTER's weather probe can resolve local
+    // NWS watch zones (server dedupes identical coords).
+    if (typeof navigator !== 'undefined' && navigator.geolocation) {
+      navigator.geolocation.getCurrentPosition((pos) => {
+        fetch('/api/cortex/geo/watch', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ lat: pos.coords.latitude, lon: pos.coords.longitude }),
+        }).catch(() => {});
+      }, () => {}, { timeout: 10000, maximumAge: 300000 });
+    }
     return () => { cancelled = true; clearInterval(t); };
   }, []);
 
