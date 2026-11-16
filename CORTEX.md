@@ -132,6 +132,13 @@ Voice/STT ──► useVisualizerVoice ──► cortex-globe (map cmds) ──�
 | `/api/cortex/ambient/pending` | Notice queue drain |
 | `/api/cortex/bus/state` | Visualizer signal bus |
 
+### 4.1 Runtime & Infrastructure Topology
+
+- **Agent runtime is Mac-local** — `agentRuntime` lives in the Vite middleware (`vite.config.ts`); tasks, queues, `.cortex-runtime/` state, and LLM matrix all pause when the Mac sleeps. Always-on migration to Oracle is planned, not done.
+- **Discord surface**: `https://cortex.tailc088d4.ts.net` (Tailscale Funnel → `localhost:5173`). `tailscaled` + Vite run under launchd (`com.tailscale.cortex`, `com.syncscript.vite`) — survive reboots.
+- **Automation Chrome lives on Oracle** (`syncscript-a1-retry-2`, ARM64 Ubuntu): systemd `cortex-xvfb` (display :99) + `cortex-chrome` (Chrome 159, CDP `127.0.0.1:9222`, profile `/opt/cortex-chrome/profile`, x11vnc :5900 for logins). Mac reaches it via launchd SSH tunnel `com.cortex.cdp-tunnel` (`localhost:9222` → oracle). All `storefront/tools/*.mjs` scripts work unchanged.
+- **Agent Reach** (`~/.local/bin/agent-reach`, uv tool): SCOUT `social_scan` read-only platform access — github/youtube/web/v2ex/bilibili/reddit/xueqiu live; twitter/linkedin/etc. installed, need `agent-reach login`.
+
 ---
 
 ## 5. Spec & Research Index

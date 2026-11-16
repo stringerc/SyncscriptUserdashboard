@@ -164,7 +164,7 @@ async function runBrowserShot(ctx: AgentContext, payload: Record<string, unknown
     const ping = await fetch('http://localhost:9222/json/version', { signal: AbortSignal.timeout(3000) });
     if (!ping.ok) throw new Error(`CDP HTTP ${ping.status}`);
   } catch (e: any) {
-    throw new Error(`automation Chrome offline — CDP :9222 unreachable (${String(e?.message || e).slice(0, 120)}). Start Chrome with --remote-debugging-port=9222`);
+    throw new Error(`automation Chrome offline — CDP :9222 unreachable (${String(e?.message || e).slice(0, 120)}). Chrome runs on Oracle (cortex-chrome.service); check the com.cortex.cdp-tunnel launchd job on this Mac`);
   }
   const out = await sh(`node tools/browser-shot.mjs ${match ? `'${match}'` : ''}`, ctx.telemetry, 60_000);
   const stdout = String(out?.stdout || '');
