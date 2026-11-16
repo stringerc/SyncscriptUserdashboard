@@ -1998,7 +1998,7 @@ function CortexCoreInner({ fx }: { fx: React.MutableRefObject<{ shocks: Shock[] 
       <StarLayer live={live} count={1400} rMin={14} rMax={30} sMin={0.7} sMax={1.8} rotSpeed={0.008} twinkle={0.8} />
       <StarLayer live={live} count={500} rMin={9} rMax={18} sMin={1.2} sMax={2.6} rotSpeed={-0.02} twinkle={1.0} />
 
-      <group scale={0.5}>
+      <group scale={0.75}>
         <Core live={live} />
         <DetailShell live={live} />
         <VoiceHalo live={live} />
