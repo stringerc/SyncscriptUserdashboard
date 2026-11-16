@@ -10489,42 +10489,55 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
           const chatMessages = [...sysMsg, ...messages.map((m: any) => ({ role: m.role === 'assistant' ? 'assistant' : 'user', content: String(m.content || '') }))];
 
           let lastErr = 'no provider succeeded';
+          // Reasoning models (NIM nemotron/step) can spend the whole token
+          // budget on reasoning_content and return content:null. When that
+          // happens, retry the same candidate once with a larger budget
+          // before counting it as a failure.
+          const callProvider = async (cand: any, prov: any, tokens: number) => {
+            if (prov.protocol === 'anthropic') {
+              const r = await fetch(prov.url, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'x-api-key': prov.key, 'anthropic-version': '2023-06-01' },
+                body: JSON.stringify({ model: cand.model, system: chatMessages.find(m => m.role === 'system')?.content || '', messages: chatMessages.filter(m => m.role !== 'system'), max_tokens: tokens }),
+                signal: AbortSignal.timeout(30_000),
+              });
+              if (!r.ok) return { httpStatus: r.status, j: null };
+              const j: any = await r.json();
+              const content = (j?.content || []).filter((b: any) => b.type === 'text').map((b: any) => b.text).join('');
+              return { httpStatus: 200, j, content };
+            }
+            const r = await fetch(prov.url, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${prov.key}` },
+              body: JSON.stringify({ model: cand.model, messages: chatMessages, max_tokens: tokens, temperature: 0.3, stream: false }),
+              signal: AbortSignal.timeout(30_000),
+            });
+            if (!r.ok) return { httpStatus: r.status, j: null };
+            const j: any = await r.json();
+            const content = j?.choices?.[0]?.message?.content || '';
+            const reasoning = j?.choices?.[0]?.message?.reasoning_content || '';
+            return { httpStatus: 200, j, content, reasoning };
+          };
           for (const cand of candidates.slice(0, 6)) {
             const prov = providerFor(cand.provider);
             if (!prov) { agentRuntime.matrix.recordProbe(cand.provider, cand.model, false); continue; }
             const started = Date.now();
             try {
-              let r: Response;
-              if (prov.protocol === 'anthropic') {
-                r = await fetch(prov.url, {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json', 'x-api-key': prov.key, 'anthropic-version': '2023-06-01' },
-                  body: JSON.stringify({ model: cand.model, system: chatMessages.find(m => m.role === 'system')?.content || '', messages: chatMessages.filter(m => m.role !== 'system'), max_tokens: maxTokens }),
-                  signal: AbortSignal.timeout(30_000),
-                });
-              } else {
-                r = await fetch(prov.url, {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${prov.key}` },
-                  body: JSON.stringify({ model: cand.model, messages: chatMessages, max_tokens: maxTokens, temperature: 0.3, stream: false }),
-                  signal: AbortSignal.timeout(30_000),
-                });
-              }
-              if (!r.ok) {
-                lastErr = `${cand.provider} http ${r.status}`;
-                // Auth/billing failures can't self-heal in seconds — mark
-                // permanent so the matrix cools the candidate down hard
-                // instead of re-tripping it every backoff cycle.
-                const permanent = [401, 402, 403].includes(r.status);
+              let out = await callProvider(cand, prov, maxTokens);
+              if (out.httpStatus !== 200) {
+                lastErr = `${cand.provider} http ${out.httpStatus}`;
+                const permanent = [401, 402, 403].includes(out.httpStatus);
                 agentRuntime.matrix.recordProbe(cand.provider, cand.model, false, undefined, permanent);
                 continue;
               }
-              const j: any = await r.json();
-              let content = '';
-              if (prov.protocol === 'anthropic') {
-                content = (j?.content || []).filter((b: any) => b.type === 'text').map((b: any) => b.text).join('');
-              } else {
-                content = j?.choices?.[0]?.message?.content || '';
+              let content = out.content || '';
+              let j: any = out.j;
+              // Reasoning-starvation retry: content empty but the model did
+              // reason → it likely hit the token cap mid-thought.
+              if (!content && out.reasoning && maxTokens < 4096) {
+                const retryTokens = Math.min(4096, Math.max(maxTokens * 3, 2048));
+                const retry = await callProvider(cand, prov, retryTokens);
+                if (retry.httpStatus === 200) { out = retry; content = retry.content || ''; j = retry.j; }
               }
               if (!content) { lastErr = `${cand.provider} empty content`; agentRuntime.matrix.recordProbe(cand.provider, cand.model, false); continue; }
               agentRuntime.matrix.recordProbe(cand.provider, cand.model, true, Date.now() - started);
