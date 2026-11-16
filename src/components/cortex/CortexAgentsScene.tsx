@@ -72,6 +72,28 @@ const prand = (i: number, salt: number) => {
   return x - Math.floor(x);
 };
 
+// ── Enterprise stations — the outer orbit is for businesses, not agents.
+// Each entry is a running venture with its own sprite + live status feed.
+// `busy` drives the activity animation (orbiting sparks, pulsing ring).
+interface BusinessStation {
+  id: string;
+  name: string;
+  img: string;
+  statusUrl?: string;
+  phase: number;
+  size: { w: number; h: number };
+}
+const BUSINESS_STATIONS: BusinessStation[] = [
+  {
+    id: 'gumroad-pipeline',
+    name: 'GUMROAD // PIPELINE',
+    img: '/images/stations/gumroad-pipeline.jpg',
+    statusUrl: '/api/cortex/distribution/status',
+    phase: 0.9,
+    size: { w: 92, h: 67 },
+  },
+];
+
 /** Roster glyph — mirrors the canvas vessels: diamond for standard agents,
  *  satellite for enterprise/spawned. Pure SVG so the DOM roster matches. */
 const AgentGlyph: React.FC<{ enterprise?: boolean; color: string }> = ({ enterprise, color }) =>
@@ -327,6 +349,8 @@ export const CortexAgentsScene: React.FC = () => {
   const voiceState = useRef<string>('idle');
   const mouse = useRef({ x: 0.5, y: 0.5, inside: false });
   const hoverAgent = useRef<string | null>(null);
+  const stationStatus = useRef<Record<string, { busy: boolean; state: 'idle' | 'busy' | 'error' | 'unknown' }>>({});
+  const stationImgs = useRef(new Map<string, HTMLImageElement>());
 
   useEffect(() => {
     agentsClient.start();
@@ -354,6 +378,39 @@ export const CortexAgentsScene: React.FC = () => {
   useEffect(() => {
     const id = setInterval(() => setNowTs(Date.now()), 1000);
     return () => clearInterval(id);
+  }, []);
+
+  // Enterprise stations: preload sprites and poll each station's live
+  // status feed. Busy = the venture is actively working right now.
+  useEffect(() => {
+    for (const st of BUSINESS_STATIONS) {
+      const img = new Image();
+      img.src = st.img;
+      stationImgs.current.set(st.id, img);
+    }
+    let alive = true;
+    const poll = () => {
+      for (const st of BUSINESS_STATIONS) {
+        if (!st.statusUrl) continue;
+        fetch(st.statusUrl, { cache: 'no-store' })
+          .then((r) => r.json())
+          .then((j: any) => {
+            if (!alive || !j?.ok) return;
+            const tasks: any[] = j.tasks || [];
+            const busy = j.distributor?.status === 'working'
+              || tasks.some((t) => t.status === 'running' || t.status === 'queued');
+            const errored = j.distributor?.status === 'error';
+            stationStatus.current[st.id] = {
+              busy: !!busy,
+              state: errored ? 'error' : busy ? 'busy' : 'idle',
+            };
+          })
+          .catch(() => { });
+      }
+    };
+    poll();
+    const iv = setInterval(poll, 15_000);
+    return () => { alive = false; clearInterval(iv); };
   }, []);
 
   useEffect(() => {
@@ -888,6 +945,74 @@ export const CortexAgentsScene: React.FC = () => {
         ctx.font = `8px ${MONO}`;
         ctx.fillText(`${enterprise ? 'SAT·' : ''}${a.status.toUpperCase()}`, ax, ay + vr * 1.15 + 27);
       });
+
+      // ── 5b. Enterprise stations — businesses on the outer orbit ──
+      {
+        const stRx = Math.min(w * 0.37, 580) * 1.24 * 1.10;
+        const stRy = Math.min(h * 0.32, 320) * 1.24 * 1.10;
+        ctx.strokeStyle = 'rgba(251,191,36,0.10)';
+        ctx.setLineDash([1, 9]);
+        ctx.beginPath(); ctx.ellipse(cx, cy, stRx, stRy, 0, 0, Math.PI * 2); ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.font = `7px ${MONO}`;
+        ctx.textAlign = 'center';
+        ctx.fillStyle = 'rgba(251,191,36,0.35)';
+        ctx.fillText('ENTERPRISES', cx, cy - stRy - 8);
+
+        BUSINESS_STATIONS.forEach((st, si) => {
+          const img = stationImgs.current.get(st.id);
+          const stt = stationStatus.current[st.id] || { busy: false, state: 'unknown' as const };
+          const a = st.phase + time * (stt.busy ? 0.05 : 0.022) + si * 2.1;
+          const sx = cx + Math.cos(a) * stRx;
+          const sy = cy + Math.sin(a) * stRy;
+          const iw = st.size.w, ih = st.size.h;
+          const col = stt.state === 'error' ? '#f87171' : '#fbbf24';
+          const pulse = stt.busy
+            ? 0.55 + 0.3 * Math.sin(time * 5)
+            : 0.26 + 0.08 * Math.sin(time * 1.2 + si);
+
+          // ambient glow
+          const g = ctx.createRadialGradient(sx, sy, 0, sx, sy, iw * 0.95);
+          g.addColorStop(0, hexA(col, pulse * 0.45));
+          g.addColorStop(1, hexA(col, 0));
+          ctx.fillStyle = g;
+          ctx.fillRect(sx - iw, sy - ih, iw * 2, ih * 2);
+
+          // busy: rotating dashed halo + orbiting sparks = work in progress
+          if (stt.busy && !reducedMotion.current) {
+            ctx.strokeStyle = hexA(col, 0.55);
+            ctx.setLineDash([4, 6]);
+            ctx.lineDashOffset = -time * 34;
+            ctx.beginPath(); ctx.ellipse(sx, sy, iw * 0.72, ih * 0.72, 0, 0, Math.PI * 2); ctx.stroke();
+            ctx.setLineDash([]);
+            ctx.lineDashOffset = 0;
+            for (let k = 0; k < 4; k++) {
+              const sa = time * 2.4 + k * (Math.PI / 2) + si * 1.7;
+              ctx.fillStyle = hexA(col, 0.85);
+              ctx.beginPath();
+              ctx.arc(sx + Math.cos(sa) * iw * 0.72, sy + Math.sin(sa) * ih * 0.72, 1.6, 0, Math.PI * 2);
+              ctx.fill();
+            }
+          }
+
+          if (img?.complete && img.naturalWidth) {
+            ctx.drawImage(img, sx - iw / 2, sy - ih / 2, iw, ih);
+          } else {
+            // placeholder until the sprite loads
+            ctx.strokeStyle = hexA(col, 0.6);
+            ctx.lineWidth = 1.2;
+            ctx.strokeRect(sx - iw / 2, sy - ih / 2, iw, ih);
+          }
+
+          // name + live status — Foundry face only
+          ctx.font = `700 8px ${MONO}`;
+          ctx.fillStyle = stt.busy ? col : 'rgba(251,191,36,0.75)';
+          ctx.fillText(st.name, sx, sy + ih / 2 + 12);
+          ctx.font = `7px ${MONO}`;
+          ctx.fillStyle = stt.state === 'error' ? '#f87171' : stt.busy ? col : DIM;
+          ctx.fillText(stt.state === 'unknown' ? 'LINKING' : stt.state.toUpperCase(), sx, sy + ih / 2 + 21);
+        });
+      }
 
       // ── 6. Reticle + coordinate readout ──
       if (mouse.current.inside && !reducedMotion.current) {
