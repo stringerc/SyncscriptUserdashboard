@@ -232,7 +232,10 @@ export function listStrategyProposals(status?: string): StrategyProposal[] {
 
 export function decideStrategyProposal(id: string, decision: 'approved' | 'dismissed' | 'executed' | 'failed', note?: string, dispatchedTaskId?: string): StrategyProposal | null {
   const all = readAll();
-  const p = all.find((x) => x.id === id);
+  // Prefer a live (pending/approved) match — legacy duplicate ids exist
+  // in the ledger and find() would otherwise shadow the actionable one.
+  const p = all.find((x) => x.id === id && (x.status === 'pending' || x.status === 'approved'))
+    || all.find((x) => x.id === id);
   if (!p || p.status !== 'pending' && p.status !== 'approved') return null;
   p.status = decision;
   p.decidedAt = Date.now();
