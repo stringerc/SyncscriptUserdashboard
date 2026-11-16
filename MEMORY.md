@@ -2565,3 +2565,8 @@ Finish sending out resumes and reach out to Hall and Lampros
 
 ### 2026-11-15 — Cortex Conscious Entry
 Court date: August 18th (past). User confirmed they do not have court on Monday, November 16th.
+
+## 2026-11-16 — Closed-loop research prompt
+- Created CORTEX_CLOSED_LOOP_RESEARCH_PROMPT.md: elite spec request for self-improving agent ecosystems, seeded with the dossier A/B case study and 5 known loop leaks.
+- Fed A/B findings back into ecosystem: 6 honest outcome notes + learnings summary written to ~/.cortex/vault/03 - Learnings/ so distillLearnings can cluster scout|research.
+- Discovered: scoutWorker never calls relevantRules(); distill needs >=3 clustered non-green outcomes — single experiments bypass the loop.
