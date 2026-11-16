@@ -39,6 +39,9 @@ export interface StrategyProposal {
   /** Deterministic action executed on approval instead of agent dispatch —
    *  e.g. budgetRaise adjusts the agent's dailyBudget directly. */
   action?: { type: 'budgetRaise'; agentId: string; budget: number };
+  /** Extra fields merged into the dispatched task's input on approval —
+   *  e.g. devin_task carries operatorApproved/approvedProposalId proof. */
+  taskInput?: Record<string, unknown>;
 }
 
 function readAll(): StrategyProposal[] {
@@ -180,6 +183,42 @@ export function fileIncidentProposal(inc: {
     evidence: inc.evidence.slice(-5),
     status: 'pending',
     createdAt: Date.now(),
+  });
+  writeAll(all);
+  return true;
+}
+
+/**
+ * File a Devin cloud-session proposal when a devin_task is submitted
+ * without operator approval. One proposal per instruction per day —
+ * repeat submissions dedupe instead of spamming the Inbox. Approval
+ * dispatches kind 'devin_task' back to the devin agent with
+ * taskInput.approvedProposalId as governance proof.
+ */
+export function fileDevinSessionProposal(opts: {
+  taskId: string; title: string; instruction: string;
+  taskInput?: Record<string, unknown>;
+}): boolean {
+  const all = readAll();
+  const day = new Date().toISOString().slice(0, 10);
+  const hash = opts.instruction.replace(/[^a-z0-9]+/gi, '-').slice(0, 40);
+  const proposalId = `devin-task-${hash}-${day}`;
+  if (all.some((p) => p.id === proposalId)) return false;
+  if (all.filter((p) => p.status === 'pending').length >= MAX_PENDING) return false;
+  all.push({
+    id: proposalId,
+    planNote: '',
+    planTaskId: opts.taskId,
+    actionIndex: 0,
+    title: `Launch Devin session: ${opts.title.slice(0, 100)}`,
+    actionClass: 'infra',
+    agentId: 'devin',
+    kind: 'devin_task',
+    instruction: opts.instruction.slice(0, 1500),
+    evidence: [`requested by task ${opts.taskId}`, 'cloud session can push code — approval required'],
+    status: 'pending',
+    createdAt: Date.now(),
+    taskInput: { ...(opts.taskInput || {}), approvedProposalId: proposalId },
   });
   writeAll(all);
   return true;

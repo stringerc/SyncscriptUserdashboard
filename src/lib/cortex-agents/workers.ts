@@ -1430,13 +1430,35 @@ const devinWorker: WorkerHandler = async (ctx) => {
       throw new Error('devin bridge not configured — set DEVIN_API_KEY + DEVIN_ORG_ID');
     const instruction = str(ctx.task.input.instruction || ctx.task.input.query || ctx.task.title);
     if (!instruction) throw new Error(`${ctx.task.kind} requires input.instruction`);
-    if (ctx.task.kind === 'devin_task' && ctx.task.input.operatorApproved !== true && !ctx.task.input.approvedProposalId) {
+    // Governance proof: operatorApproved flag (direct API/voice path) OR an
+    // approvedProposalId that resolves to an approved devin_task proposal.
+    let approved = ctx.task.input.operatorApproved === true;
+    const proposalId = str(ctx.task.input.approvedProposalId);
+    if (!approved && proposalId) {
+      try {
+        const { listStrategyProposals } = await import('./strategy-proposals');
+        const p = listStrategyProposals().find((x) => x.id === proposalId);
+        approved = Boolean(p && p.kind === 'devin_task' && (p.status === 'approved' || p.status === 'executed'));
+      } catch { approved = false; }
+    }
+    if (ctx.task.kind === 'devin_task' && !approved) {
       ctx.progress(1);
+      let filed = false;
+      try {
+        const { fileDevinSessionProposal } = await import('./strategy-proposals');
+        filed = fileDevinSessionProposal({
+          taskId: ctx.task.id, title: ctx.task.title || instruction,
+          instruction,
+          taskInput: { context: ctx.task.input.context, repo: ctx.task.input.repo, mode: ctx.task.input.mode },
+        });
+      } catch { /* proposal filing is best-effort — veto still honest */ }
       return {
         vetoed: true,
-        reason: 'devin_task launches a cloud agent that can push code — requires operator approval (input.operatorApproved or approvedProposalId)',
-        proposal: { title: ctx.task.title, instruction, kind: 'devin_task' },
-        note: 'Routed to initiative proposal path — no Devin session was created.',
+        reason: 'devin_task launches a cloud agent that can push code — Inbox approval required',
+        proposal: { title: ctx.task.title, instruction, kind: 'devin_task', inboxProposalFiled: filed },
+        note: filed
+          ? 'Filed to Initiative Inbox — approve there to launch the Devin session.'
+          : 'Approval required — resubmit with operatorApproved:true or approve the pending Inbox proposal.',
       };
     }
     ctx.progress(0.3);

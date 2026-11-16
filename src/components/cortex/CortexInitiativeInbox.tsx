@@ -277,6 +277,7 @@ interface StrategyProposal {
   createdAt: number;
   decisionNote?: string;
   action?: { type: 'budgetRaise'; agentId: string; budget: number };
+  taskInput?: Record<string, unknown>;
 }
 
 interface IncidentTicket {
@@ -323,11 +324,35 @@ function StrategyProposalCard({ p, onDecided }: { p: StrategyProposal; onDecided
         });
         setNote(b?.ok ? `budget raised: ${p.action.agentId} → ${p.action.budget}/day` : `raise failed: ${b?.error || 'unknown'}`);
       } else if (dispatchTask) {
+        let tid: string | undefined;
+        if (p.kind === 'devin_task' && decision === 'approved') {
+          // Flip to approved BEFORE dispatch — the devin worker verifies
+          // the proposal is actually approved before launching a session.
+          await fetch('/api/cortex/agents/proposals', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ id: p.id, decision: 'approved', note: 'pre-dispatch approval' }),
+          });
+          const t = await fetch('/api/cortex/agents/task', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              agentId: p.agentId, kind: p.kind, title: p.title.slice(0, 120),
+              input: { instruction: p.instruction, ...(p.taskInput || {}), approvedProposalId: p.id },
+            }),
+          }).then(r => r.json()).catch(() => null);
+          tid = t?.task?.id ? String(t.task.id) : undefined;
+          await fetch('/api/cortex/agents/proposals', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ id: p.id, decision: 'approved', taskId: tid, note: tid ? `dispatched ${tid}` : 'dispatch failed' }),
+          });
+          setNote(t?.ok === false ? `dispatch rejected: ${t.error}` : `devin session launching${tid ? ` (${tid})` : ''}`);
+          onDecided();
+          return;
+        }
         const t = await fetch('/api/cortex/agents/task', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ agentId: p.agentId, kind: p.kind, title: p.title.slice(0, 120), input: { instruction: p.instruction } }),
         }).then(r => r.json()).catch(() => null);
-        const tid = t?.task?.id ? String(t.task.id) : undefined;
+        tid = t?.task?.id ? String(t.task.id) : undefined;
         await fetch('/api/cortex/agents/proposals', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ id: p.id, decision, taskId: tid, note: tid ? `dispatched ${tid}` : 'dispatch failed' }),
