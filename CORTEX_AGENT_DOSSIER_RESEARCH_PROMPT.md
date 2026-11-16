@@ -1,5 +1,7 @@
 # Cortex Agent Dossier — Elite Research Prompt
 
+> **Independent-run protocol:** This prompt is executed blind. Do NOT read `CORTEX_AGENT_DOSSIER_SPEC.md` or any prior output before producing your report — this research is being run across multiple independent models for A/B comparison, and prior outputs would contaminate the comparison. Produce your own report from sources only, then save it as `CORTEX_AGENT_DOSSIER_SPEC.<model-name>.md`. Differences between independent reports are signal, not noise.
+
 > **Mission:** Determine what an agent detail view ("dossier") should display when a user clicks an agent, by studying the most successful agent platforms, observability tools, and mission-control interfaces in production today — with cited, verifiable sources for every claim.
 >
 > **Standard:** This is .01% research. Every factual claim must trace to a primary source (official docs, product UI, engineering blog, conference talk, SEC filing, or named journalist/reviewer). No SEO listicles, no unsourced "best practices," no hallucinated features. If a claim cannot be sourced, it does not go in the report. Label every recommendation with the evidence tier that supports it.
