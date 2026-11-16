@@ -30,6 +30,19 @@
   a { color: var(--magenta); }
   #ts { color: var(--dim); font-size: 10px; }
   pre { white-space: pre-wrap; word-break: break-word; font-size: 10px; color: var(--dim); max-height: 180px; overflow: auto; }
+
+  /* Ambient Cortex scrollbar theme — matches the Foundry panels. */
+  * { scrollbar-width: thin; scrollbar-color: #22d3ee4d transparent; }
+  *::-webkit-scrollbar { width: 6px; height: 6px; }
+  *::-webkit-scrollbar-track { background: transparent; }
+  *::-webkit-scrollbar-thumb {
+    background: linear-gradient(180deg, #14b8a666, #0ea5e966);
+    border-radius: 999px;
+    border: 1px solid #22d3ee33;
+  }
+  *::-webkit-scrollbar-thumb:hover {
+    background: linear-gradient(180deg, #14b8a699, #0ea5e999);
+  }
 </style>
 </head>
 <body>

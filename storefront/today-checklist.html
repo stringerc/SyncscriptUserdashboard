@@ -29,6 +29,19 @@
   #ts { color: var(--dim); font-size: 10px; }
   .summary { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 4px; }
   .summary b { color: var(--cyan); }
+
+  /* Ambient Cortex scrollbar theme — matches the Foundry panels. */
+  * { scrollbar-width: thin; scrollbar-color: #22d3ee4d transparent; }
+  *::-webkit-scrollbar { width: 6px; height: 6px; }
+  *::-webkit-scrollbar-track { background: transparent; }
+  *::-webkit-scrollbar-thumb {
+    background: linear-gradient(180deg, #14b8a666, #0ea5e966);
+    border-radius: 999px;
+    border: 1px solid #22d3ee33;
+  }
+  *::-webkit-scrollbar-thumb:hover {
+    background: linear-gradient(180deg, #14b8a699, #0ea5e999);
+  }
 </style>
 </head>
 <body>
