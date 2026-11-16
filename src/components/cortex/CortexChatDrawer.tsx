@@ -1,7 +1,7 @@
 import React, { Suspense, lazy, useEffect, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { Copy, Check, X } from 'lucide-react';
+import { Copy, Check, X, Volume2, ArrowDown } from 'lucide-react';
 import {
   C, preprocessMarkdown, cortexMarkdownComponents,
   type ChatMessage,
@@ -164,7 +164,23 @@ function InlineProcessingBubble({ payload }: { payload: CortexSignalBusPayload }
   );
 }
 
-function TranscriptMessage({ msg }: { msg: ChatMessage }) {
+const stripMarkdown = (md: string) =>
+  md
+    .replace(/```[\s\S]*?```/g, ' code block ')
+    .replace(/!\[([^\]]*)\]\([^)]*\)/g, '$1')
+    .replace(/\[([^\]]*)\]\([^)]*\)/g, '$1')
+    .replace(/[#>*_`~|-]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 2000);
+
+interface TranscriptMessageProps {
+  msg: ChatMessage;
+  speaking: boolean;
+  onSpeak: (msgId: string, text: string) => void;
+}
+
+function TranscriptMessage({ msg, speaking, onSpeak }: TranscriptMessageProps) {
   const [copied, setCopied] = useState(false);
   const isUser = msg.role === 'user';
   const isAi = msg.role === 'ai' || msg.role === 'cortex';
@@ -206,11 +222,24 @@ function TranscriptMessage({ msg }: { msg: ChatMessage }) {
             boxShadow: `0 0 6px ${C.cyan}`, animation: 'pulse 1s infinite',
           }} />
         )}
+        {isAi && !msg.streaming && (
+          <button
+            onClick={() => onSpeak(msg.id, msg.content)}
+            title={speaking ? 'Stop playback' : 'Play response aloud'}
+            style={{
+              background: 'none', border: 'none', cursor: 'pointer',
+              color: speaking ? '#67e8f9' : 'rgba(148,233,255,0.4)', padding: 2,
+              display: 'flex', alignItems: 'center',
+            }}
+          >
+            <Volume2 size={11} />
+          </button>
+        )}
         <button
           onClick={copy}
           title="Copy"
           style={{
-            marginLeft: 'auto', background: 'none', border: 'none', cursor: 'pointer',
+            marginLeft: isAi && !msg.streaming ? 0 : 'auto', background: 'none', border: 'none', cursor: 'pointer',
             color: copied ? '#34d399' : 'rgba(148,233,255,0.4)', padding: 2,
             display: 'flex', alignItems: 'center',
           }}
@@ -274,6 +303,10 @@ export function CortexChatDrawer({ open, onClose, payload, onSubmitText }: Corte
   const messages = useCortexChatMessages();
   const scrollRef = useRef<HTMLDivElement>(null);
   const [draft, setDraft] = useState('');
+  const [speakingId, setSpeakingId] = useState<string | null>(null);
+  const [showJump, setShowJump] = useState(false);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const audioUrlRef = useRef<string | null>(null);
   const st = STATE_LABEL[payload.state] ?? STATE_LABEL.idle;
   const hydratedRef = useRef(false);
   const hydrateAttemptsRef = useRef(0);
@@ -333,6 +366,69 @@ export function CortexChatDrawer({ open, onClose, payload, onSubmitText }: Corte
       el.scrollTop = el.scrollHeight;
     }
   }, [messages, open, payload.text, payload.state, isProcessing, isWaitingAfterUser]);
+
+  // Stop any in-flight playback when the drawer closes
+  useEffect(() => {
+    if (open) return;
+    audioRef.current?.pause();
+    setSpeakingId(null);
+  }, [open]);
+
+  useEffect(() => () => {
+    audioRef.current?.pause();
+    if (audioUrlRef.current) URL.revokeObjectURL(audioUrlRef.current);
+  }, []);
+
+  const handleSpeak = async (msgId: string, rawText: string) => {
+    if (speakingId === msgId) {
+      audioRef.current?.pause();
+      setSpeakingId(null);
+      return;
+    }
+    audioRef.current?.pause();
+    if (audioUrlRef.current) { URL.revokeObjectURL(audioUrlRef.current); audioUrlRef.current = null; }
+    const text = stripMarkdown(rawText);
+    if (!text) return;
+    try {
+      const res = await fetch('/api/cortex/tts', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text, voice: 'cortana' }),
+      });
+      if (!res.ok) throw new Error(`tts ${res.status}`);
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      audioUrlRef.current = url;
+      const audio = new Audio(url);
+      audioRef.current = audio;
+      setSpeakingId(msgId);
+      audio.onended = () => { setSpeakingId(null); URL.revokeObjectURL(url); audioUrlRef.current = null; };
+      audio.onerror = () => { setSpeakingId(null); URL.revokeObjectURL(url); audioUrlRef.current = null; };
+      await audio.play();
+    } catch {
+      // TTS unreachable — fall back to browser speech so playback never dead-ends
+      if (speakingId !== msgId) {
+        try {
+          const u = new SpeechSynthesisUtterance(text.slice(0, 400));
+          u.rate = 1.02;
+          speechSynthesis.speak(u);
+          setSpeakingId(msgId);
+          u.onend = () => setSpeakingId(null);
+        } catch { }
+      }
+    }
+  };
+
+  const scrollToBottom = () => {
+    const el = scrollRef.current;
+    if (el) el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
+  };
+
+  const onScroll = () => {
+    const el = scrollRef.current;
+    if (!el) return;
+    setShowJump(el.scrollHeight - el.scrollTop - el.clientHeight > 160);
+  };
 
   if (!open) return null;
 
@@ -405,7 +501,8 @@ export function CortexChatDrawer({ open, onClose, payload, onSubmitText }: Corte
       </div>
 
       {/* Transcript */}
-      <div ref={scrollRef} className="cx-drawer-scroll" style={{ flex: 1, overflowY: 'auto', padding: '16px 14px' }}>
+      <div className="cx-drawer-scroll" style={{ position: 'relative', flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+        <div ref={scrollRef} onScroll={onScroll} style={{ flex: 1, overflowY: 'auto', padding: '16px 14px' }}>
         {messages.length === 0 && !isProcessing ? (
           <div style={{ padding: '40px 12px', textAlign: 'center' }}>
             <div style={{ fontSize: 10, letterSpacing: '0.34em', color: C.dim, marginBottom: 8 }}>— SILENT CHANNEL —</div>
@@ -415,9 +512,34 @@ export function CortexChatDrawer({ open, onClose, payload, onSubmitText }: Corte
           </div>
         ) : (
           <>
-            {messages.map((m) => <TranscriptMessage key={m.id} msg={m} />)}
+            {messages.map((m) => (
+              <TranscriptMessage
+                key={m.id}
+                msg={m}
+                speaking={speakingId === m.id}
+                onSpeak={handleSpeak}
+              />
+            ))}
             {isProcessing && <InlineProcessingBubble payload={payload} />}
           </>
+        )}
+        </div>
+        {showJump && (
+          <button
+            onClick={scrollToBottom}
+            title="Jump to latest"
+            style={{
+              position: 'absolute', bottom: 10, left: '50%', transform: 'translateX(-50%)',
+              display: 'flex', alignItems: 'center', gap: 5,
+              padding: '5px 12px', borderRadius: 12, cursor: 'pointer',
+              background: 'rgba(4,8,14,0.85)', border: `1px solid ${C.borderBright}`,
+              color: C.cyan, fontSize: 9, fontWeight: 700, letterSpacing: '0.18em',
+              fontFamily: '"IBM Plex Mono", monospace',
+              backdropFilter: 'blur(8px)', boxShadow: '0 4px 16px rgba(0,0,0,0.4)',
+            }}
+          >
+            <ArrowDown size={10} /> LATEST
+          </button>
         )}
       </div>
 
