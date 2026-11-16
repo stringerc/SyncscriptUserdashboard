@@ -78,7 +78,6 @@ const prand = (i: number, salt: number) => {
 interface BusinessStation {
   id: string;
   name: string;
-  img: string;
   statusUrl?: string;
   phase: number;
   size: { w: number; h: number };
@@ -87,12 +86,64 @@ const BUSINESS_STATIONS: BusinessStation[] = [
   {
     id: 'gumroad-pipeline',
     name: 'GUMROAD // PIPELINE',
-    img: '/images/stations/gumroad-pipeline.jpg',
     statusUrl: '/api/cortex/distribution/status',
     phase: 0.9,
-    size: { w: 92, h: 67 },
+    size: { w: 96, h: 56 },
   },
 ];
+
+/** 2D spacestation glyph — same vector language as the agent vessels:
+ *  habitat torus around a truss spine, solar wings outboard, blinking
+ *  beacon. `s` scales the ~96×56 footprint; drawn upright, never rotates. */
+function drawStationGlyph(
+  ctx: CanvasRenderingContext2D,
+  x: number, y: number, s: number,
+  t: number, busy: boolean, col: string,
+) {
+  ctx.save();
+  ctx.translate(x, y);
+  // solar wings — dark PV arrays with cyan cell grid, outboard of the hub
+  const wingL = 34 * s, wingY = -3.4 * s, wingH = 6.8 * s;
+  for (const d of [-1, 1]) {
+    const wx = d === 1 ? 9 * s : -9 * s - wingL;
+    ctx.fillStyle = '#0b1226';
+    ctx.fillRect(wx, wingY, wingL, wingH);
+    ctx.strokeStyle = 'rgba(103,232,249,0.45)';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(wx, wingY, wingL, wingH);
+    ctx.strokeStyle = 'rgba(103,232,249,0.16)';
+    for (let gx = wx + 6 * s; gx < wx + wingL - 2; gx += 6 * s) {
+      ctx.beginPath(); ctx.moveTo(gx, wingY); ctx.lineTo(gx, wingY + wingH); ctx.stroke();
+    }
+  }
+  // truss spine
+  ctx.fillStyle = '#26314e';
+  ctx.strokeStyle = 'rgba(199,206,222,0.7)';
+  ctx.fillRect(-9 * s, -1.8 * s, 18 * s, 3.6 * s);
+  ctx.strokeRect(-9 * s, -1.8 * s, 18 * s, 3.6 * s);
+  // habitat torus — the station's signature ring, vertical through the hub
+  ctx.strokeStyle = '#c7cede';
+  ctx.lineWidth = 2.4 * s;
+  ctx.beginPath(); ctx.ellipse(0, 0, 11 * s, 15 * s, 0, 0, Math.PI * 2); ctx.stroke();
+  ctx.strokeStyle = hexA(col, 0.5);
+  ctx.lineWidth = 1 * s;
+  ctx.beginPath(); ctx.ellipse(0, 0, 8.5 * s, 12.5 * s, 0, 0, Math.PI * 2); ctx.stroke();
+  // hub
+  ctx.fillStyle = '#e8c98a';
+  ctx.beginPath(); ctx.arc(0, 0, 3.4 * s, 0, Math.PI * 2); ctx.fill();
+  ctx.strokeStyle = 'rgba(232,201,138,0.9)';
+  ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.arc(0, 0, 4.6 * s, 0, Math.PI * 2); ctx.stroke();
+  // service pods under the ring
+  ctx.fillStyle = '#182642';
+  ctx.fillRect(-4 * s, 13 * s, 3 * s, 5 * s);
+  ctx.fillRect(1 * s, 13 * s, 3 * s, 5 * s);
+  // beacon — strobes faster while the venture is busy
+  const blink = busy ? (Math.sin(t * 9) > 0 ? 1 : 0.25) : 0.45 + 0.3 * Math.sin(t * 2);
+  ctx.fillStyle = hexA(col, blink);
+  ctx.beginPath(); ctx.arc(0, -16 * s, 1.8 * s, 0, Math.PI * 2); ctx.fill();
+  ctx.restore();
+}
 
 /** Roster glyph — mirrors the canvas vessels: diamond for standard agents,
  *  satellite for enterprise/spawned. Pure SVG so the DOM roster matches. */
@@ -350,7 +401,6 @@ export const CortexAgentsScene: React.FC = () => {
   const mouse = useRef({ x: 0.5, y: 0.5, inside: false });
   const hoverAgent = useRef<string | null>(null);
   const stationStatus = useRef<Record<string, { busy: boolean; state: 'idle' | 'busy' | 'error' | 'unknown' }>>({});
-  const stationImgs = useRef(new Map<string, HTMLImageElement>());
 
   useEffect(() => {
     agentsClient.start();
@@ -383,11 +433,6 @@ export const CortexAgentsScene: React.FC = () => {
   // Enterprise stations: preload sprites and poll each station's live
   // status feed. Busy = the venture is actively working right now.
   useEffect(() => {
-    for (const st of BUSINESS_STATIONS) {
-      const img = new Image();
-      img.src = st.img;
-      stationImgs.current.set(st.id, img);
-    }
     let alive = true;
     const poll = () => {
       for (const st of BUSINESS_STATIONS) {
@@ -960,7 +1005,6 @@ export const CortexAgentsScene: React.FC = () => {
         ctx.fillText('ENTERPRISES', cx, cy - stRy - 8);
 
         BUSINESS_STATIONS.forEach((st, si) => {
-          const img = stationImgs.current.get(st.id);
           const stt = stationStatus.current[st.id] || { busy: false, state: 'unknown' as const };
           const a = st.phase + time * (stt.busy ? 0.05 : 0.022) + si * 2.1;
           const sx = cx + Math.cos(a) * stRx;
@@ -995,14 +1039,7 @@ export const CortexAgentsScene: React.FC = () => {
             }
           }
 
-          if (img?.complete && img.naturalWidth) {
-            ctx.drawImage(img, sx - iw / 2, sy - ih / 2, iw, ih);
-          } else {
-            // placeholder until the sprite loads
-            ctx.strokeStyle = hexA(col, 0.6);
-            ctx.lineWidth = 1.2;
-            ctx.strokeRect(sx - iw / 2, sy - ih / 2, iw, ih);
-          }
+          drawStationGlyph(ctx, sx, sy, 1, time + si * 2.4, stt.busy, col);
 
           // name + live status — Foundry face only
           ctx.font = `700 8px ${MONO}`;
