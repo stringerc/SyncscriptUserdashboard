@@ -17022,6 +17022,33 @@ html {
   background: linear-gradient(180deg, #14b8a699, #0ea5e999);
 }
 
+/* Global ambient scrollbars — thin cyan gradient thumb, transparent track.
+   Element/class-scoped scrollbar themes (custom-scrollbar, hide-scrollbar)
+   still win on specificity where applied. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #22d3ee4d transparent;
+}
+
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+*::-webkit-scrollbar-thumb {
+  background: linear-gradient(180deg, #14b8a666, #0ea5e966);
+  border-radius: 999px;
+  border: 1px solid #22d3ee33;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background: linear-gradient(180deg, #14b8a699, #0ea5e999);
+}
+
 .card-hover {
   transition: all .2s;
 }

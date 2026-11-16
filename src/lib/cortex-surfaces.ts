@@ -98,10 +98,11 @@ export interface SurfacePanel {
   customSize?: { w: number; h: number };
   /**
    * Free-canvas position: normalized 0-1 coords of the panel's top-left
-   * within the workspace area. Set by ⌥-drag drops; while present the panel
-   * renders at this position instead of its zone rect and does NOT occupy
-   * the zone (another panel can dock there). movePanelToZone/arrange/
-   * cluster clear it — voice "move it left" always re-docks.
+   * within the workspace area. Set by any pointer drag drop (default);
+   * while present the panel renders at this position instead of its zone
+   * rect and does NOT occupy the zone (another panel can dock there).
+   * movePanelToZone/arrange/cluster clear it — voice "move it left"
+   * always re-docks.
    */
   free?: { x: number; y: number };
   createdAt: number;

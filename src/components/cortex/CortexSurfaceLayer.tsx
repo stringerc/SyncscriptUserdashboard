@@ -1,9 +1,8 @@
 /**
  * CortexSurfaceLayer — dockable panel host for the visualizer workspace.
- * Positions SurfacePanels on a 3×3 zone grid computed inside HUD safe-area
- * insets (telemetry rail, top/bottom HUD chrome, chat drawer). Panels drag
- * freely by their chrome and magnetically snap to the nearest zone on
- * release; occupied zones swap, so panels never stack or hide.
+ * Panels drag freely by their chrome and drop exactly where released
+ * (free-canvas normalized coords). The zone grid remains as the initial
+ * layout and as the target for keyboard nudges / voice "move it left".
  */
 import React, { Suspense, lazy, useEffect, useRef, useState, useCallback } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
@@ -327,7 +326,7 @@ function PanelChrome({
         <div
           role="button"
           tabIndex={0}
-          aria-label={`Move panel ${panel.title} — arrow keys to reposition, hold ⌥ while dragging for free placement`}
+          aria-label={`Move panel ${panel.title} — drag to reposition freely, arrow keys to nudge`}
           onKeyDown={(e) => {
             const map: Record<string, [number, number]> = {
               ArrowLeft: [0, -1], ArrowRight: [0, 1], ArrowUp: [-1, 0], ArrowDown: [1, 0],
@@ -1806,9 +1805,6 @@ export function CortexSurfaceLayer({ drawerOpen = false }: { drawerOpen?: boolea
       dragRectRef.current = null;
       setDrag(null);
       if (d) {
-        const px = typeof e.clientX === 'number' && e.clientX > 0 ? e.clientX : (rect ? rect.x + rect.w / 2 : 0);
-        const py = typeof e.clientY === 'number' && e.clientY > 0 ? e.clientY : (rect ? rect.y + rect.h / 2 : 0);
-        const zone = d.targetZone || nearestZoneByPoint(px, py, rectsRef.current);
         // Fresh snapshot — a voice command may have closed/re-zoned this
         // panel mid-drag; the render-closure `panels` array is stale.
         const panel = getSurfaceSnapshot().panels.find((p) => p.id === d.id);
@@ -1818,18 +1814,9 @@ export function CortexSurfaceLayer({ drawerOpen = false }: { drawerOpen?: boolea
             x: Math.max(0, Math.min(0.95, (rect.x - ws.x) / Math.max(1, ws.w - rect.w))),
             y: Math.max(0, Math.min(0.95, (rect.y - ws.y) / Math.max(1, ws.h - rect.h))),
           };
-          const alt = (e as MouseEvent).altKey === true;
-          if (alt !== !!panel.free) {
-            // ⌥ toggles canvas mode: docked→free, free→docked.
-            if (alt) movePanelFree(d.id, freeDrop.x, freeDrop.y);
-            else if (zone && zone !== panel.zone) movePanelToZone(d.id, zone);
-            else movePanelToZone(d.id, panel.zone); // re-dock in place (clears free)
-          } else if (panel.free) {
-            // Free panel dragged without ⌥: stays free, follows the drop point.
-            movePanelFree(d.id, freeDrop.x, freeDrop.y);
-          } else if (zone && zone !== panel.zone) {
-            movePanelToZone(d.id, zone);
-          }
+          // Free-canvas is the default: any pointer drop lands exactly where
+          // released. Zone docking remains for keyboard nudge / voice moves.
+          movePanelFree(d.id, freeDrop.x, freeDrop.y);
         }
       }
     };
@@ -1947,17 +1934,7 @@ export function CortexSurfaceLayer({ drawerOpen = false }: { drawerOpen?: boolea
       {drag !== null && (
         <style>{`iframe { pointer-events: none !important; user-select: none !important; }`}</style>
       )}
-      {/* Drop-target preview — the zone the dragged panel will land in */}
-      {drag?.zone && (() => {
-        const zr = rects[drag.zone];
-        return (
-          <div style={{
-            position: 'absolute', left: zr.x, top: zr.y, width: zr.w, height: zr.h,
-            border: '1px dashed rgba(103,232,249,0.45)', borderRadius: 6,
-            background: 'rgba(103,232,249,0.05)', zIndex: 31,
-          }} />
-        );
-      })()}
+      {/* Free-canvas drag: no zone snap preview — the panel itself is the preview. */}
       <AnimatePresence>
         {panels.map((p) => {
           const isFocused = focusedPanelId === p.id;
@@ -2003,11 +1980,15 @@ export function CortexSurfaceLayer({ drawerOpen = false }: { drawerOpen?: boolea
             : baseZone.y;
 
           const ws = workspaceRect(drawerOpen);
-          const freeRect = !isDragging && !isResizing && !isFocused && p.free && !hug
+          // Free placement applies to hug (image) panels too — they keep their
+          // content-sized w/h but their top-left follows the free coords.
+          const fw = hug ? hug.rect.w : w;
+          const fh = hug ? hug.rect.h : h;
+          const freeRect = !isDragging && !isResizing && !isFocused && p.free
             ? {
-                x: Math.round(ws.x + p.free.x * Math.max(1, ws.w - w)),
-                y: Math.round(ws.y + p.free.y * Math.max(1, ws.h - h)),
-                w, h,
+                x: Math.round(ws.x + p.free.x * Math.max(1, ws.w - fw)),
+                y: Math.round(ws.y + p.free.y * Math.max(1, ws.h - fh)),
+                w: fw, h: fh,
               }
             : null;
 
@@ -2017,9 +1998,7 @@ export function CortexSurfaceLayer({ drawerOpen = false }: { drawerOpen?: boolea
               ? resizing.rect
               : isFocused
                 ? { x: targetX, y: targetY, w: targetW, h: targetH }
-                : hug
-                  ? hug.rect
-                  : freeRect ?? { x: dockedX, y: dockedY, w, h };
+                : freeRect ?? (hug ? hug.rect : { x: dockedX, y: dockedY, w, h });
           return (
             <motion.div
               key={p.id}
