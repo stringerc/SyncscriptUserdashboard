@@ -166,13 +166,29 @@ function InlineProcessingBubble({ payload }: { payload: CortexSignalBusPayload }
 
 const stripMarkdown = (md: string) =>
   md
-    .replace(/```[\s\S]*?```/g, ' code block ')
+    .replace(/```[\s\S]*?```/g, ' ')
     .replace(/!\[([^\]]*)\]\([^)]*\)/g, '$1')
     .replace(/\[([^\]]*)\]\([^)]*\)/g, '$1')
     .replace(/[#>*_`~|-]+/g, ' ')
     .replace(/\s+/g, ' ')
-    .trim()
-    .slice(0, 2000);
+    .trim();
+
+// Split long replies into TTS-sized chunks on sentence boundaries so playback
+// reads the ENTIRE message — matching what Cortex speaks live.
+const chunkForSpeech = (text: string, size = 1800): string[] => {
+  if (text.length <= size) return text ? [text] : [];
+  const chunks: string[] = [];
+  let rest = text;
+  while (rest.length > size) {
+    let cut = rest.lastIndexOf('. ', size);
+    if (cut < size * 0.5) cut = rest.lastIndexOf(' ', size);
+    if (cut < size * 0.4) cut = size;
+    chunks.push(rest.slice(0, cut + 1).trim());
+    rest = rest.slice(cut + 1).trim();
+  }
+  if (rest) chunks.push(rest);
+  return chunks;
+};
 
 interface TranscriptMessageProps {
   msg: ChatMessage;
@@ -307,6 +323,7 @@ export function CortexChatDrawer({ open, onClose, payload, onSubmitText }: Corte
   const [showJump, setShowJump] = useState(false);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const audioUrlRef = useRef<string | null>(null);
+  const speechCancelRef = useRef<(() => void) | null>(null);
   const st = STATE_LABEL[payload.state] ?? STATE_LABEL.idle;
   const hydratedRef = useRef(false);
   const hydrateAttemptsRef = useRef(0);
@@ -370,53 +387,78 @@ export function CortexChatDrawer({ open, onClose, payload, onSubmitText }: Corte
   // Stop any in-flight playback when the drawer closes
   useEffect(() => {
     if (open) return;
+    speechCancelRef.current?.();
+    speechCancelRef.current = null;
     audioRef.current?.pause();
+    speechSynthesis.cancel();
     setSpeakingId(null);
   }, [open]);
 
   useEffect(() => () => {
+    speechCancelRef.current?.();
     audioRef.current?.pause();
+    speechSynthesis.cancel();
     if (audioUrlRef.current) URL.revokeObjectURL(audioUrlRef.current);
   }, []);
 
-  const handleSpeak = async (msgId: string, rawText: string) => {
-    if (speakingId === msgId) {
-      audioRef.current?.pause();
-      setSpeakingId(null);
-      return;
-    }
+  const stopSpeech = () => {
+    speechCancelRef.current?.();
+    speechCancelRef.current = null;
     audioRef.current?.pause();
-    if (audioUrlRef.current) { URL.revokeObjectURL(audioUrlRef.current); audioUrlRef.current = null; }
+    setSpeakingId(null);
+  };
+
+  const handleSpeak = async (msgId: string, rawText: string) => {
+    if (speakingId === msgId) { stopSpeech(); return; }
+    stopSpeech();
     const text = stripMarkdown(rawText);
-    if (!text) return;
-    try {
-      const res = await fetch('/api/cortex/tts', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text, voice: 'cortana' }),
-      });
-      if (!res.ok) throw new Error(`tts ${res.status}`);
-      const blob = await res.blob();
-      const url = URL.createObjectURL(blob);
-      audioUrlRef.current = url;
-      const audio = new Audio(url);
-      audioRef.current = audio;
-      setSpeakingId(msgId);
-      audio.onended = () => { setSpeakingId(null); URL.revokeObjectURL(url); audioUrlRef.current = null; };
-      audio.onerror = () => { setSpeakingId(null); URL.revokeObjectURL(url); audioUrlRef.current = null; };
-      await audio.play();
-    } catch {
-      // TTS unreachable — fall back to browser speech so playback never dead-ends
-      if (speakingId !== msgId) {
+    const chunks = chunkForSpeech(text);
+    if (!chunks.length) return;
+    const urls: string[] = [];
+    let idx = 0;
+    let dead = false;
+    speechCancelRef.current = () => {
+      dead = true;
+      urls.forEach((u) => URL.revokeObjectURL(u));
+      urls.length = 0;
+    };
+    const cleanup = () => {
+      if (speechCancelRef.current) { speechCancelRef.current(); speechCancelRef.current = null; }
+      setSpeakingId(null);
+    };
+    const playNext = async () => {
+      if (dead) return;
+      if (idx >= chunks.length) { cleanup(); return; }
+      try {
+        const res = await fetch('/api/cortex/tts', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ text: chunks[idx], voice: 'cortana' }),
+        });
+        if (!res.ok) throw new Error(`tts ${res.status}`);
+        if (dead) return;
+        const url = URL.createObjectURL(await res.blob());
+        urls.push(url);
+        const audio = new Audio(url);
+        audioRef.current = audio;
+        audio.onended = () => { idx += 1; void playNext(); };
+        audio.onerror = () => { idx += 1; void playNext(); };
+        await audio.play();
+      } catch {
+        if (dead) return;
+        // TTS unreachable — read the remainder via browser speech, whole reply
+        const rest = chunks.slice(idx).join(' ');
         try {
-          const u = new SpeechSynthesisUtterance(text.slice(0, 400));
+          speechSynthesis.cancel();
+          const u = new SpeechSynthesisUtterance(rest.slice(0, 4000));
           u.rate = 1.02;
+          u.onend = cleanup;
           speechSynthesis.speak(u);
-          setSpeakingId(msgId);
-          u.onend = () => setSpeakingId(null);
-        } catch { }
+        } catch { cleanup(); }
       }
-    }
+    };
+    setSpeakingId(msgId);
+    void playNext();
   };
 
   const scrollToBottom = () => {
