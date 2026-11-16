@@ -197,7 +197,7 @@ export default function CortexVisualizerPage() {
     }
   });
   const [micLive, setMicLive] = useState(false);
-  const [chatOpen, setChatOpen] = useState(false);
+  const [chatOpen, setChatOpen] = useState(true);
   const [faceMode, setFaceMode] = useState<ActiveScene>(() => {
     if (typeof window === 'undefined') return 'core';
     const param = new URLSearchParams(window.location.search).get('face')?.toLowerCase();
