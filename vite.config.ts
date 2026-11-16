@@ -27,7 +27,14 @@ import {
   formatProposalCard, formatDigest, formatForecastList,
   loadPushState, savePushState, consumePushBudget, alreadyPosted, markPosted,
   digestAlreadySent, markDigestSent,
+  loadDiscordThreads, saveDiscordThreads, threadNameFor, formatTaskResult, routeAskAgent,
 } from './src/lib/cortex-discord';
+
+const AGENT_LABELS_SAFE: Record<string, string> = {
+  sentinel: 'SENTINEL', scout: 'SCOUT', librarian: 'LIBRARIAN', builder: 'BUILDER',
+  reviewer: 'REVIEWER', runner: 'RUNNER', distributor: 'DISTRIBUTOR', warden: 'WARDEN',
+  forecaster: 'FORECASTER', prep: 'PREP',
+};
 import { getCortexProactiveInitiative } from './src/lib/cortex-proactive-initiative';
 
 /** Short SHA for deploy verification (Vercel sets VERCEL_GIT_COMMIT_SHA at build time). */
@@ -10120,9 +10127,11 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
       // Env: DISCORD_BOT_TOKEN, DISCORD_PUBLIC_KEY, DISCORD_OWNER_ID,
       //      DISCORD_CHANNEL_ID, DISCORD_GUILD_ID (optional), DISCORD_DIGEST_HOUR.
       const discordDir = path.join(process.cwd(), '.cortex-runtime');
+      const dEnv = loadEnv((server.config as any)?.mode || 'development', process.cwd(), '');
+      const dval = (k: string) => dEnv[k] || process.env[k] || '';
       let discordOutputMode: 'low' | 'medium' | 'high' = 'medium';
       const discordDeps = {
-        ownerId: process.env.DISCORD_OWNER_ID || '',
+        ownerId: dval('DISCORD_OWNER_ID'),
         getSnapshot: async () => agentRuntime.snapshot(),
         getPendingProposals: () => getCortexProactiveInitiative().getPendingProposals() as any,
         acceptProposal: (id: string) => getCortexProactiveInitiative().acceptProposal(id),
@@ -10145,9 +10154,41 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
         getOutputMode: () => discordOutputMode,
         setOutputMode: (m: 'low' | 'medium' | 'high') => { discordOutputMode = m; },
         stateDir: discordDir,
+        afterAsk: (payload: any, job: any) => {
+          // Thread-per-ask: post a working message, spin a thread on it,
+          // register task↔thread so the poller can post results + follow-ups.
+          const token = dval('DISCORD_BOT_TOKEN');
+          const channelId = String(job?.channelId || payload?.channel_id || '');
+          if (!token || !channelId) return;
+          (async () => {
+            try {
+              const label = AGENT_LABELS_SAFE[job.agentId] || String(job.agentId).toUpperCase();
+              const msg = await discordApi('POST', `/channels/${channelId}/messages`, {
+                token,
+                body: { content: `🧵 **${label}** working on: ${String(job.title).slice(0, 200)}` },
+              });
+              const messageId = msg?.id;
+              if (!messageId) return;
+              const thread = await discordApi('POST', `/channels/${channelId}/messages/${messageId}/threads`, {
+                token,
+                body: { name: threadNameFor(job.title), auto_archive_duration: 1440, type: 11 },
+              });
+              const tid = thread?.id;
+              if (!tid || !job.taskId) return;
+              const threads = loadDiscordThreads(discordDir);
+              threads[tid] = {
+                threadId: tid, taskId: String(job.taskId), agentId: job.agentId,
+                title: job.title, channelId, createdAt: Date.now(),
+              };
+              saveDiscordThreads(discordDir, threads);
+            } catch (e) {
+              console.warn('[cortex-discord] thread spawn failed:', String(e?.message || e).slice(0, 160));
+            }
+          })();
+        },
       };
       const discordReady = () =>
-        Boolean(process.env.DISCORD_BOT_TOKEN && process.env.DISCORD_PUBLIC_KEY && process.env.DISCORD_OWNER_ID);
+        Boolean(dval('DISCORD_BOT_TOKEN') && dval('DISCORD_PUBLIC_KEY') && dval('DISCORD_OWNER_ID'));
 
       server.middlewares.use('/api/cortex/discord/interactions', (req: any, res: any, next: any) => {
         if (req.method === 'OPTIONS') {
@@ -10164,13 +10205,47 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
         req.on('end', async () => {
           try {
             const sig = String(req.headers['x-signature-ed25519'] || '');
-            const ts = String(req.headers['x-timestamp'] || '');
-            if (!verifyDiscordSignature(body, sig, ts, process.env.DISCORD_PUBLIC_KEY!)) {
+            const ts = String(req.headers['x-signature-timestamp'] || req.headers['x-timestamp'] || '');
+            const sigOk = verifyDiscordSignature(body, sig, ts, dval('DISCORD_PUBLIC_KEY'));
+            let payloadType = '?';
+            let payloadUser = '';
+            try { const pj = JSON.parse(body || '{}'); payloadType = String(pj?.type ?? '?'); payloadUser = String(pj?.user?.id || pj?.member?.user?.id || ''); } catch {}
+            console.info(`[cortex-discord] interaction type=${payloadType} user=${payloadUser} expectOwner=${discordDeps.ownerId || 'EMPTY'} sig=${sigOk ? 'ok' : 'FAIL'} bytes=${body.length}`);
+            if (!sigOk) {
               res.writeHead(401, { 'Content-Type': 'application/json' });
               return res.end(JSON.stringify({ ok: false, error: 'invalid signature' }));
             }
             const payload = JSON.parse(body || '{}');
+            // Route split: /cortex commands + cx* component ids stay local;
+            // everything else (legacy feedback-bot commands) proxies to the
+            // Supabase Edge interactions handler so the old surface keeps working.
+            const cmdName = String(payload?.data?.name || '').toLowerCase();
+            const componentId = String(payload?.data?.custom_id || '');
+            const isOurs = payload?.type === 1
+              || (payload?.type === 2 && cmdName === 'cortex')
+              || (payload?.type === 3 && componentId.startsWith('cx'));
+            if (!isOurs) {
+              try {
+                const upstream = await fetch('https://kwhnrlzibgfedtxpkbgb.supabase.co/functions/v1/make-server-57781ad9/discord/interactions', {
+                  method: 'POST',
+                  headers: {
+                    'Content-Type': 'application/json',
+                    'x-signature-ed25519': sig,
+                    'x-signature-timestamp': ts,
+                  },
+                  body,
+                  signal: AbortSignal.timeout(10_000),
+                });
+                const upBody = await upstream.text();
+                res.writeHead(upstream.status, { 'Content-Type': upstream.headers.get('content-type') || 'application/json' });
+                return res.end(upBody);
+              } catch (e: any) {
+                res.writeHead(502, { 'Content-Type': 'application/json' });
+                return res.end(JSON.stringify({ type: 4, data: { content: `Upstream error: ${String(e?.message || e).slice(0, 120)}`, flags: 64 } }));
+              }
+            }
             const result = await handleDiscordInteraction(payload, discordDeps);
+            console.info(`[cortex-discord] → type=${result.type} reply=${JSON.stringify(result.data?.content || '').slice(0, 120)}`);
             res.writeHead(200, { 'Content-Type': 'application/json' });
             res.end(JSON.stringify(result));
           } catch (e: any) {
@@ -10189,7 +10264,7 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
           return res.end();
         }
         if (req.method !== 'POST') return next();
-        const token = process.env.DISCORD_BOT_TOKEN;
+        const token = dval('DISCORD_BOT_TOKEN');
         if (!token) {
           res.writeHead(503, { 'Content-Type': 'application/json' });
           return res.end(JSON.stringify({ ok: false, error: 'DISCORD_BOT_TOKEN missing' }));
@@ -10198,7 +10273,7 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
           const me = await discordApi('GET', '/oauth2/applications/@me', { token });
           const appId = me?.id || me?.application?.id;
           if (!appId) throw new Error('could not resolve application id');
-          const guildId = process.env.DISCORD_GUILD_ID || '';
+          const guildId = dval('DISCORD_GUILD_ID');
           const endpoint = guildId
             ? `/applications/${appId}/guilds/${guildId}/commands`
             : `/applications/${appId}/commands`;
@@ -10227,12 +10302,12 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
         res.end(JSON.stringify({
           ok: true,
           configured: discordReady(),
-          hasToken: Boolean(process.env.DISCORD_BOT_TOKEN),
-          hasPublicKey: Boolean(process.env.DISCORD_PUBLIC_KEY),
-          hasOwner: Boolean(process.env.DISCORD_OWNER_ID),
-          channelId: process.env.DISCORD_CHANNEL_ID || null,
-          guildId: process.env.DISCORD_GUILD_ID || null,
-          digestHour: Number(process.env.DISCORD_DIGEST_HOUR) || 7,
+          hasToken: Boolean(dval('DISCORD_BOT_TOKEN')),
+          hasPublicKey: Boolean(dval('DISCORD_PUBLIC_KEY')),
+          hasOwner: Boolean(dval('DISCORD_OWNER_ID')),
+          channelId: dval('DISCORD_CHANNEL_ID') || null,
+          guildId: dval('DISCORD_GUILD_ID') || null,
+          digestHour: Number(dval('DISCORD_DIGEST_HOUR')) || 7,
           pushState: loadPushState(discordDir),
           outputMode: discordOutputMode,
         }));
@@ -10242,13 +10317,22 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
       // Posts: pending proposal cards → channel, new tier>=2 forecasts →
       // channel (shared 5/day budget), morning digest at DISCORD_DIGEST_HOUR.
       // Command replies are not budgeted. All posts are evidence-backed.
-      if (discordReady() && process.env.DISCORD_CHANNEL_ID) {
-        const channelId = process.env.DISCORD_CHANNEL_ID;
-        const token = process.env.DISCORD_BOT_TOKEN!;
-        const post = (body: any) => discordApi('POST', `/channels/${channelId}/messages`, { token, body }).catch((e) => {
-          console.warn('[cortex-discord] post failed:', String(e?.message || e).slice(0, 160));
-          return null;
-        });
+      const discordChannels = {
+        default: dval('DISCORD_CHANNEL_ID'),
+        inbox: dval('DISCORD_CHANNEL_INBOX') || dval('DISCORD_CHANNEL_ID'),
+        alerts: dval('DISCORD_CHANNEL_ALERTS') || dval('DISCORD_CHANNEL_ID'),
+        briefs: dval('DISCORD_CHANNEL_BRIEFS') || dval('DISCORD_CHANNEL_ID'),
+      };
+      if (discordReady() && discordChannels.default) {
+        const token = dval('DISCORD_BOT_TOKEN');
+        const post = (body: any, target: keyof typeof discordChannels = 'default') => {
+          const cid = discordChannels[target] || discordChannels.default;
+          if (!cid) return Promise.resolve(null);
+          return discordApi('POST', `/channels/${cid}/messages`, { token, body }).catch((e) => {
+            console.warn('[cortex-discord] post failed:', String(e?.message || e).slice(0, 160));
+            return null;
+          });
+        };
         const pollDiscord = async () => {
           try {
             const now = Date.now();
@@ -10257,7 +10341,7 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
               const id = String(p.id || '');
               if (!id || alreadyPosted(discordDir, 'proposal', id)) continue;
               const card = formatProposalCard(p);
-              await post({ content: `New initiative proposal — needs your call:`, ...card });
+              await post({ content: `New initiative proposal — needs your call:`, ...card }, 'inbox');
               markPosted(discordDir, 'proposal', id);
             }
             // Forecast pushes: tier>=2 (proposal/interrupt routed) entries.
@@ -10277,11 +10361,11 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
                   footer: { text: `evidence: ${(f.evidence || []).map((e: any) => `${e.kind}:${e.ref}`).join(', ').slice(0, 200) || 'n/a'}` },
                   timestamp: new Date().toISOString(),
                 }],
-              });
+              }, 'alerts');
               markPosted(discordDir, 'forecast', fid);
             }
             // Morning digest — once per day at configured local hour.
-            const digestHour = Number(process.env.DISCORD_DIGEST_HOUR) || 7;
+            const digestHour = Number(dval('DISCORD_DIGEST_HOUR')) || 7;
             const d = new Date(now);
             if (d.getHours() === digestHour && !digestAlreadySent(discordDir, now) && consumePushBudget(discordDir, now)) {
               const [snap, props, fc, ev] = [
@@ -10290,7 +10374,7 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
                 discordDeps.listForecasts() as any[],
                 discordDeps.listCalendarEvents() as any[],
               ];
-              await post({ content: formatDigest({ events: ev, pendingProposals: props, forecasts: fc, snapshot: snap, now }) });
+              await post({ content: formatDigest({ events: ev, pendingProposals: props, forecasts: fc, snapshot: snap, now }) }, 'briefs');
               markDigestSent(discordDir, now);
             }
           } catch (e) {
@@ -10299,6 +10383,71 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
         };
         setTimeout(pollDiscord, 30_000); // let the server settle first
         setInterval(pollDiscord, 5 * 60_000);
+
+        // ── Task-thread sync (45s) — REST-only, no gateway ──
+        // For each tracked ask-thread: post the agent result when the task
+        // finishes, and turn new user messages into follow-up tasks.
+        const syncDiscordThreads = async () => {
+          try {
+            const threads = loadDiscordThreads(discordDir);
+            const ids = Object.keys(threads);
+            if (!ids.length) return;
+            const snap = await agentRuntime.snapshot();
+            const taskById = new Map((snap.tasks || []).map((t: any) => [String(t.id), t]));
+            let dirty = false;
+            for (const tid of ids) {
+              const rec = threads[tid];
+              if (!rec) continue;
+              // 1) Task completion → post each task's result into the thread once.
+              const candidateIds = [rec.taskId, ...(rec.pendingTaskIds || [])].filter(Boolean);
+              const posted = new Set(rec.postedTaskIds || []);
+              for (const cid of candidateIds) {
+                if (posted.has(cid)) continue;
+                const task = taskById.get(cid);
+                if (!task) continue;
+                const { done, content } = formatTaskResult(task);
+                if (done && content) {
+                  await discordApi('POST', `/channels/${tid}/messages`, { token, body: { content } }).catch(() => null);
+                  posted.add(cid);
+                  dirty = true;
+                }
+              }
+              if (posted.size) {
+                rec.postedTaskIds = [...posted];
+                rec.resultPosted = candidateIds.every((c) => posted.has(c));
+              }
+              // 2) New user messages → follow-up tasks.
+              try {
+                const q = rec.lastMessageId ? `?after=${rec.lastMessageId}&limit=10` : '?limit=5';
+                const msgs = await discordApi('GET', `/channels/${tid}/messages${q}`, { token }).catch(() => []);
+                const fresh = (Array.isArray(msgs) ? msgs : []).reverse(); // oldest → newest
+                for (const m of fresh) {
+                  rec.lastMessageId = String(m.id);
+                  dirty = true;
+                  if (m?.author?.bot) continue;
+                  const text = String(m?.content || '').trim();
+                  if (!text || text.startsWith('/')) continue;
+                  const routed = routeAskAgent(text);
+                  const sub = discordDeps.submitTask(routed.agentId, routed.kind, `${rec.title} → ${text}`.slice(0, 140), {
+                    source: 'discord-thread', threadId: tid, followUpOf: rec.taskId, text,
+                  });
+                  if (sub?.ok) {
+                    rec.pendingTaskIds = [...(rec.pendingTaskIds || []), String(sub.task?.id || '')].filter(Boolean);
+                    await discordApi('POST', `/channels/${tid}/messages`, {
+                      token,
+                      body: { content: `↳ Queued follow-up → **${AGENT_LABELS_SAFE[routed.agentId] || routed.agentId}**` },
+                    }).catch(() => null);
+                  }
+                }
+              } catch {}
+            }
+            if (dirty) saveDiscordThreads(discordDir, threads);
+          } catch (e) {
+            console.warn('[cortex-discord] thread sync error:', String(e).slice(0, 160));
+          }
+        };
+        setTimeout(syncDiscordThreads, 45_000);
+        setInterval(syncDiscordThreads, 45_000);
         console.info('[cortex-discord] proactive poller enabled — 5m cadence, 5/day push budget');
       } else if (!discordReady()) {
         console.info('[cortex-discord] disabled — DISCORD_BOT_TOKEN/PUBLIC_KEY/OWNER_ID not all set');

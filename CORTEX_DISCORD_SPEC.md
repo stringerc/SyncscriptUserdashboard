@@ -146,6 +146,7 @@ templating — no LLM in the digest path, matching "scoring is code, prose is LL
 | P3 | Proposal cards + Approve/Dismiss buttons | Implemented |
 | P4 | Poller: proposal push, forecast push, 5/day budget | Implemented |
 | P5 | Morning digest format | Implemented |
+| P6 | Thread-per-ask: `/cortex ask` spawns a thread on a bot message; 45s REST poller posts task results into it and routes new thread replies to follow-up tasks (auto-archive 24h, no gateway needed) | Implemented |
 
 ## 11. Known gaps (honest list)
 
@@ -153,6 +154,7 @@ templating — no LLM in the digest path, matching "scoring is code, prose is LL
 - Slash-command registration is manual (`sync-commands` endpoint) — not auto on boot
 - Discord approvals record the decision; suggestedTool execution still needs the
   Cortex UI event path (or a follow-up executor)
-- No thread-per-ask-session yet — ask replies are single messages (threads are
-  a P6 candidate if conversation depth proves needed)
+- ~~No thread-per-ask-session yet~~ — implemented (P6). Remaining nuance:
+  thread replies route through the keyword agent-router, not full conversational
+  context; deep multi-turn sessions would need the gateway or richer context passing
 - Production deployment path undefined (local Vite only for now)

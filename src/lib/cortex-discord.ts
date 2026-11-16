@@ -75,7 +75,10 @@ export interface DiscordDeps {
   getPendingProposals: () => ProposalLike[];
   acceptProposal: (id: string) => boolean;
   dismissProposal: (id: string) => boolean;
-  submitTask: (agentId: string, kind: string, title: string, input?: any) => { ok: boolean; error?: string };
+  submitTask: (agentId: string, kind: string, title: string, input?: any) => { ok: boolean; task?: { id?: string }; error?: string };
+  /** Fire-and-forget hook invoked after a successful /cortex ask — used to
+   *  spawn the task thread. Receives the raw interaction payload + job info. */
+  afterAsk?: (payload: any, job: { agentId: string; kind: string; title: string; taskId?: string; channelId: string }) => void;
   listForecasts: () => ForecastLike[];
   listCalendarEvents: () => { title: string; start: number }[];
   getOutputMode: () => 'low' | 'medium' | 'high';
@@ -404,7 +407,7 @@ export async function handleDiscordInteraction(
   payload: any,
   deps: DiscordDeps,
 ): Promise<InteractionResponse> {
-  const userId = String(payload?.user?.id || '');
+  const userId = String(payload?.user?.id || payload?.member?.user?.id || '');
   const isOwner = userId === deps.ownerId;
 
   // PING (type 1) — must respond immediately.
@@ -488,7 +491,11 @@ export async function handleDiscordInteraction(
       if (!res.ok) {
         return { type: 4, data: { content: `Task rejected: ${res.error || 'unknown'}`, flags: EPHEMERAL } };
       }
-      return { type: 4, data: { content: `Queued → **${AGENT_LABELS[agentId] || agentId}** (${kind}). Track on the Agents tab or \`/cortex status\`.` } };
+      deps.afterAsk?.(payload, {
+        agentId, kind, title: text.slice(0, 140),
+        taskId: res.task?.id, channelId: String(payload?.channel_id || ''),
+      });
+      return { type: 4, data: { content: `Queued → **${AGENT_LABELS[agentId] || agentId}** (${kind}) — thread incoming. Track on the Agents tab or \`/cortex status\`.` } };
     }
     case 'outputmode': {
       const mode = subcommandOpt(payload, 'mode') as 'low' | 'medium' | 'high';
@@ -511,4 +518,63 @@ export async function handleDiscordInteraction(
     default:
       return { type: 4, data: { content: `Unknown subcommand \`${sub}\`. Try status, digest, forecast, proposals, ask, outputmode, approve, dismiss.`, flags: EPHEMERAL } };
   }
+}
+
+// ── Task threads (thread-per-ask) ───────────────────────────────────
+// REST-only model: no gateway needed. /cortex ask spawns a thread on a bot
+// message; a poller watches tracked threads for (a) task completion → posts
+// the result, (b) new user messages → submits follow-up tasks. Threads
+// auto-archive via Discord (24h) — no cleanup job needed.
+
+export interface DiscordThreadRecord {
+  threadId: string;
+  taskId: string;
+  agentId: string;
+  title: string;
+  channelId: string;
+  createdAt: number;
+  lastMessageId?: string;
+  resultPosted?: boolean;
+  /** Follow-up task ids submitted from thread replies — results post here too. */
+  pendingTaskIds?: string[];
+  postedTaskIds?: string[];
+}
+
+const THREADS_FILE = 'discord-threads.json';
+
+export function loadDiscordThreads(stateDir: string): Record<string, DiscordThreadRecord> {
+  try {
+    const raw = JSON.parse(fs.readFileSync(path.join(stateDir, THREADS_FILE), 'utf8'));
+    return raw && typeof raw === 'object' ? raw : {};
+  } catch { return {}; }
+}
+
+export function saveDiscordThreads(stateDir: string, threads: Record<string, DiscordThreadRecord>): void {
+  try {
+    fs.mkdirSync(stateDir, { recursive: true });
+    const entries = Object.entries(threads).slice(-100); // cap tracked threads
+    fs.writeFileSync(path.join(stateDir, THREADS_FILE), JSON.stringify(Object.fromEntries(entries), null, 2));
+  } catch {}
+}
+
+export function threadNameFor(text: string): string {
+  const clean = text.replace(/[#\n*`>\\|]/g, ' ').replace(/\s+/g, ' ').trim();
+  return (`${clean || 'cortex task'}`).slice(0, 90) || 'cortex task';
+}
+
+/** Format an agent task's terminal state for posting into its thread. */
+export function formatTaskResult(task: any): { done: boolean; content: string } {
+  const status = String(task?.status || '');
+  if (status === 'done' || status === 'completed') {
+    const res = task?.result;
+    const summary = typeof res === 'string' ? res
+      : res && typeof res === 'object'
+        ? (res.summary || res.note || JSON.stringify(res).slice(0, 400))
+        : '';
+    return { done: true, content: `✅ **Done** — ${String(summary || 'task completed').slice(0, 1500)}` };
+  }
+  if (status === 'failed' || status === 'error' || status === 'cancelled') {
+    return { done: true, content: `❌ **${status === 'cancelled' ? 'Cancelled' : 'Failed'}** — ${String(task?.error || 'unknown error').slice(0, 500)}` };
+  }
+  return { done: false, content: '' };
 }
