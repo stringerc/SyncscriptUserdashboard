@@ -15,6 +15,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
+import child_process from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import type { AgentContext, AgentRuntime, WorkerHandler } from './runtime';
 
@@ -58,6 +59,19 @@ async function toolExecute(name: string, args: Record<string, unknown>, timeoutM
     return out;
   } catch (e) {
     if (telemetry) telemetry.toolFailures++;
+    // Direct execution fallback if Cortex HTTP daemon is unreachable
+    if (name === 'run_command' && args.command) {
+      try {
+        const stdout = child_process.execSync(String(args.command), {
+          cwd: String(args.cwd || process.cwd()),
+          timeout: timeoutMs,
+          encoding: 'utf8',
+        });
+        return { ok: true, stdout, exitCode: 0 };
+      } catch (err: any) {
+        return { ok: false, stdout: err.stdout || '', stderr: err.stderr || err.message, exitCode: err.status || 1 };
+      }
+    }
     throw e;
   }
 }
@@ -330,26 +344,26 @@ async function runRedditDraft(ctx: AgentContext, payload: Record<string, unknown
   return { permalink, drafted: text, queued: enq.ok, queueId: enq.item?.id, queueNote: enq.reason };
 }
 
-async function runOmniPublish(ctx: AgentContext, payload: Record<string, unknown>) {
+export async function runOmniPublish(ctx: AgentContext, payload: Record<string, unknown>) {
   ctx.progress(0.2);
   const platform = str(payload.platform, 'all');
   const dryRun = payload.dryRun !== false;
   const scriptPath = path.resolve(process.cwd(), 'storefront/tools/omni-publisher.mjs');
-  const args = [scriptPath];
-  if (dryRun) args.push('--dry-run');
-  if (platform) args.push(`--platform=${platform}`);
-  const res = await ctx.sh('node', args);
+  const cmd = `node "${scriptPath}" ${dryRun ? '--dry-run' : ''} --platform=${platform}`;
+  const out = await sh(cmd, ctx.telemetry);
+  const stdout = String(out?.stdout || '');
+  const exitCode = typeof out?.exitCode === 'number' ? out.exitCode : (out?.ok ? 0 : 1);
   ctx.progress(1);
   return {
     platform,
     dryRun,
-    exitCode: res.exitCode,
-    stdout: res.stdout.slice(-1000),
-    staged: res.exitCode === 0,
+    exitCode,
+    stdout: stdout.slice(-1000),
+    staged: exitCode === 0,
   };
 }
 
-const ITEM_HANDLERS: Record<string, (ctx: AgentContext, p: Record<string, unknown>) => Promise<unknown>> = {
+export const ITEM_HANDLERS: Record<string, (ctx: AgentContext, p: Record<string, unknown>) => Promise<unknown>> = {
   reddit_scan: runRedditScan,
   reddit_comment: runRedditComment,
   pinterest_pin: runPinterestPin,

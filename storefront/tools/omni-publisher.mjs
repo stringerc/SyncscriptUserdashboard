@@ -3,10 +3,10 @@
  * Omni-Store Autonomous Publisher
  * Cross-Platform Staged Publisher for Gumroad, Etsy, Amazon KDP & Redbubble
  */
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { pauseAndPrompt } from './cdp-supervisor.mjs';
+import { pauseAndPrompt, checkCdpEndpoint } from './cdp-supervisor.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -125,8 +125,11 @@ async function run() {
     results,
   };
 
+  const cdpReachable = await checkCdpEndpoint(9222);
+  console.log(`[CDP Supervisor] Chrome DevTools Protocol (127.0.0.1:9222): ${cdpReachable ? 'CONNECTED' : 'DISCONNECTED (Offline Staging Mode)'}`);
+
   const distDir = path.resolve(STOREFRONT, 'dist');
-  if (!existsSync(distDir)) writeFileSync(distDir, '');
+  if (!existsSync(distDir)) mkdirSync(distDir, { recursive: true });
   writeFileSync(REPORT_PATH, JSON.stringify(report, null, 2), 'utf8');
   console.log(`Staging audit report written to: ${REPORT_PATH}`);
 

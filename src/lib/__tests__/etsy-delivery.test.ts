@@ -1,5 +1,9 @@
 import { describe, it, expect } from 'vitest';
-import { generateEtsyAccessHtml, generatePrintableChecklistsHtml } from '../../../storefront/generators/etsy-delivery';
+import {
+  generateEtsyAccessHtml,
+  generatePrintableChecklistsHtml,
+  compileEtsyAccessPdf,
+} from '../../../storefront/generators/etsy-delivery';
 
 describe('Etsy Customer Delivery Generator', () => {
   it('generates an access document with verified token links and support instructions', () => {
@@ -19,5 +23,14 @@ describe('Etsy Customer Delivery Generator', () => {
     expect(html).toContain('Open House Client Sign-in Sheet');
     expect(html).toContain('Listing Preparation Checklist');
     expect(html).toContain('Print at 100% Scale');
+  });
+
+  it('compiles genuine binary PDF documents for Etsy delivery access', async () => {
+    const pdfBytes = await compileEtsyAccessPdf({
+      'Social Media Pack': 'https://www.canva.com/design/example-1',
+      'Listing Presentation': 'https://www.canva.com/design/example-2',
+    });
+    expect(pdfBytes).toBeInstanceOf(Uint8Array);
+    expect(Buffer.from(pdfBytes.slice(0, 5)).toString()).toBe('%PDF-');
   });
 });

@@ -71,6 +71,14 @@ export function validateOmniManifest(data: unknown): OmniManifestValidationResul
     errors.push('Missing or empty "productId" field');
   }
 
+  if (!p.title || typeof p.title !== 'string' || p.title.trim() === '') {
+    errors.push('Missing or empty "title" field');
+  }
+
+  if (!p.version || typeof p.version !== 'string' || p.version.trim() === '') {
+    errors.push('Missing or empty "version" field');
+  }
+
   if (!p.platforms || typeof p.platforms !== 'object') {
     errors.push('Missing "platforms" configuration object');
     return { valid: false, errors };

@@ -1,3 +1,5 @@
+import { PDFDocument, rgb, StandardFonts } from 'pdf-lib';
+
 /**
  * Generates the customer-facing 1-page Access PDF HTML for Etsy buyers.
  * Contains direct one-click Canva template access tokens, commercial license,
@@ -127,4 +129,122 @@ export function generatePrintableChecklistsHtml(): string {
   </div>
 </body>
 </html>`;
+}
+
+/**
+ * Compiles a genuine binary PDF for Etsy customer delivery using pdf-lib.
+ * Includes direct Canva token links, how-to instructions, and commercial licensing terms.
+ */
+export async function compileEtsyAccessPdf(links: Record<string, string>): Promise<Uint8Array> {
+  const doc = await PDFDocument.create();
+  const fontBold = await doc.embedFont(StandardFonts.HelveticaBold);
+  const fontRegular = await doc.embedFont(StandardFonts.Helvetica);
+  const page = doc.addPage([612, 792]); // Letter (8.5 x 11 in points)
+  const { width, height } = page.getSize();
+
+  // Top header banner
+  page.drawRectangle({
+    x: 40,
+    y: height - 70,
+    width: width - 80,
+    height: 36,
+    color: rgb(0.06, 0.09, 0.16),
+  });
+  page.drawText('VERIFIED DIGITAL PRODUCT DELIVERY — THE SOVEREIGN SUITE', {
+    x: 55,
+    y: height - 56,
+    size: 10,
+    font: fontBold,
+    color: rgb(0.22, 0.74, 0.97),
+  });
+
+  // Main Title
+  page.drawText('Your Real Estate Marketing Suite Access', {
+    x: 40,
+    y: height - 110,
+    size: 18,
+    font: fontBold,
+    color: rgb(0.06, 0.09, 0.16),
+  });
+
+  page.drawText('Click or copy the direct Canva template links below to add them to your account:', {
+    x: 40,
+    y: height - 130,
+    size: 10,
+    font: fontRegular,
+    color: rgb(0.3, 0.35, 0.42),
+  });
+
+  // Link cards
+  let y = height - 170;
+  for (const [title, url] of Object.entries(links)) {
+    page.drawRectangle({
+      x: 40,
+      y: y - 24,
+      width: width - 80,
+      height: 44,
+      color: rgb(0.97, 0.98, 0.99),
+      borderColor: rgb(0.85, 0.88, 0.92),
+      borderWidth: 1,
+    });
+    page.drawText(title, {
+      x: 55,
+      y: y + 2,
+      size: 11,
+      font: fontBold,
+      color: rgb(0.06, 0.09, 0.16),
+    });
+    page.drawText(url, {
+      x: 55,
+      y: y - 13,
+      size: 9,
+      font: fontRegular,
+      color: rgb(0.15, 0.39, 0.92),
+    });
+    y -= 54;
+  }
+
+  // Instructions
+  y -= 10;
+  page.drawText('How to Use Your Templates in Canva:', {
+    x: 40,
+    y,
+    size: 11,
+    font: fontBold,
+    color: rgb(0.06, 0.09, 0.16),
+  });
+  y -= 16;
+  const steps = [
+    '1. Open any link above in your web browser.',
+    '2. Click "Use Template for New Design" to duplicate the file into your Canva account.',
+    '3. Edit headshots, logos, property specs, and pricing in seconds with full commercial rights.',
+  ];
+  for (const s of steps) {
+    page.drawText(s, {
+      x: 40,
+      y,
+      size: 9,
+      font: fontRegular,
+      color: rgb(0.3, 0.35, 0.42),
+    });
+    y -= 14;
+  }
+
+  // Footer License
+  page.drawRectangle({
+    x: 40,
+    y: 36,
+    width: width - 80,
+    height: 32,
+    color: rgb(0.95, 0.96, 0.98),
+  });
+  page.drawText('Commercial License Included: Unlimited personal, team, and client marketing use.', {
+    x: 55,
+    y: 48,
+    size: 8,
+    font: fontRegular,
+    color: rgb(0.35, 0.4, 0.48),
+  });
+
+  return doc.save();
 }

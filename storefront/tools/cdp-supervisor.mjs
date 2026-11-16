@@ -1,6 +1,15 @@
 /**
  * CDP Supervisor — Resilience, Human-in-the-Loop Pauses & Challenge Detection
  */
+export async function checkCdpEndpoint(port = 9222) {
+  try {
+    const res = await fetch(`http://127.0.0.1:${port}/json/version`, { signal: AbortSignal.timeout(1000) });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
 export async function detectCaptchaOrChallenge(htmlContent) {
   if (!htmlContent || typeof htmlContent !== 'string') return false;
   const indicators = [

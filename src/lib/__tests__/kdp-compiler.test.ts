@@ -1,5 +1,11 @@
 import { describe, it, expect } from 'vitest';
-import { calculateKdpDimensions, renderKdpInteriorHtml, renderKdpCoverSvg } from '../../../storefront/generators/kdp-compiler';
+import {
+  calculateKdpDimensions,
+  renderKdpInteriorHtml,
+  renderKdpCoverSvg,
+  compileKdpInteriorPdf,
+  compileKdpCoverPdf,
+} from '../../../storefront/generators/kdp-compiler';
 
 describe('KDP Compiler & Math Formulas', () => {
   it('calculates mathematically exact spine width and total cover wrap dimensions for 124 pages', () => {
@@ -31,5 +37,21 @@ describe('KDP Compiler & Math Formulas', () => {
     expect(svg).toContain('viewBox');
     expect(svg).toContain('Christian Sterling');
     expect(svg).toContain('barcode-clearance-zone');
+  });
+
+  it('compiles genuine binary PDF documents for KDP interior and cover', async () => {
+    const dims = calculateKdpDimensions(124, 'white');
+    const interiorBytes = await compileKdpInteriorPdf({ title: 'Real Estate Daily Planner', totalPages: 10 });
+    expect(interiorBytes).toBeInstanceOf(Uint8Array);
+    // PDF Magic bytes: %PDF-
+    expect(Buffer.from(interiorBytes.slice(0, 5)).toString()).toBe('%PDF-');
+
+    const coverBytes = await compileKdpCoverPdf({
+      title: 'Real Estate Daily Planner',
+      author: 'Christian Sterling',
+      geometry: dims,
+    });
+    expect(coverBytes).toBeInstanceOf(Uint8Array);
+    expect(Buffer.from(coverBytes.slice(0, 5)).toString()).toBe('%PDF-');
   });
 });
