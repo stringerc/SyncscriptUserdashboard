@@ -8,9 +8,11 @@
 
 ---
 
-## KNOWN ISSUE FOUND DURING THIS AUDIT (2026-11-16)
+## KNOWN ISSUE — FIXED 2026-11-16
 
-**Core scene drops spawned agents — satellite count bug.**
+**Core scene drops spawned agents — satellite count bug.** ✅ Fixed `0a81178`: `SAT_COUNT` 10→16, added `prep`/`forecaster` to order+color maps. Core assembly scale tuned to 0.75 (`fd64cd4`, user-approved).
+
+~~`src/components/cortex/CortexCoreScene.tsx:565` — `const SAT_COUNT = 10` ...~~
 
 `src/components/cortex/CortexCoreScene.tsx:565` — `const SAT_COUNT = 10` and line 770 `.slice(0, SAT_COUNT)`. The fleet has **12 agents**; sort order puts the 8 named agents first (`SAT_AGENT_ORDER`, line 569 — note `prep` and `forecaster` are NOT in it), then alphabetical: `forecaster`, `prep`, `spawn-ledger-7-1`, `spawn-pulse-2`. Slice(0,10) keeps forecaster+prep and **drops both spawn agents entirely** — they never render on the core page.
 
