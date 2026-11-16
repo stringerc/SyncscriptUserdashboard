@@ -573,10 +573,24 @@ export function formatTaskResult(task: any): { done: boolean; content: string } 
   const status = String(task?.status || '');
   if (status === 'done' || status === 'completed') {
     const res = task?.result;
-    const summary = typeof res === 'string' ? res
-      : res && typeof res === 'object'
-        ? (res.summary || res.note || JSON.stringify(res).slice(0, 400))
-        : '';
+    // Prefer human-readable fields workers actually return (scout→brief,
+    // prep→brief markdown, librarian→answer) over a raw JSON dump.
+    let summary = '';
+    if (typeof res === 'string') summary = res;
+    else if (res && typeof res === 'object') {
+      for (const k of ['brief', 'answer', 'summary', 'synthesis', 'report', 'note', 'content', 'message']) {
+        const v = (res as any)[k];
+        if (typeof v === 'string' && v.trim()) { summary = v; break; }
+      }
+      if (!summary) {
+        // Structured results (e.g. scout sources list): show key counts + first lines.
+        const parts: string[] = [];
+        for (const k of ['sources', 'results', 'items', 'findings']) {
+          if (Array.isArray((res as any)[k])) parts.push(`${(res as any)[k].length} ${k}`);
+        }
+        summary = parts.length ? parts.join(' · ') + '\n' + JSON.stringify(res).slice(0, 600) : JSON.stringify(res).slice(0, 600);
+      }
+    }
     return { done: true, content: `✅ **Done** — ${String(summary || 'task completed').slice(0, 1500)}` };
   }
   if (status === 'failed' || status === 'error' || status === 'cancelled') {
