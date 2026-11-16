@@ -271,7 +271,7 @@ const AgentDossierPanel: React.FC<{ agent: AgentClient; snap: AgentsSnapshotClie
           <span>BUDGET {a.dailyBudget}/DAY</span>
           <span style={{ marginLeft: 'auto', color: DIM }}>{recent.length} RECENT</span>
         </div>
-        <div style={{ overflowY: 'auto', maxHeight: 150, flexShrink: 1 }}>
+        <div className="ambient-scrollbar" style={{ overflowY: 'auto', maxHeight: 150, flexShrink: 1 }}>
           {recent.map((t) => <TaskRow key={t.id} t={t} now={now} />)}
           {!recent.length && <div style={{ fontSize: 8, color: DIM, fontFamily: MONO, padding: '4px 0' }}>NO TASK HISTORY — AWAITING FIRST ASSIGNMENT</div>}
         </div>
@@ -285,7 +285,7 @@ const AgentDossierPanel: React.FC<{ agent: AgentClient; snap: AgentsSnapshotClie
         <span style={{ color: col }}>{dossierOpen ? '▾' : '▸'}</span> dossier — identity · tools · lineage
       </button>
       {dossierOpen && (
-        <div style={{ overflowY: 'auto', fontSize: 8, fontFamily: MONO, color: 'rgba(203,213,225,0.7)', lineHeight: 1.7, paddingTop: 6 }}>
+        <div className="ambient-scrollbar" style={{ overflowY: 'auto', fontSize: 8, fontFamily: MONO, color: 'rgba(203,213,225,0.7)', lineHeight: 1.7, paddingTop: 6 }}>
           <div style={{ color: 'rgba(203,213,225,0.85)', marginBottom: 2 }}>{a.blurb}</div>
           <div style={{ display: 'grid', gridTemplateColumns: 'auto 1fr', gap: '1px 10px' }}>
             <span style={{ color: DIM }}>TOOLS</span>
@@ -1001,7 +1001,7 @@ export const CortexAgentsScene: React.FC = () => {
             <span>ROSTER</span>
             <span style={{ color: 'rgba(148,233,255,0.35)', letterSpacing: '0.15em' }}>{agents.length}</span>
           </div>
-          <div style={{ maxHeight: '62vh', overflowY: 'auto', scrollbarWidth: 'thin' }}>
+          <div className="ambient-scrollbar" style={{ maxHeight: '62vh', overflowY: 'auto', scrollbarWidth: 'thin' }}>
             {agents.slice().sort(agentSort).map(a => {
               const col = AGENT_COLORS[a.id] || (a.spawnSpec ? `hsl(${spawnHue(a.id)} 85% 68%)` : '#94a3b8');
               const enterprise = agentTier(a) === 'enterprise';
@@ -1067,7 +1067,7 @@ export const CortexAgentsScene: React.FC = () => {
             {missionTasks.filter(t => t.status === 'running' || t.status === 'queued').length} ACTIVE
           </span>
         </div>
-        <div style={{ maxHeight: 190, overflowY: 'auto', scrollbarWidth: 'thin' }}>
+        <div className="ambient-scrollbar" style={{ maxHeight: 190, overflowY: 'auto', scrollbarWidth: 'thin' }}>
           {missionTasks.length === 0 && (
             <div style={{ padding: '12px 10px', color: 'rgba(148,233,255,0.3)', letterSpacing: '0.15em' }}>
               NO TASKS THIS SESSION — SUBMIT WORK VIA VOICE OR API

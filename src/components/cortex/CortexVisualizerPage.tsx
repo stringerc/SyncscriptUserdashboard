@@ -1697,7 +1697,7 @@ export default function CortexVisualizerPage() {
                 {tasks.filter(t => t.status === 'running' || t.status === 'queued').length} ACTIVE · CLICK TO EXPAND
               </span>
             </div>
-            <div style={{ height: missionH, overflowY: 'auto', scrollbarWidth: 'thin' }}>
+            <div className="ambient-scrollbar" style={{ height: missionH, overflowY: 'auto', scrollbarWidth: 'thin' }}>
               {tasks.length === 0 && (
                 <div style={{ padding: '12px 10px', color: 'rgba(148,233,255,0.3)', letterSpacing: '0.15em' }}>NO TASKS THIS SESSION</div>
               )}
@@ -1770,7 +1770,7 @@ export default function CortexVisualizerPage() {
                 }}
               >ESC / CLOSE</button>
             </div>
-            <div style={{ flex: 1, overflowY: 'auto', scrollbarWidth: 'thin' }}>
+            <div className="ambient-scrollbar" style={{ flex: 1, overflowY: 'auto', scrollbarWidth: 'thin' }}>
               {(agentCrew.tasks || []).length === 0 && (
                 <div style={{ padding: '30px', textAlign: 'center', fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, letterSpacing: '0.2em', color: 'rgba(148,233,255,0.35)' }}>
                   NO TASKS RECORDED — THE FLEET IS IDLE
