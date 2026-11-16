@@ -2,7 +2,7 @@
 // Usage: node browser-shot.mjs [urlSubstring] [outPath]
 // Defaults: prefer pinterest.com tab, else reddit.com, else first tab.
 // Saves PNG + writes storefront/browser/latest.txt timestamp.
-import { chromium } from '/Users/Apple/.cursor/mcp-servers/google-flow-browser-mcp/node_modules/playwright-core/index.mjs';
+import { chromium } from 'playwright-core';
 import fs from 'node:fs';
 import path from 'node:path';
 

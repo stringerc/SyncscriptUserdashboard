@@ -1,5 +1,5 @@
 // Full pin creation: upload image, fill fields, publish to selected board.
-import { chromium } from '/Users/Apple/.cursor/mcp-servers/google-flow-browser-mcp/node_modules/playwright-core/index.mjs';
+import { chromium } from 'playwright-core';
 
 const [img, title, desc, link] = process.argv.slice(2);
 const browser = await chromium.connectOverCDP('http://localhost:9222');

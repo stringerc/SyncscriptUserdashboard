@@ -1,4 +1,4 @@
-import { chromium } from '/Users/Apple/.cursor/mcp-servers/google-flow-browser-mcp/node_modules/playwright-core/index.mjs';
+import { chromium } from 'playwright-core';
 import { readFileSync } from 'fs';
 const [permalink, file] = process.argv.slice(2);
 const text = readFileSync(file, 'utf8').trim();

@@ -12,7 +12,7 @@ const stripe = new Stripe(process.env.STRIPE_SECRET_KEY || '', {
 });
 
 async function loadCatalog() {
-  const catalogPath = join('/Users/Apple/syncscript/src/lib/storefront', 'generated-catalog.ts');
+  const catalogPath = join(join(process.env.SYNCSPACE_ROOT || process.cwd(), 'src/lib/storefront'), 'generated-catalog.ts');
   const content = await readFile(catalogPath, 'utf-8');
   const match = content.match(/export const PRODUCT_CATALOG: Product\[\] = (\[[\s\S]*?\]);/);
   if (!match) throw new Error('Could not extract catalog');
@@ -101,7 +101,7 @@ async function main() {
   }
   
   // Update catalog with Stripe IDs
-  const catalogPath = join('/Users/Apple/syncscript/src/lib/storefront', 'generated-catalog.ts');
+  const catalogPath = join(join(process.env.SYNCSPACE_ROOT || process.cwd(), 'src/lib/storefront'), 'generated-catalog.ts');
   const content = await readFile(catalogPath, 'utf-8');
   const updatedContent = content.replace(
     /export const PRODUCT_CATALOG: Product\[\] = \[[\s\S]*?\];/,

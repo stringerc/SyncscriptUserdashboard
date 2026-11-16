@@ -96,20 +96,20 @@ async function main() {
   }
   
   // Load products from generation summary
-  const summaryPath = join('/Users/Apple/projects/income/first-dollar/production/products_500', 'generation_summary_500.json');
+  const summaryPath = join(join(process.env.INCOME_ROOT || '/Users/Apple/projects/income/first-dollar', 'production/products_500'), 'generation_summary_500.json');
   const data = JSON.parse(await readFile(summaryPath, 'utf-8'));
   
   const products = data.products.map(p => ({
     name: p.product.replace(/\*+/g, '').trim(),
     description: `${p.script_count} production-ready automation scripts. Verifiers, debug, provisioning, Action Gate safety. MIT License.`,
     price: p.price,
-    zipPath: join('/Users/Apple/projects/income/first-dollar/production/products_500', p.zip),
+    zipPath: join(join(process.env.INCOME_ROOT || '/Users/Apple/projects/income/first-dollar', 'production/products_500'), p.zip),
     slug: p.slug,
     tags: ['automation', 'scripts', 'devops', 'terminal', 'production-ready'],
   }));
   
   // Filter to only products not yet uploaded (check log)
-  const logPath = '/Users/Apple/projects/income/first-dollar/GUMROAD_UPLOAD_LOG.md';
+  const logPath = join(process.env.INCOME_ROOT || '/Users/Apple/projects/income/first-dollar', 'GUMROAD_UPLOAD_LOG.md');
   let uploadedSlugs = new Set();
   try {
     const log = await readFile(logPath, 'utf-8');

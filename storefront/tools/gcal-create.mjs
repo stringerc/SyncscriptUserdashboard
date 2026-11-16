@@ -1,7 +1,7 @@
 // gcal-create.mjs — create a Google Calendar event via the automation Chrome (CDP).
 // Usage: node gcal-create.mjs "<title>" "<startISO>" "<endISO>" "[description]" [--allday]
 // Dates: RFC3339 e.g. 2026-11-16T09:30:00-05:00. All-day uses YYYY-MM-DD.
-import { chromium } from '/Users/Apple/.cursor/mcp-servers/google-flow-browser-mcp/node_modules/playwright-core/index.mjs';
+import { chromium } from 'playwright-core';
 
 const args = process.argv.slice(2);
 const allday = args.includes('--allday');

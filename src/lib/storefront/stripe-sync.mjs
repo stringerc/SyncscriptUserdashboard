@@ -3,7 +3,7 @@ import { join } from "node:path";
 import Stripe from "stripe";
 
 // Load generated catalog
-const catalogPath = join('/Users/Apple/syncscript/src/lib/storefront', 'generated-catalog.ts');
+const catalogPath = join(join(process.env.SYNCSPACE_ROOT || process.cwd(), 'src/lib/storefront'), 'generated-catalog.ts');
 const catalogContent = await readFile(catalogPath, 'utf-8');
 
 // Extract PRODUCT_CATALOG array from the generated file

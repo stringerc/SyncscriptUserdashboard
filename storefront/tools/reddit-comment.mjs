@@ -1,6 +1,6 @@
 // Post a comment on a Reddit thread via logged-in CDP Chrome.
 // Usage: node reddit-comment.mjs <permalink> <comment-file>
-import { chromium } from '/Users/Apple/.cursor/mcp-servers/google-flow-browser-mcp/node_modules/playwright-core/index.mjs';
+import { chromium } from 'playwright-core';
 import { readFileSync } from 'fs';
 const [link, file] = process.argv.slice(2);
 const text = readFileSync(file, 'utf8').trim();

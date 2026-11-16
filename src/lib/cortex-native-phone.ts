@@ -50,7 +50,7 @@ export interface MeetingDossier {
 
 export class CortexNativePhoneService {
   private static instance: CortexNativePhoneService | null = null;
-  private readonly workspaceRoot = '/Users/Apple/syncscript';
+  private readonly workspaceRoot = process.env.SYNCSPACE_ROOT || process.cwd();
   private activeSession: PhoneCallSession | null = null;
 
   public static getInstance(): CortexNativePhoneService {

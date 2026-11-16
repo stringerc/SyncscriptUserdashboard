@@ -825,7 +825,7 @@ Return JSON:
     }
 
     try {
-      const skillsDir = '/Users/Apple/.openclaw/skills';
+      const skillsDir = process.env.OPENCLAW_SKILLS_DIR || `${process.env.HOME || ''}/.openclaw/skills`;
       const toolDir = `${skillsDir}/${tool.spec.name}`;
       
       // Create skill directory structure

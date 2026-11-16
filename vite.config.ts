@@ -9399,6 +9399,10 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
           return res.end();
         }
         try {
+          if (process.platform !== 'darwin') {
+            res.writeHead(503, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+            return res.end(JSON.stringify({ ok: false, error: 'gmail live-inbox requires macOS (AppleScript Chrome bridge) — unavailable on this host' }));
+          }
           const { getLiveGmailInbox } = await import('./scripts/cortex-gmail-live.mjs');
           const data = await getLiveGmailInbox();
           res.writeHead(200, {
@@ -9430,6 +9434,10 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
         req.on('data', (chunk: any) => body += chunk);
         req.on('end', async () => {
           try {
+            if (process.platform !== 'darwin') {
+              res.writeHead(503, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+              return res.end(JSON.stringify({ ok: false, error: 'gmail triage requires macOS (AppleScript Chrome bridge) — unavailable on this host' }));
+            }
             const { action, params } = JSON.parse(body || '{}');
             const { executeGmailTriage } = await import('./scripts/cortex-gmail-live.mjs');
             const result = await executeGmailTriage(action || 'purge_promotions', params || {});

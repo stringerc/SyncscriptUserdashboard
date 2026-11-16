@@ -27,7 +27,7 @@ const s3 = new S3Client({
 });
 
 async function uploadAllProducts() {
-  const productsDir = '/Users/Apple/projects/income/first-dollar/production/products_500';
+  const productsDir = join(process.env.INCOME_ROOT || '/Users/Apple/projects/income/first-dollar', 'production/products_500');
   const files = await readdir(productsDir);
   const zipFiles = files.filter(f => f.endsWith('.zip'));
   

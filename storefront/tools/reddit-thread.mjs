@@ -1,4 +1,4 @@
-import { chromium } from '/Users/Apple/.cursor/mcp-servers/google-flow-browser-mcp/node_modules/playwright-core/index.mjs';
+import { chromium } from 'playwright-core';
 const link = process.argv[2];
 const browser = await chromium.connectOverCDP('http://localhost:9222');
 const page = browser.contexts()[0].pages().find(p => p.url().includes('reddit.com'));

@@ -132,8 +132,8 @@ function buildTags(name: string, tier: string): string[] {
 }
 
 async function main() {
-  const summaryPath = join('/Users/Apple/projects/income/first-dollar/production/products_500', 'generation_summary_500.json');
-  const outputPath = join('/Users/Apple/syncscript/src/lib/storefront', 'generated-catalog.ts');
+  const summaryPath = join(process.env.INCOME_ROOT || '/Users/Apple/projects/income/first-dollar', 'production/products_500', 'generation_summary_500.json');
+  const outputPath = join(process.env.SYNCSPACE_ROOT || process.cwd(), 'src/lib/storefront', 'generated-catalog.ts');
   
   const raw = await readFile(summaryPath, 'utf-8');
   const data = JSON.parse(raw);

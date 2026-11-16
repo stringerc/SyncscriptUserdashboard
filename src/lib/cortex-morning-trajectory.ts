@@ -44,7 +44,7 @@ export interface MorningTrajectoryBrief {
 
 export class CortexMorningTrajectoryService {
   private static instance: CortexMorningTrajectoryService | null = null;
-  private readonly workspaceRoot = '/Users/Apple/syncscript';
+  private readonly workspaceRoot = process.env.SYNCSPACE_ROOT || process.cwd();
   private cachedBrief: MorningTrajectoryBrief | null = null;
 
   public static getInstance(): CortexMorningTrajectoryService {
