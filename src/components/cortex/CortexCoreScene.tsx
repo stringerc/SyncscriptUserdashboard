@@ -562,11 +562,11 @@ function OrbitRing({ spec, live, index }: { spec: RingSpec; live: React.MutableR
  *  read by the DOM inspect card so it rides the agent's orbit. */
 export const agentScreenAnchors: Record<string, { x: number; y: number; behind: boolean }> = {};
 
-const SAT_COUNT = 10;
+const SAT_COUNT = 16;
 const SAT_AGENT_COLORS: Record<string, string> = {
-  sentinel: '#67e8f9', scout: '#e879f9', librarian: '#fbbf24', builder: '#34d399', reviewer: '#fb7185', runner: '#a3e635', distributor: '#fb923c', warden: '#818cf8',
+  sentinel: '#67e8f9', scout: '#e879f9', librarian: '#fbbf24', builder: '#34d399', reviewer: '#fb7185', runner: '#a3e635', distributor: '#fb923c', warden: '#818cf8', prep: '#f472b6', forecaster: '#2dd4bf',
 };
-const SAT_AGENT_ORDER = ['sentinel', 'scout', 'librarian', 'builder', 'reviewer', 'runner', 'distributor', 'warden'];
+const SAT_AGENT_ORDER = ['sentinel', 'scout', 'librarian', 'builder', 'reviewer', 'runner', 'distributor', 'warden', 'prep', 'forecaster'];
 const satSpawnHue = (id: string) => {
   let h = 0;
   for (const ch of id) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
