@@ -729,12 +729,14 @@ async function socialScanWorker(ctx: AgentContext) {
   const url = str(input.url);
   const query = str(input.query || input.text);
   const channel = str(input.channel || 'web').toLowerCase();
-  const action = str(input.action || 'search').toLowerCase();
+  let action = str(input.action || 'search').toLowerCase();
   const limit = Math.min(10, Math.max(1, Number(input.limit) || 5));
 
   if (!url && !query) throw new Error('social_scan requires input.query or input.url');
   const allowed = SOCIAL_ACTIONS[channel];
   if (!allowed) throw new Error(`social_scan: unsupported channel '${channel}'`);
+  // URL reads prefer the 'read' action when the channel supports it.
+  if (url && allowed.has('read')) action = 'read';
   if (url) {
     if (!/^https?:\/\//i.test(url)) throw new Error('social_scan url must be http(s)');
   } else if (!allowed.has(action)) {

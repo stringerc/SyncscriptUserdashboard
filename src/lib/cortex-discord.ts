@@ -412,6 +412,10 @@ export function routeAskAgent(text: string): { agentId: string; kind: string; in
     : /instagram/.test(t) ? 'instagram'
     : /linkedin/.test(t) ? 'linkedin'
     : /xiaohongshu|小红书/.test(t) ? 'xiaohongshu'
+    : /xueqiu|雪球|stock|quote|行情/.test(t) ? 'xueqiu'
+    : /podcast|xiaoyuzhou|小宇宙/.test(t) ? 'xiaoyuzhou'
+    : /job|hiring|boss直聘|boss zhipin/.test(t) ? 'boss'
+    : /facebook/.test(t) ? 'facebook'
     : /reddit|twitter|youtube|github|bilibili|instagram|linkedin|xiaohongshu|social media|comments?|posts?|thread/.test(t) ? 'web' : '';
   if (channel) return { agentId: 'scout', kind: 'social_scan', input: { ...base, query: text, channel, action: 'search' } };
   // Memory/vault lookups → LIBRARIAN recall. Personal-assistant queries
