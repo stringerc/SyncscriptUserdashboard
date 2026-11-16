@@ -26,6 +26,7 @@ import type { SpawnSpec } from './types';
 import { readArchive, type TaskArchiveRecord } from './archive';
 import { RULES_DIR, vaultFolder, listMd } from './rules';
 import { LEARNINGS_DIR } from './outcomes';
+import { fileStrategyProposals } from './strategy-proposals';
 import { cortexObsidianMemory } from '../cortex-obsidian-memory';
 
 const STATE_DIR = process.env.CORTEX_AGENTS_STATE_DIR || path.join(process.cwd(), '.cortex-runtime');
@@ -199,8 +200,12 @@ async function planWorker(ctx: AgentContext) {
     created: new Date().toISOString(), agent: 'STRATEGIST', kind: 'action-plan',
   });
 
+  // Close the loop: top actions become approvable proposals in the
+  // Initiative Inbox — STRATEGIST proposes, humans approve, BUILDER runs.
+  const filed = fileStrategyProposals({ planNote: notePath, planTaskId: ctx.task.id, actions });
+
   return {
-    plan: { note: notePath, actions, clusterCount: clusters.length, windowDays: days },
+    plan: { note: notePath, actions, clusterCount: clusters.length, windowDays: days, proposalsFiled: filed.filed, proposalsSkipped: filed.skipped },
     text: planText.slice(0, 4000),
   };
 }

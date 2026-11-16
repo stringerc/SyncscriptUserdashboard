@@ -21,6 +21,7 @@ import { deriveSomaticState, type SomaticSample } from './src/lib/cortex-somatic
 import { getAgentRuntime } from './src/lib/cortex-agents/runtime';
 import { recordAgentOutcome } from './src/lib/cortex-agents/outcomes';
 import { archiveTask, readArchive } from './src/lib/cortex-agents/archive';
+import { listStrategyProposals, decideStrategyProposal } from './src/lib/cortex-agents/strategy-proposals';
 import { registerAgentWorkers, makeEphemeralWorker, expandTaskSpec } from './src/lib/cortex-agents/workers';
 import type { RouteTier } from './src/lib/cortex-agents/types';
 import { normalizeForSpeech } from './src/lib/tts-speech-normalize';
@@ -10031,6 +10032,51 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
           res.writeHead(500);
           res.end(JSON.stringify({ ok: false, error: e?.message || 'archive read failed' }));
         }
+      });
+
+      // GET /api/cortex/agents/proposals?status=pending — STRATEGIST action
+      // plans awaiting human decision (the closed-loop approval bridge).
+      server.middlewares.use('/api/cortex/agents/proposals', (req: any, res: any, next: any) => {
+        const origin = req.headers.origin;
+        if (req.method === 'OPTIONS') {
+          res.writeHead(204, { 'Access-Control-Allow-Origin': origin || '*', 'Access-Control-Allow-Methods': 'GET, POST, OPTIONS', 'Access-Control-Allow-Headers': 'Content-Type' });
+          return res.end();
+        }
+        if (!isAllowedOrigin(origin, req.headers.host)) return next();
+        agentCors(req, res);
+        if (req.method === 'GET') {
+          try {
+            const url = new URL(req.url || '/', `http://localhost`);
+            const status = url.searchParams.get('status') || undefined;
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            return res.end(JSON.stringify({ ok: true, proposals: listStrategyProposals(status) }));
+          } catch (e: any) {
+            res.writeHead(500);
+            return res.end(JSON.stringify({ ok: false, error: e?.message || 'proposals read failed' }));
+          }
+        }
+        if (req.method === 'POST') {
+          let body = '';
+          req.on('data', (c: Buffer) => { body += c.toString(); });
+          req.on('end', () => {
+            try {
+              const parsed = JSON.parse(body || '{}');
+              const decision = String(parsed.decision || '');
+              if (!['approved', 'dismissed', 'executed', 'failed'].includes(decision)) {
+                res.writeHead(400);
+                return res.end(JSON.stringify({ ok: false, error: 'decision must be approved|dismissed|executed|failed' }));
+              }
+              const p = decideStrategyProposal(String(parsed.id || ''), decision as any, parsed.note);
+              res.writeHead(p ? 200 : 404, { 'Content-Type': 'application/json' });
+              res.end(JSON.stringify(p ? { ok: true, proposal: p } : { ok: false, error: 'proposal not found or already decided' }));
+            } catch (e: any) {
+              res.writeHead(500);
+              res.end(JSON.stringify({ ok: false, error: e?.message || 'decide failed' }));
+            }
+          });
+          return;
+        }
+        return next();
       });
 
       // POST /api/cortex/agents/spec — expand a terse instruction into a task

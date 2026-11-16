@@ -264,16 +264,129 @@ function AutonomyPanel() {
   );
 }
 
+interface StrategyProposal {
+  id: string;
+  planNote: string;
+  title: string;
+  actionClass: string;
+  agentId: string;
+  kind: string;
+  instruction: string;
+  evidence: string[];
+  status: string;
+  createdAt: number;
+  decisionNote?: string;
+}
+
+const CLASS_COLOR: Record<string, string> = {
+  infra: C.red, code: C.amber, eval: C.cyan, config: C.amber,
+  process: C.dim, prompt: C.cyan, skill: C.green, rule: C.green,
+};
+
+function StrategyProposalCard({ p, onDecided }: { p: StrategyProposal; onDecided: () => void }) {
+  const [busy, setBusy] = useState(false);
+  const [expanded, setExpanded] = useState(false);
+  const [note, setNote] = useState('');
+
+  const decide = async (decision: 'approved' | 'dismissed', dispatchTask = false) => {
+    setBusy(true);
+    try {
+      if (dispatchTask) {
+        const t = await fetch('/api/cortex/agents/task', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ agentId: p.agentId, kind: p.kind, title: p.title.slice(0, 120), input: { instruction: p.instruction } }),
+        }).then(r => r.json()).catch(() => null);
+        await fetch('/api/cortex/agents/proposals', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id: p.id, decision, note: t?.task?.id ? `dispatched ${t.task.id}` : 'dispatch failed' }),
+        });
+        setNote(t?.ok === false ? `dispatch rejected: ${t.error}` : `dispatched to ${p.agentId}`);
+      } else {
+        await fetch('/api/cortex/agents/proposals', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id: p.id, decision }),
+        });
+      }
+      onDecided();
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div style={{
+      border: `1px solid ${C.border}`, borderLeft: `3px solid ${CLASS_COLOR[p.actionClass] || C.dim}`,
+      borderRadius: 8, padding: '10px 12px', background: C.surface, marginBottom: 8,
+    }}>
+      <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+            <span style={{ fontSize: 9, fontFamily: MONO, color: CLASS_COLOR[p.actionClass] || C.dim, border: `1px solid ${(CLASS_COLOR[p.actionClass] || C.dim)}55`, borderRadius: 3, padding: '0 4px' }}>
+              {p.actionClass.toUpperCase()}
+            </span>
+            <span style={{ fontSize: 12, fontWeight: 600, color: C.text, fontFamily: MONO }}>{p.title}</span>
+          </div>
+          <div style={{ fontSize: 9, color: C.dim, fontFamily: MONO, marginTop: 4 }}>
+            STRATEGIST plan · → {p.agentId} · {timeAgo(p.createdAt)}
+            {p.planNote ? ` · ${p.planNote.split('/').pop()}` : ''}
+          </div>
+          {p.evidence?.length > 0 && (
+            <div style={{ fontSize: 9, color: C.dim, fontFamily: MONO, marginTop: 4, opacity: 0.75 }}>
+              evidence: {p.evidence.join(', ').slice(0, 160)}
+            </div>
+          )}
+          {note && <div style={{ fontSize: 9, color: C.cyan, fontFamily: MONO, marginTop: 4 }}>{note}</div>}
+        </div>
+        <button onClick={() => decide('dismissed')} disabled={busy} title="Dismiss"
+          style={{ background: 'none', border: 'none', color: C.dim, cursor: 'pointer', padding: 4 }}><X size={13} /></button>
+      </div>
+      <div style={{ display: 'flex', gap: 6, marginTop: 8, alignItems: 'center' }}>
+        <button onClick={() => setExpanded(v => !v)}
+          style={{ background: 'none', border: 'none', color: C.amber, fontSize: 10, fontFamily: MONO, cursor: 'pointer', padding: 0 }}>
+          {expanded ? '▾ hide instruction' : '▸ review instruction'}
+        </button>
+        <span style={{ flex: 1 }} />
+        <button onClick={() => decide('approved', true)} disabled={busy}
+          style={{
+            background: `${C.green}18`, color: C.green, border: `1px solid ${C.green}55`, borderRadius: 4,
+            fontSize: 10, fontFamily: MONO, padding: '3px 10px', cursor: busy ? 'wait' : 'pointer',
+          }}>
+          {busy ? '…' : `Approve → ${p.agentId}`}
+        </button>
+      </div>
+      {expanded && (
+        <pre style={{ fontSize: 9, color: C.dim, fontFamily: MONO, background: 'rgba(0,0,0,0.3)', padding: 6, borderRadius: 4, overflow: 'auto', maxHeight: 120, marginTop: 6, whiteSpace: 'pre-wrap' }}>
+          {p.instruction}
+        </pre>
+      )}
+    </div>
+  );
+}
+
 export function CortexInitiativeInbox() {
   const engine = getCortexProactiveInitiative();
   const ledger = getCortexTrustLedger();
   const [tab, setTab] = useState<'proposals' | 'activity' | 'autonomy'>('proposals');
   const [tick, setTick] = useState(0);
+  const [strategyProps, setStrategyProps] = useState<StrategyProposal[]>([]);
 
   useEffect(() => {
     const u1 = engine.subscribe(() => setTick(t => t + 1));
     const u2 = ledger.subscribe(() => setTick(t => t + 1));
     return () => { u1(); u2(); };
+  }, []);
+
+  // STRATEGIST action plans — the fleet's proposal queue. Polled because
+  // plans are filed server-side by agent tasks, outside the client engine.
+  useEffect(() => {
+    let alive = true;
+    const load = () => fetch('/api/cortex/agents/proposals?status=pending', { cache: 'no-store' })
+      .then(r => r.json())
+      .then(j => { if (alive && j?.ok) setStrategyProps(j.proposals || []); })
+      .catch(() => {});
+    load();
+    const iv = setInterval(load, 30_000);
+    return () => { alive = false; clearInterval(iv); };
   }, []);
 
   const proposals = useMemo(() => engine.getPendingProposals(), [tick]);
@@ -315,6 +428,17 @@ export function CortexInitiativeInbox() {
       <div style={{ flex: 1, overflowY: 'auto' }}>
         {tab === 'proposals' && (
           <>
+            {strategyProps.length > 0 && (
+              <div style={{ marginBottom: 12 }}>
+                <div style={{ fontSize: 9, color: C.cyan, fontFamily: MONO, letterSpacing: 1, marginBottom: 6, textTransform: 'uppercase' }}>
+                  Strategist action plans
+                </div>
+                {strategyProps.map(p => (
+                  <StrategyProposalCard key={p.id} p={p}
+                    onDecided={() => setStrategyProps(prev => prev.filter(x => x.id !== p.id))} />
+                ))}
+              </div>
+            )}
             {inFlight.length > 0 && (
               <div style={{ marginBottom: 10 }}>
                 <div style={{ fontSize: 9, color: C.dim, fontFamily: MONO, letterSpacing: 1, marginBottom: 6, textTransform: 'uppercase' }}>
