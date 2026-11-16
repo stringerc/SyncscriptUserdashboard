@@ -296,11 +296,12 @@ function StrategyProposalCard({ p, onDecided }: { p: StrategyProposal; onDecided
           method: 'POST', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ agentId: p.agentId, kind: p.kind, title: p.title.slice(0, 120), input: { instruction: p.instruction } }),
         }).then(r => r.json()).catch(() => null);
+        const tid = t?.task?.id ? String(t.task.id) : undefined;
         await fetch('/api/cortex/agents/proposals', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ id: p.id, decision, note: t?.task?.id ? `dispatched ${t.task.id}` : 'dispatch failed' }),
+          body: JSON.stringify({ id: p.id, decision, taskId: tid, note: tid ? `dispatched ${tid}` : 'dispatch failed' }),
         });
-        setNote(t?.ok === false ? `dispatch rejected: ${t.error}` : `dispatched to ${p.agentId}`);
+        setNote(t?.ok === false ? `dispatch rejected: ${t.error}` : `dispatched to ${p.agentId}${tid ? ` (${tid})` : ''}`);
       } else {
         await fetch('/api/cortex/agents/proposals', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },

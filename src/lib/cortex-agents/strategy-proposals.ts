@@ -34,6 +34,8 @@ export interface StrategyProposal {
   createdAt: number;
   decidedAt?: number;
   decisionNote?: string;
+  /** Agent task dispatched on approval — reconciled to executed/failed. */
+  dispatchedTaskId?: string;
 }
 
 function readAll(): StrategyProposal[] {
@@ -108,13 +110,49 @@ export function listStrategyProposals(status?: string): StrategyProposal[] {
   return filtered.sort((a, b) => b.createdAt - a.createdAt).slice(0, 50);
 }
 
-export function decideStrategyProposal(id: string, decision: 'approved' | 'dismissed' | 'executed' | 'failed', note?: string): StrategyProposal | null {
+export function decideStrategyProposal(id: string, decision: 'approved' | 'dismissed' | 'executed' | 'failed', note?: string, dispatchedTaskId?: string): StrategyProposal | null {
   const all = readAll();
   const p = all.find((x) => x.id === id);
   if (!p || p.status !== 'pending' && p.status !== 'approved') return null;
   p.status = decision;
   p.decidedAt = Date.now();
   if (note) p.decisionNote = note.slice(0, 300);
+  if (dispatchedTaskId) p.dispatchedTaskId = dispatchedTaskId;
   writeAll(all);
   return p;
+}
+
+/**
+ * Reconcile approved proposals against terminal task states. Called on
+ * read so the Inbox reflects reality: approved + task failed → 'failed',
+ * task completed → 'executed'. Never throws.
+ */
+export function reconcileStrategyProposals(
+  taskStatus: (taskId: string) => { status: string; error?: string; result?: unknown } | null,
+): number {
+  const all = readAll();
+  let changed = 0;
+  for (const p of all) {
+    if (p.status !== 'approved') continue;
+    // Backfill: v1 stored the task id inside decisionNote.
+    if (!p.dispatchedTaskId) {
+      const m = p.decisionNote?.match(/dispatched\s+(task-[a-z0-9-]+)/i);
+      if (m) p.dispatchedTaskId = m[1];
+    }
+    if (!p.dispatchedTaskId) continue;
+    const t = taskStatus(p.dispatchedTaskId);
+    if (!t) continue;
+    if (t.status === 'completed') {
+      p.status = 'executed';
+      p.decidedAt = Date.now();
+      changed++;
+    } else if (['failed', 'vetoed', 'cancelled'].includes(t.status)) {
+      p.status = 'failed';
+      p.decidedAt = Date.now();
+      p.decisionNote = `task ${t.status}${t.error ? `: ${String(t.error).slice(0, 200)}` : ''}`;
+      changed++;
+    }
+  }
+  if (changed) writeAll(all);
+  return changed;
 }

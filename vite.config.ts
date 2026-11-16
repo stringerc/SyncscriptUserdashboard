@@ -21,7 +21,7 @@ import { deriveSomaticState, type SomaticSample } from './src/lib/cortex-somatic
 import { getAgentRuntime } from './src/lib/cortex-agents/runtime';
 import { recordAgentOutcome } from './src/lib/cortex-agents/outcomes';
 import { archiveTask, readArchive } from './src/lib/cortex-agents/archive';
-import { listStrategyProposals, decideStrategyProposal } from './src/lib/cortex-agents/strategy-proposals';
+import { listStrategyProposals, decideStrategyProposal, reconcileStrategyProposals } from './src/lib/cortex-agents/strategy-proposals';
 import { registerAgentWorkers, makeEphemeralWorker, expandTaskSpec } from './src/lib/cortex-agents/workers';
 import type { RouteTier } from './src/lib/cortex-agents/types';
 import { normalizeForSpeech } from './src/lib/tts-speech-normalize';
@@ -10048,6 +10048,15 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
           try {
             const url = new URL(req.url || '/', `http://localhost`);
             const status = url.searchParams.get('status') || undefined;
+            // Reconcile approved proposals against their dispatched tasks —
+            // 'approved' must not linger when the task already finished.
+            reconcileStrategyProposals((taskId) => {
+              const t = agentRuntime.snapshot().tasks.find((x: any) => x.id === taskId);
+              if (t) return { status: t.status, error: t.error, result: t.result };
+              // Evicted from the 200-task window? The durable archive still has it.
+              const a = readArchive({ limit: 500 }).find((r) => r.id === taskId);
+              return a ? { status: a.status, error: a.error, result: a.result } : null;
+            });
             res.writeHead(200, { 'Content-Type': 'application/json' });
             return res.end(JSON.stringify({ ok: true, proposals: listStrategyProposals(status) }));
           } catch (e: any) {
@@ -10066,7 +10075,7 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
                 res.writeHead(400);
                 return res.end(JSON.stringify({ ok: false, error: 'decision must be approved|dismissed|executed|failed' }));
               }
-              const p = decideStrategyProposal(String(parsed.id || ''), decision as any, parsed.note);
+              const p = decideStrategyProposal(String(parsed.id || ''), decision as any, parsed.note, parsed.taskId ? String(parsed.taskId) : undefined);
               res.writeHead(p ? 200 : 404, { 'Content-Type': 'application/json' });
               res.end(JSON.stringify(p ? { ok: true, proposal: p } : { ok: false, error: 'proposal not found or already decided' }));
             } catch (e: any) {
