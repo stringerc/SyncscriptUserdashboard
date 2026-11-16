@@ -660,11 +660,18 @@ export class AgentRuntime {
         .finally(() => {
           this.running.delete(task.id);
           this.persist();
-          this.pump(agentId);
+          // Global cap is shared across agents: a task queued behind
+          // GLOBAL_CONCURRENCY only gets pumped when ITS agent finishes —
+          // other agents' completions must drain every queue.
+          this.pumpAll();
         });
     }
     if (!queue.length && !this.activeCount(agentId) && agent.status === 'working')
       this.setStatus(agentId, 'idle');
+  }
+
+  private pumpAll() {
+    for (const agentId of this.queues.keys()) this.pump(agentId);
   }
 
   /**
