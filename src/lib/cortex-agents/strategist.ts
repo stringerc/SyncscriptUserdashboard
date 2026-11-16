@@ -141,7 +141,7 @@ async function planWorker(ctx: AgentContext) {
   if (specPath) {
     try {
       const abs = path.isAbsolute(specPath) ? specPath : path.join(process.cwd(), specPath);
-      specExcerpt = fs.readFileSync(abs, 'utf-8').slice(0, 6000);
+      specExcerpt = fs.readFileSync(abs, 'utf-8').slice(0, 4000);
     } catch { specExcerpt = ''; }
   }
   const clusterDigest = clusters.slice(0, 10).map((c) => ({
@@ -166,9 +166,12 @@ async function planWorker(ctx: AgentContext) {
     `\nEmit markdown: ## Ranked actions (1..N), each with [class] title — evidence: <refs> — why — risk. Then ## What we should NOT do yet. Then ## Evidence gaps.`,
   ].filter(Boolean).join('\n');
 
+  const planModel = typeof ctx.task.input.model === 'string' && ctx.task.input.model.includes(':')
+    ? ctx.task.input.model : undefined;
   const planText = await ctx.llm({
     tier: 'reason',
-    maxTokens: 1400,
+    model: planModel,
+    maxTokens: 3000,
     messages: [
       { role: 'system', content: 'You are STRATEGIST — evidence-cited fleet synthesis. Concrete, ranked, honest about uncertainty.' },
       { role: 'user', content: prompt },
@@ -177,7 +180,7 @@ async function planWorker(ctx: AgentContext) {
 
   // Extract ranked actions deterministically for the structured result.
   const actions = planText.split('\n')
-    .filter((l) => /^\s*(?:\d+[.)]|[-*])\s+.*\[(rule|prompt|skill|eval|config|code|infra|process)\]/i.test(l))
+    .filter((l) => /^\s*(?:\d+[.)]|[-*])\s+.*\[(rule|prompt|skill|eval|config|code|infra|process)[^\]]*\]/i.test(l))
     .map((l) => l.replace(/^\s*(?:\d+[.)]|[-*])\s+/, '').trim().slice(0, 300))
     .slice(0, 12);
 

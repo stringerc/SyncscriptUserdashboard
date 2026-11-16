@@ -22,7 +22,7 @@ export interface AgentContext {
   /** Report 0-1 progress; emits task.progress events. */
   progress(p: number): void;
   /** Matrix-routed LLM completion (calls the /api/cortex/agents/llm endpoint). */
-  llm(opts: { tier?: 'fast' | 'reason' | 'deep'; messages: { role: string; content: string }[]; maxTokens?: number }): Promise<string>;
+  llm(opts: { tier?: 'fast' | 'reason' | 'deep'; model?: string; messages: { role: string; content: string }[]; maxTokens?: number }): Promise<string>;
   /** Emit a custom event onto the bus (e.g. worker-specific telemetry). */
   emit(e: AgentEvent): void;
   signal: AbortSignal;

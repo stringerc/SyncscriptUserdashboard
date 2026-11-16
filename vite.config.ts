@@ -10634,7 +10634,7 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', 'x-api-key': prov.key, 'anthropic-version': '2023-06-01' },
                 body: JSON.stringify({ model: cand.model, system: chatMessages.find(m => m.role === 'system')?.content || '', messages: chatMessages.filter(m => m.role !== 'system'), max_tokens: tokens }),
-                signal: AbortSignal.timeout(30_000),
+                signal: AbortSignal.timeout(55_000),
               });
               if (!r.ok) return { httpStatus: r.status, j: null };
               const j: any = await r.json();
@@ -10645,7 +10645,7 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
               method: 'POST',
               headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${prov.key}` },
               body: JSON.stringify({ model: cand.model, messages: chatMessages, max_tokens: tokens, temperature: 0.3, stream: false }),
-              signal: AbortSignal.timeout(30_000),
+              signal: AbortSignal.timeout(55_000),
             });
             if (!r.ok) return { httpStatus: r.status, j: null };
             const j: any = await r.json();
