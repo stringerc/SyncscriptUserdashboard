@@ -35,15 +35,15 @@ export const SEED_MATRIX: Record<RouteTier, ModelCandidate[]> = {
   reason: [
     { provider: 'nvidia-nim-550b', model: 'nvidia/nemotron-3-ultra-550b-a55b' },
     { provider: 'free-proxy', model: 'claude-fable-5-2' },
-    { provider: 'nvidia-nim', model: 'nvidia/nemotron-3-super-120b-a12b' },
     { provider: 'nvidia-nim', model: 'nvidia/nemotron-3.5-super-vl-120b-a12b' },
+    { provider: 'nvidia-nim', model: 'stepfun-ai/step-5-preview' },
     { provider: 'openrouter', model: 'meta-llama/llama-3.3-70b-instruct' },
   ],
   deep: [
     { provider: 'nvidia-nim-550b', model: 'nvidia/nemotron-3-ultra-550b-a55b' },
     { provider: 'deepseek', model: 'deepseek-chat' },
-    { provider: 'nvidia-nim', model: 'nvidia/llama-3.1-nemotron-ultra-253b-v1' },
-    { provider: 'nvidia-nim', model: 'moonshotai/kimi-k2.6' },
+    { provider: 'nvidia-nim', model: 'mistralai/mistral-large-4-1t-a52b' },
+    { provider: 'nvidia-nim', model: 'deepseek-ai/deepseek-v4.1-flash' },
   ],
 };
 
