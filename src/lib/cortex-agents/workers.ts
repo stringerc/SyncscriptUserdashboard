@@ -21,6 +21,8 @@ import { runForecastCycle, type RoutedForecast, type ProbeDeps } from './forecas
 import { makePrepWorker } from './prep';
 import { getCortexProactiveInitiative } from '../cortex-proactive-initiative';
 import { cortexObsidianMemory } from '../cortex-obsidian-memory';
+import { relevantRules, rulesBlock, RULES_DIR, vaultFolder, listMd } from './rules';
+import { LEARNINGS_DIR } from './outcomes';
 
 const PORT = process.env.PORT ? parseInt(process.env.PORT) : 5173;
 const BASE = `http://127.0.0.1:${PORT}`;
@@ -212,8 +214,6 @@ function specBlock(spec: TaskSpec | null): string {
 // Builders/ephemeral agents then inject matching rules into their plan
 // prompt, so accepted outcomes shape how future work gets cut.
 
-const LEARNINGS_DIR = '03 - Learnings';
-const RULES_DIR = '04 - Rules';
 const DISTILL_MIN_CLUSTER = 3;
 const DISTILL_MAX_RULES = 3;
 
@@ -225,19 +225,6 @@ interface AgentOutcome {
   outcome: string;
   retryLine: string;
   summary: string;
-}
-
-function vaultFolder(folder: string): string | null {
-  try {
-    const p = path.join(cortexObsidianMemory.getVaultPath(), folder);
-    return fs.existsSync(p) ? p : null;
-  } catch { return null; }
-}
-
-function listMd(dir: string | null): string[] {
-  if (!dir) return [];
-  try { return fs.readdirSync(dir).filter((f) => f.endsWith('.md')); }
-  catch { return []; }
 }
 
 function parseOutcomeNote(file: string, content: string): AgentOutcome | null {
@@ -275,40 +262,6 @@ function loadOutcomes(): AgentOutcome[] {
     } catch { /* skip unreadable notes */ }
   }
   return out;
-}
-
-/** Extract the rule text from a distilled-rule note (first heading or line). */
-function ruleText(content: string): string {
-  const heading = content.match(/^#\s*(?:Rule|DISTILLED RULE):?\s*(.+)$/im)?.[1];
-  if (heading) return heading.trim().slice(0, 220);
-  const firstLine = content.split('\n').map((l) => l.trim()).find((l) => l && !l.startsWith('#') && !l.startsWith('>') && !l.startsWith('---'));
-  return (firstLine || '').slice(0, 220);
-}
-
-/** Deterministic token-overlap scorer — no LLM, no network. */
-function tokenScore(text: string, tokens: Set<string>): number {
-  let n = 0;
-  for (const t of tokens) if (text.toLowerCase().includes(t)) n++;
-  return n;
-}
-
-/** Rules relevant to a task instruction, formatted for a system prompt. */
-function relevantRules(instruction: string, limit = 3): string {
-  const dir = vaultFolder(RULES_DIR);
-  const files = listMd(dir).slice(-40);
-  if (!files.length) return '';
-  const tokens = new Set(instruction.toLowerCase().split(/[^a-z0-9]+/).filter((t) => t.length > 3));
-  const scored = files
-    .map((f) => {
-      try {
-        const content = fs.readFileSync(path.join(dir!, f), 'utf-8');
-        return { file: f, text: ruleText(content), score: tokenScore(content, tokens) };
-      } catch { return { file: f, text: '', score: 0 }; }
-    })
-    .filter((r) => r.text && r.score > 0)
-    .sort((a, b) => b.score - a.score)
-    .slice(0, limit);
-  return scored.map((r) => `- ${r.text}`).join('\n');
 }
 
 async function distillLearnings(ctx: AgentContext): Promise<unknown> {
@@ -501,7 +454,7 @@ async function repoScanWorker(ctx: AgentContext) {
           'calendar/energy scheduling, Obsidian memory, and distribution automation.',
           'Score each repo 0-1 for fit. Output STRICT JSON: {"picks":[{"name","fit","why","action":"adopt|watch|ignore"}]}.',
           'Only include repos worth attention (fit >= 0.5). Max 8 picks. No prose outside JSON.',
-        ].join(' '),
+        ].join(' ') + rulesBlock('repo scan github fit cortex stack agent tooling', 'constraints learned from accepted agent outcomes — follow unless they conflict with the scan task'),
       },
       {
         role: 'user',
@@ -573,7 +526,7 @@ async function agentIdeasWorker(ctx: AgentContext) {
           'tools ⊆ ["read","write","exec","surface"]; modelPin.tier ∈ fast|reason|deep; dailyBudget 1-32; ttlHours 1-168.',
           'callSign UPPER-DASH. Propose NOTHING if the fleet looks healthy — an empty {"ideas":[]} is a valid, preferred answer.',
           'No prose outside JSON.',
-        ].join(' '),
+        ].join(' ') + rulesBlock('agent ideas spawn proposals capability gap fleet health', 'constraints learned from accepted agent outcomes — follow unless they conflict with the ideation task'),
       },
       {
         role: 'user',
@@ -658,7 +611,7 @@ ${p.text.slice(0, 2500)}`).join('\n\n');
     messages: [
       {
         role: 'system',
-        content: 'You are SCOUT, Cortex\'s research operative. Produce a tight, factual research brief from the provided sources. Cite source numbers. If sources conflict, say so. No filler.',
+        content: 'You are SCOUT, Cortex\'s research operative. Produce a tight, factual research brief from the provided sources. Cite source numbers. If sources conflict, say so. No filler.' + rulesBlock(query, 'constraints learned from accepted agent outcomes — follow unless they conflict with the research task'),
       },
       {
         role: 'user',
@@ -764,7 +717,7 @@ async function socialScanWorker(ctx: AgentContext) {
     messages: [
       {
         role: 'system',
-        content: `You are SCOUT, Cortex's research operative. Produce a tight, factual brief from ${doc?.channel || channel} results. Cite item numbers. Prefer recent, substantive posts over listicles. No filler.`,
+        content: `You are SCOUT, Cortex's research operative. Produce a tight, factual brief from ${doc?.channel || channel} results. Cite item numbers. Prefer recent, substantive posts over listicles. No filler.` + rulesBlock(query || url || 'social scan', 'constraints learned from accepted agent outcomes — follow unless they conflict with the research task'),
       },
       { role: 'user', content: `QUERY: ${query || url}\nCHANNEL: ${doc?.channel || channel} (backend: ${doc?.backend || 'unknown'})\n\nITEMS:\n${digest}\n\nWrite the brief.` },
     ],
@@ -811,7 +764,7 @@ const librarianWorker: WorkerHandler = async (ctx) => {
       tier: 'fast',
       maxTokens: 500,
       messages: [
-        { role: 'system', content: 'You are LIBRARIAN, Cortex\'s memory keeper. Answer from the retrieved memories only. If nothing relevant exists, say so plainly.' },
+        { role: 'system', content: 'You are LIBRARIAN, Cortex\'s memory keeper. Answer from the retrieved memories only. If nothing relevant exists, say so plainly.' + rulesBlock(query, 'constraints learned from accepted agent outcomes — follow unless they conflict with the recall task') },
         { role: 'user', content: `QUERY: ${query}\n\nMEMORY RESULTS:\n${JSON.stringify(mem).slice(0, 6000)}` },
       ],
     });
@@ -994,7 +947,7 @@ const reviewerWorker: WorkerHandler = async (ctx) => {
     messages: [
       {
         role: 'system',
-        content: 'You are REVIEWER, Cortex\'s read-only code critic. Produce a prioritized review: CRITICAL (bugs, security, data loss), WARNINGS (design, maintainability, error handling), SUGGESTIONS (style, nits). Be specific — cite file and line where possible. Never rewrite code; describe the fix in one line. If the material is clean, say so plainly. Output concise markdown.',
+        content: 'You are REVIEWER, Cortex\'s read-only code critic. Produce a prioritized review: CRITICAL (bugs, security, data loss), WARNINGS (design, maintainability, error handling), SUGGESTIONS (style, nits). Be specific — cite file and line where possible. Never rewrite code; describe the fix in one line. If the material is clean, say so plainly. Output concise markdown.' + rulesBlock(instruction || files.join(' ') || 'code review', 'constraints learned from accepted agent outcomes — follow unless they conflict with the review task'),
       },
       {
         role: 'user',
@@ -1042,7 +995,7 @@ const runnerWorker: WorkerHandler = async (ctx) => {
     messages: [
       {
         role: 'system',
-        content: 'You are RUNNER, Cortex\'s exec operative. Given a command and its output, report ONLY: what ran, whether it passed, the 3-5 most important facts (failures, errors, key numbers), and anything the operator must act on. No restating passing output. If it passed cleanly, one line is enough.',
+        content: 'You are RUNNER, Cortex\'s exec operative. Given a command and its output, report ONLY: what ran, whether it passed, the 3-5 most important facts (failures, errors, key numbers), and anything the operator must act on. No restating passing output. If it passed cleanly, one line is enough.' + rulesBlock(effective, 'constraints learned from accepted agent outcomes — follow unless they conflict with the reporting task'),
       },
       {
         role: 'user',

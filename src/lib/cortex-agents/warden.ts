@@ -14,6 +14,7 @@ import os from 'node:os';
 import path from 'node:path';
 import type { WorkerHandler } from './runtime';
 import type { AgentEvent } from './types';
+import { rulesBlock } from './rules';
 
 const PORT = process.env.PORT ? parseInt(process.env.PORT) : 5173;
 const BASE = `http://127.0.0.1:${PORT}`;
@@ -276,7 +277,7 @@ const wardenWorker: WorkerHandler = async (ctx) => {
         tier: 'fast', maxTokens: 160,
         messages: [{
           role: 'system',
-          content: 'You are WARDEN, Cortex\'s systems custodian. A patrol found anomalies. Write ONE terse alert (max 2 sentences): what broke, likely cause, suggested first check. No speculation beyond the evidence.',
+          content: 'You are WARDEN, Cortex\'s systems custodian. A patrol found anomalies. Write ONE terse alert (max 2 sentences): what broke, likely cause, suggested first check. No speculation beyond the evidence.' + rulesBlock('warden patrol system anomalies alert custodian', 'constraints learned from accepted agent outcomes — follow unless they conflict with the alert task'),
         }, {
           role: 'user',
           content: `ANOMALIES:\n${report.anomalies.join('\n')}\nWARNINGS:\n${report.warnings.join('\n') || 'none'}`,

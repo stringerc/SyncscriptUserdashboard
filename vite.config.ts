@@ -19,6 +19,7 @@ import { recordForecastOutcome, loadCalibration } from './src/lib/cortex-agents/
 import { getAutonomousVigilance } from './src/lib/cortex-autonomous-vigilance';
 import { deriveSomaticState, type SomaticSample } from './src/lib/cortex-somatic';
 import { getAgentRuntime } from './src/lib/cortex-agents/runtime';
+import { recordAgentOutcome } from './src/lib/cortex-agents/outcomes';
 import { registerAgentWorkers, makeEphemeralWorker, expandTaskSpec } from './src/lib/cortex-agents/workers';
 import type { RouteTier } from './src/lib/cortex-agents/types';
 import { normalizeForSpeech } from './src/lib/tts-speech-normalize';
@@ -1034,19 +1035,34 @@ function apiProxyPlugin(): Plugin {
         // Learning edge: accepted results feed back as vault learnings so
         // later runs inherit what worked — including retry lineage, which is
         // the constraint that actually shaped the successful attempt.
+        // Telemetry (tokens, tool calls, failure class, duration) rides
+        // along so distillation can cluster by failure mode, not just kind.
         try {
           const failedSteps = Number((task.result as any)?.failedSteps ?? 0);
-          const outcome = failedSteps > 0 ? `partial — ${failedSteps} step(s) failed/vetoed` : 'green';
+          const tel = task.telemetry as any;
+          if (tel && tel.durationMs == null && task.startedAt && task.finishedAt)
+            tel.durationMs = task.finishedAt - task.startedAt;
+          const outcome = task.status === 'failed' ? `failed — ${String(task.error || 'unknown').slice(0, 120)}`
+            : failedSteps > 0 ? `partial — ${failedSteps} step(s) failed/vetoed` : 'green';
           const retryLine = task.input?.retryOf
-            ? `\nRetry lineage: succeeded on attempt ${Number(task.input.attempt ?? 1) + 1} after prior failure: ${String(task.input.priorError || '').slice(0, 160)}`
-            : '';
-          cortexObsidianMemory.ensureVaultInitialized();
-          cortexObsidianMemory.writeNote(
-            '03 - Learnings',
-            `agent-${String(task.agentId)}-${task.kind}-${Date.now().toString(36)}`,
-            `# Agent outcome: ${agent.name} [${task.kind}]\n\n> ${new Date().toISOString().slice(0, 10)}\n\nTask: ${task.title}\nOutcome: ${outcome} via ${task.model || 'matrix'}${retryLine}\nSummary: ${String(summary).slice(0, 300)}\n\nTags: agent-outcome cortex-agents`,
-            { created: new Date().toISOString(), agent: agent.name, kind: 'agent-outcome' },
-          );
+            ? `Retry lineage: succeeded on attempt ${Number(task.input.attempt ?? 1) + 1} after prior failure: ${String(task.input.priorError || '').slice(0, 160)}`
+            : undefined;
+          recordAgentOutcome({
+            agentId: String(task.agentId),
+            agentName: agent.name,
+            kind: task.kind,
+            title: task.title,
+            outcome,
+            summary: String(summary).slice(0, 300),
+            model: task.model || 'matrix',
+            retryLine,
+            telemetry: tel ? {
+              llmCalls: tel.llmCalls, tokensIn: tel.tokensIn, tokensOut: tel.tokensOut,
+              llmMs: tel.llmMs, toolCalls: tel.toolCalls, toolFailures: tel.toolFailures,
+              durationMs: tel.durationMs, failureClass: tel.failureClass,
+            } : null,
+            source: 'runtime',
+          });
           agentOutcomesSinceDistill += 1;
           if (agentOutcomesSinceDistill >= DISTILL_EVERY) {
             agentOutcomesSinceDistill = 0;
@@ -9916,6 +9932,63 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
             agentCors(req, res);
             res.writeHead(result.ok ? 200 : 400);
             res.end(JSON.stringify(result.ok ? { ok: true, task: result.task } : { ok: false, error: result.error }));
+          } catch (e: any) {
+            agentCors(req, res);
+            res.writeHead(400);
+            res.end(JSON.stringify({ ok: false, error: e?.message || 'bad request' }));
+          }
+        });
+      });
+
+      // POST /api/cortex/agents/outcome — universal learning capture.
+      // Any agent, script, or manual session can record an outcome so the
+      // distill loop sees it: {agentId, kind, title, outcome, summary?, model?, telemetry?, source?}
+      server.middlewares.use('/api/cortex/agents/outcome', (req: any, res: any, next: any) => {
+        const origin = req.headers.origin;
+        const isAllowed = isAllowedOrigin(origin, req.headers.host);
+        if (req.method === 'OPTIONS') {
+          res.writeHead(204, { 'Access-Control-Allow-Origin': origin || '*', 'Access-Control-Allow-Methods': 'POST, OPTIONS', 'Access-Control-Allow-Headers': 'Content-Type' });
+          return res.end();
+        }
+        if (req.method !== 'POST' || !isAllowed) return next();
+        let body = '';
+        req.on('data', (c: Buffer) => { body += c.toString(); });
+        req.on('end', () => {
+          try {
+            const p = JSON.parse(body || '{}');
+            const agentId = String(p.agentId || '').slice(0, 48);
+            const kind = String(p.kind || '').slice(0, 40);
+            const title = String(p.title || p.summary || 'manual outcome').slice(0, 200);
+            const outcome = String(p.outcome || 'green').slice(0, 160);
+            if (!agentId || !kind) {
+              agentCors(req, res); res.writeHead(400);
+              return res.end(JSON.stringify({ ok: false, error: 'agentId and kind required' }));
+            }
+            const tel = (p.telemetry && typeof p.telemetry === 'object') ? p.telemetry : null;
+            const path = recordAgentOutcome({
+              agentId,
+              agentName: typeof p.agentName === 'string' ? p.agentName.slice(0, 60) : undefined,
+              kind,
+              title,
+              outcome,
+              summary: typeof p.summary === 'string' ? p.summary.slice(0, 300) : undefined,
+              model: typeof p.model === 'string' ? p.model.slice(0, 80) : undefined,
+              retryLine: typeof p.retryLine === 'string' ? p.retryLine.slice(0, 300) : undefined,
+              telemetry: tel ? {
+                llmCalls: Number(tel.llmCalls) || undefined,
+                tokensIn: Number(tel.tokensIn) || undefined,
+                tokensOut: Number(tel.tokensOut) || undefined,
+                llmMs: Number(tel.llmMs) || undefined,
+                toolCalls: Number(tel.toolCalls) || undefined,
+                toolFailures: Number(tel.toolFailures) || undefined,
+                durationMs: Number(tel.durationMs) || undefined,
+                failureClass: typeof tel.failureClass === 'string' ? tel.failureClass.slice(0, 60) : undefined,
+              } : null,
+              source: typeof p.source === 'string' ? p.source.slice(0, 40) : 'manual',
+            });
+            agentCors(req, res);
+            res.writeHead(path ? 200 : 500);
+            res.end(JSON.stringify(path ? { ok: true, path } : { ok: false, error: 'vault write failed' }));
           } catch (e: any) {
             agentCors(req, res);
             res.writeHead(400);

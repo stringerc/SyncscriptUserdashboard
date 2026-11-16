@@ -14,6 +14,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import type { WorkerHandler } from './runtime';
+import { rulesBlock } from './rules';
 
 const RUNTIME_DIR = process.env.CORTEX_AGENTS_STATE_DIR || path.join(process.cwd(), '.cortex-runtime');
 const BRIEFS_DIR = path.join(RUNTIME_DIR, 'prep-briefs');
@@ -222,7 +223,7 @@ export function makePrepWorker(deps: {
             'Every bullet MUST end with " — src: <kind>:<ref>" where kind/ref exactly matches a [kind:ref] tag in the sources.',
             'Never invent facts, names, or history. If sources are thin, write fewer bullets — an honest short brief beats a padded one.',
             'AGENDA bullets may be recommendations (no src needed only if purely logistical like "confirm agenda"), but prefer cited items.',
-          ].join('\n'),
+          ].join('\n') + rulesBlock(`meeting prep brief ${meeting.title || ''} cited sources`, 'constraints learned from accepted agent outcomes — follow unless they conflict with the prep task'),
         },
         {
           role: 'user',
