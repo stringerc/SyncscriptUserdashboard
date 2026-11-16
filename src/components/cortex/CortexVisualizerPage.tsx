@@ -1714,7 +1714,7 @@ export default function CortexVisualizerPage() {
                   if (!r) return;
                   const maxW = Math.max(220, window.innerWidth - (narrow ? 16 : 64) - 16);
                   setMissionW(Math.min(maxW, Math.max(220, r.w + (ev.clientX - r.x))));
-                  setMissionH(Math.min(520, Math.max(72, r.h + (ev.clientY - r.y))));
+                  setMissionH(Math.min(520, Math.max(72, r.h - (ev.clientY - r.y))));
                 };
                 const up = () => {
                   missionResize.current = null;
