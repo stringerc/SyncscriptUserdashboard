@@ -1697,7 +1697,7 @@ export default function CortexVisualizerPage() {
                 {tasks.filter(t => t.status === 'running' || t.status === 'queued').length} ACTIVE · CLICK TO EXPAND
               </span>
             </div>
-            <div style={{ maxHeight: missionH, overflowY: 'auto', scrollbarWidth: 'thin' }}>
+            <div style={{ height: missionH, overflowY: 'auto', scrollbarWidth: 'thin' }}>
               {tasks.length === 0 && (
                 <div style={{ padding: '12px 10px', color: 'rgba(148,233,255,0.3)', letterSpacing: '0.15em' }}>NO TASKS THIS SESSION</div>
               )}
