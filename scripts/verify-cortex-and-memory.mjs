@@ -23,6 +23,7 @@ run('cortex-full-validation', 'npx', ['tsx', 'src/lib/__tests__/cortex-full-vali
 run('cortex-openclaw-phase1', 'npx', ['vitest', 'run', 'src/lib/__tests__/cortex-openclaw-phase1.test.ts']);
 run('cortex-hermes-phase2', 'npx', ['vitest', 'run', 'src/lib/__tests__/cortex-hermes-phase2.test.ts']);
 run('cortex-phase3-continuity', 'npx', ['vitest', 'run', 'src/lib/__tests__/cortex-phase3-continuity.test.ts']);
+run('cortex-agents', 'npx', ['vitest', 'run', 'src/lib/__tests__/cortex-agents.test.ts']);
 run('cortex-chat-verification', 'node', ['scripts/verify-cortex-chat.mjs']);
 
 console.log('\n== cortex-70-validation ==');

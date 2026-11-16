@@ -34,7 +34,6 @@ export const SEED_MATRIX: Record<RouteTier, ModelCandidate[]> = {
   ],
   reason: [
     { provider: 'nvidia-nim-550b', model: 'nvidia/nemotron-3-ultra-550b-a55b' },
-    { provider: 'free-proxy', model: 'claude-fable-5-2' },
     { provider: 'nvidia-nim', model: 'nvidia/nemotron-3.5-super-vl-120b-a12b' },
     { provider: 'nvidia-nim', model: 'stepfun-ai/step-5-preview' },
     { provider: 'openrouter', model: 'meta-llama/llama-3.3-70b-instruct' },

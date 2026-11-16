@@ -77,14 +77,30 @@ function saveQueue(q: QueueFile) {
   fs.renameSync(tmp, QUEUE_FILE);
 }
 
+/** Dedupe key: identical payloads always dedupe; reddit_comment also
+ *  dedupes per-permalink so drafts can't stack multiple pending comments
+ *  on the same thread (a spam pattern Reddit flags). */
+function dedupeKey(type: string, payload: Record<string, unknown>): string {
+  if (type === 'reddit_comment') return `reddit_comment|${String(payload.permalink || '')}`;
+  return `${type}|${JSON.stringify(payload)}`;
+}
+
 /** Append a pending work item — the producer side of the pipeline.
  *  Deduped on type+payload fingerprint so agents can't double-enqueue. */
 export function enqueueDistributionItem(type: string, payload: Record<string, unknown>, notBefore?: number): { ok: boolean; item?: QueueItem; reason?: string } {
   if (!ITEM_HANDLERS[type]) return { ok: false, reason: `unknown queue type '${type}'` };
   const queue = loadQueue();
-  const fp = JSON.stringify(payload);
-  const dup = queue.items.find((i) =>
-    i.type === type && i.status !== 'failed' && JSON.stringify(i.payload || {}) === fp);
+  const key = dedupeKey(type, payload);
+  const dup = queue.items.find((i) => {
+    if (dedupeKey(i.type, i.payload || {}) !== key) return false;
+    if (type === 'reddit_comment') {
+      // Per-permalink: one comment per thread, ever — pending, running,
+      // or already posted all block new drafts on that thread. Failed
+      // items don't block (the post never happened).
+      return i.status === 'pending' || i.status === 'running' || i.status === 'done';
+    }
+    return i.status !== 'failed';
+  });
   if (dup) return { ok: true, item: dup, reason: 'duplicate — already queued' };
   const item: QueueItem = {
     id: `${type}-${Date.now().toString(36)}-${randomBytes(2).toString('hex')}`,

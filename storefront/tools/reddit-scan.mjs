@@ -1,6 +1,13 @@
 import { chromium } from 'playwright-core';
+import { readFileSync, existsSync } from 'fs';
+import path from 'path';
+function cdpUrl() {
+  if (process.env.CORTEX_CDP_URL) return process.env.CORTEX_CDP_URL;
+  try { const f = path.resolve('.cdp-url'); if (existsSync(f)) return readFileSync(f,'utf8').trim(); } catch {}
+  return 'http://localhost:9222';
+}
 const subs = process.argv.slice(2);
-const browser = await chromium.connectOverCDP('http://localhost:9222');
+const browser = await chromium.connectOverCDP(cdpUrl());
 const page = browser.contexts()[0].pages().find(p => p.url().includes('reddit.com'));
 for (const sub of subs) {
   await page.goto(`https://www.reddit.com/r/${sub}/hot/`, {waitUntil:'domcontentloaded'});

@@ -518,7 +518,7 @@ describe('Cortex Warden', () => {
     });
     expect(report.healthy).toBe(true);
     expect(report.anomalies).toEqual([]);
-    expect(report.checks.length).toBe(9);
+    expect(report.checks.length).toBe(12);
     expect(report.checks.every((c) => c.ms >= 0)).toBe(true);
   });
 

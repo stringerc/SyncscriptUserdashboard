@@ -2,15 +2,16 @@ import { chromium } from 'playwright-core';
 import { readFileSync, writeFileSync, copyFileSync, existsSync, mkdirSync } from 'fs';
 import path from 'path';
 
-// Reddit comment poster — drives the automation Chrome over CDP.
-// Contract: prints `POSTED: true|false | reason | screenshot | url` on
-// stdout; exit 0 only when the comment text is verified on the page.
+// Reddit comment poster — drives a Chrome over CDP (default the local
+// logged-in automation profile; override with $CORTEX_CDP_URL or
+// storefront/.cdp-url). Uses www.reddit.com: old.reddit.com thread pages
+// redirect logged-in sessions to /login?reason=lor2 and datacenter IPs
+// are network-policy blocked outright.
+//
+// Contract: prints `POSTED: true|false | reason | screenshot | url`.
+// Exit 0 only when the comment text is verified on the rendered page.
 // Screenshots land in storefront/browser/ (latest.png feeds
 // /api/cortex/browser-shot.png so a human can eyeball the result).
-//
-// CDP endpoint resolution: $CORTEX_CDP_URL → storefront/.cdp-url →
-// http://localhost:9222. Point it at a local logged-in Chrome to skip
-// the Oracle browser entirely.
 
 const [permalink, file] = process.argv.slice(2);
 if (!permalink || !file) {
@@ -39,7 +40,7 @@ const shotLatest = path.join(shotDir, 'latest.png');
 const shotStamp = path.join(shotDir, `reddit-${stamp}.png`);
 
 let browser, page;
-const snap = async (label) => {
+const snap = async () => {
   try {
     await page.screenshot({ path: shotLatest });
     copyFileSync(shotLatest, shotStamp);
@@ -47,7 +48,7 @@ const snap = async (label) => {
   } catch (e) { return `screenshot-failed:${e.message}`; }
 };
 const done = async (posted, reason) => {
-  const shot = await snap(reason);
+  const shot = await snap();
   console.log(`POSTED: ${posted} | reason: ${reason} | screenshot: ${shot} | url: ${page?.url?.() || 'n/a'}`);
   try { await browser?.close(); } catch { }
   process.exit(posted ? 0 : 1);
@@ -58,51 +59,70 @@ try {
   const ctx = browser.contexts()[0];
   page = ctx.pages().find(p => p.url().includes('reddit.com')) || await ctx.newPage();
 
-  await page.goto('https://old.reddit.com' + permalink, { waitUntil: 'domcontentloaded', timeout: 30000 });
-  await page.waitForTimeout(3000);
+  const threadUrl = 'https://www.reddit.com' + permalink.replace(/\/+$/, '') + '/';
+  await page.goto(threadUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
+  await page.waitForTimeout(4000);
 
-  // ── Login gate: no credentials here — fail fast and loud instead of
-  // burning 30s on a selector that can never appear. ──
-  const auth = await page.evaluate(() => ({
-    userKarma: !!document.querySelector('.user .userkarma, .user a.author'),
-    loginLink: !!document.querySelector('a[href*="login"], .user a[href*="register"]'),
-    hasCommentBox: !!document.querySelector('textarea[name="text"], div[slot="comment"] [contenteditable="true"]'),
-  }));
-  if (!auth.userKarma && auth.loginLink) {
+  if (page.url().includes('/login')) {
     await done(false, 'reddit-not-logged-in — sign into reddit in the automation Chrome once');
   }
 
-  // ── old.reddit flow ──
-  let ta = page.locator('textarea[name="text"]').first();
-  if (await ta.count() === 0) {
-    // Some threads hide the box behind a "join the conversation" toggle.
-    const join = page.locator('text=/join the conversation|add a comment/i').first();
-    if (await join.count()) { await join.click().catch(() => { }); await page.waitForTimeout(1500); }
-    ta = page.locator('textarea[name="text"]').first();
+  // ── Locked threads can't be commented on. The "Locked post" svg
+  // aria-label appears on normal posts too — only visible body text
+  // is a reliable signal. ──
+  const locked = await page.evaluate(() =>
+    /comments are locked|this post is locked|posting has been disabled/i.test(document.body.innerText.slice(0, 5000)));
+  if (locked) await done(false, 'thread-locked — comments disabled on this post');
+
+  // ── New-reddit flow: the composer starts as a collapsed
+  // faceplate-textarea-input bar; clicking it expands the lexical
+  // editor. Fallbacks: "Join the conversation" text, then any
+  // already-visible editor. ──
+  const collapsedInput = page.locator('comment-composer-host faceplate-textarea-input, shreddit-composer-host faceplate-textarea-input').first();
+  if (await collapsedInput.count()) {
+    await collapsedInput.scrollIntoViewIfNeeded().catch(() => { });
+    await collapsedInput.click({ timeout: 8000 }).catch(() => { });
+    await page.waitForTimeout(2500);
   }
-  if (await ta.count() === 0) {
-    await done(false, 'comment-box-not-found — page may have changed or thread locked');
+  if (await page.locator('[data-lexical-editor="true"][contenteditable="true"]:visible').count() === 0) {
+    const joinBtn = page.locator('text=Join the conversation').last();
+    if (await joinBtn.count()) {
+      await joinBtn.scrollIntoViewIfNeeded().catch(() => { });
+      await joinBtn.click({ timeout: 8000 }).catch(() => { });
+      await page.waitForTimeout(2500);
+    }
   }
 
-  await ta.click();
-  await ta.fill(text);
-  await page.waitForTimeout(800);
-
-  const saveBtn = page.locator('button.save, input[value="save"], button:has-text("save")').first();
-  if (await saveBtn.count() === 0) {
-    await done(false, 'save-button-not-found');
+  // Comment editor: lexical contenteditable inside the composer. Threads
+  // render several editors (main box + hidden reply templates) — the
+  // visible one is the live composer.
+  const editors = page.locator('[data-lexical-editor="true"][contenteditable="true"]:visible, shreddit-composer [contenteditable="true"]:visible');
+  const edCount = await editors.count();
+  if (edCount === 0) {
+    await done(false, 'comment-box-not-found — composer never opened (locked thread or UI change)');
   }
-  await saveBtn.click();
-  await page.waitForTimeout(5000);
+  const editor = editors.nth(edCount - 1); // last visible editor = main composer (reply templates sit earlier in DOM)
+  await editor.scrollIntoViewIfNeeded().catch(() => { });
+  await editor.click({ timeout: 8000 });
+  await page.waitForTimeout(600);
+  await page.keyboard.type(text, { delay: 2 });
+  await page.waitForTimeout(1200);
+
+  const commentBtn = page.locator('comment-composer-host button:has-text("Comment"), shreddit-composer button:has-text("Comment")').last();
+  if (await commentBtn.count() === 0) {
+    await done(false, 'comment-button-not-found');
+  }
+  await commentBtn.click({ timeout: 8000 });
+  await page.waitForTimeout(6000);
 
   // ── Verify: our text must appear on the rendered page ──
   const ok = await page.evaluate((t) => document.body.innerText.includes(t.slice(0, 40)), text);
-  if (!ok) await done(false, 'comment-not-visible-after-submit — possible shadowban or rate limit');
+  if (!ok) await done(false, 'comment-not-visible-after-submit — possible shadowban, rate limit, or removed');
   await done(true, 'verified-on-page');
 } catch (e) {
   try {
     if (page) {
-      const shot = await snap('crash');
+      const shot = await snap();
       console.log(`POSTED: false | reason: crash: ${String(e.message).slice(0, 160)} | screenshot: ${shot} | url: ${page.url()}`);
     } else {
       console.log(`POSTED: false | reason: crash: ${String(e.message).slice(0, 160)} | screenshot: none | url: n/a`);
