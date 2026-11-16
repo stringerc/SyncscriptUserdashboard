@@ -266,3 +266,16 @@ src/executor/home-executor-runner.js
 !scripts/concierge-playbook-worker.mjs
 graphify-out/
 .cortex-runtime/
+
+# Config backups (may contain hardcoded fallbacks/secrets)
+*.backup
+*.backup2
+vite.config.ts.backup*
+
+# Local-only credential/test artifacts flagged by GitGuardian
+src/YOUR_DISCORD_CREDENTIALS.md
+src/*CREDENTIALS*.md
+dashboard/test-builder-*.js
+dashboard/test-builder-*.ts
+dashboard/BUILDER_API_KEYS_TEST_RESULTS.md
+supabase/.temp/
