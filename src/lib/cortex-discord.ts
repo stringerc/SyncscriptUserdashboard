@@ -403,6 +403,17 @@ export function routeAskAgent(text: string): { agentId: string; kind: string; in
   if (/prep|brief|meeting/.test(t)) return { agentId: 'prep', kind: 'prep_brief', input: { ...base, title: text.slice(0, 140) } };
   if (/build|code|implement|fix|write/.test(t)) return { agentId: 'builder', kind: 'build_task', input: { ...base, instruction: text } };
   if (/review|audit|check/.test(t)) return { agentId: 'reviewer', kind: 'review_task', input: { ...base, instruction: text } };
+  // Social/platform listening → SCOUT social_scan via Agent Reach.
+  const channel = /reddit/.test(t) ? 'reddit'
+    : /twitter|tweet|\bx\.com\b/.test(t) ? 'twitter'
+    : /youtube|video/.test(t) ? 'youtube'
+    : /github|repo|issue|pull request/.test(t) ? 'github'
+    : /bilibili|b站/.test(t) ? 'bilibili'
+    : /instagram/.test(t) ? 'instagram'
+    : /linkedin/.test(t) ? 'linkedin'
+    : /xiaohongshu|小红书/.test(t) ? 'xiaohongshu'
+    : /reddit|twitter|youtube|github|bilibili|instagram|linkedin|xiaohongshu|social media|comments?|posts?|thread/.test(t) ? 'web' : '';
+  if (channel) return { agentId: 'scout', kind: 'social_scan', input: { ...base, query: text, channel, action: 'search' } };
   // Memory/vault lookups → LIBRARIAN recall. Personal-assistant queries
   // ("what did we decide", "find that email") live here, not in web research.
   if (/remember|recall|what do we (know|have)|did we|have we|lookup|who is|who was|contact|email from|message from|notes? on|saved/.test(t)) {

@@ -12,6 +12,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
+import { execFile } from 'node:child_process';
 import type { AgentContext, AgentRuntime, WorkerHandler } from './runtime';
 import type { AgentId, SpawnSpec, ToolScope } from './types';
 import { registerWardenWorker } from './warden';
@@ -625,6 +626,7 @@ const scoutWorker: WorkerHandler = async (ctx) => {
   const kind = ctx.task.kind || 'research';
   if (kind === 'repo_scan') return repoScanWorker(ctx);
   if (kind === 'agent_ideas') return agentIdeasWorker(ctx);
+  if (kind === 'social_scan') return socialScanWorker(ctx);
   const query = str(ctx.task.input.query);
   const depth = Math.min(3, Math.max(1, Number(ctx.task.input.depth) || 1));
   if (!query) throw new Error('scout research requires input.query');
@@ -672,6 +674,109 @@ ${p.text.slice(0, 2500)}`).join('\n\n');
     brief: answer,
   };
 };
+
+// ── Scout: social_scan via Agent Reach ────────────────────────────
+// Read-only platform access (github/youtube/web/v2ex/bilibili by
+// default; reddit/twitter/etc. once added — the CLI reports
+// NEED_LOGIN honestly rather than faking access). agent-reach emits
+// one JSON object; items feed the same digest→LLM brief as research.
+
+const AGENT_REACH_BIN = (() => {
+  const p = path.join(process.env.HOME || '', '.local', 'bin', 'agent-reach');
+  return fs.existsSync(p) ? p : 'agent-reach';
+})();
+
+const SOCIAL_ACTIONS: Record<string, Set<string>> = {
+  github: new Set(['search', 'read']),
+  youtube: new Set(['read', 'search', 'subtitle', 'transcribe']),
+  web: new Set(['search', 'read']),
+  v2ex: new Set(['hot', 'node', 'read', 'user']),
+  bilibili: new Set(['search', 'read', 'hot', 'subtitle']),
+  reddit: new Set(['search', 'read', 'subreddit']),
+  twitter: new Set(['search', 'profile', 'tweets', 'thread']),
+  xiaohongshu: new Set(['search', 'read', 'comments']),
+  linkedin: new Set(['jobs', 'read']),
+  xueqiu: new Set(['quote', 'search', 'hot_posts', 'hot_stocks']),
+  boss: new Set(['search', 'read']),
+  xiaoyuzhou: new Set(['transcribe']),
+  facebook: new Set(['search', 'profile']),
+  instagram: new Set(['search', 'profile', 'posts']),
+};
+
+function runAgentReach(args: string[], timeoutMs = 90_000): Promise<any> {
+  return new Promise((resolve, reject) => {
+    execFile(AGENT_REACH_BIN, args, {
+      timeout: timeoutMs,
+      maxBuffer: 8 * 1024 * 1024,
+      env: { ...process.env, PATH: `${process.env.HOME}/.local/bin:${process.env.PATH || ''}` },
+    }, (err, stdout, stderr) => {
+      const text = String(stdout || '');
+      const start = text.indexOf('{');
+      if (start < 0) return reject(new Error(`agent-reach produced no JSON: ${String(stderr || text).slice(0, 200)}`));
+      let doc: any = null;
+      try { doc = JSON.parse(text.slice(start)); } catch { return reject(new Error('agent-reach returned unparseable JSON')); }
+      if (doc?.ok === false) {
+        const e = doc.error || {};
+        return reject(new Error(`agent-reach ${e.code || 'ERROR'}: ${String(e.message || 'failed').slice(0, 300)}`));
+      }
+      resolve(doc);
+    });
+  });
+}
+
+async function socialScanWorker(ctx: AgentContext) {
+  const input = (ctx.task.input || {}) as any;
+  const url = str(input.url);
+  const query = str(input.query || input.text);
+  const channel = str(input.channel || 'web').toLowerCase();
+  const action = str(input.action || 'search').toLowerCase();
+  const limit = Math.min(10, Math.max(1, Number(input.limit) || 5));
+
+  if (!url && !query) throw new Error('social_scan requires input.query or input.url');
+  const allowed = SOCIAL_ACTIONS[channel];
+  if (!allowed) throw new Error(`social_scan: unsupported channel '${channel}'`);
+  if (url) {
+    if (!/^https?:\/\//i.test(url)) throw new Error('social_scan url must be http(s)');
+  } else if (!allowed.has(action)) {
+    throw new Error(`social_scan: '${action}' not valid for channel '${channel}' (have: ${[...allowed].join(', ')})`);
+  }
+
+  ctx.progress(0.2);
+  const args = url
+    ? ['read', url]
+    : [channel, action, query, '--limit', String(limit)];
+  const doc = await runAgentReach(args);
+  ctx.progress(0.6);
+
+  const items = Array.isArray(doc?.items) ? doc.items : [];
+  if (!items.length) {
+    return { query: query || url, channel: doc?.channel || channel, action: doc?.action || action, backend: doc?.backend || null, items: [], brief: 'agent-reach returned no items for this query.', note: 'Empty result is honest — the platform may have nothing or may need login (check error.meta if present).' };
+  }
+
+  const digest = items.slice(0, 10).map((it: any, i: number) =>
+    `${i + 1}. ${it.title || '(untitled)'}\n   ${it.url || ''}\n   ${it.author ? `by ${it.author}` : ''}\n   ${String(it.text || '').slice(0, 400)}`).join('\n');
+
+  const brief = await ctx.llm({
+    tier: 'reason',
+    maxTokens: 900,
+    messages: [
+      {
+        role: 'system',
+        content: `You are SCOUT, Cortex's research operative. Produce a tight, factual brief from ${doc?.channel || channel} results. Cite item numbers. Prefer recent, substantive posts over listicles. No filler.`,
+      },
+      { role: 'user', content: `QUERY: ${query || url}\nCHANNEL: ${doc?.channel || channel} (backend: ${doc?.backend || 'unknown'})\n\nITEMS:\n${digest}\n\nWrite the brief.` },
+    ],
+  });
+  ctx.progress(1);
+  return {
+    query: query || url,
+    channel: doc?.channel || channel,
+    action: doc?.action || action,
+    backend: doc?.backend || null,
+    sources: items.slice(0, 10).map((it: any) => ({ title: it.title, url: it.url, author: it.author })),
+    brief,
+  };
+}
 
 // ── Librarian: memory / vault / graph ─────────────────────────────
 

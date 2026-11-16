@@ -211,6 +211,14 @@ test('routeAskAgent keyword routing + worker-shaped inputs', () => {
   const build = routeAskAgent('fix the login bug');
   assert.equal(build.agentId, 'builder');
   assert.ok(build.input.instruction, 'builder needs input.instruction');
+  // Social listening routes to scout social_scan with detected channel.
+  const reddit = routeAskAgent('what are people on reddit saying about u-pick farms');
+  assert.equal(reddit.agentId, 'scout');
+  assert.equal(reddit.kind, 'social_scan');
+  assert.equal(reddit.input.channel, 'reddit');
+  const yt = routeAskAgent('search youtube for sourdough tutorials');
+  assert.equal(yt.kind, 'social_scan');
+  assert.equal(yt.input.channel, 'youtube');
   // Memory lookups route to librarian recall, not web research.
   const mem = routeAskAgent('what do we know about the berry farm lead');
   assert.equal(mem.agentId, 'librarian');

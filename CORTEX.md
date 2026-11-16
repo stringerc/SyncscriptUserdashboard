@@ -59,7 +59,7 @@ Runtime: `runtime.ts` — registry, queues, budgets, SSE events, persistence (`.
 | Agent | Role | Tier/model |
 |---|---|---|
 | SENTINEL | Model/provider health probe | fast |
-| SCOUT | Research operative + repo-scan + agent-ideation | reason |
+| SCOUT | Research operative + repo-scan + agent-ideation + social_scan (Agent Reach) | reason |
 | LIBRARIAN | Memory distillation → rules | reason |
 | BUILDER | Code/repo work | reason |
 | REVIEWER | Verification pass | reason |
@@ -74,6 +74,8 @@ Runtime: `runtime.ts` — registry, queues, budgets, SSE events, persistence (`.
 **PREP** (`prep.ts`): gathers memory + Gmail + calendar context → reason-tier brief → **citation validator drops every uncited claim** → local markdown in `.cortex-runtime/prep-briefs/`. Honest empty when no sources. FORECASTER's calendar `noprep` signals auto-dispatch `prep_brief` tasks via `signal.handoff`.
 
 **Spawned agents** (`CORTEX_AGENTS_SELF.md`): any built-in can propose a `SpawnSpec` — deterministic gate (evidence re-derived from real task IDs, Jaccard overlap check, fleet caps) → Inbox approval → ephemeral agent (≤168h TTL, ≤32 tasks/day, concurrency 1). SCOUT's daily `agent_ideas` routine feeds this pipeline.
+
+**SCOUT `social_scan`**: read-only platform access via [Agent Reach](https://github.com/Panniantong/Agent-Reach) (`~/.local/bin/agent-reach`, uv-installed). Channels: github/youtube/web/v2ex/bilibili active; reddit/twitter/linkedin/etc. available via `agent-reach add` + login. Discord `/cortex ask` routes social keywords → `social_scan` with channel detection. Whitelisted channels/actions only, `execFile` (no shell), 90s cap; `ok:false` errors (NEED_LOGIN/RATE_LIMITED) surface honestly.
 
 **Workers** (`workers.ts`): all execution through `ctx.llm()` (matrix-routed `/api/cortex/agents/llm`) and `/api/cortex/tools/execute` (sovereign key). Telemetry per task: LLM calls, tokens, tool calls/failures, duration, failure class.
 
