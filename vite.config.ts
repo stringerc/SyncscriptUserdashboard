@@ -22,6 +22,13 @@ import { getAgentRuntime } from './src/lib/cortex-agents/runtime';
 import { registerAgentWorkers, makeEphemeralWorker, expandTaskSpec } from './src/lib/cortex-agents/workers';
 import type { RouteTier } from './src/lib/cortex-agents/types';
 import { normalizeForSpeech } from './src/lib/tts-speech-normalize';
+import {
+  verifyDiscordSignature, discordApi, buildCommandSpecs, handleDiscordInteraction,
+  formatProposalCard, formatDigest, formatForecastList,
+  loadPushState, savePushState, consumePushBudget, alreadyPosted, markPosted,
+  digestAlreadySent, markDigestSent,
+} from './src/lib/cortex-discord';
+import { getCortexProactiveInitiative } from './src/lib/cortex-proactive-initiative';
 
 /** Short SHA for deploy verification (Vercel sets VERCEL_GIT_COMMIT_SHA at build time). */
 function resolveSyncscriptBuildSha(): string {
@@ -10106,6 +10113,196 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
           }
         });
       });
+
+      // ── Cortex Discord surface (/api/cortex/discord/*) ──
+      // Discord is a transport, not a brain: Ed25519-verified interactions in,
+      // agentRuntime + initiative engine calls, bot-token REST messages out.
+      // Env: DISCORD_BOT_TOKEN, DISCORD_PUBLIC_KEY, DISCORD_OWNER_ID,
+      //      DISCORD_CHANNEL_ID, DISCORD_GUILD_ID (optional), DISCORD_DIGEST_HOUR.
+      const discordDir = path.join(process.cwd(), '.cortex-runtime');
+      let discordOutputMode: 'low' | 'medium' | 'high' = 'medium';
+      const discordDeps = {
+        ownerId: process.env.DISCORD_OWNER_ID || '',
+        getSnapshot: async () => agentRuntime.snapshot(),
+        getPendingProposals: () => getCortexProactiveInitiative().getPendingProposals() as any,
+        acceptProposal: (id: string) => getCortexProactiveInitiative().acceptProposal(id),
+        dismissProposal: (id: string) => getCortexProactiveInitiative().dismissProposal(id),
+        submitTask: (agentId: string, kind: string, title: string, input?: any) =>
+          agentRuntime.submitTask(agentId as any, kind, title, input) as any,
+        listForecasts: () => {
+          try {
+            const ledger = path.join(discordDir, 'forecasts.jsonl');
+            const lines = fsSync.readFileSync(ledger, 'utf8').split('\n').filter(Boolean).slice(-40);
+            return lines.map((l: string) => { try { return JSON.parse(l); } catch { return null; } }).filter(Boolean);
+          } catch { return []; }
+        },
+        listCalendarEvents: () => {
+          try {
+            const raw = JSON.parse(fsSync.readFileSync(path.join(discordDir, 'calendar-upcoming.json'), 'utf8'));
+            return Array.isArray(raw?.events) ? raw.events : [];
+          } catch { return []; }
+        },
+        getOutputMode: () => discordOutputMode,
+        setOutputMode: (m: 'low' | 'medium' | 'high') => { discordOutputMode = m; },
+        stateDir: discordDir,
+      };
+      const discordReady = () =>
+        Boolean(process.env.DISCORD_BOT_TOKEN && process.env.DISCORD_PUBLIC_KEY && process.env.DISCORD_OWNER_ID);
+
+      server.middlewares.use('/api/cortex/discord/interactions', (req: any, res: any, next: any) => {
+        if (req.method === 'OPTIONS') {
+          res.writeHead(204, { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Methods': 'POST, OPTIONS', 'Access-Control-Allow-Headers': 'Content-Type' });
+          return res.end();
+        }
+        if (req.method !== 'POST') return next();
+        if (!discordReady()) {
+          res.writeHead(503, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ ok: false, error: 'Discord surface not configured (DISCORD_* env missing)' }));
+        }
+        let body = '';
+        req.on('data', (c: Buffer) => { body += c.toString(); });
+        req.on('end', async () => {
+          try {
+            const sig = String(req.headers['x-signature-ed25519'] || '');
+            const ts = String(req.headers['x-timestamp'] || '');
+            if (!verifyDiscordSignature(body, sig, ts, process.env.DISCORD_PUBLIC_KEY!)) {
+              res.writeHead(401, { 'Content-Type': 'application/json' });
+              return res.end(JSON.stringify({ ok: false, error: 'invalid signature' }));
+            }
+            const payload = JSON.parse(body || '{}');
+            const result = await handleDiscordInteraction(payload, discordDeps);
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify(result));
+          } catch (e: any) {
+            res.writeHead(500, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ type: 4, data: { content: `Cortex error: ${String(e?.message || e).slice(0, 200)}`, flags: 64 } }));
+          }
+        });
+      });
+
+      // POST /api/cortex/discord/sync-commands — register /cortex globally or
+      // guild-scoped (instant) when DISCORD_GUILD_ID is set. Manual trigger;
+      // Discord global commands can take up to 1h to propagate.
+      server.middlewares.use('/api/cortex/discord/sync-commands', async (req: any, res: any, next: any) => {
+        if (req.method === 'OPTIONS') {
+          res.writeHead(204, { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Methods': 'POST, OPTIONS', 'Access-Control-Allow-Headers': 'Content-Type' });
+          return res.end();
+        }
+        if (req.method !== 'POST') return next();
+        const token = process.env.DISCORD_BOT_TOKEN;
+        if (!token) {
+          res.writeHead(503, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ ok: false, error: 'DISCORD_BOT_TOKEN missing' }));
+        }
+        try {
+          const me = await discordApi('GET', '/oauth2/applications/@me', { token });
+          const appId = me?.id || me?.application?.id;
+          if (!appId) throw new Error('could not resolve application id');
+          const guildId = process.env.DISCORD_GUILD_ID || '';
+          const endpoint = guildId
+            ? `/applications/${appId}/guilds/${guildId}/commands`
+            : `/applications/${appId}/commands`;
+          const existing = await discordApi('GET', endpoint, { token }).catch(() => []);
+          const specs = buildCommandSpecs();
+          const results: any[] = [];
+          for (const spec of specs) {
+            const match = (existing as any[]).find((c: any) => c.name === spec.name);
+            const r = match
+              ? await discordApi('PATCH', `${endpoint}/${match.id}`, { token, body: spec })
+              : await discordApi('POST', endpoint, { token, body: spec });
+            results.push({ name: spec.name, id: r?.id });
+          }
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ ok: true, scope: guildId ? `guild:${guildId}` : 'global', commands: results }));
+        } catch (e: any) {
+          res.writeHead(500, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ ok: false, error: String(e?.message || e) }));
+        }
+      });
+
+      // GET /api/cortex/discord/state — config + push-budget debug surface.
+      server.middlewares.use('/api/cortex/discord/state', (req: any, res: any, next: any) => {
+        if (req.method !== 'GET') return next();
+        agentCors(req, res);
+        res.end(JSON.stringify({
+          ok: true,
+          configured: discordReady(),
+          hasToken: Boolean(process.env.DISCORD_BOT_TOKEN),
+          hasPublicKey: Boolean(process.env.DISCORD_PUBLIC_KEY),
+          hasOwner: Boolean(process.env.DISCORD_OWNER_ID),
+          channelId: process.env.DISCORD_CHANNEL_ID || null,
+          guildId: process.env.DISCORD_GUILD_ID || null,
+          digestHour: Number(process.env.DISCORD_DIGEST_HOUR) || 7,
+          pushState: loadPushState(discordDir),
+          outputMode: discordOutputMode,
+        }));
+      });
+
+      // ── Discord proactive poller (5-min cadence) ──
+      // Posts: pending proposal cards → channel, new tier>=2 forecasts →
+      // channel (shared 5/day budget), morning digest at DISCORD_DIGEST_HOUR.
+      // Command replies are not budgeted. All posts are evidence-backed.
+      if (discordReady() && process.env.DISCORD_CHANNEL_ID) {
+        const channelId = process.env.DISCORD_CHANNEL_ID;
+        const token = process.env.DISCORD_BOT_TOKEN!;
+        const post = (body: any) => discordApi('POST', `/channels/${channelId}/messages`, { token, body }).catch((e) => {
+          console.warn('[cortex-discord] post failed:', String(e?.message || e).slice(0, 160));
+          return null;
+        });
+        const pollDiscord = async () => {
+          try {
+            const now = Date.now();
+            const proposals = getCortexProactiveInitiative().getPendingProposals() as any[];
+            for (const p of proposals.slice(0, 5)) {
+              const id = String(p.id || '');
+              if (!id || alreadyPosted(discordDir, 'proposal', id)) continue;
+              const card = formatProposalCard(p);
+              await post({ content: `New initiative proposal — needs your call:`, ...card });
+              markPosted(discordDir, 'proposal', id);
+            }
+            // Forecast pushes: tier>=2 (proposal/interrupt routed) entries.
+            const forecasts = discordDeps.listForecasts() as any[];
+            for (const f of forecasts.slice(-10)) {
+              const fid = String(f?.id || `${f?.domain}:${f?.claim}`.slice(0, 80));
+              if (alreadyPosted(discordDir, 'forecast', fid)) continue;
+              const tier = Number(f?.tier ?? (f?.urgency === 'high' ? 3 : 2));
+              if (tier < 2 || !f?.claim) continue;
+              if (!consumePushBudget(discordDir, now)) break;
+              const conf = typeof f.confidence === 'number' ? ` · ${Math.round(f.confidence * 100)}%` : '';
+              await post({
+                embeds: [{
+                  title: `Forecast · ${f.domain || 'signal'}${conf}`,
+                  description: String(f.claim).slice(0, 1000),
+                  color: f.urgency === 'high' ? 0xed4245 : 0xfee75c,
+                  footer: { text: `evidence: ${(f.evidence || []).map((e: any) => `${e.kind}:${e.ref}`).join(', ').slice(0, 200) || 'n/a'}` },
+                  timestamp: new Date().toISOString(),
+                }],
+              });
+              markPosted(discordDir, 'forecast', fid);
+            }
+            // Morning digest — once per day at configured local hour.
+            const digestHour = Number(process.env.DISCORD_DIGEST_HOUR) || 7;
+            const d = new Date(now);
+            if (d.getHours() === digestHour && !digestAlreadySent(discordDir, now) && consumePushBudget(discordDir, now)) {
+              const [snap, props, fc, ev] = [
+                await agentRuntime.snapshot(),
+                getCortexProactiveInitiative().getPendingProposals() as any[],
+                discordDeps.listForecasts() as any[],
+                discordDeps.listCalendarEvents() as any[],
+              ];
+              await post({ content: formatDigest({ events: ev, pendingProposals: props, forecasts: fc, snapshot: snap, now }) });
+              markDigestSent(discordDir, now);
+            }
+          } catch (e) {
+            console.warn('[cortex-discord] poll error:', String(e).slice(0, 160));
+          }
+        };
+        setTimeout(pollDiscord, 30_000); // let the server settle first
+        setInterval(pollDiscord, 5 * 60_000);
+        console.info('[cortex-discord] proactive poller enabled — 5m cadence, 5/day push budget');
+      } else if (!discordReady()) {
+        console.info('[cortex-discord] disabled — DISCORD_BOT_TOKEN/PUBLIC_KEY/OWNER_ID not all set');
+      }
 
       // POST /api/cortex/agents/llm — matrix-routed chat completion for workers.
       // {tier?, agentId?, model?, messages, maxTokens?, system?}
