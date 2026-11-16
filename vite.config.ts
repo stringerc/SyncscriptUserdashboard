@@ -22,6 +22,7 @@ import { getAgentRuntime } from './src/lib/cortex-agents/runtime';
 import { recordAgentOutcome } from './src/lib/cortex-agents/outcomes';
 import { archiveTask, readArchive } from './src/lib/cortex-agents/archive';
 import { listStrategyProposals, decideStrategyProposal, reconcileStrategyProposals, fileBudgetProposal } from './src/lib/cortex-agents/strategy-proposals';
+import { recordIncidentFailure, resolveIncidentsOnSuccess, listIncidents } from './src/lib/cortex-agents/incidents';
 import { registerAgentWorkers, makeEphemeralWorker, expandTaskSpec } from './src/lib/cortex-agents/workers';
 import type { RouteTier } from './src/lib/cortex-agents/types';
 import { normalizeForSpeech } from './src/lib/tts-speech-normalize';
@@ -1021,6 +1022,15 @@ function apiProxyPlugin(): Plugin {
       // failure evidence survive the 200-task in-memory eviction window.
       agentRuntime.setTaskFinishedHook((task, agent) => {
         archiveTask(task, agent?.name);
+        // Incident ticket: every failure upserts the agent|class|kind ledger.
+        if (task.status === 'failed') {
+          recordIncidentFailure({
+            taskId: task.id, agentId: task.agentId, agentName: agent?.name,
+            kind: task.kind, title: task.title,
+            failureClass: String(task.telemetry?.failureClass || 'worker'),
+            error: task.error,
+          });
+        }
       });
       // Closed-loop recovery: when a strategy proposal executes (a fix
       // landed), transient-class casualties (provider/timeout failures in
@@ -1053,6 +1063,9 @@ function apiProxyPlugin(): Plugin {
       let agentOutcomesSinceDistill = 0;
       const DISTILL_EVERY = 12;
       agentRuntime.setTaskCompletedHook((task, agent) => {
+        // Incident auto-resolve: a completed task with the same agent+kind
+        // signature is execution-verified proof the failure mode is gone.
+        try { resolveIncidentsOnSuccess(task.agentId, task.kind, task.id); } catch { }
         const res = task.result as any;
         const summary = typeof res === 'string' ? res
           : res?.summary || res?.brief || res?.answer || res?.report
@@ -10127,6 +10140,20 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
           return;
         }
         return next();
+      });
+
+      // GET /api/cortex/agents/incidents?status=open — incident ticket ledger.
+      server.middlewares.use('/api/cortex/agents/incidents', (req: any, res: any, next: any) => {
+        if (req.method !== 'GET') return next();
+        agentCors(req, res);
+        try {
+          const url = new URL(req.url || '/', 'http://localhost');
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ ok: true, incidents: listIncidents(url.searchParams.get('status') || undefined) }));
+        } catch (e: any) {
+          res.writeHead(500);
+          res.end(JSON.stringify({ ok: false, error: e?.message || 'incidents read failed' }));
+        }
       });
 
       // POST /api/cortex/agents/budget — {agentId, budget} human-approved

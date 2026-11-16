@@ -279,6 +279,20 @@ interface StrategyProposal {
   action?: { type: 'budgetRaise'; agentId: string; budget: number };
 }
 
+interface IncidentTicket {
+  id: string;
+  agentId: string;
+  agentName?: string;
+  kind: string;
+  failureClass: string;
+  title: string;
+  status: string;
+  count: number;
+  lastSeenAt: number;
+  lastError?: string;
+  evidence: string[];
+}
+
 const CLASS_COLOR: Record<string, string> = {
   infra: C.red, code: C.amber, eval: C.cyan, config: C.amber,
   process: C.dim, prompt: C.cyan, skill: C.green, rule: C.green,
@@ -385,6 +399,7 @@ export function CortexInitiativeInbox() {
   const [tab, setTab] = useState<'proposals' | 'activity' | 'autonomy'>('proposals');
   const [tick, setTick] = useState(0);
   const [strategyProps, setStrategyProps] = useState<StrategyProposal[]>([]);
+  const [incidents, setIncidents] = useState<IncidentTicket[]>([]);
 
   useEffect(() => {
     const u1 = engine.subscribe(() => setTick(t => t + 1));
@@ -399,6 +414,18 @@ export function CortexInitiativeInbox() {
     const load = () => fetch('/api/cortex/agents/proposals?status=pending', { cache: 'no-store' })
       .then(r => r.json())
       .then(j => { if (alive && j?.ok) setStrategyProps(j.proposals || []); })
+      .catch(() => {});
+    load();
+    const iv = setInterval(load, 30_000);
+    return () => { alive = false; clearInterval(iv); };
+  }, []);
+
+  // Incident tickets — open failure signatures awaiting a verified fix.
+  useEffect(() => {
+    let alive = true;
+    const load = () => fetch('/api/cortex/agents/incidents?status=open', { cache: 'no-store' })
+      .then(r => r.json())
+      .then(j => { if (alive && j?.ok) setIncidents(j.incidents || []); })
       .catch(() => {});
     load();
     const iv = setInterval(load, 30_000);
@@ -444,6 +471,33 @@ export function CortexInitiativeInbox() {
       <div style={{ flex: 1, overflowY: 'auto' }}>
         {tab === 'proposals' && (
           <>
+            {incidents.length > 0 && (
+              <div style={{ marginBottom: 12 }}>
+                <div style={{ fontSize: 9, color: C.red, fontFamily: MONO, letterSpacing: 1, marginBottom: 6, textTransform: 'uppercase' }}>
+                  Incidents — {incidents.length} open
+                </div>
+                {incidents.map(inc => (
+                  <div key={inc.id} style={{
+                    border: `1px solid ${C.border}`, borderLeft: '3px solid #f87171',
+                    borderRadius: 8, padding: '8px 12px', background: C.surface, marginBottom: 6,
+                  }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                      <span style={{ fontSize: 9, fontFamily: MONO, color: '#f87171', border: '1px solid #f8717155', borderRadius: 3, padding: '0 4px' }}>
+                        {inc.failureClass.toUpperCase()}
+                      </span>
+                      <span style={{ fontSize: 11, fontWeight: 600, color: C.text, fontFamily: MONO }}>
+                        {inc.agentName || inc.agentId} · {inc.kind}
+                      </span>
+                      <span style={{ fontSize: 9, color: C.dim, fontFamily: MONO }}>×{inc.count}</span>
+                      <span style={{ marginLeft: 'auto', fontSize: 9, color: C.dim, fontFamily: MONO }}>{timeAgo(inc.lastSeenAt)}</span>
+                    </div>
+                    <div style={{ fontSize: 9, color: C.dim, fontFamily: MONO, marginTop: 4, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {inc.title}{inc.lastError ? ` — ${inc.lastError}` : ''}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
             {strategyProps.length > 0 && (
               <div style={{ marginBottom: 12 }}>
                 <div style={{ fontSize: 9, color: C.cyan, fontFamily: MONO, letterSpacing: 1, marginBottom: 6, textTransform: 'uppercase' }}>
