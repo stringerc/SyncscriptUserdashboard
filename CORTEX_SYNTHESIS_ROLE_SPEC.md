@@ -107,6 +107,7 @@ Cortex's REVIEWER is the wrong host for this — it is a *critic of artifacts* (
 - Duplicate/suppressed proposal rate (spam metric — the key failure mode)
 
 ### Why not the alternatives
+- **Inline orchestration (Copilot Studio model):** Microsoft's generative orchestration embeds planning inside the agent runtime — valid pattern, but our runtime is a task queue with no reasoning router in the dispatch path. Adopting it means rebuilding dispatch, not adding a worker. (SCOUT arm finding: arxiv IterSynth 2609.29444 shows the dedicated Planner/Synthesizer decoupling works as an alternative academic paradigm.)
 - **REVIEWER expansion:** reviewer is artifact-shaped (diff/file in → findings out). Synthesis is fleet-shaped (many signal types in → prioritized actions out). Different inputs, different outputs, different authority. Keep reviewer for code; add strategist for fleet.
 - **Orchestrator function:** our runtime is a task queue, not a reasoning router — there's no supervisor LLM in the dispatch path. Building one is a bigger change than a new agent worker.
 - **Human-gated only:** doesn't scale — the user is already the bottleneck; the whole point of the fleet is absorbing this load.
