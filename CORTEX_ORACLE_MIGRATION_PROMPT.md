@@ -23,10 +23,13 @@
 | Oracle disk | `/` 45 GB, **8.8 GB free**; `/opt/syncscript` already rsync'd (4.1 GB), `/opt/cortex-app` 3.1 GB | tight — budget carefully |
 | Oracle node | v22.22.2, npm present, passwordless sudo via `ssh oracle` | — |
 
-### Mac-only dependencies that CANNOT migrate (must be replaced, proxied, or explicitly descoped)
+### Mac-only dependencies — VERIFIED on VM 2026-11-16 (results below)
 
-- **Kokoro TTS / voice pipeline** (`cortana_tts_server.py`, pocket-tts, Whisper/STT) — local GPU/ML models; stays Mac. Cortex voice features degrade gracefully when Mac is off — spec must define the degraded-mode contract.
-- **`textutil` / macOS PDF-DOCX conversions** in `create_document` — already degrade gracefully on Linux (writes .md+.html only) per MEMORY.md.
+- **Kokoro TTS**: ✅ `kokoro-onnx` + onnxruntime runs on aarch64 — synthesized 2.6s audio in 4.1s (**0.65× realtime** on 4 OCPU). Fine for notices/digests/briefs; marginal for live conversation. Model files ~340 MB to `/opt/cortex-runtime/models/`.
+- **Cortana voice clone (F5-TTS + RVC + DSP)**: ❌ realistically Mac-bound — MLX is Apple-only, PyTorch CPU inference on 4 OCPU too slow for voice cloning. **Degraded-mode contract: Cortana voice unavailable when Mac off; generic Kokoro voice is the VM fallback.**
+- **Whisper STT**: `ggml-base.en.bin` → whisper.cpp has linux-arm64 builds; or Groq Whisper API (keys exist). Either works.
+- **`textutil` conversions**: ✅ replaced — LibreOffice headless installed on VM, `md→pdf` verified producing valid PDF.
+- **Agent Reach**: ✅ fully working on VM — `uv tool install` + `setup` succeeded, 5/5 default channels, live `github search` + `web search` (Exa) verified. Optional/login channels need per-channel verification (OpenCLI + VM Chrome).
 - **Hardcoded Mac paths**: `storefront/tools/*.mjs` import playwright-core from `/Users/Apple/.cursor/mcp-servers/google-flow-browser-mcp/node_modules/...` — must become a real dependency or env-configured path on the VM.
 - **Gmail scrape** (`/api/cortex/gmail/live-inbox`) — verify mechanism; if it drives local Chrome session it needs rework on Oracle Chrome.
 - **Calendar mirror, geo-watch (NWS), ambient queue** — verify external deps; likely portable HTTP.
