@@ -158,10 +158,22 @@ async function runCalendarEvent(ctx: AgentContext, payload: Record<string, unkno
 async function runBrowserShot(ctx: AgentContext, payload: Record<string, unknown>) {
   const match = str(payload.match);
   ctx.progress(0.3);
+  // Preflight: the shot needs the automation Chrome's CDP endpoint. Fail
+  // with a diagnosable reason instead of a blank stderr-empty error.
+  try {
+    const ping = await fetch('http://localhost:9222/json/version', { signal: AbortSignal.timeout(3000) });
+    if (!ping.ok) throw new Error(`CDP HTTP ${ping.status}`);
+  } catch (e: any) {
+    throw new Error(`automation Chrome offline — CDP :9222 unreachable (${String(e?.message || e).slice(0, 120)}). Start Chrome with --remote-debugging-port=9222`);
+  }
   const out = await sh(`node tools/browser-shot.mjs ${match ? `'${match}'` : ''}`, ctx.telemetry, 60_000);
   const stdout = String(out?.stdout || '');
+  const stderr = String(out?.stderr || '');
   ctx.progress(1);
-  if (!/SHOT:/.test(stdout)) throw new Error(`browser shot failed: ${stdout.slice(0, 200)}`);
+  if (!/SHOT:/.test(stdout)) {
+    const detail = (stderr || stdout).trim().slice(0, 300) || `exit=${out?.exitCode ?? '?'} ok=${out?.ok}`;
+    throw new Error(`browser shot failed: ${detail}`);
+  }
   return { shot: true, output: stdout.slice(0, 400) };
 }
 
