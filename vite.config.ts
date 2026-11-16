@@ -1176,7 +1176,7 @@ function apiProxyPlugin(): Plugin {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(opts),
-          signal: AbortSignal.timeout(60_000),
+          signal: AbortSignal.timeout(90_000),
         });
         const j: any = await r.json().catch(() => null);
         if (!r.ok || !j?.ok) throw new Error(j?.error || `llm bridge http ${r.status}`);

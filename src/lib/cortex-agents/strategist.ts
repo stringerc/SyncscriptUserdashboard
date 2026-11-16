@@ -141,12 +141,12 @@ async function planWorker(ctx: AgentContext) {
   if (specPath) {
     try {
       const abs = path.isAbsolute(specPath) ? specPath : path.join(process.cwd(), specPath);
-      specExcerpt = fs.readFileSync(abs, 'utf-8').slice(0, 12000);
+      specExcerpt = fs.readFileSync(abs, 'utf-8').slice(0, 6000);
     } catch { specExcerpt = ''; }
   }
-  const clusterDigest = clusters.slice(0, 15).map((c) => ({
+  const clusterDigest = clusters.slice(0, 10).map((c) => ({
     key: c.key, type: c.type, agentId: c.agentId, failureClass: c.failureClass,
-    count: c.count, taskIds: c.taskIds, sampleTitles: c.sampleTitles, sampleErrors: c.sampleErrors,
+    count: c.count, taskIds: c.taskIds.slice(0, 4), sampleTitles: c.sampleTitles.slice(0, 2), sampleErrors: c.sampleErrors.slice(0, 2),
   }));
 
   const prompt = [
@@ -168,7 +168,7 @@ async function planWorker(ctx: AgentContext) {
 
   const planText = await ctx.llm({
     tier: 'reason',
-    maxTokens: 1800,
+    maxTokens: 1400,
     messages: [
       { role: 'system', content: 'You are STRATEGIST — evidence-cited fleet synthesis. Concrete, ranked, honest about uncertainty.' },
       { role: 'user', content: prompt },
