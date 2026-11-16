@@ -179,7 +179,7 @@ const TaskRow: React.FC<{ t: AgentTaskClient; now: number }> = ({ t, now }) => {
   );
 };
 
-const AgentDossierPanel: React.FC<{ agent: AgentClient; snap: AgentsSnapshotClient; now: number; onClose: () => void }> = ({ agent: a, snap, now, onClose }) => {
+const AgentDossierPanel: React.FC<{ agent: AgentClient; snap: AgentsSnapshotClient; now: number; onClose: () => void; dockLeft?: boolean }> = ({ agent: a, snap, now, onClose, dockLeft }) => {
   const [dossierOpen, setDossierOpen] = useState(false);
   const col = AGENT_COLORS[a.id] || `hsl(${spawnHue(a.id)}, 70%, 65%)`;
   const current = a.currentTaskId ? snap.tasks.find((t) => t.id === a.currentTaskId) : null;
@@ -194,7 +194,14 @@ const AgentDossierPanel: React.FC<{ agent: AgentClient; snap: AgentsSnapshotClie
   const statusCol = STATUS_COLOR[a.status] || DIM;
 
   return (
-    <div style={{
+    <div style={dockLeft ? {
+      // Docked to the roster rail: extends rightward from it, vertically centered.
+      position: 'absolute', left: 216, top: '50%', transform: 'translateY(-50%)', zIndex: 7,
+      width: 520, maxWidth: 'calc(100vw - 240px)', maxHeight: '74vh', display: 'flex', flexDirection: 'column',
+      background: 'linear-gradient(165deg, rgba(8,14,24,0.94), rgba(5,8,15,0.9))',
+      border: `1px solid ${hexA(col, 0.35)}`, borderLeft: `3px solid ${col}`, borderRadius: 3, padding: '12px 16px',
+      backdropFilter: 'blur(14px)', boxShadow: `0 0 40px ${hexA(col, 0.15)}`, overflow: 'hidden',
+    } : {
       position: 'absolute', bottom: 18, left: '50%', transform: 'translateX(-50%)', zIndex: 7,
       width: 560, maxWidth: '92vw', maxHeight: '62vh', display: 'flex', flexDirection: 'column',
       background: 'linear-gradient(165deg, rgba(8,14,24,0.94), rgba(5,8,15,0.9))',
@@ -1166,7 +1173,7 @@ export const CortexAgentsScene: React.FC = () => {
       {selectedAgent && (() => {
         const a = agents.find(x => x.id === selectedAgent);
         if (!a) return null;
-        return <AgentDossierPanel agent={a} snap={snap} now={nowTs} onClose={() => setSelectedAgent(null)} />;
+        return <AgentDossierPanel agent={a} snap={snap} now={nowTs} onClose={() => setSelectedAgent(null)} dockLeft={!narrow} />;
       })()}
 
       <div style={{ position: 'absolute', inset: 0, zIndex: 8, pointerEvents: 'none', background: 'repeating-linear-gradient(0deg, rgba(255,255,255,0.012) 0px, rgba(255,255,255,0.012) 1px, transparent 1px, transparent 3px)' }} />
