@@ -10394,6 +10394,16 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
             if (!ids.length) return;
             const snap = await agentRuntime.snapshot();
             const taskById = new Map((snap.tasks || []).map((t: any) => [String(t.id), t]));
+            // Auto-retries get a new task id with input.retryOf → follow the
+            // chain so the thread sees the final attempt's outcome, not the
+            // transient first failure.
+            const retryByOriginal = new Map<string, any>();
+            for (const t of (snap.tasks || []) as any[]) {
+              const orig = t?.input?.retryOf ? String(t.input.retryOf) : '';
+              if (!orig) continue;
+              const prev = retryByOriginal.get(orig);
+              if (!prev || Number(t.createdAt || 0) > Number(prev.createdAt || 0)) retryByOriginal.set(orig, t);
+            }
             let dirty = false;
             for (const tid of ids) {
               const rec = threads[tid];
@@ -10403,12 +10413,20 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
               const posted = new Set(rec.postedTaskIds || []);
               for (const cid of candidateIds) {
                 if (posted.has(cid)) continue;
-                const task = taskById.get(cid);
+                let task = taskById.get(cid);
                 if (!task) continue;
+                // Walk retry chain to the latest attempt (max 5 hops).
+                let hops = 0;
+                while (task.status === 'failed' && retryByOriginal.has(String(task.id)) && hops++ < 5) {
+                  task = retryByOriginal.get(String(task.id));
+                }
+                const effectiveId = String(task.id);
+                if (effectiveId !== cid && posted.has(effectiveId)) { posted.add(cid); dirty = true; continue; }
                 const { done, content } = formatTaskResult(task);
                 if (done && content) {
                   await discordApi('POST', `/channels/${tid}/messages`, { token, body: { content } }).catch(() => null);
                   posted.add(cid);
+                  posted.add(effectiveId);
                   dirty = true;
                 }
               }
