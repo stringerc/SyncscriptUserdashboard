@@ -203,6 +203,8 @@ Mapping to our actual `AgentClient` / `AgentTaskClient` / `ModelClient` / snapsh
 | Inter-agent handoff trace | Spawn lineage is static (proposedBy); no runtime handoff record | Medium: tasks would need parent/spawnedBy task refs |
 | Permission/scope inventory | `spawnSpec.tools[]` exists for spawned agents only; built-ins have implicit scopes | Small: declare tools per built-in agent, display uniformly |
 | Eval/quality scores | WARDEN patrols exist but produce findings, not per-agent scores | Medium: aggregate warden findings per agent → score |
+| Efficiency benchmarks | Not computed — but derivable: tasksCompleted/tasksFailed, dailyBudget | Small: "avg cost/task, avg error rate" once cost lands; Relevance AI shows both natively ([source](https://relevanceai.com/docs/enterprise/analytics), surfaced by SCOUT arm) |
+| Evidence trail per decision | `task.result`/error only — no per-step reasoning record | Medium-large: requires task runner instrumentation; Across AI's "evidence behind every decision" is the aspirational pattern |
 | Deliverable registry | `task.result` is `unknown` | Small-medium: schema-ify results per task kind |
 | Spawn lineage on tasks | `proposedBy` lives on proposals, not tasks | Small: propagate at spawn time |
 | Heartbeat display | `lastHeartbeatAt` exists, unused in UI | Trivial |
