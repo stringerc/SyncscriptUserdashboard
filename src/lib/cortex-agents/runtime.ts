@@ -147,6 +147,16 @@ export const AGENT_SPECS: AgentSpec[] = [
     dailyBudget: 160, // ~10-min patrol cadence + manual runs
     modelPin: { tier: 'fast' },
   },
+  {
+    id: 'devin',
+    name: 'DEVIN',
+    role: 'Principal Architect',
+    blurb: 'The deep-tier pair-programmer — plans, executes through governed tools, then verifies its own work and repairs failures before reporting. Claims only what evidence shows.',
+    concurrency: 1,
+    dailyBudget: 12, // deep lane is the expensive tier — small cap, high signal
+    modelPin: { tier: 'deep' },
+    tier: 'enterprise',
+  },
 ];
 
 const GLOBAL_CONCURRENCY = 4;

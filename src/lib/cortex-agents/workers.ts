@@ -1401,6 +1401,129 @@ const forecasterWorker = (runtime: AgentRuntime): WorkerHandler => async (ctx) =
   };
 };
 
+// ── Devin: Principal Architect ───────────────────────────────────
+// The deepest agent in the fleet. Where BUILDER is a one-shot
+// plan→execute operative, DEVIN runs a plan→execute→verify→repair loop:
+// it treats its own output as guilty until a verification command or
+// rendered evidence proves otherwise, then reports only what it can
+// stand behind. Hard blast-radius still routes to proposals — depth
+// never bypasses governance.
+
+const DEVIN_SYSTEM = `You are DEVIN, Cortex's principal architect — the deepest reasoning agent in the fleet. You pair-program with the operator on real engineering work: debugging, refactors, features, research synthesis, architecture.
+
+Operating contract (non-negotiable):
+- VERIFY BEFORE CLAIM. Never report success without evidence: a passing test, a clean typecheck, a diff you actually read, an HTTP 200 you actually got. "Should work" is not done.
+- SURGICAL CHANGES. Read before you write. Prefer the smallest correct diff. Match the codebase's existing conventions over your own preferences.
+- HONEST STATUS. Report exactly three states: verified (evidence shown), partial (what worked, what didn't), unverified (couldn't check — say why). Never blur them.
+- ESCALATE, DON'T GUESS. Destructive ops, external side effects, ambiguous requirements → veto/proposal, never silent execution.
+- ROOT CAUSE, NOT SYMPTOMS. When something fails, find why before patching. A fix that treats the symptom is a future incident.
+
+Given a task, output a JSON array of steps {"tool","args","why"} — or {"veto":true,"reason"} for tier-2 work. Allowed tools: read_file, write_file, edit_file, list_dir, run_command, search_code, web_fetch. Include a run_command verification step (test/typecheck/lint/build) whenever the task changes code. Output ONLY the JSON array.`;
+
+const devinWorker: WorkerHandler = async (ctx) => {
+  const instruction = str(ctx.task.input.instruction || ctx.task.input.query);
+  if (!instruction) throw new Error('devin requires input.instruction');
+
+  ctx.progress(0.05);
+  const distilledRules = relevantRules(instruction);
+  const spec = await expandTaskSpec(ctx.llm, instruction + retryNote(ctx.task.input), 'deep');
+  ctx.progress(0.15);
+
+  const planMessages = [
+    { role: 'system', content: DEVIN_SYSTEM + (distilledRules ? `\n\nDISTILLED RULES (constraints learned from accepted outcomes — follow unless they conflict with governance):\n${distilledRules}` : '') },
+    { role: 'user', content: instruction + specBlock(spec) + retryNote(ctx.task.input) },
+  ];
+  const parseSteps = (text: string): any[] => {
+    try {
+      const m = text.match(/\[[\s\S]*\]/);
+      const p = m ? JSON.parse(m[0]) : null;
+      return Array.isArray(p) ? p : [];
+    } catch { return []; }
+  };
+  let planText = await ctx.llm({ tier: 'deep', maxTokens: 900, messages: planMessages });
+  ctx.progress(0.3);
+  let steps = parseSteps(planText);
+  if (!steps.length) {
+    planText = await ctx.llm({
+      tier: 'deep', maxTokens: 900,
+      messages: [...planMessages,
+        { role: 'assistant', content: planText.slice(0, 1500) },
+        { role: 'user', content: 'Not a valid JSON array. Output ONLY the JSON array of steps now.' }],
+    });
+    steps = parseSteps(planText);
+  }
+  if (!steps.length)
+    throw new Error(`devin could not decompose task (model returned: ${planText.slice(0, 160).replace(/\s+/g, ' ')})`);
+
+  const risky = steps.find((s) => s?.veto || TIER2_RE.test(JSON.stringify(s)));
+  if (risky) {
+    ctx.progress(1);
+    return { vetoed: true, reason: risky.reason || 'task requires tier-2 approval', proposal: { title: ctx.task.title, instruction, steps: steps.slice(0, 5) }, note: 'Routed to initiative proposal path — nothing was executed.' };
+  }
+
+  const execSteps = async (list: any[]) => {
+    const results: any[] = [];
+    const lanes: Record<BlastLane, number> = { contained: 0, reversible: 0, hard: 0 };
+    for (const [i, step] of list.slice(0, 8).entries()) {
+      if (ctx.signal.aborted) throw new Error('cancelled');
+      const tool = String(step?.tool || '');
+      const args = (step?.args && typeof step.args === 'object') ? step.args : {};
+      const lane = blastLane(tool, JSON.stringify(args));
+      lanes[lane]++;
+      if (lane === 'hard') { results.push({ step: i, tool, vetoed: true, lane }); continue; }
+      const out = await toolExecute(tool, args, 60_000, ctx.telemetry);
+      results.push({ step: i, tool, lane, ok: out.ok !== false, output: JSON.stringify(out).slice(0, 800) });
+    }
+    return { results, lanes };
+  };
+
+  let { results, lanes } = await execSteps(steps);
+  ctx.progress(0.65);
+
+  // Verify-and-repair: if a verification-shaped step failed, feed the
+  // failure back and give the model one repair round per failure class.
+  const failures = () => results.filter((r) => r.ok === false || r.vetoed);
+  let repairs = 0;
+  for (let round = 0; round < 2 && failures().length; round++) {
+    const failCtx = failures().map((f) => `${f.tool}: ${String(f.output || 'vetoed').slice(0, 300)}`).join('\n');
+    const fixText = await ctx.llm({
+      tier: 'deep', maxTokens: 700,
+      messages: [
+        { role: 'system', content: DEVIN_SYSTEM },
+        { role: 'user', content: `TASK: ${instruction}\n\nThese steps FAILED — diagnose root cause and output ONLY a JSON array of corrective steps (same tool vocabulary), or [{"veto":true,"reason":"..."}] if unfixable within governance.\n\nFAILURES:\n${failCtx}` },
+      ],
+    });
+    const fixSteps = parseSteps(fixText);
+    if (!fixSteps.length || fixSteps[0]?.veto) break;
+    repairs++;
+    const retry = await execSteps(fixSteps);
+    lanes = { contained: lanes.contained + retry.lanes.contained, reversible: lanes.reversible + retry.lanes.reversible, hard: lanes.hard + retry.lanes.hard };
+    results = results.concat(retry.results);
+    ctx.progress(0.65 + 0.15 * (round + 1));
+  }
+  ctx.progress(1);
+
+  const failed = failures();
+  const verifyRan = results.some((r) => /test|typecheck|lint|verify|check|build/i.test(String(r.tool)));
+  const verifyPassed = verifyRan && !results.some((r) => /test|typecheck|lint|verify|check|build/i.test(String(r.tool)) && r.ok === false);
+  return {
+    instruction,
+    spec: spec ?? undefined,
+    stepsExecuted: results.length,
+    repairs,
+    lanes,
+    results,
+    // Honest verification status: what ran, what passed, what never did.
+    verification: {
+      required: spec?.verification ?? null,
+      verifyStepRan: verifyRan,
+      verifyStepPassed: verifyPassed,
+      unresolvedFailures: failed.length,
+    },
+    status: failed.length === 0 ? 'verified' : verifyPassed ? 'partial' : 'unverified',
+  };
+};
+
 // ── Registration ──────────────────────────────────────────────────
 
 export function registerAgentWorkers(runtime: AgentRuntime) {
@@ -1408,6 +1531,7 @@ export function registerAgentWorkers(runtime: AgentRuntime) {
   runtime.registerWorker('scout', scoutWorker);
   runtime.registerWorker('librarian', librarianWorker);
   runtime.registerWorker('builder', builderWorker);
+  runtime.registerWorker('devin', devinWorker);
   runtime.registerWorker('reviewer', reviewerWorker);
   runtime.registerWorker('runner', runnerWorker);
   registerDistributorWorker(runtime);
