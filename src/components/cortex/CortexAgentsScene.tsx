@@ -115,6 +115,197 @@ function eventLine(e: { type: string; at: number; [k: string]: unknown }): strin
   }
 }
 
+// ── Agent dossier — NOW / RECORD / DOSSIER (CORTEX_AGENT_DOSSIER_SPEC.md) ──
+// Zone A answers "what is it doing right now"; Zone B "how has it performed";
+// Zone C "what is it allowed to be". Progressive disclosure, MCC doctrine.
+
+const STATUS_COLOR: Record<string, string> = {
+  working: '#34d399', idle: '#67e8f9', error: '#f87171',
+  cooldown: '#fbbf24', offline: DIM, retired: DIM,
+};
+
+const ModelHealthLine: React.FC<{ model?: string; models: ModelClient[] }> = ({ model, models }) => {
+  if (!model) return null;
+  const [prov, ...rest] = model.split(':');
+  const mid = rest.join(':') || model;
+  const h = models.find((m) => m.provider === prov && m.id === mid) || models.find((m) => m.id === mid || m.id.endsWith(mid));
+  if (!h) return <span style={{ color: DIM }}>model health: unprobed</span>;
+  const col = modelStarColor(h);
+  return (
+    <span style={{ color: col }}>
+      brain: {h.status}{h.latencyMsP50 != null ? ` · ${h.latencyMsP50}ms p50` : ''}{h.consecutiveFailures ? ` · ${h.consecutiveFailures} fails` : ''}
+    </span>
+  );
+};
+
+const TaskRow: React.FC<{ t: AgentTaskClient; now: number }> = ({ t, now }) => {
+  const [open, setOpen] = useState(false);
+  const col = t.status === 'failed' || t.status === 'vetoed' ? '#f87171' : t.status === 'completed' ? '#34d399' : '#fbbf24';
+  const dur = t.finishedAt && t.startedAt ? fmtElapsed(t.finishedAt - t.startedAt) : t.startedAt ? fmtElapsed(now - t.startedAt) : '';
+  const telem = t.telemetry;
+  return (
+    <div style={{ borderTop: '1px solid rgba(148,163,184,0.08)' }}>
+      <button onClick={() => setOpen(v => !v)} style={{
+        display: 'flex', width: '100%', alignItems: 'center', gap: 6, background: 'none', border: 'none',
+        padding: '4px 0', cursor: 'pointer', fontFamily: MONO, textAlign: 'left',
+      }}>
+        <span style={{ width: 6, height: 6, borderRadius: '50%', background: col, flexShrink: 0, boxShadow: `0 0 6px ${col}` }} />
+        <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 9, color: 'rgba(203,213,225,0.75)' }}>
+          {t.title}
+        </span>
+        <span style={{ fontSize: 8, color: DIM, whiteSpace: 'nowrap' }}>
+          {t.status.toUpperCase()}{dur ? ` · ${dur}` : ''}{t.model ? ` · ${t.model.split('/').pop()?.slice(0, 18)}` : ''}
+          {telem?.failureClass ? ` · ${String(telem.failureClass).toUpperCase()}` : ''}
+        </span>
+      </button>
+      {open && (
+        <div style={{ padding: '4px 0 8px 12px', fontSize: 8, fontFamily: MONO, color: 'rgba(148,163,184,0.7)', lineHeight: 1.6 }}>
+          {t.error && <div style={{ color: '#f87171' }}>error: {t.error}</div>}
+          {telem && (
+            <div>
+              telemetry: {telem.llmCalls ?? 0} llm · {telem.tokensIn ?? 0}in/{telem.tokensOut ?? 0}tok · {telem.toolCalls ?? 0} tools({telem.toolFailures ?? 0} fail)
+              {telem.durationMs != null ? ` · ${telem.durationMs}ms` : ''}
+            </div>
+          )}
+          {t.result != null && (
+            <pre style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word', maxHeight: 140, overflow: 'auto', background: 'rgba(0,0,0,0.3)', padding: 6, borderRadius: 4, marginTop: 4 }}>
+              {typeof t.result === 'string' ? t.result.slice(0, 2000) : JSON.stringify(t.result, null, 1).slice(0, 2000)}
+            </pre>
+          )}
+          {!t.error && t.result == null && <div>no result payload recorded</div>}
+        </div>
+      )}
+    </div>
+  );
+};
+
+const AgentDossierPanel: React.FC<{ agent: AgentClient; snap: AgentsSnapshotClient; now: number; onClose: () => void }> = ({ agent: a, snap, now, onClose }) => {
+  const [dossierOpen, setDossierOpen] = useState(false);
+  const col = AGENT_COLORS[a.id] || `hsl(${spawnHue(a.id)}, 70%, 65%)`;
+  const current = a.currentTaskId ? snap.tasks.find((t) => t.id === a.currentTaskId) : null;
+  const agentTasks = snap.tasks.filter((t) => t.agentId === a.id);
+  const decided = agentTasks.filter((t) => t.status === 'completed' || t.status === 'failed' || t.status === 'vetoed');
+  const tsr = decided.length ? Math.round((decided.filter((t) => t.status === 'completed').length / decided.length) * 100) : null;
+  const recent = agentTasks.slice(0, 8);
+  const beatAge = a.lastHeartbeatAt ? now - a.lastHeartbeatAt : null;
+  const beatCol = beatAge == null ? DIM : beatAge < 30_000 ? '#34d399' : beatAge < 120_000 ? '#fbbf24' : '#f87171';
+  const spawn = a.spawnSpec;
+  const ttlLeft = spawn?.ttlHours && a.spawnedAt ? a.spawnedAt + spawn.ttlHours * 3_600_000 - now : null;
+  const statusCol = STATUS_COLOR[a.status] || DIM;
+
+  return (
+    <div style={{
+      position: 'absolute', bottom: 18, left: '50%', transform: 'translateX(-50%)', zIndex: 7,
+      width: 560, maxWidth: '92vw', maxHeight: '62vh', display: 'flex', flexDirection: 'column',
+      background: 'linear-gradient(165deg, rgba(8,14,24,0.94), rgba(5,8,15,0.9))',
+      border: `1px solid ${hexA(col, 0.35)}`, borderRadius: 3, padding: '12px 16px',
+      backdropFilter: 'blur(14px)', boxShadow: `0 0 40px ${hexA(col, 0.15)}`, overflow: 'hidden',
+    }}>
+      <style>{'@keyframes cortexPulse { 0%,100% { opacity: 1; } 50% { opacity: 0.35; } }'}</style>
+      {/* ── ZONE A: NOW ── */}
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', flexShrink: 0 }}>
+        <span style={{ fontSize: 11, letterSpacing: '0.3em', color: col, fontFamily: MONO, fontWeight: 700 }}>
+          {a.name}
+          <span style={{ fontSize: 7, letterSpacing: 0.1, color: agentTier(a) === 'enterprise' ? '#fbbf24' : DIM, marginLeft: 8, verticalAlign: 'middle' }}>
+            {agentTier(a) === 'enterprise' ? 'ENTERPRISE' : 'STANDARD'}
+          </span>
+        </span>
+        <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <span style={{ fontSize: 8, color: DIM, fontFamily: MONO }}>{a.role}</span>
+          <button onClick={onClose} style={{ background: 'none', border: 'none', color: DIM, cursor: 'pointer', fontSize: 11, fontFamily: MONO, padding: 0 }}>✕</button>
+        </span>
+      </div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 6, flexShrink: 0 }}>
+        <span style={{ width: 7, height: 7, borderRadius: '50%', background: statusCol, boxShadow: `0 0 8px ${statusCol}`, animation: a.status === 'working' ? 'cortexPulse 1.2s infinite' : 'none' }} />
+        <span style={{ fontSize: 9, color: statusCol, fontFamily: MONO, letterSpacing: 0.15 }}>{a.status.toUpperCase()}</span>
+        <span style={{ fontSize: 8, color: beatCol, fontFamily: MONO }}>beat {beatAge == null ? 'never' : `${fmtElapsed(beatAge)} ago`}</span>
+        {a.modelPin?.tier && <span style={{ fontSize: 8, color: DIM, fontFamily: MONO }}>PIN {a.modelPin.tier.toUpperCase()}</span>}
+      </div>
+
+      {current ? (
+        <div style={{ marginTop: 8, flexShrink: 0 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, fontSize: 9, fontFamily: MONO }}>
+            <span style={{ color: 'rgba(203,213,225,0.85)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {current.title} <span style={{ color: DIM }}>· {current.kind}</span>
+            </span>
+            <span style={{ color: col, whiteSpace: 'nowrap' }}>
+              {current.status === 'queued' ? 'QUEUED' : `${Math.round((current.progress ?? 0) * 100)}%`}
+              {current.model && <span style={{ color: DIM }}> · {current.model.split('/').pop()?.slice(0, 22)}</span>}
+            </span>
+          </div>
+          <div style={{ height: 3, background: 'rgba(148,163,184,0.12)', borderRadius: 2, marginTop: 4, overflow: 'hidden' }}>
+            <div style={{
+              width: `${Math.round((current.progress ?? 0) * 100)}%`, height: '100%',
+              background: `linear-gradient(90deg, ${hexA(col, 0.6)}, ${col})`, transition: 'width 0.4s',
+            }} />
+          </div>
+          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 7, color: 'rgba(148,163,184,0.45)', fontFamily: MONO, marginTop: 2 }}>
+            <span>{current.startedAt ? `${fmtElapsed(now - current.startedAt)} elapsed` : ''}</span>
+            <ModelHealthLine model={current.model} models={snap.models} />
+          </div>
+        </div>
+      ) : (
+        <div style={{ fontSize: 9, color: DIM, fontFamily: MONO, marginTop: 8, flexShrink: 0 }}>
+          {a.status === 'working' ? 'TASK DISPATCHING…' : 'NO ACTIVE TASK — STANDING BY'}
+        </div>
+      )}
+
+      {a.status === 'error' && (
+        <div style={{ fontSize: 8, color: '#f87171', fontFamily: MONO, marginTop: 6, padding: '4px 6px', border: '1px solid rgba(248,113,113,0.3)', borderRadius: 3, background: 'rgba(248,113,113,0.06)', flexShrink: 0 }}>
+          last failure{current?.telemetry?.failureClass ? ` [${current.telemetry.failureClass}]` : ''}: {(current?.error || agentTasks.find((t) => t.status === 'failed')?.error || 'unknown').slice(0, 160)}
+        </div>
+      )}
+
+      {/* ── ZONE B: RECORD ── */}
+      <div style={{ marginTop: 10, flexShrink: 0 }}>
+        <div style={{ display: 'flex', gap: 14, fontSize: 8, color: 'rgba(148,233,255,0.55)', fontFamily: MONO, marginBottom: 4 }}>
+          <span>{a.tasksCompleted} DONE</span><span>{a.tasksFailed} FAILED</span>
+          {tsr !== null && <span title="Success rate over retained task window">TSR {tsr}%</span>}
+          <span>BUDGET {a.dailyBudget}/DAY</span>
+          <span style={{ marginLeft: 'auto', color: DIM }}>{recent.length} RECENT</span>
+        </div>
+        <div style={{ overflowY: 'auto', maxHeight: 150, flexShrink: 1 }}>
+          {recent.map((t) => <TaskRow key={t.id} t={t} now={now} />)}
+          {!recent.length && <div style={{ fontSize: 8, color: DIM, fontFamily: MONO, padding: '4px 0' }}>NO TASK HISTORY — AWAITING FIRST ASSIGNMENT</div>}
+        </div>
+      </div>
+
+      {/* ── ZONE C: DOSSIER (collapsible) ── */}
+      <button onClick={() => setDossierOpen(v => !v)} style={{
+        display: 'flex', alignItems: 'center', gap: 6, background: 'none', border: 'none', cursor: 'pointer',
+        fontFamily: MONO, fontSize: 8, color: DIM, letterSpacing: 0.15, padding: '8px 0 0', textTransform: 'uppercase',
+      }}>
+        <span style={{ color: col }}>{dossierOpen ? '▾' : '▸'}</span> dossier — identity · tools · lineage
+      </button>
+      {dossierOpen && (
+        <div style={{ overflowY: 'auto', fontSize: 8, fontFamily: MONO, color: 'rgba(203,213,225,0.7)', lineHeight: 1.7, paddingTop: 6 }}>
+          <div style={{ color: 'rgba(203,213,225,0.85)', marginBottom: 2 }}>{a.blurb}</div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'auto 1fr', gap: '1px 10px' }}>
+            <span style={{ color: DIM }}>TOOLS</span>
+            <span>{spawn?.tools?.length ? spawn.tools.join(', ') : 'built-in governed scopes'}</span>
+            <span style={{ color: DIM }}>MODEL PIN</span>
+            <span>{a.modelPin?.tier ? `${a.modelPin.tier.toUpperCase()}${a.modelPin.excludeProviders?.length ? ` (excl: ${a.modelPin.excludeProviders.join(', ')})` : ''}` : 'auto (matrix-routed)'}</span>
+            <span style={{ color: DIM }}>CONCURRENCY</span>
+            <span>{a.concurrency} parallel</span>
+            {spawn && (
+              <>
+                <span style={{ color: DIM }}>LINEAGE</span>
+                <span>
+                  {spawn.callSign || a.id}{spawn.parentAgentId ? ` · parent ${spawn.parentAgentId}` : ''}
+                  {a.spawnedAt ? ` · spawned ${fmtElapsed(now - a.spawnedAt)} ago` : ''}
+                  {ttlLeft != null ? ` · TTL ${ttlLeft > 0 ? `${Math.round(ttlLeft / 3_600_000)}h left` : 'EXPIRED'}` : ''}
+                </span>
+                <span style={{ color: DIM }}>MISSION</span>
+                <span>{spawn.mission || spawn.role || '—'}</span>
+              </>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
 export const CortexAgentsScene: React.FC = () => {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -975,31 +1166,7 @@ export const CortexAgentsScene: React.FC = () => {
       {selectedAgent && (() => {
         const a = agents.find(x => x.id === selectedAgent);
         if (!a) return null;
-        const col = AGENT_COLORS[a.id] || '#94a3b8';
-        const recent = (snap.tasks || []).filter(t => t.agentId === a.id).slice(0, 5);
-        const agentTasks = (snap.tasks || []).filter(t => t.agentId === a.id && (t.status === 'completed' || t.status === 'failed'));
-        const tsr = agentTasks.length ? Math.round((agentTasks.filter(t => t.status === 'completed').length / agentTasks.length) * 100) : null;
-        return (
-          <div style={{ position: 'absolute', bottom: 18, left: '50%', transform: 'translateX(-50%)', zIndex: 7, width: 500, maxWidth: '92vw', background: 'linear-gradient(165deg, rgba(8,14,24,0.92), rgba(5,8,15,0.88))', border: `1px solid ${hexA(col, 0.35)}`, borderRadius: 3, padding: '12px 16px', backdropFilter: 'blur(14px)', boxShadow: `0 0 40px ${hexA(col, 0.15)}` }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
-              <span style={{ fontSize: 11, letterSpacing: '0.3em', color: col, fontFamily: MONO, fontWeight: 700 }}>{a.name}</span>
-              <span style={{ fontSize: 8, color: DIM, fontFamily: MONO }}>{a.role}</span>
-            </div>
-            <div style={{ fontSize: 9, color: 'rgba(203,213,225,0.65)', fontFamily: MONO, margin: '5px 0 8px' }}>{a.blurb}</div>
-            <div style={{ display: 'flex', gap: 16, fontSize: 8, color: 'rgba(148,233,255,0.55)', fontFamily: MONO, marginBottom: 8 }}>
-              <span>{a.tasksCompleted} DONE</span><span>{a.tasksFailed} FAILED</span>{tsr !== null && <span title="Task success rate over retained history">TSR {tsr}%</span>}<span>BUDGET {a.dailyBudget}/DAY</span><span>PIN {a.modelPin?.tier?.toUpperCase() || 'NONE'}</span><span style={{ color: agentTier(a) === 'enterprise' ? '#fbbf24' : DIM }}>CLASS {agentTier(a) === 'enterprise' ? 'ENTERPRISE' : 'STANDARD'}</span>
-            </div>
-            {recent.map(t => (
-              <div key={t.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 8, fontFamily: MONO, padding: '3px 0', borderTop: '1px solid rgba(148,163,184,0.08)' }}>
-                <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 340, color: t.status === 'failed' ? '#f87171' : 'rgba(203,213,225,0.7)' }}>{t.title}</span>
-                <span style={{ color: DIM, whiteSpace: 'nowrap', marginLeft: 10 }}>
-                  {t.status.toUpperCase()}{t.model ? ` · ${t.model.split('/').pop()}` : ''}{t.finishedAt && t.startedAt ? ` · ${fmtElapsed(t.finishedAt - t.startedAt)}` : ''}{t.status === 'failed' && t.telemetry?.failureClass ? ` · ${String(t.telemetry.failureClass).toUpperCase()}` : ''}
-                </span>
-              </div>
-            ))}
-            {!recent.length && <div style={{ fontSize: 8, color: DIM, fontFamily: MONO }}>NO TASK HISTORY — AWAITING FIRST ASSIGNMENT</div>}
-          </div>
-        );
+        return <AgentDossierPanel agent={a} snap={snap} now={nowTs} onClose={() => setSelectedAgent(null)} />;
       })()}
 
       <div style={{ position: 'absolute', inset: 0, zIndex: 8, pointerEvents: 'none', background: 'repeating-linear-gradient(0deg, rgba(255,255,255,0.012) 0px, rgba(255,255,255,0.012) 1px, transparent 1px, transparent 3px)' }} />

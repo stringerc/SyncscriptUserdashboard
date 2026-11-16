@@ -10,15 +10,21 @@ export interface AgentTaskClient {
   id: string; agentId: string; kind: string; title: string;
   status: string; progress: number | null; model?: string;
   result?: unknown; error?: string;
+  telemetry?: {
+    llmCalls?: number; tokensIn?: number; tokensOut?: number; llmMs?: number;
+    toolCalls?: number; toolFailures?: number; durationMs?: number;
+    failureClass?: string;
+  } | null;
   createdAt: number; startedAt?: number; finishedAt?: number;
 }
 export interface AgentClient {
   id: string; name: string; role: string; blurb: string;
   status: string; currentTaskId: string | null;
   concurrency: number; dailyBudget: number;
+  modelPin?: { tier?: string; excludeProviders?: string[] } | null;
   lastHeartbeatAt: number | null;
   tasksCompleted: number; tasksFailed: number;
-  spawnSpec?: { callSign?: string; role?: string; mission?: string; ttlHours?: number; dailyBudget?: number; tools?: string[] } | null;
+  spawnSpec?: { callSign?: string; role?: string; mission?: string; ttlHours?: number; dailyBudget?: number; tools?: string[]; parentAgentId?: string } | null;
   spawnedAt?: number | null;
   /** 'enterprise' agents render as satellites; absent/'standard' render as moons. */
   tier?: 'standard' | 'enterprise' | null;
