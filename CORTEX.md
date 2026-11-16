@@ -134,8 +134,8 @@ Voice/STT ──► useVisualizerVoice ──► cortex-globe (map cmds) ──�
 
 ### 4.1 Runtime & Infrastructure Topology
 
-- **Agent runtime is Mac-local** — `agentRuntime` lives in the Vite middleware (`vite.config.ts`); tasks, queues, `.cortex-runtime/` state, and LLM matrix all pause when the Mac sleeps. Always-on migration to Oracle is planned, not done.
-- **Discord surface**: `https://cortex.tailc088d4.ts.net` (Tailscale Funnel → `localhost:5173`). `tailscaled` + Vite run under launchd (`com.tailscale.cortex`, `com.syncscript.vite`) — survive reboots.
+- **Agent runtime — PARALLEL-RUN on Oracle (migration in progress)**: full Cortex runtime now live on `syncscript-a1-retry-2` at `/opt/cortex-runtime` (systemd `cortex-runtime.service`, vite :5174, arm64 `npm install` clean). Public endpoint `https://cortex-oracle.tailc088d4.ts.net` (Tailscale Funnel → :5174) verified: discord/state configured, signature checks, 12 agents, all smoke gates pass (scout social_scan, librarian recall, distributor browser_shot via local CDP :9222, TTS cortana via `pocket-tts-cortana.service` :8911). Mac instance remains authoritative for Discord until 24h soak + portal cutover. See `CORTEX_ORACLE_MIGRATION_{PROMPT,AUDIT,SPEC}.md`.
+- **Discord surface (current/authoritative)**: `https://cortex.tailc088d4.ts.net` (Tailscale Funnel → Mac `localhost:5173`). `tailscaled` + Vite run under launchd (`com.tailscale.cortex`, `com.syncscript.vite`) — survive reboots. **Planned cutover**: portal URL → `cortex-oracle.tailc088d4.ts.net` after soak.
 - **Automation Chrome lives on Oracle** (`syncscript-a1-retry-2`, ARM64 Ubuntu): systemd `cortex-xvfb` (display :99) + `cortex-chrome` (Chrome 159, CDP `127.0.0.1:9222`, profile `/opt/cortex-chrome/profile`, x11vnc :5900 for logins). Mac reaches it via launchd SSH tunnel `com.cortex.cdp-tunnel` (`localhost:9222` → oracle). All `storefront/tools/*.mjs` scripts work unchanged.
 - **Agent Reach** (`~/.local/bin/agent-reach`, uv tool): SCOUT `social_scan` read-only platform access — github/youtube/web/v2ex/bilibili/reddit/xueqiu live; twitter/linkedin/etc. installed, need `agent-reach login`.
 
