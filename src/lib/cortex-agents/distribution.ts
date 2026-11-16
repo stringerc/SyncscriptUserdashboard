@@ -77,6 +77,27 @@ function saveQueue(q: QueueFile) {
   fs.renameSync(tmp, QUEUE_FILE);
 }
 
+/** Append a pending work item — the producer side of the pipeline.
+ *  Deduped on type+payload fingerprint so agents can't double-enqueue. */
+export function enqueueDistributionItem(type: string, payload: Record<string, unknown>, notBefore?: number): { ok: boolean; item?: QueueItem; reason?: string } {
+  if (!ITEM_HANDLERS[type]) return { ok: false, reason: `unknown queue type '${type}'` };
+  const queue = loadQueue();
+  const fp = JSON.stringify(payload);
+  const dup = queue.items.find((i) =>
+    i.type === type && i.status !== 'failed' && JSON.stringify(i.payload || {}) === fp);
+  if (dup) return { ok: true, item: dup, reason: 'duplicate — already queued' };
+  const item: QueueItem = {
+    id: `${type}-${Date.now().toString(36)}-${randomBytes(2).toString('hex')}`,
+    type, payload, status: 'pending', createdAt: Date.now(), attempts: 0,
+    ...(notBefore ? { notBefore } : {}),
+  };
+  queue.items.push(item);
+  saveQueue(queue);
+  return { ok: true, item };
+}
+
+// ITEM_TYPES exported below, after ITEM_HANDLERS is defined.
+
 function sh(cmd: string, telemetry?: { toolCalls: number; toolFailures: number }, timeoutMs = CMD_TIMEOUT_MS) {
   return toolExecute('run_command', { command: cmd, cwd: STOREFRONT, timeout: timeoutMs }, timeoutMs + 15_000, telemetry);
 }
@@ -249,6 +270,40 @@ async function runDistributionStatus(ctx: AgentContext, _payload: Record<string,
   };
 }
 
+/** reddit_draft — the content half of the last mile. Given a thread
+ *  permalink (+ optional product context), the fast lane drafts a
+ *  value-first comment and enqueues a reddit_comment item; the next
+ *  queue_process drain posts it through the governed browser path.
+ *  Drafting and posting stay separate steps so bad drafts never ship. */
+async function runRedditDraft(ctx: AgentContext, payload: Record<string, unknown>) {
+  const permalink = str(payload.permalink);
+  const context = str(payload.context, '');
+  const product = str(payload.product, '');
+  if (!permalink) throw new Error('reddit_draft requires payload.permalink');
+  const threadHint = str(payload.threadHint, '');
+  ctx.progress(0.2);
+  const draft = await ctx.llm({
+    tier: 'fast',
+    maxTokens: 400,
+    messages: [
+      {
+        role: 'system',
+        content: 'You write Reddit comments for a solo founder who sells AI workflow products on Gumroad. Rules: lead with genuine help, never pitch in the first comment, no links unless the thread explicitly asks for tools, sound like a practitioner not a marketer, 2-4 sentences max, no em-dash, no corporate tone. Output ONLY the comment text.',
+      },
+      {
+        role: 'user',
+        content: `THREAD: ${permalink}${threadHint ? `\nTHREAD CONTEXT: ${threadHint.slice(0, 1500)}` : ''}${context ? `\nPRODUCT TO WEAVE IN NATURALLY (only if it fits): ${context}` : ''}${product ? `\nPRODUCT: ${product}` : ''}\n\nDraft the comment.`,
+      },
+    ],
+  });
+  const text = String(draft || '').trim().replace(/^"|"$/g, '');
+  if (text.length < 20) throw new Error('reddit_draft produced empty/too-short comment');
+  ctx.progress(0.7);
+  const enq = enqueueDistributionItem('reddit_comment', { permalink, text });
+  ctx.progress(1);
+  return { permalink, drafted: text, queued: enq.ok, queueId: enq.item?.id, queueNote: enq.reason };
+}
+
 const ITEM_HANDLERS: Record<string, (ctx: AgentContext, p: Record<string, unknown>) => Promise<unknown>> = {
   reddit_scan: runRedditScan,
   reddit_comment: runRedditComment,
@@ -258,6 +313,8 @@ const ITEM_HANDLERS: Record<string, (ctx: AgentContext, p: Record<string, unknow
   dreamina_generate: runDreaminaGenerate,
   dreamina_collect: runDreaminaCollect,
 };
+
+export const DISTRIBUTION_ITEM_TYPES = Object.keys(ITEM_HANDLERS);
 
 // ── Worker ────────────────────────────────────────────────────────
 
@@ -273,6 +330,10 @@ const distributorWorker: WorkerHandler = async (ctx) => {
 
   if (kind === 'distribution_status') {
     return runDistributionStatus(ctx, ctx.task.input);
+  }
+
+  if (kind === 'reddit_draft') {
+    return runRedditDraft(ctx, ctx.task.input);
   }
 
   if (kind !== 'queue_process') {

@@ -24,6 +24,7 @@ import { archiveTask, readArchive } from './src/lib/cortex-agents/archive';
 import { listStrategyProposals, decideStrategyProposal, reconcileStrategyProposals, fileBudgetProposal } from './src/lib/cortex-agents/strategy-proposals';
 import { recordIncidentFailure, resolveIncidentsOnSuccess, listIncidents } from './src/lib/cortex-agents/incidents';
 import { registerAgentWorkers, makeEphemeralWorker, expandTaskSpec } from './src/lib/cortex-agents/workers';
+import { enqueueDistributionItem, DISTRIBUTION_ITEM_TYPES } from './src/lib/cortex-agents/distribution';
 import type { RouteTier } from './src/lib/cortex-agents/types';
 import { normalizeForSpeech } from './src/lib/tts-speech-normalize';
 import {
@@ -9763,6 +9764,34 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
             launchLogTail: readTail(path.join(sf, 'GUMROAD_LAUNCH_LOG.md')),
             browserShot: readTail(path.join(sf, 'browser', 'latest.txt'), 200),
           }));
+        } catch (e: any) {
+          res.writeHead(500, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ ok: false, error: String(e?.message || e) }));
+        }
+      });
+
+      // POST /api/cortex/distribution/enqueue — {type, payload, notBefore?}
+      // The producer side of the pipeline: agents, the Inbox, and scripts can
+      // push real work items (reddit_comment, pinterest_pin, ...) into the
+      // queue the distributor drains every 30min. Deduped by payload.
+      server.middlewares.use('/api/cortex/distribution/enqueue', async (req: any, res: any, next: any) => {
+        if (req.method === 'OPTIONS') {
+          res.writeHead(204, { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Methods': 'POST, OPTIONS', 'Access-Control-Allow-Headers': 'Content-Type' });
+          return res.end();
+        }
+        if (req.method !== 'POST') return next();
+        agentCors(req, res);
+        try {
+          let body = '';
+          for await (const chunk of req) body += chunk;
+          const { type, payload, notBefore } = JSON.parse(body || '{}');
+          if (!type || typeof payload !== 'object' || payload === null) {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            return res.end(JSON.stringify({ ok: false, error: 'type and payload required', types: DISTRIBUTION_ITEM_TYPES }));
+          }
+          const result = enqueueDistributionItem(String(type), payload as Record<string, unknown>, notBefore ? Number(notBefore) : undefined);
+          res.writeHead(result.ok ? 200 : 400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ ok: result.ok, item: result.item, reason: result.reason, types: DISTRIBUTION_ITEM_TYPES }));
         } catch (e: any) {
           res.writeHead(500, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ ok: false, error: String(e?.message || e) }));
