@@ -363,6 +363,9 @@ export default function CortexVisualizerPage() {
   const [agentCrew, setAgentCrew] = useState(agentsClient.snapshot);
   const [agentEvents, setAgentEvents] = useState(agentsClient.events);
   const [missionExpanded, setMissionExpanded] = useState(false);
+  const [missionW, setMissionW] = useState(300);
+  const [missionH, setMissionH] = useState(168);
+  const missionResize = useRef<{ x: number; y: number; w: number; h: number } | null>(null);
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
   const agentCardRef = useRef<HTMLDivElement | null>(null);
   // Ride the agent's orbital position: the card tracks the mote's projected
@@ -1678,7 +1681,8 @@ export default function CortexVisualizerPage() {
             onClick={() => { setMissionExpanded(true); cortexSpeak('Expanding mission log.'); }}
             title="Click to expand the full mission log"
             style={{
-              position: 'absolute', left: narrow ? 16 : 64, bottom: 112, zIndex: 20, width: narrow ? '60vw' : 300,
+              position: 'absolute', left: narrow ? 16 : 64, bottom: 112, zIndex: 20,
+              width: narrow ? '60vw' : missionW,
               fontFamily: "'IBM Plex Mono', monospace", fontSize: 8, letterSpacing: '0.1em',
               background: 'rgba(4,8,18,0.66)', border: '1px solid rgba(103,232,249,0.14)',
               borderRadius: 4, backdropFilter: 'blur(6px)', overflow: 'hidden', cursor: 'pointer',
@@ -1693,12 +1697,42 @@ export default function CortexVisualizerPage() {
                 {tasks.filter(t => t.status === 'running' || t.status === 'queued').length} ACTIVE · CLICK TO EXPAND
               </span>
             </div>
-            <div style={{ maxHeight: 168, overflowY: 'auto', scrollbarWidth: 'thin' }}>
+            <div style={{ maxHeight: missionH, overflowY: 'auto', scrollbarWidth: 'thin' }}>
               {tasks.length === 0 && (
                 <div style={{ padding: '12px 10px', color: 'rgba(148,233,255,0.3)', letterSpacing: '0.15em' }}>NO TASKS THIS SESSION</div>
               )}
               {tasks.map(t => taskRow(t, true))}
             </div>
+            {/* resize grip — drag the top-right corner to enlarge the log */}
+            <div
+              onPointerDown={(e) => {
+                e.stopPropagation();
+                e.preventDefault();
+                missionResize.current = { x: e.clientX, y: e.clientY, w: missionW, h: missionH };
+                const move = (ev: PointerEvent) => {
+                  const r = missionResize.current;
+                  if (!r) return;
+                  const maxW = Math.max(220, window.innerWidth - (narrow ? 16 : 64) - 16);
+                  setMissionW(Math.min(maxW, Math.max(220, r.w + (ev.clientX - r.x))));
+                  setMissionH(Math.min(520, Math.max(72, r.h + (ev.clientY - r.y))));
+                };
+                const up = () => {
+                  missionResize.current = null;
+                  window.removeEventListener('pointermove', move);
+                  window.removeEventListener('pointerup', up);
+                };
+                window.addEventListener('pointermove', move);
+                window.addEventListener('pointerup', up);
+              }}
+              onClick={(e) => e.stopPropagation()}
+              title="Drag to resize"
+              style={{
+                position: 'absolute', top: 0, right: 0, width: 16, height: 16, zIndex: 2,
+                cursor: 'nwse-resize', userSelect: 'none',
+                display: 'flex', alignItems: 'flex-start', justifyContent: 'flex-end',
+                color: 'rgba(148,233,255,0.35)', fontSize: 10, lineHeight: 1, padding: '3px 4px 0 0',
+              }}
+            >◢</div>
           </div>
         );
       })()}
@@ -1749,6 +1783,11 @@ export default function CortexVisualizerPage() {
                 const col = STATUS_COLORS[t.status] || '#64748b';
                 const agentCol = AGENT_HUES[t.agentId] || '#a78bfa';
                 const dur = t.finishedAt && t.startedAt ? `${Math.max(1, Math.round((t.finishedAt - t.startedAt) / 1000))}s` : '';
+                const tokIn = t.telemetry?.tokensIn ?? 0;
+                const tokOut = t.telemetry?.tokensOut ?? 0;
+                const tokTotal = tokIn + tokOut;
+                const toolCalls = t.telemetry?.toolCalls ?? 0;
+                const toolFailures = t.telemetry?.toolFailures ?? 0;
                 return (
                   <div key={t.id} style={{
                     padding: '9px 16px', borderBottom: '1px solid rgba(148,233,255,0.05)',
@@ -1767,11 +1806,11 @@ export default function CortexVisualizerPage() {
                         {t.kind && <><span>·</span><span>{String(t.kind).toUpperCase()}</span></>}
                         {t.model && <><span>·</span><span style={{ color: 'rgba(196,181,253,0.6)' }}>{t.model}</span></>}
                         {dur && <span style={{ color: 'rgba(148,233,255,0.3)' }}>{dur}</span>}
-                        {(t.telemetry?.tokensIn ?? 0) + (t.telemetry?.tokensOut ?? 0) > 0 && (
-                          <span style={{ color: 'rgba(196,181,253,0.5)' }}>{((t.telemetry.tokensIn + t.telemetry.tokensOut) >= 1000 ? `${((t.telemetry.tokensIn + t.telemetry.tokensOut) / 1000).toFixed(1)}k` : String(t.telemetry.tokensIn + t.telemetry.tokensOut))} TOK</span>
+                        {tokTotal > 0 && (
+                          <span style={{ color: 'rgba(196,181,253,0.5)' }}>{(tokTotal >= 1000 ? `${(tokTotal / 1000).toFixed(1)}k` : String(tokTotal))} TOK</span>
                         )}
-                        {(t.telemetry?.toolCalls ?? 0) > 0 && (
-                          <span style={{ color: 'rgba(148,233,255,0.4)' }}>{t.telemetry.toolCalls} TOOL{t.telemetry.toolCalls === 1 ? '' : 'S'}{(t.telemetry.toolFailures ?? 0) > 0 ? ` (${t.telemetry.toolFailures} FAIL)` : ''}</span>
+                        {toolCalls > 0 && (
+                          <span style={{ color: 'rgba(148,233,255,0.4)' }}>{toolCalls} TOOL{toolCalls === 1 ? '' : 'S'}{toolFailures > 0 ? ` (${toolFailures} FAIL)` : ''}</span>
                         )}
                         {t.status === 'failed' && t.telemetry?.failureClass && (
                           <span style={{ color: 'rgba(248,113,113,0.65)' }}>{String(t.telemetry.failureClass).toUpperCase()}</span>
