@@ -75,6 +75,12 @@ export interface DiscordDeps {
   getPendingProposals: () => ProposalLike[];
   acceptProposal: (id: string) => boolean;
   dismissProposal: (id: string) => boolean;
+  /** Agent-fleet strategy proposals (incident investigations, budget
+   *  raises, devin_task launches) — separate ledger from initiative
+   *  proposals. decideStrategyProposal performs the full approve flow
+   *  server-side (budget apply / task dispatch / devin session gate). */
+  listStrategyProposals?: () => any[];
+  decideStrategyProposal?: (id: string, decision: 'approved' | 'dismissed') => Promise<{ ok: boolean; note?: string }> | { ok: boolean; note?: string };
   submitTask: (agentId: string, kind: string, title: string, input?: any) => { ok: boolean; task?: { id?: string }; error?: string };
   /** Fire-and-forget hook invoked after a successful /cortex ask — used to
    *  spawn the task thread. Receives the raw interaction payload + job info. */
@@ -273,6 +279,34 @@ export function formatProposalCard(p: ProposalLike): { embeds: DiscordEmbed[]; c
   return { embeds: [embed], components };
 }
 
+/** Card for agent-fleet strategy proposals (incident investigations,
+ *  budget raises, devin_task launches). Buttons use the sx prefix so the
+ *  interaction handler routes to the strategy-proposal ledger. */
+export function formatStrategyProposalCard(p: any): { embeds: DiscordEmbed[]; components: DiscordComponent[] } {
+  const infra = p.actionClass === 'infra' || p.kind === 'devin_task';
+  const embed: DiscordEmbed = {
+    title: `Agent proposal: ${String(p.title || 'untitled').slice(0, 250)}`,
+    color: infra ? 0xed4245 : p.actionClass === 'config' ? 0xfee75c : 0x5865f2,
+    timestamp: new Date(p.createdAt || Date.now()).toISOString(),
+    fields: [
+      { name: 'Routes to', value: `${p.agentId} · ${p.kind}`, inline: true },
+      { name: 'Class', value: p.actionClass || 'process', inline: true },
+      ...(p.instruction ? [{ name: 'Ask', value: String(p.instruction).slice(0, 900) }] : []),
+      ...(Array.isArray(p.evidence) && p.evidence.length
+        ? [{ name: 'Evidence', value: p.evidence.slice(0, 5).map(String).join('\n').slice(0, 400) }]
+        : []),
+    ],
+  };
+  const components: DiscordComponent[] = [{
+    type: 1,
+    components: [
+      { type: 2, style: 3, label: 'Approve', custom_id: `sxok:${p.id}` },
+      { type: 2, style: 4, label: 'Dismiss', custom_id: `sxdsm:${p.id}` },
+    ],
+  }];
+  return { embeds: [embed], components };
+}
+
 export function formatDigest(input: {
   events: { title: string; start: number }[];
   pendingProposals: ProposalLike[];
@@ -319,7 +353,7 @@ export function formatDigest(input: {
 
 const PUSH_CAP_PER_DAY = 5;
 
-interface PushState { day: string; count: number; lastDigestDay?: string; postedProposalIds?: string[]; postedForecastIds?: string[]; }
+interface PushState { day: string; count: number; lastDigestDay?: string; postedProposalIds?: string[]; postedForecastIds?: string[]; postedStrategyIds?: string[]; }
 
 export function loadPushState(stateDir: string): PushState {
   try {
@@ -351,15 +385,21 @@ export function consumePushBudget(stateDir: string, now = Date.now()): boolean {
   return true;
 }
 
-export function alreadyPosted(stateDir: string, kind: 'proposal' | 'forecast', id: string): boolean {
+const PUSH_KIND_KEYS: Record<string, 'postedProposalIds' | 'postedForecastIds' | 'postedStrategyIds'> = {
+  proposal: 'postedProposalIds',
+  forecast: 'postedForecastIds',
+  strategy: 'postedStrategyIds',
+};
+
+export function alreadyPosted(stateDir: string, kind: 'proposal' | 'forecast' | 'strategy', id: string): boolean {
   const s = loadPushState(stateDir);
-  const key = kind === 'proposal' ? 'postedProposalIds' : 'postedForecastIds';
+  const key = PUSH_KIND_KEYS[kind] || 'postedProposalIds';
   return Array.isArray(s[key]) && (s[key] as string[]).includes(id);
 }
 
-export function markPosted(stateDir: string, kind: 'proposal' | 'forecast', id: string): void {
+export function markPosted(stateDir: string, kind: 'proposal' | 'forecast' | 'strategy', id: string): void {
   const s = loadPushState(stateDir);
-  const key = kind === 'proposal' ? 'postedProposalIds' : 'postedForecastIds';
+  const key = PUSH_KIND_KEYS[kind] || 'postedProposalIds';
   s[key] = Array.isArray(s[key]) ? [...(s[key] as string[]), id] : [id];
   s[key] = (s[key] as string[]).slice(-200);
   savePushState(stateDir, s);
@@ -445,6 +485,26 @@ export async function handleDiscordInteraction(
     if (!isOwner) {
       return { type: 4, data: { content: 'Not authorized.', flags: EPHEMERAL } };
     }
+    // Strategy-proposal buttons (sx prefix) → agent-fleet ledger.
+    const sm = customId.match(/^sx(ok|dsm):(.+)$/);
+    if (sm) {
+      if (!deps.decideStrategyProposal) {
+        return { type: 4, data: { content: 'Strategy proposals are not wired on this host.', flags: EPHEMERAL } };
+      }
+      const res = await deps.decideStrategyProposal(sm[2], sm[1] === 'ok' ? 'approved' : 'dismissed');
+      const messageId = String(payload?.message?.id || '');
+      const channelId = String(payload?.channel_id || '');
+      return {
+        type: 7,
+        data: {
+          content: res.ok
+            ? `**${sm[1] === 'ok' ? 'Approved' : 'Dismissed'}** \`${sm[2]}\` by <@${userId}>${res.note ? ` — ${res.note}` : ''}`
+            : `Could not resolve \`${sm[2]}\` — ${res.note || 'already decided or unknown.'}`,
+          embeds: payload?.message?.embeds || [],
+          components: [],
+        },
+      };
+    }
     const m = customId.match(/^cx(ok|dsm):(.+)$/);
     if (!m) return { type: 4, data: { content: 'Unknown component.', flags: EPHEMERAL } };
     const [, action, proposalId] = m;
@@ -485,16 +545,20 @@ export async function handleDiscordInteraction(
     }
     case 'proposals': {
       const proposals = deps.getPendingProposals();
-      if (!proposals.length) {
-        return { type: 4, data: { content: formatProposalsList(proposals) } };
+      const strat = deps.listStrategyProposals?.() || [];
+      const stratSection = strat.length
+        ? `\n\n**Agent proposals (${strat.length}):**\n` + strat.slice(0, 6).map((p: any) => `• \`${p.id}\` **${String(p.title || '').slice(0, 80)}** → ${p.agentId} (${p.kind})`).join('\n')
+        : '';
+      if (!proposals.length && !strat.length) {
+        return { type: 4, data: { content: formatProposalsList(proposals) + stratSection } };
       }
-      // Show first proposal as a card so it can be approved inline.
-      const card = formatProposalCard(proposals[0]);
-      const rest = proposals.length > 1 ? `\n\n*+${proposals.length - 1} more — use /cortex approve <id>*` : '';
+      // Show first initiative proposal as a card so it can be approved inline.
+      const card = proposals.length ? formatProposalCard(proposals[0]) : { embeds: [] as DiscordEmbed[], components: [] as DiscordComponent[] };
+      const rest = proposals.length > 1 ? `\n\n*+${proposals.length - 1} more initiative — use /cortex approve <id>*` : '';
       return {
         type: 4,
         data: {
-          content: `Pending proposals (${proposals.length}):\n${formatProposalsList(proposals.slice(1))}${rest}`.slice(0, 1900),
+          content: (`${proposals.length ? `Pending proposals (${proposals.length}):\n${formatProposalsList(proposals.slice(1))}${rest}` : 'No initiative proposals pending.'}${stratSection}`).slice(0, 1900),
           embeds: card.embeds,
           components: card.components,
         },
@@ -535,10 +599,16 @@ export async function handleDiscordInteraction(
     case 'dismiss': {
       const id = subcommandOpt(payload, 'id').trim();
       if (!id) return { type: 4, data: { content: 'Missing proposal id.', flags: EPHEMERAL } };
-      const ok = sub === 'approve' ? deps.acceptProposal(id) : deps.dismissProposal(id);
+      let ok = sub === 'approve' ? deps.acceptProposal(id) : deps.dismissProposal(id);
+      let extra = '';
+      if (!ok && deps.decideStrategyProposal) {
+        const r = await deps.decideStrategyProposal(id, sub === 'approve' ? 'approved' : 'dismissed');
+        ok = r.ok;
+        extra = r.note ? ` — ${r.note}` : '';
+      }
       return {
         type: 4,
-        data: { content: ok ? `**${sub === 'approve' ? 'Approved' : 'Dismissed'}** \`${id}\`.` : `Could not resolve \`${id}\` — already decided or unknown.` },
+        data: { content: ok ? `**${sub === 'approve' ? 'Approved' : 'Dismissed'}** \`${id}\`.${extra}` : `Could not resolve \`${id}\` — already decided or unknown.` },
       };
     }
     default:

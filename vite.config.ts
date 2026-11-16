@@ -29,7 +29,7 @@ import type { RouteTier } from './src/lib/cortex-agents/types';
 import { normalizeForSpeech } from './src/lib/tts-speech-normalize';
 import {
   verifyDiscordSignature, discordApi, buildCommandSpecs, handleDiscordInteraction,
-  formatProposalCard, formatDigest, formatForecastList,
+  formatProposalCard, formatStrategyProposalCard, formatDigest, formatForecastList,
   loadPushState, savePushState, consumePushBudget, alreadyPosted, markPosted,
   digestAlreadySent, markDigestSent,
   loadDiscordThreads, saveDiscordThreads, threadNameFor, formatTaskResult, routeAskAgent,
@@ -7996,7 +7996,11 @@ function triggerQuickAction() {
                   status: sub.task?.status,
                   message: sub.ok === false
                     ? `Task rejected: ${sub.error || 'unknown'}`
-                    : `Task queued for ${sub.task?.agentId || args?.agentId} — the agent will report real progress on the Agents tab.`,
+                    : (args?.kind === 'comm'
+                      ? `Directive transmitted to ${(args?.input as any)?.targetAgent || 'Cortex'} via ${sub.task?.agentId || args?.agentId} — quantum channel is active.`
+                      : args?.kind === 'handoff'
+                      ? `Relay baton secured. Task context handed off to ${(args?.input as any)?.toAgent || 'Devin'}.`
+                      : `Task dispatched to ${sub.task?.agentId || args?.agentId}. Telemetry is streaming live on the Foundry deck.`),
                   durationMs: Date.now() - startMs,
                 }));
               }
@@ -10234,6 +10238,49 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
         }
       });
 
+      // GET/POST /api/cortex/agents/handoff — The Relay Baton (Antigravity <-> Devin Failover)
+      server.middlewares.use('/api/cortex/agents/handoff', async (req: any, res: any, next: any) => {
+        const origin = req.headers.origin;
+        const isAllowed = isAllowedOrigin(origin, req.headers.host);
+        if (req.method === 'OPTIONS') {
+          res.writeHead(204, { 'Access-Control-Allow-Origin': origin || '*', 'Access-Control-Allow-Methods': 'GET, POST, DELETE, OPTIONS', 'Access-Control-Allow-Headers': 'Content-Type' });
+          return res.end();
+        }
+        if (!isAllowed) return next();
+        const { readSessionHandoff, writeSessionHandoff, clearSessionHandoff } = await import('./src/lib/cortex-agents/handoff');
+        if (req.method === 'GET') {
+          agentCors(req, res);
+          const handoff = readSessionHandoff();
+          res.writeHead(200);
+          return res.end(JSON.stringify({ ok: true, handoff }));
+        }
+        if (req.method === 'DELETE') {
+          agentCors(req, res);
+          const ok = clearSessionHandoff();
+          res.writeHead(200);
+          return res.end(JSON.stringify({ ok }));
+        }
+        if (req.method === 'POST') {
+          let body = '';
+          req.on('data', (c: Buffer) => { body += c.toString(); });
+          req.on('end', () => {
+            try {
+              const parsed = JSON.parse(body || '{}');
+              const handoff = writeSessionHandoff(parsed);
+              agentCors(req, res);
+              res.writeHead(200);
+              res.end(JSON.stringify({ ok: true, handoff }));
+            } catch (e: any) {
+              agentCors(req, res);
+              res.writeHead(400);
+              res.end(JSON.stringify({ ok: false, error: e?.message || 'bad request' }));
+            }
+          });
+          return;
+        }
+        next();
+      });
+
       // POST /api/cortex/agents/budget — {agentId, budget} human-approved
       // daily-budget override. Deterministic governance action; no agent
       // dispatch. Approved budgetRaise proposals land here.
@@ -10482,6 +10529,44 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
         getPendingProposals: () => getCortexProactiveInitiative().getPendingProposals() as any,
         acceptProposal: (id: string) => getCortexProactiveInitiative().acceptProposal(id),
         dismissProposal: (id: string) => getCortexProactiveInitiative().dismissProposal(id),
+        // Agent-fleet strategy proposals (incidents, budgets, devin_task).
+        // Approval runs the same logic as the Inbox UI, server-side.
+        listStrategyProposals: () => listStrategyProposals('pending') as any[],
+        decideStrategyProposal: async (id: string, decision: 'approved' | 'dismissed') => {
+          const p = listStrategyProposals().find((x) => x.id === id);
+          if (!p || p.status !== 'pending') return { ok: false, note: 'already decided or unknown' };
+          if (decision === 'dismissed') {
+            decideStrategyProposal(id, 'dismissed');
+            return { ok: true, note: 'dismissed' };
+          }
+          if (p.action?.type === 'budgetRaise') {
+            const okBudget = agentRuntime.setDailyBudget(p.action.agentId as any, p.action.budget);
+            decideStrategyProposal(id, okBudget ? 'executed' : 'approved', okBudget ? `budget ${p.action.agentId} → ${p.action.budget}/day` : 'budget raise failed');
+            return { ok: okBudget, note: okBudget ? `budget raised: ${p.action.agentId} → ${p.action.budget}/day` : 'raise failed' };
+          }
+          if (p.kind === 'devin_task') {
+            // Flip approved BEFORE dispatch — the worker verifies status.
+            decideStrategyProposal(id, 'approved', 'pre-dispatch approval');
+            const t = agentRuntime.submitTask('devin' as any, 'devin_task', String(p.title || '').slice(0, 120), {
+              instruction: p.instruction, ...(p.taskInput || {}), approvedProposalId: p.id,
+            });
+            if (!t.ok) {
+              decideStrategyProposal(id, 'failed', String(t.error || 'dispatch rejected'));
+              return { ok: false, note: String(t.error || 'dispatch rejected') };
+            }
+            decideStrategyProposal(id, 'approved', `dispatched ${t.task.id}`, t.task.id);
+            return { ok: true, note: `devin session launching (${t.task.id})` };
+          }
+          const t = agentRuntime.submitTask(p.agentId as any, p.kind, String(p.title || '').slice(0, 120), {
+            instruction: p.instruction, ...(p.taskInput || {}),
+          });
+          if (!t.ok) {
+            decideStrategyProposal(id, 'failed', String(t.error || 'dispatch rejected'));
+            return { ok: false, note: String(t.error || 'dispatch rejected') };
+          }
+          decideStrategyProposal(id, 'approved', `dispatched ${t.task.id}`, t.task.id);
+          return { ok: true, note: `dispatched to ${p.agentId} (${t.task.id})` };
+        },
         submitTask: (agentId: string, kind: string, title: string, input?: any) =>
           agentRuntime.submitTask(agentId as any, kind, title, input) as any,
         listForecasts: () => {
@@ -10689,6 +10774,17 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
               const card = formatProposalCard(p);
               await post({ content: `New initiative proposal — needs your call:`, ...card }, 'inbox');
               markPosted(discordDir, 'proposal', id);
+            }
+            // Agent-fleet strategy proposals — incident investigations,
+            // budget raises, devin_task launches. Same inbox channel,
+            // separate dedupe keyspace, sx-prefixed approve buttons.
+            const stratProps = discordDeps.listStrategyProposals?.() || [];
+            for (const p of stratProps.slice(0, 5)) {
+              const id = `strat:${String(p.id || '')}`;
+              if (!p.id || alreadyPosted(discordDir, 'strategy', id)) continue;
+              const card = formatStrategyProposalCard(p);
+              await post({ content: `Agent proposal — needs your call:`, ...card }, 'inbox');
+              markPosted(discordDir, 'strategy', id);
             }
             // Forecast pushes: tier>=2 (proposal/interrupt routed) entries.
             const forecasts = discordDeps.listForecasts() as any[];
