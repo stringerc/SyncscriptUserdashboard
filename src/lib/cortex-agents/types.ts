@@ -10,9 +10,9 @@
  * never inferred from elapsed time.
  */
 
-// Widened: spawned agents get dynamic ids (`spawn-<n>`). The four literals
-// remain the built-ins; `(string & {})` keeps autocomplete for them.
-export type AgentId = 'sentinel' | 'scout' | 'librarian' | 'builder' | (string & {});
+// Widened: spawned agents get dynamic ids (`spawn-<n>`).
+// The literals remain the built-ins; `(string & {})` keeps autocomplete for them.
+export type AgentId = 'antigravity' | 'sentinel' | 'scout' | 'librarian' | 'builder' | 'devin' | 'reviewer' | 'runner' | 'distributor' | 'warden' | 'prep' | 'forecaster' | 'strategist' | (string & {});
 
 export type AgentStatus =
   | 'offline'   // never heartbeated or heartbeat stale
@@ -170,6 +170,14 @@ export type AgentEvent =
         anomalies: string[]; warnings: string[];
         checks: { name: string; ok: boolean; ms: number }[];
       };
+      at: number;
+    }
+  | {
+      type: 'agent.comm';
+      from: AgentId;
+      to: AgentId | 'cortex' | 'all';
+      channel: 'directive' | 'telemetry' | 'quantum_resonance' | 'consensus';
+      message: string;
       at: number;
     }
   | { type: 'runtime.snapshot'; at: number };

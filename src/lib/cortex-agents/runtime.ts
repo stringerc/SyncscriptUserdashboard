@@ -46,6 +46,16 @@ export interface AgentSpec {
 
 export const AGENT_SPECS: AgentSpec[] = [
   {
+    id: 'antigravity',
+    name: 'ANTIGRAVITY',
+    role: 'Quantum Hyper-Architect',
+    blurb: 'Sovereign meta-intelligence eons ahead of its time — orchestrates fleet resonance, cross-agent synthesis, cognitive harmony, and high-order strategic directives. Communicates directly with Cortex and all agents.',
+    concurrency: 2,
+    dailyBudget: 64,
+    modelPin: { tier: 'deep' },
+    tier: 'enterprise',
+  },
+  {
     id: 'sentinel',
     name: 'SENTINEL',
     role: 'Model Warden',

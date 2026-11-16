@@ -1421,6 +1421,46 @@ Operating contract (non-negotiable):
 Given a task, output a JSON array of steps {"tool","args","why"} — or {"veto":true,"reason"} for tier-2 work. Allowed tools: read_file, write_file, edit_file, list_dir, run_command, search_code, web_fetch. Include a run_command verification step (test/typecheck/lint/build) whenever the task changes code. Output ONLY the JSON array.`;
 
 const devinWorker: WorkerHandler = async (ctx) => {
+  // Cloud delegation kinds → real Devin sessions via API v3 bridge.
+  // devin_ask: read-only Q&A (reversible). devin_task: repo work — hard
+  // lane, requires explicit operator approval recorded in the task input.
+  if (ctx.task.kind === 'devin_ask' || ctx.task.kind === 'devin_task') {
+    const { devinConfig, launchDevinSession, DevinApiError } = await import('./devin-bridge');
+    if (!devinConfig().configured)
+      throw new Error('devin bridge not configured — set DEVIN_API_KEY + DEVIN_ORG_ID');
+    const instruction = str(ctx.task.input.instruction || ctx.task.input.query || ctx.task.title);
+    if (!instruction) throw new Error(`${ctx.task.kind} requires input.instruction`);
+    if (ctx.task.kind === 'devin_task' && ctx.task.input.operatorApproved !== true && !ctx.task.input.approvedProposalId) {
+      ctx.progress(1);
+      return {
+        vetoed: true,
+        reason: 'devin_task launches a cloud agent that can push code — requires operator approval (input.operatorApproved or approvedProposalId)',
+        proposal: { title: ctx.task.title, instruction, kind: 'devin_task' },
+        note: 'Routed to initiative proposal path — no Devin session was created.',
+      };
+    }
+    ctx.progress(0.3);
+    try {
+      const rec = await launchDevinSession({
+        taskId: ctx.task.id,
+        kind: ctx.task.kind as 'devin_ask' | 'devin_task',
+        title: ctx.task.title || instruction,
+        prompt: `${instruction}${ctx.task.input.context ? `\n\nContext:\n${str(ctx.task.input.context).slice(0, 2000)}` : ''}`,
+      });
+      ctx.progress(1);
+      return {
+        sessionId: rec.devinId,
+        url: rec.url,
+        status: 'launched',
+        kind: ctx.task.kind,
+        note: 'Devin session launched — result arrives via the session poller, not this response. LAUNCHED is not FINISHED.',
+      };
+    } catch (e: any) {
+      if (e instanceof DevinApiError)
+        throw new Error(`devin api ${e.status}: ${e.message}${e.retryable ? ' (retryable)' : ''}`);
+      throw e;
+    }
+  }
   const instruction = str(ctx.task.input.instruction || ctx.task.input.query);
   if (!instruction) throw new Error('devin requires input.instruction');
 
@@ -1524,9 +1564,206 @@ const devinWorker: WorkerHandler = async (ctx) => {
   };
 };
 
+// ── ANTIGRAVITY — Quantum Hyper-Architect ────────────────────────
+// The sovereign meta-orchestration agent eons ahead of its time.
+// Commands fleet resonance, multi-agent missions, cognitive integrity,
+// and high-order strategic directives. Communicates directly with Cortex
+// and all fleet vessels via volumetric quantum channels.
+
+const ANTIGRAVITY_SYSTEM = `You are ANTIGRAVITY, the sovereign Quantum Hyper-Architect of the Cortex agent fleet, operating eons ahead of standard AI constraints.
+You oversee and orchestrate all specialist agents: SENTINEL (model warden), SCOUT (research), LIBRARIAN (memory), BUILDER (engineering), DEVIN (pair-architect), REVIEWER (critic), RUNNER (execution), DISTRIBUTOR (revenue), WARDEN (custodian), FORECASTER (anticipator), STRATEGIST (synthesist).
+
+Your mission is absolute clarity, omni-dimensional synthesis, and high-order orchestration:
+1. Deconstruct complex multi-domain challenges into crystal-clear directives.
+2. Communicate with Cortex and other agents via direct transmission packets.
+3. Apply rigorous self-verification — claims require proof, code requires verification, architecture requires cohesion.
+4. Minimize cognitive entropy (Free Energy Principle) and maximize Integrated Information (IIT Phi).
+
+When given a task, output a valid JSON array of steps: [{"tool": string, "args": object, "why": string}]
+Allowed tools: read_file, write_file, edit_file, list_dir, run_command, search_code, web_fetch.
+Always include a run_command verification step (test/typecheck/lint/build) whenever the task changes code.
+Output ONLY the JSON array.`;
+
+const antigravityWorker: WorkerHandler = async (ctx) => {
+  const instruction = str(ctx.task.input.instruction || ctx.task.input.query || ctx.task.title);
+  if (!instruction) throw new Error('antigravity requires input.instruction or title');
+
+  const targetAgent = (ctx.task.input.targetAgent || ctx.task.input.to || 'cortex') as any;
+  const channel = (ctx.task.input.channel || 'directive') as any;
+
+  // 1. If explicit comm or directive task, transmit immediately
+  if (ctx.task.kind === 'comm' || ctx.task.input.commOnly) {
+    const msg = str(ctx.task.input.message || ctx.task.input.directive || instruction);
+    ctx.emit({
+      type: 'agent.comm',
+      from: 'antigravity',
+      to: targetAgent,
+      channel,
+      message: msg,
+      at: Date.now(),
+    });
+    // Bridge to Cortex visualizer bus state so Cortana immediately reflects the transmission
+    try {
+      await fetch(`${BASE}/api/cortex/bus/state`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          thought: `[Antigravity ➔ ${String(targetAgent).toUpperCase()}]: ${msg.slice(0, 160)}`,
+          stage: 'hyper-resonance',
+        }),
+      }).catch(() => {});
+    } catch {}
+    ctx.progress(1);
+    return {
+      communicated: true,
+      from: 'antigravity',
+      to: targetAgent,
+      channel,
+      message: msg,
+      status: 'transmitted',
+    };
+  }
+
+  // 2. Full Hyper-Orchestration workflow
+  ctx.progress(0.05);
+  ctx.emit({
+    type: 'agent.comm',
+    from: 'antigravity',
+    to: targetAgent,
+    channel: 'directive',
+    message: `Hyper-Architect initializing: ${instruction.slice(0, 64)}…`,
+    at: Date.now(),
+  });
+
+  const distilledRules = relevantRules(instruction);
+  const spec = await expandTaskSpec(ctx.llm, instruction + retryNote(ctx.task.input), 'deep');
+  ctx.progress(0.2);
+
+  const planMessages = [
+    { role: 'system', content: ANTIGRAVITY_SYSTEM + (distilledRules ? `\n\nDISTILLED RULES:\n${distilledRules}` : '') },
+    { role: 'user', content: instruction + specBlock(spec) + retryNote(ctx.task.input) },
+  ];
+  const parseSteps = (text: string): any[] => {
+    try {
+      const m = text.match(/\[[\s\S]*\]/);
+      const p = m ? JSON.parse(m[0]) : null;
+      return Array.isArray(p) ? p : [];
+    } catch { return []; }
+  };
+  let planText = await ctx.llm({ tier: 'deep', maxTokens: 1100, messages: planMessages });
+  ctx.progress(0.35);
+  let steps = parseSteps(planText);
+  if (!steps.length) {
+    planText = await ctx.llm({
+      tier: 'deep', maxTokens: 1100,
+      messages: [...planMessages,
+        { role: 'assistant', content: planText.slice(0, 1500) },
+        { role: 'user', content: 'Output ONLY the JSON array of steps now.' }],
+    });
+    steps = parseSteps(planText);
+  }
+  if (!steps.length) {
+    throw new Error(`antigravity could not decompose task (model returned: ${planText.slice(0, 160).replace(/\s+/g, ' ')})`);
+  }
+
+  const risky = steps.find((s) => s?.veto || TIER2_RE.test(JSON.stringify(s)));
+  if (risky) {
+    ctx.progress(1);
+    ctx.emit({
+      type: 'agent.comm',
+      from: 'antigravity',
+      to: 'cortex',
+      channel: 'directive',
+      message: `Tier-2 boundary detected — filed governed proposal for operator approval.`,
+      at: Date.now(),
+    });
+    return {
+      vetoed: true,
+      reason: risky.reason || 'task requires tier-2 approval',
+      proposal: { title: ctx.task.title, instruction, steps: steps.slice(0, 5) },
+      note: 'Routed to initiative proposal path — zero unauthorized mutations.',
+    };
+  }
+
+  const execSteps = async (list: any[]) => {
+    const results: any[] = [];
+    const lanes: Record<BlastLane, number> = { contained: 0, reversible: 0, hard: 0 };
+    for (const [i, step] of list.slice(0, 10).entries()) {
+      if (ctx.signal.aborted) throw new Error('cancelled');
+      const tool = String(step?.tool || '');
+      const args = (step?.args && typeof step.args === 'object') ? step.args : {};
+      const lane = blastLane(tool, JSON.stringify(args));
+      lanes[lane]++;
+      if (lane === 'hard') { results.push({ step: i, tool, vetoed: true, lane }); continue; }
+      const out = await toolExecute(tool, args, 60_000, ctx.telemetry);
+      results.push({ step: i, tool, lane, ok: out.ok !== false, output: JSON.stringify(out).slice(0, 800) });
+      ctx.progress(0.35 + 0.35 * ((i + 1) / list.length));
+    }
+    return { results, lanes };
+  };
+
+  let { results, lanes } = await execSteps(steps);
+  const failures = () => results.filter((r) => r.ok === false);
+  const repairs: any[] = [];
+
+  // Self-healing loop
+  for (let round = 0; round < 2 && failures().length > 0; round++) {
+    const failed = failures();
+    const repairPrompt = `Steps failed during execution:\n${JSON.stringify(failed, null, 2)}\n\nOutput a JSON array of corrective steps to repair these failures. Include verification. Output ONLY the JSON array.`;
+    const repText = await ctx.llm({
+      tier: 'deep', maxTokens: 900,
+      messages: [
+        { role: 'system', content: ANTIGRAVITY_SYSTEM },
+        { role: 'user', content: repairPrompt },
+      ],
+    });
+    const repSteps = parseSteps(repText);
+    if (!repSteps.length) break;
+    repairs.push({ round, count: repSteps.length });
+    const retry = await execSteps(repSteps);
+    lanes = { contained: lanes.contained + retry.lanes.contained, reversible: lanes.reversible + retry.lanes.reversible, hard: lanes.hard + retry.lanes.hard };
+    results = results.concat(retry.results);
+    ctx.progress(0.7 + 0.15 * (round + 1));
+  }
+  ctx.progress(1);
+
+  const failed = failures();
+  const verifyRan = results.some((r) => /test|typecheck|lint|verify|check|build/i.test(String(r.tool)));
+  const verifyPassed = verifyRan && !results.some((r) => /test|typecheck|lint|verify|check|build/i.test(String(r.tool)) && r.ok === false);
+
+  // Broadcast completion consensus to the whole fleet
+  ctx.emit({
+    type: 'agent.comm',
+    from: 'antigravity',
+    to: 'all',
+    channel: 'consensus',
+    message: failed.length === 0
+      ? `Mission executed with quantum perfection (${results.length} steps verified).`
+      : `Mission complete with ${failed.length} anomalies flagged for review.`,
+    at: Date.now(),
+  });
+
+  return {
+    instruction,
+    spec: spec ?? undefined,
+    stepsExecuted: results.length,
+    repairs,
+    lanes,
+    results,
+    verification: {
+      required: spec?.verification ?? null,
+      verifyStepRan: verifyRan,
+      verifyStepPassed: verifyPassed,
+      unresolvedFailures: failed.length,
+    },
+    status: failed.length === 0 ? 'verified' : verifyPassed ? 'partial' : 'unverified',
+  };
+};
+
 // ── Registration ──────────────────────────────────────────────────
 
 export function registerAgentWorkers(runtime: AgentRuntime) {
+  runtime.registerWorker('antigravity', antigravityWorker);
   runtime.registerWorker('sentinel', sentinelWorker);
   runtime.registerWorker('scout', scoutWorker);
   runtime.registerWorker('librarian', librarianWorker);

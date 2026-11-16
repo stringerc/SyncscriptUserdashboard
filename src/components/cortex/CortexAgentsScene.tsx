@@ -21,6 +21,8 @@ import { agentsClient, type AgentsSnapshotClient, type AgentClient, type AgentTa
 import { cortexSignalBus } from './CortexVisualizer';
 
 const AGENT_COLORS: Record<string, string> = {
+  antigravity: '#c084fc',
+  devin: '#38bdf8',
   sentinel: '#67e8f9',
   scout: '#e879f9',
   librarian: '#fbbf24',
@@ -29,8 +31,11 @@ const AGENT_COLORS: Record<string, string> = {
   runner: '#a3e635',
   distributor: '#fb923c',
   warden: '#818cf8',
+  prep: '#f472b6',
+  forecaster: '#2dd4bf',
+  strategist: '#e879f9',
 };
-const AGENT_ORDER = ['sentinel', 'scout', 'librarian', 'builder', 'reviewer', 'runner', 'distributor', 'warden'];
+const AGENT_ORDER = ['antigravity', 'sentinel', 'scout', 'librarian', 'builder', 'devin', 'reviewer', 'runner', 'distributor', 'warden', 'prep', 'forecaster', 'strategist'];
 // Deterministic hue for spawned agents from their callSign — stable across renders.
 const spawnHue = (id: string) => {
   let h = 0;
@@ -182,6 +187,11 @@ function eventLine(e: { type: string; at: number; [k: string]: unknown }): strin
     case 'model.discovered': {
       const m = e.model as any;
       return `${t}  DISCOVERED ${String(m?.id || '').split('/').pop()?.slice(0, 34)}`;
+    }
+    case 'agent.comm': {
+      const from = String(e.from || 'ANTIGRAVITY').toUpperCase();
+      const to = String(e.to || 'ALL').toUpperCase();
+      return `${t}  📡 ${from} ➔ ${to}: ${String(e.message || '').slice(0, 52)}`;
     }
     case 'matrix.changed': return `${t}  MATRIX ${String(e.tier).toUpperCase()} lane re-ordered`;
     default: return `${t}  ${e.type}`;
@@ -818,6 +828,62 @@ export const CortexAgentsScene: React.FC = () => {
         canvas.style.cursor = 'crosshair';
       }
 
+      // ── Inter-Agent Communication Conduits (agent.comm) ──
+      const recentComms = events.filter((e) => e.type === 'agent.comm' && (Date.now() - e.at < 12_000));
+      recentComms.forEach((comm: any) => {
+        const fromAgent = agents.find((x) => x.id === comm.from);
+        const toAgent = (comm.to === 'cortex' || comm.to === 'all')
+          ? null
+          : agents.find((x) => x.id === comm.to);
+        if (fromAgent) {
+          const fromP = agentPos(agents, fromAgent, w, h, cx, cy, time);
+          const toX = toAgent ? agentPos(agents, toAgent, w, h, cx, cy, time).x : cx;
+          const toY = toAgent ? agentPos(agents, toAgent, w, h, cx, cy, time).y : cy;
+
+          ctx.save();
+          ctx.globalCompositeOperation = 'lighter';
+          const age = Math.min(1, (Date.now() - comm.at) / 12_000);
+          const alpha = (1 - age) * 0.88;
+          const commCol = AGENT_COLORS[comm.from] || '#c084fc';
+
+          // Glowing laser conduit line
+          ctx.strokeStyle = hexA(commCol, alpha * 0.7);
+          ctx.lineWidth = 1.8;
+          ctx.setLineDash([7, 4]);
+          ctx.beginPath();
+          ctx.moveTo(fromP.x, fromP.y);
+          ctx.lineTo(toX, toY);
+          ctx.stroke();
+          ctx.setLineDash([]);
+
+          // Traveling photon packet
+          const packetT = (((Date.now() - comm.at) * 0.0025) % 1);
+          const ptx = fromP.x + (toX - fromP.x) * packetT;
+          const pty = fromP.y + (toY - fromP.y) * packetT;
+          ctx.fillStyle = '#ffffff';
+          ctx.beginPath(); ctx.arc(ptx, pty, 3, 0, Math.PI * 2); ctx.fill();
+          ctx.fillStyle = hexA(commCol, 0.9);
+          ctx.beginPath(); ctx.arc(ptx, pty, 6, 0, Math.PI * 2); ctx.fill();
+
+          // Speech / Directive HUD tag near mid-beam
+          const midX = (fromP.x + toX) / 2;
+          const midY = (fromP.y + toY) / 2 - 14;
+          ctx.font = '700 8px monospace';
+          const txt = `📡 ${String(comm.from).toUpperCase()} ➔ ${String(comm.to).toUpperCase()}: ${String(comm.message || '').slice(0, 38)}`;
+          const tw = ctx.measureText(txt).width;
+          ctx.fillStyle = 'rgba(6,10,22,0.88)';
+          ctx.strokeStyle = hexA(commCol, alpha * 0.85);
+          ctx.lineWidth = 1;
+          ctx.fillRect(midX - tw / 2 - 6, midY - 7, tw + 12, 14);
+          ctx.strokeRect(midX - tw / 2 - 6, midY - 7, tw + 12, 14);
+          ctx.fillStyle = hexA(commCol, 0.95);
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          ctx.fillText(txt, midX, midY);
+          ctx.restore();
+        }
+      });
+
       agents.forEach((a, i) => {
         const { x: ax, y: ay } = agentPos(agents, a, w, h, cx, cy, time);
         const enterprise = agentTier(a) === 'enterprise';
@@ -897,7 +963,51 @@ export const CortexAgentsScene: React.FC = () => {
           ctx.beginPath(); ctx.arc(0, vr * 1.3, vr * 1.6, 0, Math.PI * 2); ctx.fill();
           ctx.globalCompositeOperation = 'source-over';
         }
-        if (enterprise) {
+        if (a.id === 'antigravity') {
+          // ── ANTIGRAVITY: Quantum Singularity Spire ──
+          // Sovereign apex vessel: dual tachyon rings + singularity core + quantum aura
+          const ringRad = vr * 1.75;
+          ctx.save();
+          // Counter-rotating tachyon ring 1
+          ctx.rotate(time * 1.6);
+          ctx.strokeStyle = '#c084fc';
+          ctx.lineWidth = 1.4;
+          ctx.setLineDash([7, 5]);
+          ctx.beginPath(); ctx.arc(0, 0, ringRad, 0, Math.PI * 2); ctx.stroke();
+          // Counter-rotating tachyon ring 2
+          ctx.rotate(-time * 3.0);
+          ctx.strokeStyle = '#38bdf8';
+          ctx.lineWidth = 1.1;
+          ctx.setLineDash([4, 6]);
+          ctx.beginPath(); ctx.arc(0, 0, ringRad * 1.3, 0, Math.PI * 2); ctx.stroke();
+          ctx.setLineDash([]);
+          ctx.restore();
+
+          // Singularity Hull: Forerunner Diamond Prism
+          ctx.fillStyle = '#060814';
+          ctx.strokeStyle = working ? '#f472b6' : '#c084fc';
+          ctx.lineWidth = working ? 2.6 : 1.9;
+          ctx.beginPath();
+          ctx.moveTo(0, -vr * 1.42);
+          ctx.lineTo(vr * 1.05, 0);
+          ctx.lineTo(0, vr * 1.42);
+          ctx.lineTo(-vr * 1.05, 0);
+          ctx.closePath();
+          ctx.fill(); ctx.stroke();
+
+          // Inner Quantum Core
+          const qg = ctx.createRadialGradient(0, 0, 0, 0, 0, vr * 0.72);
+          qg.addColorStop(0, '#ffffff');
+          qg.addColorStop(0.35, '#c084fc');
+          qg.addColorStop(0.8, '#38bdf8');
+          qg.addColorStop(1, 'rgba(192,132,252,0)');
+          ctx.fillStyle = qg;
+          ctx.beginPath(); ctx.arc(0, 0, vr * 0.72, 0, Math.PI * 2); ctx.fill();
+
+          // Specular Spire Glint
+          ctx.fillStyle = 'rgba(255,255,255,0.9)';
+          ctx.beginPath(); ctx.arc(0, -vr * 0.62, 1.8, 0, Math.PI * 2); ctx.fill();
+        } else if (enterprise) {
           // ── Satellite: solar wings + bus + blinking beacon + spin ring ──
           const wingY = vr * 0.36, wingH = vr * 0.72, wingW = vr * 1.25;
           for (const sgn of [-1, 1] as const) {

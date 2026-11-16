@@ -1243,6 +1243,38 @@ function apiProxyPlugin(): Plugin {
       });
       console.info('[cortex-agents] runtime online — 6 specialists registered, sentinel probing model health');
 
+      // ── Devin session poller ──
+      // Launched cloud sessions are async: the devin worker returns at
+      // launch; this poller tracks status transitions and records
+      // terminal evidence. LAUNCHED ≠ FINISHED — events say which.
+      const devinEnv = loadEnv((server.config as any)?.mode || 'development', process.cwd(), '');
+      for (const k of ['DEVIN_API_KEY', 'DEVIN_API_KEY_COG', 'DEVIN_ORG_ID', 'CORTEX_DEVIN_MAX_SESSIONS_PER_DAY', 'CORTEX_DEVIN_POLL_MS', 'CORTEX_DEVIN_SESSION_TTL_MS']) {
+        if (devinEnv[k] && !process.env[k]) process.env[k] = devinEnv[k];
+      }
+      const devinPollMs = Math.max(30_000, Number(process.env.CORTEX_DEVIN_POLL_MS || 60_000));
+      const devinTimer = setInterval(async () => {
+        try {
+          const { pollDevinSessions, devinConfig } = await import('./src/lib/cortex-agents/devin-bridge');
+          if (!devinConfig().configured) return;
+          for (const t of await pollDevinSessions()) {
+            if (!t.changed && !t.justFinished) continue;
+            agentRuntime.emit({
+              type: 'agent.comm', from: 'devin', to: 'cortex', channel: 'telemetry',
+              message: `Devin ${t.record.devinId.slice(0, 8)} → ${t.record.status}${t.record.statusDetail ? '/' + t.record.statusDetail : ''}${t.record.pullRequests.length ? ` PRs:${t.record.pullRequests.length}` : ''}`,
+              at: Date.now(),
+            } as any);
+            if (t.justFinished) {
+              agentRuntime.emit({
+                type: 'agent.comm', from: 'devin', to: 'all', channel: 'consensus',
+                message: `Devin session finished (${t.record.terminal}): ${t.record.url}${t.record.pullRequests.length ? ` — ${t.record.pullRequests.length} PR(s)` : ''}`,
+                at: Date.now(),
+              } as any);
+            }
+          }
+        } catch { /* poller must never kill the server */ }
+      }, devinPollMs);
+      devinTimer.unref?.();
+
       // ── Edge auth gate — active only when CORTEX_EDGE_TOKEN is set ──
       // Protects the always-on Oracle deployment: without it every API route
       // (and the provider keys behind them) would be reachable by anyone.
