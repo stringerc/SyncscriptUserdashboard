@@ -72,6 +72,27 @@ const prand = (i: number, salt: number) => {
   return x - Math.floor(x);
 };
 
+/** Roster glyph — mirrors the canvas vessels: diamond for standard agents,
+ *  satellite for enterprise/spawned. Pure SVG so the DOM roster matches. */
+const AgentGlyph: React.FC<{ enterprise?: boolean; color: string }> = ({ enterprise, color }) =>
+  enterprise ? (
+    <svg width="30" height="20" viewBox="-22 -13 44 26" style={{ flexShrink: 0 }}>
+      <rect x="-21" y="-5" width="13" height="10" fill={hexA(color, 0.13)} stroke={color} strokeOpacity="0.55" strokeWidth="0.8" />
+      <rect x="8" y="-5" width="13" height="10" fill={hexA(color, 0.13)} stroke={color} strokeOpacity="0.55" strokeWidth="0.8" />
+      <path d="M-17.5 -2.5h6M-17.5 0h6M-17.5 2.5h6M12.5 -2.5h6M12.5 0h6M12.5 2.5h6" stroke={color} strokeOpacity="0.4" strokeWidth="0.7" />
+      <rect x="-6.5" y="-5.8" width="13" height="11.6" rx="2" fill="#0a1120" stroke={color} strokeWidth="1.2" />
+      <rect x="-4.2" y="-1.4" width="8.4" height="2.8" fill={color} opacity="0.45" />
+      <circle cx="0" cy="-7.2" r="1.7" fill="#f87171" />
+      <circle cx="0" cy="0" r="14.5" fill="none" stroke={color} strokeOpacity="0.5" strokeWidth="1" strokeDasharray="3 5" />
+    </svg>
+  ) : (
+    <svg width="20" height="24" viewBox="-12 -14 24 28" style={{ flexShrink: 0 }}>
+      <path d="M0 -11 L8 0 L0 11 L-8 0 Z" fill="#0a1120" stroke={color} strokeWidth="1.4" />
+      <rect x="-3.4" y="-3.4" width="6.8" height="6.8" fill="none" stroke={color} strokeOpacity="0.6" strokeWidth="1" />
+      <circle cx="-2.2" cy="-4.4" r="1.3" fill="rgba(240,249,255,0.45)" />
+    </svg>
+  );
+
 function eventLine(e: { type: string; at: number; [k: string]: unknown }): string {
   const t = new Date(e.at).toLocaleTimeString('en-US', { hour12: false });
   switch (e.type) {
@@ -102,6 +123,7 @@ export const CortexAgentsScene: React.FC = () => {
   const [events, setEvents] = useState(agentsClient.events);
   const [selectedAgent, setSelectedAgent] = useState<string | null>(null);
   const [nowTs, setNowTs] = useState(() => Date.now());
+  const [narrow, setNarrow] = useState(() => typeof window !== 'undefined' && window.innerWidth < 900);
   const reducedMotion = useRef(false);
   const voiceLevel = useRef(0);
   const voiceState = useRef<string>('idle');
@@ -137,6 +159,12 @@ export const CortexAgentsScene: React.FC = () => {
   }, []);
 
   useEffect(() => {
+    const onR = () => setNarrow(window.innerWidth < 900);
+    window.addEventListener('resize', onR);
+    return () => window.removeEventListener('resize', onR);
+  }, []);
+
+  useEffect(() => {
     const canvas = canvasRef.current;
     const container = containerRef.current;
     if (!canvas || !container) return;
@@ -166,7 +194,7 @@ export const CortexAgentsScene: React.FC = () => {
       const dpr = Math.min(window.devicePixelRatio || 1, 2);
       void dpr;
       const agents = (snapRef.current.agents || []).slice().sort(agentSort);
-      const cx = w / 2, cy = h / 2 + h * 0.05;
+      const cx = w / 2 + (w >= 900 ? 100 : 0), cy = h / 2 + h * 0.05;
       const mx = ev.clientX - r.left, my = ev.clientY - r.top;
       agents.forEach((a) => {
         const { x: ax, y: ay } = agentPos(agents, a, w, h, cx, cy, time);
@@ -240,7 +268,9 @@ export const CortexAgentsScene: React.FC = () => {
       ctx.fillRect(0, 0, w, h);
 
       ctx.globalCompositeOperation = 'lighter';
-      const cx = w / 2 + p.x, cy = h / 2 + h * 0.05 + p.y;
+      // Shift the whole scene right when the roster rail is visible so the
+      // orbit clears it (roster ~200px at left).
+      const cx = w / 2 + (w >= 900 ? 100 : 0) + p.x, cy = h / 2 + h * 0.05 + p.y;
       // Nebula drift is ~0.05 rad/s — quantize to 0.2s buckets; the 0.01 rad
       // step is imperceptible but cuts gradient allocations ~50x.
       const nebKey = `${bgKey}|${Math.round(time * 5)}`;
@@ -741,18 +771,86 @@ export const CortexAgentsScene: React.FC = () => {
         </div>
       </div>
 
-      <div style={{ position: 'absolute', left: 22, top: '50%', transform: 'translateY(-50%)', zIndex: 5, fontFamily: MONO, fontSize: 8, letterSpacing: '0.18em', color: 'rgba(148,233,255,0.4)', lineHeight: 2 }}>
+      {/* Right rail: merged foundry telemetry — sentinel rotation, model
+          lanes, probation pool, event bus. Roster owns the left side. */}
+      <div style={{ position: 'absolute', right: 22, top: '50%', transform: 'translateY(-50%)', zIndex: 5, fontFamily: MONO, fontSize: 8, letterSpacing: '0.18em', color: 'rgba(148,233,255,0.4)', lineHeight: 2, textAlign: 'right' }}>
+        <div style={{ color: 'rgba(165,243,252,0.55)', letterSpacing: '0.28em', marginBottom: 4 }}>FOUNDRY TELEMETRY</div>
         <div>SENTINEL ROTATION: LIVE</div>
         <div>PROBATION POOL: {(snap.models || []).filter(m => m.status === 'unknown').length}</div>
         <div>LANES: {Object.entries(snap.matrix || {}).map(([k, v]) => `${k.toUpperCase()} ${Array.isArray(v) ? v.length : 0}`).join(' · ')}</div>
         <div>UPTIME: {snap.runtime ? fmtElapsed(Date.now() - snap.runtime.startedAt) : '—'}</div>
-      </div>
-      <div style={{ position: 'absolute', right: 22, top: '50%', transform: 'translateY(-50%)', zIndex: 5, fontFamily: MONO, fontSize: 8, letterSpacing: '0.18em', color: 'rgba(148,233,255,0.4)', lineHeight: 2, textAlign: 'right' }}>
-        <div>EVENT BUS: {snap.runtime?.eventCount ?? 0}</div>
+        <div style={{ marginTop: 8, borderTop: '1px solid rgba(103,232,249,0.12)', paddingTop: 8 }}>
+          EVENT BUS: {snap.runtime?.eventCount ?? 0}
+        </div>
         <div>AGENTS: {agents.length} REGISTERED</div>
         <div>SPAWNS: {(snap.proposals || []).length} PENDING · {agents.filter(a => a.spawnSpec).length} LIVE</div>
         <div>STATE: {snap.offline ? 'OFFLINE' : 'LIVE'}</div>
       </div>
+
+      {/* ── Left rail: agent roster — vessel glyph + name, click opens dossier ── */}
+      {!narrow && (
+        <div style={{
+          position: 'absolute', left: 16, top: '50%', transform: 'translateY(-50%)', zIndex: 5,
+          width: 188, fontFamily: MONO,
+          background: 'rgba(4,8,18,0.55)', border: '1px solid rgba(103,232,249,0.12)',
+          borderRadius: 4, backdropFilter: 'blur(6px)', overflow: 'hidden',
+        }}>
+          <div style={{
+            padding: '7px 10px', borderBottom: '1px solid rgba(103,232,249,0.14)',
+            color: 'rgba(165,243,252,0.75)', fontWeight: 700, letterSpacing: '0.28em', fontSize: 8,
+            display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+          }}>
+            <span>ROSTER</span>
+            <span style={{ color: 'rgba(148,233,255,0.35)', letterSpacing: '0.15em' }}>{agents.length}</span>
+          </div>
+          <div style={{ maxHeight: '62vh', overflowY: 'auto', scrollbarWidth: 'thin' }}>
+            {agents.slice().sort(agentSort).map(a => {
+              const col = AGENT_COLORS[a.id] || (a.spawnSpec ? `hsl(${spawnHue(a.id)} 85% 68%)` : '#94a3b8');
+              const enterprise = agentTier(a) === 'enterprise';
+              const offline = a.status === 'offline' || a.status === 'retired';
+              const active = selectedAgent === a.id;
+              const statusCol = a.status === 'working' ? col : a.status === 'error' ? '#f87171' : offline ? 'rgba(100,116,139,0.8)' : 'rgba(148,163,184,0.5)';
+              return (
+                <div key={a.id}
+                  onClick={() => setSelectedAgent(active ? null : a.id)}
+                  style={{
+                    display: 'flex', alignItems: 'center', gap: 8,
+                    padding: '6px 10px', cursor: 'pointer',
+                    borderBottom: '1px solid rgba(148,233,255,0.05)',
+                    background: active ? hexA(col, 0.10) : 'transparent',
+                    opacity: offline ? 0.55 : 1,
+                  }}
+                  onMouseEnter={e => { if (!active) (e.currentTarget as HTMLElement).style.background = 'rgba(103,232,249,0.05)'; }}
+                  onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = active ? hexA(col, 0.10) : 'transparent'; }}
+                >
+                  <AgentGlyph enterprise={enterprise} color={col} />
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{
+                      fontSize: 9, letterSpacing: '0.14em', fontWeight: 700,
+                      color: active ? col : 'rgba(224,242,254,0.9)',
+                      whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+                    }}>
+                      {a.name}
+                    </div>
+                    <div style={{ fontSize: 7, letterSpacing: '0.18em', color: statusCol, marginTop: 1 }}>
+                      {enterprise ? 'SAT·' : ''}{a.status.toUpperCase()}
+                    </div>
+                  </div>
+                  <span style={{
+                    width: 5, height: 5, borderRadius: '50%', background: statusCol, flexShrink: 0,
+                    boxShadow: a.status === 'working' ? `0 0 6px ${col}` : 'none',
+                  }} />
+                </div>
+              );
+            })}
+            {agents.length === 0 && (
+              <div style={{ padding: '12px 10px', color: 'rgba(148,233,255,0.3)', letterSpacing: '0.15em', fontSize: 8 }}>
+                NO AGENTS REGISTERED
+              </div>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* ── Mission Log: always-on feed of real agent tasks ── */}
       <div style={{
@@ -833,7 +931,7 @@ export const CortexAgentsScene: React.FC = () => {
         const tasks = tasksByAgent.get(a.id) || [];
         if (!tasks.length) return null;
         const baseA = (i / Math.max(agents.length, 1)) * Math.PI * 2 - Math.PI / 2;
-        const left = 50 + Math.cos(baseA) * 36;
+        const left = (narrow ? 50 : 57) + Math.cos(baseA) * (narrow ? 36 : 33);
         const top = 50 + Math.sin(baseA) * 28;
         return (
           <div key={a.id} onClick={() => setSelectedAgent(selectedAgent === a.id ? null : a.id)}

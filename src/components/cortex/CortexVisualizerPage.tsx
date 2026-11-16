@@ -1271,7 +1271,7 @@ export default function CortexVisualizerPage() {
 
       {/* Left column: Nexus Foundry telemetry — sentinel rotation, model
           lanes, probation pool. Sits above the MODE/UPTIME rail. */}
-      {!narrow && agentCrew.runtime && (
+      {!narrow && faceMode !== 'agents' && agentCrew.runtime && (
         <div style={{
           position: 'absolute', left: 64, top: '17%', zIndex: 20,
           fontFamily: "'IBM Plex Mono', monospace", fontSize: 8, letterSpacing: '0.18em',
@@ -1288,7 +1288,7 @@ export default function CortexVisualizerPage() {
 
       {/* Left rail: telemetry column — hidden on narrow viewports where it
           would collide with the panel grid's left column */}
-      {!narrow && <div style={{
+      {!narrow && faceMode !== 'agents' && <div style={{
         position: 'absolute', left: 64, top: '50%', transform: 'translateY(-50%)',
         zIndex: 20, display: 'flex', flexDirection: 'column', gap: 14,
       }} className="cx-hud-in">
@@ -1337,8 +1337,9 @@ export default function CortexVisualizerPage() {
         )}
       </div>}
 
-      {/* Right rail: agent crew presence — appears only while agents work */}
-      {!narrow && (() => {
+      {/* Right rail: agent crew presence — appears only while agents work.
+          Hidden on the Foundry face itself (it links back to this page). */}
+      {!narrow && faceMode !== 'agents' && (() => {
         const AGENT_HUES: Record<string, string> = { sentinel: '#67e8f9', scout: '#e879f9', librarian: '#fbbf24', builder: '#34d399', reviewer: '#fb7185', runner: '#a3e635', warden: '#818cf8' };
         const active = (agentCrew.agents || []).filter(a => a.status === 'working' || a.status === 'queued');
         if (!active.length) return null;
