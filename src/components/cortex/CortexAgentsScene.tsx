@@ -89,11 +89,11 @@ interface BusinessStation {
 }
 const BUSINESS_STATIONS: BusinessStation[] = [
   {
-    id: 'gumroad-pipeline',
-    name: 'GUMROAD // PIPELINE',
+    id: 'omni-syndication',
+    name: 'OMNI // SYNDICATION',
     statusUrl: '/api/cortex/distribution/status',
     phase: 0.9,
-    size: { w: 96, h: 56 },
+    size: { w: 104, h: 56 },
   },
 ];
 
@@ -396,6 +396,205 @@ const AgentDossierPanel: React.FC<{ agent: AgentClient; snap: AgentsSnapshotClie
   );
 };
 
+const OmniSyndicationPanel: React.FC<{
+  onClose: () => void;
+  dockLeft?: boolean;
+}> = ({ onClose, dockLeft }) => {
+  const [data, setData] = useState<any>(null);
+  const [loading, setLoading] = useState(false);
+  const [msg, setMsg] = useState<string | null>(null);
+
+  const fetchStatus = () => {
+    fetch('/api/cortex/distribution/status', { cache: 'no-store' })
+      .then((r) => r.json())
+      .then((j) => { if (j?.ok) setData(j); })
+      .catch(() => {});
+  };
+
+  useEffect(() => {
+    fetchStatus();
+    const iv = setInterval(fetchStatus, 6000);
+    return () => clearInterval(iv);
+  }, []);
+
+  const triggerPublish = async (dryRun = true) => {
+    setLoading(true);
+    setMsg(null);
+    try {
+      const res = await fetch('/api/cortex/agents/task', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          agentId: 'distributor',
+          kind: 'omni_publish',
+          title: `Omni Syndication ${dryRun ? '(Staging Audit)' : '(Active CDP Sync)'}`,
+          input: { platform: 'all', dryRun },
+        }),
+      });
+      const j = await res.json();
+      if (j.ok) {
+        setMsg(`Task dispatched to DISTRIBUTOR (${j.task?.id})`);
+        setTimeout(fetchStatus, 1500);
+      } else {
+        setMsg(`Failed: ${j.error || 'unknown'}`);
+      }
+    } catch (e: any) {
+      setMsg(`Error: ${e.message}`);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const rep = data?.omniStagingReport;
+  const col = '#fbbf24';
+
+  return (
+    <div
+      style={
+        dockLeft
+          ? {
+              position: 'absolute',
+              left: 216,
+              top: '50%',
+              transform: 'translateY(-50%)',
+              zIndex: 7,
+              width: 540,
+              maxWidth: 'calc(100vw - 240px)',
+              maxHeight: '78vh',
+              display: 'flex',
+              flexDirection: 'column',
+              background: 'linear-gradient(165deg, rgba(8,14,24,0.96), rgba(5,8,15,0.92))',
+              border: `1px solid ${hexA(col, 0.4)}`,
+              borderLeft: `3px solid ${col}`,
+              borderRadius: 3,
+              padding: '14px 18px',
+              backdropFilter: 'blur(16px)',
+              boxShadow: `0 0 40px ${hexA(col, 0.18)}`,
+              overflow: 'hidden',
+            }
+          : {
+              position: 'absolute',
+              bottom: 18,
+              left: '50%',
+              transform: 'translateX(-50%)',
+              zIndex: 7,
+              width: 560,
+              maxWidth: '92vw',
+              maxHeight: '68vh',
+              display: 'flex',
+              flexDirection: 'column',
+              background: 'linear-gradient(165deg, rgba(8,14,24,0.96), rgba(5,8,15,0.92))',
+              border: `1px solid ${hexA(col, 0.4)}`,
+              borderRadius: 3,
+              padding: '14px 18px',
+              backdropFilter: 'blur(16px)',
+              boxShadow: `0 0 40px ${hexA(col, 0.18)}`,
+              overflow: 'hidden',
+            }
+      }
+    >
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', flexShrink: 0 }}>
+        <span style={{ fontSize: 11, letterSpacing: '0.25em', color: col, fontFamily: MONO, fontWeight: 700 }}>
+          OMNI // SYNDICATION
+          <span style={{ fontSize: 7, letterSpacing: 0.1, color: '#38bdf8', marginLeft: 8, verticalAlign: 'middle' }}>
+            ENTERPRISE DECK
+          </span>
+        </span>
+        <button onClick={onClose} style={{ background: 'none', border: 'none', color: DIM, cursor: 'pointer', fontSize: 11, fontFamily: MONO, padding: 0 }}>✕</button>
+      </div>
+
+      <div style={{ fontSize: 9, color: 'rgba(203,213,225,0.85)', fontFamily: MONO, marginTop: 4 }}>
+        {rep?.title || 'The Sovereign Real Estate OS & Marketing Engine'}
+        <span style={{ color: DIM, marginLeft: 6 }}>({rep?.productId || 'sovereign-real-estate-os'})</span>
+      </div>
+
+      {/* Grid of 4 platforms */}
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginTop: 12, flexShrink: 0 }}>
+        <div style={{ background: 'rgba(15,23,42,0.6)', border: '1px solid rgba(251,191,36,0.25)', borderRadius: 4, padding: 8 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 9, fontFamily: MONO }}>
+            <span style={{ color: '#fb923c', fontWeight: 700 }}>GUMROAD</span>
+            <span style={{ color: '#34d399' }}>$47</span>
+          </div>
+          <div style={{ fontSize: 8, color: DIM, fontFamily: MONO, marginTop: 2 }}>Master ZIP · 16,235 bytes</div>
+          <div style={{ fontSize: 7, color: '#a5f3fc', fontFamily: MONO, marginTop: 4 }}>STATUS: STAGED VERIFIED</div>
+        </div>
+
+        <div style={{ background: 'rgba(15,23,42,0.6)', border: '1px solid rgba(251,191,36,0.25)', borderRadius: 4, padding: 8 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 9, fontFamily: MONO }}>
+            <span style={{ color: '#f59e0b', fontWeight: 700 }}>ETSY</span>
+            <span style={{ color: '#34d399' }}>$24.99</span>
+          </div>
+          <div style={{ fontSize: 8, color: DIM, fontFamily: MONO, marginTop: 2 }}>Canva Access PDF + 13 Tags</div>
+          <div style={{ fontSize: 7, color: '#a5f3fc', fontFamily: MONO, marginTop: 4 }}>STATUS: DRAFT STAGED</div>
+        </div>
+
+        <div style={{ background: 'rgba(15,23,42,0.6)', border: '1px solid rgba(251,191,36,0.25)', borderRadius: 4, padding: 8 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 9, fontFamily: MONO }}>
+            <span style={{ color: '#60a5fa', fontWeight: 700 }}>AMAZON KDP</span>
+            <span style={{ color: '#34d399' }}>$14.99</span>
+          </div>
+          <div style={{ fontSize: 8, color: DIM, fontFamily: MONO, marginTop: 2 }}>124-Pg Interior + Wrap PDF</div>
+          <div style={{ fontSize: 7, color: '#a5f3fc', fontFamily: MONO, marginTop: 4 }}>STATUS: DRAFT STAGED</div>
+        </div>
+
+        <div style={{ background: 'rgba(15,23,42,0.6)', border: '1px solid rgba(251,191,36,0.25)', borderRadius: 4, padding: 8 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 9, fontFamily: MONO }}>
+            <span style={{ color: '#f472b6', fontWeight: 700 }}>REDBUBBLE</span>
+            <span style={{ color: '#34d399' }}>POD</span>
+          </div>
+          <div style={{ fontSize: 8, color: DIM, fontFamily: MONO, marginTop: 2 }}>4500x5400 300DPI Blueprint</div>
+          <div style={{ fontSize: 7, color: '#a5f3fc', fontFamily: MONO, marginTop: 4 }}>STATUS: PRIVATE STAGED</div>
+        </div>
+      </div>
+
+      {/* Action Bar */}
+      <div style={{ display: 'flex', gap: 8, marginTop: 14, alignItems: 'center' }}>
+        <button
+          onClick={() => triggerPublish(true)}
+          disabled={loading}
+          style={{
+            background: 'rgba(251,191,36,0.15)',
+            border: '1px solid #fbbf24',
+            color: '#fbbf24',
+            fontSize: 8,
+            fontFamily: MONO,
+            fontWeight: 700,
+            padding: '6px 12px',
+            borderRadius: 3,
+            cursor: loading ? 'wait' : 'pointer',
+          }}
+        >
+          {loading ? 'DISPATCHING…' : 'RUN STAGING AUDIT'}
+        </button>
+        <button
+          onClick={() => triggerPublish(false)}
+          disabled={loading}
+          style={{
+            background: 'rgba(56,189,248,0.15)',
+            border: '1px solid #38bdf8',
+            color: '#38bdf8',
+            fontSize: 8,
+            fontFamily: MONO,
+            fontWeight: 700,
+            padding: '6px 12px',
+            borderRadius: 3,
+            cursor: loading ? 'wait' : 'pointer',
+          }}
+        >
+          ACTIVE CDP SYNC
+        </button>
+        {msg && <span style={{ fontSize: 8, color: '#34d399', fontFamily: MONO, marginLeft: 'auto' }}>{msg}</span>}
+      </div>
+
+      {rep?.timestamp && (
+        <div style={{ fontSize: 7, color: DIM, fontFamily: MONO, marginTop: 8 }}>
+          Last Audit: {new Date(rep.timestamp).toLocaleTimeString()} · All Deliverables Verified: {rep.allVerified ? 'YES' : 'NO'}
+        </div>
+      )}
+    </div>
+  );
+};
+
 export const CortexAgentsScene: React.FC = () => {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -403,6 +602,7 @@ export const CortexAgentsScene: React.FC = () => {
   const [snap, setSnap] = useState<AgentsSnapshotClient>(snapRef.current);
   const [events, setEvents] = useState(agentsClient.events);
   const [selectedAgent, setSelectedAgent] = useState<string | null>(null);
+  const [selectedStation, setSelectedStation] = useState<string | null>(null);
   const [nowTs, setNowTs] = useState(() => Date.now());
   const [narrow, setNarrow] = useState(() => typeof window !== 'undefined' && window.innerWidth < 900);
   const reducedMotion = useRef(false);
@@ -498,18 +698,35 @@ export const CortexAgentsScene: React.FC = () => {
     };
     const onLeave = () => { mouse.current.inside = false; };
     const onClick = (ev: MouseEvent) => {
-      // hit-test agent vessels → select dossier
       const r = canvas.getBoundingClientRect();
       const w = r.width, h = r.height;
-      const dpr = Math.min(window.devicePixelRatio || 1, 2);
-      void dpr;
       const agents = (snapRef.current.agents || []).slice().sort(agentSort);
       const cx = w / 2 + (w >= 900 ? 100 : 0), cy = h / 2 + h * 0.05;
       const mx = ev.clientX - r.left, my = ev.clientY - r.top;
-      agents.forEach((a) => {
-        const { x: ax, y: ay } = agentPos(agents, a, w, h, cx, cy, time);
-        if (Math.hypot(mx - ax, my - ay) < 34) setSelectedAgent((cur) => (cur === a.id ? null : a.id));
+
+      let hitStation = false;
+      const stRx = Math.min(w * 0.37, 580) * 1.48;
+      const stRy = Math.min(h * 0.32, 320) * 1.48;
+      BUSINESS_STATIONS.forEach((st, si) => {
+        const a = st.phase + time * 0.022 + si * 2.1;
+        const sx = cx + Math.cos(a) * stRx;
+        const sy = cy + Math.sin(a) * stRy;
+        if (Math.hypot(mx - sx, my - sy) < 45) {
+          hitStation = true;
+          setSelectedStation((cur) => (cur === st.id ? null : st.id));
+          setSelectedAgent(null);
+        }
       });
+
+      if (!hitStation) {
+        agents.forEach((a) => {
+          const { x: ax, y: ay } = agentPos(agents, a, w, h, cx, cy, time);
+          if (Math.hypot(mx - ax, my - ay) < 34) {
+            setSelectedAgent((cur) => (cur === a.id ? null : a.id));
+            setSelectedStation(null);
+          }
+        });
+      }
     };
     canvas.addEventListener('mousemove', onMouse);
     canvas.addEventListener('mouseleave', onLeave);
@@ -1195,7 +1412,7 @@ export const CortexAgentsScene: React.FC = () => {
       canvas.removeEventListener('mouseleave', onLeave);
       canvas.removeEventListener('click', onClick);
     };
-  }, [selectedAgent]);
+  }, [selectedAgent, selectedStation]);
 
   // ── DOM overlay data ──
   const tasksByAgent = new Map<string, AgentTaskClient[]>();
@@ -1447,6 +1664,10 @@ export const CortexAgentsScene: React.FC = () => {
         if (!a) return null;
         return <AgentDossierPanel agent={a} snap={snap} now={nowTs} onClose={() => setSelectedAgent(null)} dockLeft={!narrow} />;
       })()}
+
+      {selectedStation && (
+        <OmniSyndicationPanel onClose={() => setSelectedStation(null)} dockLeft={!narrow} />
+      )}
 
       <div style={{ position: 'absolute', inset: 0, zIndex: 8, pointerEvents: 'none', background: 'repeating-linear-gradient(0deg, rgba(255,255,255,0.012) 0px, rgba(255,255,255,0.012) 1px, transparent 1px, transparent 3px)' }} />
     </div>
