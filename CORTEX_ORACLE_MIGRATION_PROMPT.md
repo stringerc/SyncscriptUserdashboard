@@ -25,9 +25,9 @@
 
 ### Mac-only dependencies — VERIFIED on VM 2026-11-16 (results below)
 
-- **Kokoro TTS**: ✅ `kokoro-onnx` + onnxruntime runs on aarch64 — synthesized 2.6s audio in 4.1s (**0.65× realtime** on 4 OCPU). Fine for notices/digests/briefs; marginal for live conversation. Model files ~340 MB to `/opt/cortex-runtime/models/`.
-- **Cortana voice clone (F5-TTS + RVC + DSP)**: ❌ realistically Mac-bound — MLX is Apple-only, PyTorch CPU inference on 4 OCPU too slow for voice cloning. **Degraded-mode contract: Cortana voice unavailable when Mac off; generic Kokoro voice is the VM fallback.**
-- **Whisper STT**: `ggml-base.en.bin` → whisper.cpp has linux-arm64 builds; or Groq Whisper API (keys exist). Either works.
+- **Cortana voice — RESOLVED 2026-11-16**: ✅ **Pocket TTS (Kyutai) runs the Cortana clone on Oracle ARM64 CPU.** `uv tool install pocket-tts` on VM + `pocket-tts-cortana.yaml` + voice conditioning wav (`~/.cortex/datasets/halo2_cortana/l03_0070_cor[l03_0070_cor].wav` → copied to `~/.cortex/cortana_voice.wav`) + HF token (`~/.cortex/pocket-tts.env`). Verified: 3.6s audio in 1.9s = **1.91× faster than realtime** on 4 OCPU. Output: `/tmp/cortana_test.wav` → user approved timbre. **Caveat**: this is Pocket-TTS's clone from the conditioning clip — NOT the full F5-TTS+RVC+DSP HALO2 chain; the RVC model/index (`~/.cortex/models/halo2_cortana/`) stays Mac-only unless separately ported (RVC inference on CPU is feasible but unverified — Phase 0 item). Pocket TTS serve mode: `pocket-tts serve --port 8911 --config ... --default-voice <wav>` — needs a systemd unit on VM; Mac uses port 8911, VM `/api/cortex/tts` currently expects `POCKET_TTS_URL` env (vite.config.ts:920,8111).
+- **Kokoro TTS fallback**: ✅ `kokoro-onnx` + onnxruntime runs on aarch64 — 0.65× realtime. Still useful as fallback/generic voice if pocket-tts hiccups.
+- **Whisper STT**: Groq Whisper API is already the primary path in `/api/cortex/stt` (cloud — works unchanged); local whisper.cpp arm64 build is the fallback option.
 - **`textutil` conversions**: ✅ replaced — LibreOffice headless installed on VM, `md→pdf` verified producing valid PDF.
 - **Agent Reach**: ✅ fully working on VM — `uv tool install` + `setup` succeeded, 5/5 default channels, live `github search` + `web search` (Exa) verified. Optional/login channels need per-channel verification (OpenCLI + VM Chrome).
 - **Hardcoded Mac paths**: `storefront/tools/*.mjs` import playwright-core from `/Users/Apple/.cursor/mcp-servers/google-flow-browser-mcp/node_modules/...` — must become a real dependency or env-configured path on the VM.
@@ -74,7 +74,7 @@ Write the contract. Must include:
 - **Target architecture diagram**: VM services (cortex-runtime systemd unit running `vite` or a dedicated node server — DECIDE: keep Vite dev server vs `vite preview`/custom node entry; recommend whatever is most robust for always-on), public ingress choice (Tailscale Funnel on VM vs cloudflared named tunnel vs syncscript.app path — evaluate all three, pick one, justify), Mac's residual role (visualizer UI? voice? Devin sessions?).
 - **File manifest**: exact rsync/include-exclude list, destination paths (`/opt/cortex-runtime/` proposed), `.env` placement, vault path (`OBSIDIAN_VAULT_PATH=/opt/cortex-runtime/vault`), state dir (`CORTEX_AGENTS_STATE_DIR` or cwd-relative `.cortex-runtime`).
 - **Cutover sequence**: parallel-run strategy — VM instance runs alongside Mac on a *different port*; Discord endpoint stays on Mac until VM verified; then atomic-ish switch (Discord portal URL update is the only user-visible cutover); rollback = repoint URL back + restart Mac services.
-- **Degraded-mode contract**: explicit list of features that require Mac (voice/TTS/STT, pdf conversions, anything Kokoro) — each must return honest "unavailable — host offline" not hang or fabricate.
+- **Degraded-mode contract**: voice is NO LONGER degraded — Pocket TTS Cortana clone verified on VM. Remaining Mac-bound candidates: RVC HALO2 post-processing (optional fidelity layer), any feature Phase 0 audit flags. Each must return honest "unavailable — host offline" not hang or fabricate.
 - **Health surface**: `/api/cortex/discord/state`-style endpoint or extend `/api/cortex/agents/state` with `host: oracle|mac`, uptime, last-seen; WARDEN patrol checks.
 - **Verification gates**: per-phase checklist (below) — nothing proceeds on assertion, only on evidence.
 
@@ -120,10 +120,10 @@ Order matters — each step independently verifiable:
 
 1. Vite dev server vs production build (`vite build` + `vite preview` or custom node entry) on VM — which is more robust for 24/7?
 2. Public ingress: Tailscale Funnel on VM (needs tailscale on VM — ARM64 supported) vs cloudflared named tunnel (needs domain on Cloudflare or trycloudflare ephemeral — REJECT ephemeral) vs syncscript.app reverse proxy on existing web host — pick ONE.
-3. Agent Reach on VM: does `uv tool install` + channels work on aarch64 Linux? OpenCLI needs Node+Chrome — Chrome exists on VM already. If agent-reach can't run headless-server-side, spec the fallback (social_scan stays Mac-routed through a small proxy, or degrades).
-4. Gmail/calendar/geo-watch: do they depend on Mac-local browser sessions or pure HTTP+env creds?
-5. Does anything else on the Mac poll `localhost:5173` that would break (visualizer UI open in browser, mobile pairing, keep-warm daemon, netwatch)?
-6. Rollback rehearsal: exact command sequence to repoint Discord back to Mac Funnel and restart Mac services — written BEFORE cutover, tested.
+4. ~~Agent Reach on VM~~ — **RESOLVED**: works on aarch64, 5/5 channels verified. Remaining: do login-gated channels (OpenCLI + VM Chrome :9222) work headless-server-side? Test `agent-reach doctor` + one login channel on VM.
+5. Gmail/calendar/geo-watch: do they depend on Mac-local browser sessions or pure HTTP+env creds?
+6. Does anything else on the Mac poll `localhost:5173` that would break (visualizer UI open in browser, mobile pairing, keep-warm daemon, netwatch)?
+7. Rollback rehearsal: exact command sequence to repoint Discord back to Mac Funnel and restart Mac services — written BEFORE cutover, tested.
 
 ---
 
