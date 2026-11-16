@@ -22,7 +22,7 @@ import { getAgentRuntime } from './src/lib/cortex-agents/runtime';
 import { recordAgentOutcome } from './src/lib/cortex-agents/outcomes';
 import { archiveTask, readArchive } from './src/lib/cortex-agents/archive';
 import { listStrategyProposals, decideStrategyProposal, reconcileStrategyProposals, fileBudgetProposal } from './src/lib/cortex-agents/strategy-proposals';
-import { recordIncidentFailure, resolveIncidentsOnSuccess, listIncidents } from './src/lib/cortex-agents/incidents';
+import { recordIncidentFailure, resolveIncidentsOnSuccess, listIncidents, escalateStaleIncidents } from './src/lib/cortex-agents/incidents';
 import { registerAgentWorkers, makeEphemeralWorker, expandTaskSpec } from './src/lib/cortex-agents/workers';
 import { enqueueDistributionItem, DISTRIBUTION_ITEM_TYPES } from './src/lib/cortex-agents/distribution';
 import type { RouteTier } from './src/lib/cortex-agents/types';
@@ -1207,6 +1207,23 @@ function apiProxyPlugin(): Plugin {
       wardenTimer.unref?.();
       const wardenBootTimer = setTimeout(() => submitWardenPatrol('boot sweep'), 20_000);
       wardenBootTimer.unref?.();
+
+      // ── Incident escalation sweeper ──
+      // Every 60s: open incidents older than 1min file a deduped
+      // investigation proposal — unless the same agent+kind has a
+      // queued/running task (active retry = already being tended).
+      const incidentSweep = setInterval(() => {
+        try {
+          const snap = agentRuntime.snapshot();
+          const active = new Set(
+            snap.tasks
+              .filter((t: any) => t.status === 'queued' || t.status === 'running')
+              .map((t: any) => `${t.agentId}|${t.kind}`),
+          );
+          escalateStaleIncidents((agentId, kind) => active.has(`${agentId}|${kind}`));
+        } catch { /* sweep must never kill the server */ }
+      }, 60_000);
+      incidentSweep.unref?.();
 
       // LLM bridge for workers → matrix-routed completion endpoint (self-call).
       agentRuntime.setLLMBridge(async (opts) => {

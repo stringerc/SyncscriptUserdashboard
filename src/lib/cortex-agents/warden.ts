@@ -15,7 +15,7 @@ import path from 'node:path';
 import type { WorkerHandler } from './runtime';
 import type { AgentEvent } from './types';
 import { rulesBlock } from './rules';
-import { listIncidents, escalateStaleIncidents } from './incidents';
+import { listIncidents } from './incidents';
 
 const PORT = process.env.PORT ? parseInt(process.env.PORT) : 5173;
 const BASE = `http://127.0.0.1:${PORT}`;
@@ -305,11 +305,14 @@ export function nodeFsProbes() {
 export function nodeQcProbes() {
   const storefrontDir = path.join(process.cwd(), 'storefront');
   const catalogPath = path.join(storefrontDir, 'products', 'catalog-v2.json');
-  const STALE_H = 24;
+  // QC "stale" = open >30min. Escalation proposals file after 1min, so a
+  // ticket still open at 30min means the filed investigation hasn't
+  // produced a verified fix yet — that's the number worth warning on.
+  const STALE_MIN = 30;
   return {
     incidents() {
       const open = listIncidents('open');
-      const cutoff = Date.now() - STALE_H * 3600_000;
+      const cutoff = Date.now() - STALE_MIN * 60_000;
       return {
         open: open.length,
         stale: open.filter((i) => i.firstSeenAt <= cutoff).length,
@@ -354,10 +357,6 @@ const wardenWorker: WorkerHandler = async (ctx) => {
   });
   ctx.progress(0.8);
 
-  // Escalation sweep: incidents open >24h file deduped investigation
-  // proposals so untended tickets become tracked Inbox work.
-  const escalated = escalateStaleIncidents();
-
   // One cheap synthesis pass ONLY when something is wrong — healthy patrols
   // stay silent so the mission log isn't spammed with good news.
   let alert: string | null = null;
@@ -382,13 +381,12 @@ const wardenWorker: WorkerHandler = async (ctx) => {
       at: report.at, healthy: report.healthy,
       anomalies: report.anomalies, warnings: report.warnings,
       checks: report.checks.map((c) => ({ name: c.name, ok: c.ok, ms: c.ms })),
-      escalated,
     },
     at: Date.now(),
   } as AgentEvent);
 
   ctx.progress(1);
-  return { report, alert, escalated };
+  return { report, alert };
 };
 
 export function registerWardenWorker(runtime: { registerWorker(id: string, h: WorkerHandler): void }) {

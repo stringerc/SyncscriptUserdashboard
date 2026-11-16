@@ -139,20 +139,28 @@ export function listIncidents(status?: string): (Incident & { ageHours: number }
 }
 
 /** An incident open longer than this gets a STRATEGIST investigation
- *  proposal auto-filed — "untended" becomes tracked work, not silence. */
-export const STALE_INCIDENT_HOURS = 24;
+ *  proposal auto-filed — "untended" becomes tracked work, not silence.
+ *  1 minute: a terminal failure has already exhausted its retries, so
+ *  anything older than that is genuinely waiting on a decision. */
+export const STALE_INCIDENT_MINUTES = 1;
 
 /**
- * Escalation sweep — called from the Warden patrol. Every open incident
- * older than STALE_INCIDENT_HOURS files one deduped proposal asking for
- * investigation. Returns how many new proposals were filed.
+ * Escalation sweep — runs every 60s from the dev-server sweeper.
+ * Every open incident older than STALE_INCIDENT_MINUTES files one
+ * deduped proposal asking for investigation, unless the same
+ * agent+kind already has a queued/running task (active retry work
+ * means the incident is being tended, not abandoned).
+ * Returns how many new proposals were filed.
  */
-export function escalateStaleIncidents(): number {
+export function escalateStaleIncidents(
+  isActive?: (agentId: string, kind: string) => boolean,
+): number {
   try {
-    const cutoff = Date.now() - STALE_INCIDENT_HOURS * 3600_000;
+    const cutoff = Date.now() - STALE_INCIDENT_MINUTES * 60_000;
     let filed = 0;
     for (const inc of readAll()) {
       if (inc.status !== 'open' || inc.firstSeenAt > cutoff) continue;
+      if (isActive?.(inc.agentId, inc.kind)) continue;
       if (fileIncidentProposal(inc)) filed++;
     }
     return filed;

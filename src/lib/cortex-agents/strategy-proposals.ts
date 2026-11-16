@@ -144,13 +144,25 @@ export function fileBudgetProposal(opts: { agentId: string; agentName: string; c
 export function fileIncidentProposal(inc: {
   key: string; agentId: string; agentName?: string; kind: string;
   failureClass: string; title: string; count: number;
-  firstSeenAt: number; lastError?: string; evidence: string[];
+  firstSeenAt: number; lastSeenAt: number; lastError?: string; evidence: string[];
 }): boolean {
   const all = readAll();
-  const dedupeId = `incident-${inc.key.replace(/[^a-z0-9]+/gi, '-').slice(0, 60)}`;
-  if (all.some((p) => p.id === dedupeId)) return false;
+  const base = `incident-${inc.key.replace(/[^a-z0-9]+/gi, '-').slice(0, 60)}`;
+  const prior = all.filter((p) => p.id === base || p.id.startsWith(`${base}-r`));
+  // A live proposal already covers this incident — don't double-file.
+  if (prior.some((p) => p.status === 'pending' || p.status === 'approved')) return false;
   if (all.filter((p) => p.status === 'pending').length >= MAX_PENDING) return false;
-  const ageH = Math.floor((Date.now() - inc.firstSeenAt) / 3600_000);
+  // Re-file only when there's new evidence: the failure recurred after
+  // the last proposal was decided, or the last attempt was orphaned by
+  // a restart (never actually ran). Otherwise the open ticket just sits
+  // in the Inbox — visible, not spammed.
+  const latest = prior.sort((a, b) => (b.decidedAt ?? 0) - (a.decidedAt ?? 0))[0];
+  if (latest) {
+    const orphaned = /lost — runtime restarted/.test(latest.decisionNote || '');
+    if (!orphaned && (latest.decidedAt ?? 0) >= inc.lastSeenAt) return false;
+  }
+  const dedupeId = prior.length ? `${base}-r${prior.length + 1}` : base;
+  const ageMin = Math.max(1, Math.floor((Date.now() - inc.firstSeenAt) / 60_000));
   all.push({
     id: dedupeId,
     planNote: '',
@@ -160,7 +172,7 @@ export function fileIncidentProposal(inc: {
     actionClass: 'process',
     agentId: 'builder',
     kind: 'task',
-    instruction: `[INCIDENT ESCALATION] Ticket open ${ageH}h, seen ${inc.count}x.\nFailure: ${inc.failureClass} on ${inc.kind}\nTitle: ${inc.title}\nLast error: ${inc.lastError || 'none'}\nEvidence tasks: ${inc.evidence.slice(-5).join(', ')}\nInvestigate root cause and propose or implement a verified fix. The incident auto-resolves only when a matching task completes.`,
+    instruction: `[INCIDENT ESCALATION] Ticket open ${ageMin}min, seen ${inc.count}x.\nFailure: ${inc.failureClass} on ${inc.kind}\nTitle: ${inc.title}\nLast error: ${inc.lastError || 'none'}\nEvidence tasks: ${inc.evidence.slice(-5).join(', ')}\nInvestigate root cause and propose or implement a verified fix. The incident auto-resolves only when a matching task completes.`,
     evidence: inc.evidence.slice(-5),
     status: 'pending',
     createdAt: Date.now(),
@@ -207,7 +219,18 @@ export function reconcileStrategyProposals(
     }
     if (!p.dispatchedTaskId) continue;
     const t = taskStatus(p.dispatchedTaskId);
-    if (!t) continue;
+    if (!t) {
+      // Orphaned dispatch: the task id is gone from runtime state — it
+      // died with a server restart before reaching a terminal state.
+      // Don't leave the proposal 'approved' forever; fail it honestly
+      // once it's been missing for >10min (state restore grace window).
+      if (p.decidedAt && Date.now() - p.decidedAt > 10 * 60_000) {
+        p.status = 'failed';
+        p.decisionNote = `dispatched task ${p.dispatchedTaskId} lost — runtime restarted before it finished`;
+        changed++;
+      }
+      continue;
+    }
     if (t.status === 'completed') {
       p.status = 'executed';
       p.decidedAt = Date.now();

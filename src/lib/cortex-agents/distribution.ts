@@ -127,14 +127,17 @@ async function runRedditComment(ctx: AgentContext, payload: Record<string, unkno
   ctx.progress(0.2);
   const draftFile = path.join(TOOLS, '.reddit-draft.txt');
   fs.writeFileSync(draftFile, text);
-  const out = await sh(`node tools/reddit-old-comment.mjs '${permalink.replace(/'/g, '')}' '${draftFile}'`, ctx.telemetry);
+  const out = await sh(`node tools/reddit-post.mjs '${permalink.replace(/'/g, '')}' '${draftFile}'`, ctx.telemetry);
   const stdout = String(out?.stdout || '');
+  const stderr = String(out?.stderr || '');
   ctx.progress(0.9);
   if (!/POSTED:\s*true/i.test(stdout)) {
-    throw new Error(`reddit comment not confirmed: ${stdout.slice(0, 200)}`);
+    const detail = [stdout, stderr].filter(Boolean).join(' | ').slice(0, 300);
+    throw new Error(`reddit comment not confirmed: ${detail || 'no output'}`);
   }
   ctx.progress(1);
-  return { permalink, posted: true, output: stdout.slice(0, 500) };
+  const shot = stdout.match(/screenshot:\s*(\S+)/)?.[1];
+  return { permalink, posted: true, screenshot: shot, output: stdout.slice(0, 500) };
 }
 
 async function runPinterestPin(ctx: AgentContext, payload: Record<string, unknown>) {

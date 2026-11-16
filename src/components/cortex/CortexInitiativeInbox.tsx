@@ -481,7 +481,7 @@ export function CortexInitiativeInbox() {
                 {incidents.map(inc => {
                   const ageH = inc.ageHours ?? Math.floor((Date.now() - inc.firstSeenAt) / 3600_000);
                   const stale = ageH >= 24;
-                  const aging = !stale && ageH >= 4;
+                  const aging = !stale && ageH >= 0.25;
                   return (
                   <div key={inc.id} style={{
                     border: `1px solid ${C.border}`, borderLeft: `3px solid ${stale ? '#ef4444' : aging ? '#f59e0b' : '#f87171'}`,
@@ -497,12 +497,12 @@ export function CortexInitiativeInbox() {
                       <span style={{ fontSize: 9, color: C.dim, fontFamily: MONO }}>×{inc.count}</span>
                       {stale && (
                         <span style={{ fontSize: 9, fontFamily: MONO, color: '#ef4444', border: '1px solid #ef444455', borderRadius: 3, padding: '0 4px' }}>
-                          STALE {ageH}h — escalation filed
+                          STALE {ageH}h — fix unverified
                         </span>
                       )}
                       {aging && (
                         <span style={{ fontSize: 9, fontFamily: MONO, color: '#f59e0b', border: '1px solid #f59e0b55', borderRadius: 3, padding: '0 4px' }}>
-                          AGING {ageH}h
+                          AGING {ageH >= 1 ? `${Math.floor(ageH)}h` : `${Math.floor(ageH * 60)}m`}
                         </span>
                       )}
                       <span style={{ marginLeft: 'auto', fontSize: 9, color: C.dim, fontFamily: MONO }}>{timeAgo(inc.lastSeenAt)}</span>
