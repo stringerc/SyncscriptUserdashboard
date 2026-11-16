@@ -147,6 +147,7 @@
     "vitest": "^4.1.10"
   },
   "scripts": {
+    "build:omni-package": "npx tsx storefront/tools/omni-bundle-build.mjs",
     "prepare": "husky",
     "dev": "vite",
     "preview": "vite preview",

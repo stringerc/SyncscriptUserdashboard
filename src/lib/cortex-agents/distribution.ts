@@ -265,6 +265,7 @@ async function runDistributionStatus(ctx: AgentContext, _payload: Record<string,
   const counts: Record<string, number> = { pending: 0, done: 0, failed: 0 };
   for (const i of queue.items) counts[i.status] = (counts[i.status] ?? 0) + 1;
   const gumroadState = read(path.join(STOREFRONT, '.gumroad-state.json'), 2000);
+  const omniStaging = read(path.join(STOREFRONT, 'dist', 'omni-staging-report.json'), 4000);
   const launchLog = read(path.join(STOREFRONT, 'GUMROAD_LAUNCH_LOG.md'), 3000);
   const shotTs = read(path.join(BROWSER_DIR, 'latest.txt'), 200);
   const catalog = read(path.join(STOREFRONT, 'products', 'catalog-v2.json'), 6000);
@@ -283,6 +284,7 @@ async function runDistributionStatus(ctx: AgentContext, _payload: Record<string,
     queueItems: queue.items.slice(-10).map((i) => ({ id: i.id, type: i.type, status: i.status, createdAt: i.createdAt })),
     products: { total: productCount, published: publishedCount },
     gumroadState: gumroadState ? JSON.parse(gumroadState) : null,
+    omniStagingReport: omniStaging ? JSON.parse(omniStaging) : null,
     launchLogTail: launchLog,
     browserShotAt: shotTs,
     checkedAt: new Date().toISOString(),
@@ -328,6 +330,25 @@ async function runRedditDraft(ctx: AgentContext, payload: Record<string, unknown
   return { permalink, drafted: text, queued: enq.ok, queueId: enq.item?.id, queueNote: enq.reason };
 }
 
+async function runOmniPublish(ctx: AgentContext, payload: Record<string, unknown>) {
+  ctx.progress(0.2);
+  const platform = str(payload.platform, 'all');
+  const dryRun = payload.dryRun !== false;
+  const scriptPath = path.resolve(process.cwd(), 'storefront/tools/omni-publisher.mjs');
+  const args = [scriptPath];
+  if (dryRun) args.push('--dry-run');
+  if (platform) args.push(`--platform=${platform}`);
+  const res = await ctx.sh('node', args);
+  ctx.progress(1);
+  return {
+    platform,
+    dryRun,
+    exitCode: res.exitCode,
+    stdout: res.stdout.slice(-1000),
+    staged: res.exitCode === 0,
+  };
+}
+
 const ITEM_HANDLERS: Record<string, (ctx: AgentContext, p: Record<string, unknown>) => Promise<unknown>> = {
   reddit_scan: runRedditScan,
   reddit_comment: runRedditComment,
@@ -336,6 +357,7 @@ const ITEM_HANDLERS: Record<string, (ctx: AgentContext, p: Record<string, unknow
   browser_shot: runBrowserShot,
   dreamina_generate: runDreaminaGenerate,
   dreamina_collect: runDreaminaCollect,
+  omni_publish: runOmniPublish,
 };
 
 export const DISTRIBUTION_ITEM_TYPES = Object.keys(ITEM_HANDLERS);

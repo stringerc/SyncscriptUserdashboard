@@ -1,0 +1,66 @@
+{
+  "productId": "sovereign-real-estate-os",
+  "version": "2.0.0",
+  "title": "The Sovereign Real Estate OS & Marketing Engine",
+  "summary": "120+ AI Listing Prompts, Notion Client Pipeline, Canva Marketing Suite & Daily Field Logbook",
+  "platforms": {
+    "gumroad": {
+      "channel": "api",
+      "price": 47,
+      "files": [
+        "dist/gumroad/sovereign-real-estate-os.zip"
+      ],
+      "cover": "assets/hero-real-estate-ai-listing-kit.png"
+    },
+    "etsy": {
+      "channel": "cdp",
+      "price": 24.99,
+      "digitalFile": "dist/etsy/access-canva-templates.pdf",
+      "tags": [
+        "real estate canva",
+        "realtor marketing kit",
+        "listing presentation",
+        "open house flyer",
+        "realtor branding kit",
+        "real estate templates",
+        "buyer guide canva",
+        "seller guide canva",
+        "social media realtor",
+        "realtor instagram post",
+        "real estate newsletter",
+        "new agent toolkit",
+        "realtor client tracker"
+      ],
+      "images": [
+        "assets/hero-real-estate-ai-listing-kit.png",
+        "assets/alt-hero-real-estate-ai-listing-kit.png"
+      ]
+    },
+    "kdp": {
+      "channel": "cdp",
+      "price": 14.99,
+      "interiorPdf": "dist/kdp/interior-8.5x11.pdf",
+      "coverPdf": "dist/kdp/cover-wrap.pdf",
+      "categories": [
+        "Business & Money > Real Estate",
+        "Reference > Workbooks"
+      ],
+      "author": {
+        "firstName": "Christian",
+        "lastName": "Sterling"
+      }
+    },
+    "redbubble": {
+      "channel": "cdp",
+      "artwork": "dist/redbubble/art-4500x5400-blueprint.png",
+      "tags": [
+        "realtor",
+        "real estate",
+        "architecture",
+        "closing",
+        "minimalist"
+      ],
+      "title": "Modern Realtor Architectural Blueprint"
+    }
+  }
+}

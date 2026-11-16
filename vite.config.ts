@@ -9814,6 +9814,7 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
             distributor: distributor ? { status: distributor.status, tasksCompleted: distributor.tasksCompleted, tasksFailed: distributor.tasksFailed } : null,
             tasks: distTasks,
             gumroadState: readJson(path.join(sf, '.gumroad-state.json')),
+            omniStagingReport: readJson(path.join(sf, 'dist', 'omni-staging-report.json')),
             launchLogTail: readTail(path.join(sf, 'GUMROAD_LAUNCH_LOG.md')),
             browserShot: readTail(path.join(sf, 'browser', 'latest.txt'), 200),
           }));
