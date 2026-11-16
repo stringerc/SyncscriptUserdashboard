@@ -193,6 +193,7 @@ export class AgentRuntime {
   private spawnCounter = 0;
   private routines = new Map<string, AgentRoutine>();
   private routineCounter = 0;
+  private stopped = false;
 
   constructor() {
     for (const spec of AGENT_SPECS) {
@@ -252,6 +253,7 @@ export class AgentRuntime {
   }
 
   start() {
+    this.stopped = false;
     if (this.sweeper) return;
     this.sweeper = setInterval(() => this.sweep(), 15_000);
     this.sweeper.unref?.();
@@ -263,6 +265,7 @@ export class AgentRuntime {
   }
 
   stop() {
+    this.stopped = true;
     if (this.sweeper) clearInterval(this.sweeper);
     this.sweeper = null;
     this.sentinel?.stop();
@@ -701,22 +704,54 @@ export class AgentRuntime {
    * they'd just burn budget reproducing the same failure.
    */
   private static MAX_ATTEMPTS = 3;
+  /** Transient infra failures (provider/timeout) get a longer fuse — delayed
+   *  retries survive brownouts that instant retries can't. Every retry still
+   *  consumes daily budget at submitTask, so governance is unchanged. */
+  private static MAX_TRANSIENT_ATTEMPTS = 6;
   private static NON_RETRYABLE_RE = /unknown task kind|requires input|cancelled|daily budget/i;
 
   private maybeRetry(task: AgentTask, error: string) {
     const attempt = Number(task.input?.attempt ?? 0);
-    if (attempt + 1 >= AgentRuntime.MAX_ATTEMPTS) return;
+    const cls = task.telemetry?.failureClass;
+    const transient = cls === 'provider' || cls === 'timeout';
+    const maxAttempts = transient ? AgentRuntime.MAX_TRANSIENT_ATTEMPTS : AgentRuntime.MAX_ATTEMPTS;
+    if (attempt + 1 >= maxAttempts) return;
     if (task.input?.noRetry === true) return;
     if (AgentRuntime.NON_RETRYABLE_RE.test(error)) return;
     const agent = this.agents.get(task.agentId);
     if (!agent || agent.status === 'retired') return;
-    this.submitTask(task.agentId, task.kind, task.title, {
+    const input = {
       ...task.input,
       attempt: attempt + 1,
       retryOf: task.id,
       priorError: error,
       scope: 'Fix only the failing unit described in priorError; do not expand beyond the original instruction.',
-    });
+    };
+    if (!transient) {
+      this.submitTask(task.agentId, task.kind, task.title, input);
+      return;
+    }
+    // Exponential backoff for infra failures: ~90s, 3m, 6m, 12m, 15m(cap).
+    // The delay lets provider cooldowns recover before the next attempt;
+    // submitTask re-checks budget at fire time, so a raised/lowered budget
+    // during the wait is honored honestly.
+    const delayMs = Math.min(90_000 * Math.pow(2, attempt), 15 * 60_000);
+    const timer = setTimeout(() => {
+      if (this.stopped) return;
+      this.submitTask(task.agentId, task.kind, task.title, input);
+    }, delayMs);
+    timer.unref?.();
+  }
+
+  /** Human-approved daily budget override — persisted via agents-state,
+   *  clamped to a sane range. Used by budgetRaise strategy proposals. */
+  setDailyBudget(agentId: AgentId, budget: number): boolean {
+    const agent = this.agents.get(agentId);
+    if (!agent) return false;
+    agent.dailyBudget = Math.max(1, Math.min(200, Math.floor(budget)));
+    this.persist();
+    this.emit({ type: 'agent.status', agentId, status: agent.status, at: Date.now() });
+    return true;
   }
 
   private sweep() {

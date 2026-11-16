@@ -36,6 +36,9 @@ export interface StrategyProposal {
   decisionNote?: string;
   /** Agent task dispatched on approval — reconciled to executed/failed. */
   dispatchedTaskId?: string;
+  /** Deterministic action executed on approval instead of agent dispatch —
+   *  e.g. budgetRaise adjusts the agent's dailyBudget directly. */
+  action?: { type: 'budgetRaise'; agentId: string; budget: number };
 }
 
 function readAll(): StrategyProposal[] {
@@ -104,6 +107,35 @@ export function fileStrategyProposals(opts: {
   return { filed, skipped };
 }
 
+/**
+ * File a budget-raise proposal when an agent exhausts its daily budget.
+ * One pending proposal per agent — repeated rejections don't spam the Inbox.
+ * Approval executes the deterministic budgetRaise action (no BUILDER task).
+ */
+export function fileBudgetProposal(opts: { agentId: string; agentName: string; currentBudget: number; suggestedBudget: number; error: string }): boolean {
+  const all = readAll();
+  if (all.some((p) => p.status === 'pending' && p.action?.type === 'budgetRaise' && p.action.agentId === opts.agentId)) return false;
+  if (all.filter((p) => p.status === 'pending').length >= MAX_PENDING) return false;
+  const day = new Date().toISOString().slice(0, 10);
+  all.push({
+    id: `budget-${opts.agentId}-${day}`,
+    planNote: '',
+    planTaskId: `budget-guard-${opts.agentId}`,
+    actionIndex: 0,
+    title: `${opts.agentName} daily budget exhausted — raise to ${opts.suggestedBudget}?`,
+    actionClass: 'config',
+    agentId: 'runtime',
+    kind: 'budget',
+    instruction: `${opts.error}. Options: approve raises ${opts.agentName} dailyBudget ${opts.currentBudget}→${opts.suggestedBudget} (persists until changed), or dismiss and wait for tomorrow's reset.`,
+    evidence: [`${opts.agentId} budget ${opts.currentBudget}/day exhausted`],
+    status: 'pending',
+    createdAt: Date.now(),
+    action: { type: 'budgetRaise', agentId: opts.agentId, budget: opts.suggestedBudget },
+  });
+  writeAll(all);
+  return true;
+}
+
 export function listStrategyProposals(status?: string): StrategyProposal[] {
   const all = readAll();
   const filtered = status ? all.filter((p) => p.status === status) : all;
@@ -129,6 +161,7 @@ export function decideStrategyProposal(id: string, decision: 'approved' | 'dismi
  */
 export function reconcileStrategyProposals(
   taskStatus: (taskId: string) => { status: string; error?: string; result?: unknown } | null,
+  onExecuted?: (proposal: StrategyProposal) => void,
 ): number {
   const all = readAll();
   let changed = 0;
@@ -146,6 +179,7 @@ export function reconcileStrategyProposals(
       p.status = 'executed';
       p.decidedAt = Date.now();
       changed++;
+      try { onExecuted?.(p); } catch { /* requeue hook must never break reads */ }
     } else if (['failed', 'vetoed', 'cancelled'].includes(t.status)) {
       p.status = 'failed';
       p.decidedAt = Date.now();

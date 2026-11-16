@@ -276,6 +276,7 @@ interface StrategyProposal {
   status: string;
   createdAt: number;
   decisionNote?: string;
+  action?: { type: 'budgetRaise'; agentId: string; budget: number };
 }
 
 const CLASS_COLOR: Record<string, string> = {
@@ -291,7 +292,21 @@ function StrategyProposalCard({ p, onDecided }: { p: StrategyProposal; onDecided
   const decide = async (decision: 'approved' | 'dismissed', dispatchTask = false) => {
     setBusy(true);
     try {
-      if (dispatchTask) {
+      if (p.action?.type === 'budgetRaise' && decision === 'approved') {
+        // Deterministic governance action — no agent dispatch.
+        const b = await fetch('/api/cortex/agents/budget', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ agentId: p.action.agentId, budget: p.action.budget }),
+        }).then(r => r.json()).catch(() => null);
+        await fetch('/api/cortex/agents/proposals', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            id: p.id, decision: b?.ok ? 'executed' : 'approved',
+            note: b?.ok ? `budget ${p.action.agentId} → ${p.action.budget}/day` : `budget raise failed: ${b?.error || 'unknown'}`,
+          }),
+        });
+        setNote(b?.ok ? `budget raised: ${p.action.agentId} → ${p.action.budget}/day` : `raise failed: ${b?.error || 'unknown'}`);
+      } else if (dispatchTask) {
         const t = await fetch('/api/cortex/agents/task', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ agentId: p.agentId, kind: p.kind, title: p.title.slice(0, 120), input: { instruction: p.instruction } }),
@@ -328,7 +343,7 @@ function StrategyProposalCard({ p, onDecided }: { p: StrategyProposal; onDecided
             <span style={{ fontSize: 12, fontWeight: 600, color: C.text, fontFamily: MONO }}>{p.title}</span>
           </div>
           <div style={{ fontSize: 9, color: C.dim, fontFamily: MONO, marginTop: 4 }}>
-            STRATEGIST plan · → {p.agentId} · {timeAgo(p.createdAt)}
+            STRATEGIST plan · → {p.action?.type === 'budgetRaise' ? `${p.action.agentId} budget` : p.agentId} · {timeAgo(p.createdAt)}
             {p.planNote ? ` · ${p.planNote.split('/').pop()}` : ''}
           </div>
           {p.evidence?.length > 0 && (
@@ -352,7 +367,7 @@ function StrategyProposalCard({ p, onDecided }: { p: StrategyProposal; onDecided
             background: `${C.green}18`, color: C.green, border: `1px solid ${C.green}55`, borderRadius: 4,
             fontSize: 10, fontFamily: MONO, padding: '3px 10px', cursor: busy ? 'wait' : 'pointer',
           }}>
-          {busy ? '…' : `Approve → ${p.agentId}`}
+          {busy ? '…' : p.action?.type === 'budgetRaise' ? `Approve → ${p.action.budget}/day` : `Approve → ${p.agentId}`}
         </button>
       </div>
       {expanded && (

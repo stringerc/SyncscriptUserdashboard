@@ -21,7 +21,7 @@ import { deriveSomaticState, type SomaticSample } from './src/lib/cortex-somatic
 import { getAgentRuntime } from './src/lib/cortex-agents/runtime';
 import { recordAgentOutcome } from './src/lib/cortex-agents/outcomes';
 import { archiveTask, readArchive } from './src/lib/cortex-agents/archive';
-import { listStrategyProposals, decideStrategyProposal, reconcileStrategyProposals } from './src/lib/cortex-agents/strategy-proposals';
+import { listStrategyProposals, decideStrategyProposal, reconcileStrategyProposals, fileBudgetProposal } from './src/lib/cortex-agents/strategy-proposals';
 import { registerAgentWorkers, makeEphemeralWorker, expandTaskSpec } from './src/lib/cortex-agents/workers';
 import type { RouteTier } from './src/lib/cortex-agents/types';
 import { normalizeForSpeech } from './src/lib/tts-speech-normalize';
@@ -1022,6 +1022,29 @@ function apiProxyPlugin(): Plugin {
       agentRuntime.setTaskFinishedHook((task, agent) => {
         archiveTask(task, agent?.name);
       });
+      // Closed-loop recovery: when a strategy proposal executes (a fix
+      // landed), transient-class casualties (provider/timeout failures in
+      // the last 24h) get one fresh dispatch each — capped, budget-gated,
+      // deduped by submitTask. Called once per proposal flip to 'executed'.
+      const requeueTransientCasualties = (proposalId: string) => {
+        try {
+          const since = Date.now() - 24 * 3600_000;
+          const casualties = readArchive({ status: 'failed', since, limit: 200 })
+            .filter((r) => {
+              const cls = (r.telemetry as any)?.failureClass;
+              return (cls === 'provider' || cls === 'timeout') && r.input && typeof r.input === 'object';
+            })
+            .slice(0, 5);
+          for (const r of casualties) {
+            const { attempt: _a, retryOf: _r, priorError: _p, scope: _s, requeuedFrom: _rf, requeuedBy: _rb, ...baseInput } = r.input as Record<string, unknown>;
+            agentRuntime.submitTask(r.agentId as any, r.kind, r.title, {
+              ...baseInput,
+              requeuedFrom: r.id,
+              requeuedBy: proposalId,
+            });
+          }
+        } catch { /* recovery must never break proposal reads */ }
+      };
       // Every completed agent task lands in the daily accomplishments ledger —
       // that's what the morning brief reads, so agent work shows up in briefings.
       // Learning edge, stage 2: every DISTILL_EVERY outcomes, queue a librarian
@@ -9926,6 +9949,10 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
           return res.end();
         }
         if (req.method !== 'POST' || !isAllowed) return next();
+        // Connect strips the mount path — '/api/cortex/agents/task/cancel'
+        // arrives here as '/cancel'. Only the bare endpoint submits tasks;
+        // subpaths (cancel, etc.) fall through to their own handlers.
+        if (req.url && req.url !== '/' && req.url !== '') return next();
         let body = '';
         req.on('data', (c: Buffer) => { body += c.toString(); });
         req.on('end', () => {
@@ -9937,6 +9964,20 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
             const input = (parsed.input && typeof parsed.input === 'object') ? parsed.input : {};
             if (parsed.query && !input.query) input.query = parsed.query;
             const result = agentRuntime.submitTask(agentId as any, kind, title.slice(0, 200), input);
+            // Budget exhaustion is a governance event, not a silent dead end:
+            // file an Inbox proposal (deduped per agent per day) so a human
+            // can raise the cap instead of the work just disappearing.
+            if (!result.ok && /budget exhausted/i.test(result.error || '')) {
+              const agent = agentRuntime.getAgent(agentId as any);
+              if (agent) {
+                fileBudgetProposal({
+                  agentId, agentName: agent.name,
+                  currentBudget: agent.dailyBudget,
+                  suggestedBudget: Math.min(200, agent.dailyBudget + 24),
+                  error: result.error || '',
+                });
+              }
+            }
             agentCors(req, res);
             res.writeHead(result.ok ? 200 : 400);
             res.end(JSON.stringify(result.ok ? { ok: true, task: result.task } : { ok: false, error: result.error }));
@@ -10056,7 +10097,7 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
               // Evicted from the 200-task window? The durable archive still has it.
               const a = readArchive({ limit: 500 }).find((r) => r.id === taskId);
               return a ? { status: a.status, error: a.error, result: a.result } : null;
-            });
+            }, (p) => requeueTransientCasualties(p.id));
             res.writeHead(200, { 'Content-Type': 'application/json' });
             return res.end(JSON.stringify({ ok: true, proposals: listStrategyProposals(status) }));
           } catch (e: any) {
@@ -10086,6 +10127,34 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
           return;
         }
         return next();
+      });
+
+      // POST /api/cortex/agents/budget — {agentId, budget} human-approved
+      // daily-budget override. Deterministic governance action; no agent
+      // dispatch. Approved budgetRaise proposals land here.
+      server.middlewares.use('/api/cortex/agents/budget', (req: any, res: any, next: any) => {
+        const origin = req.headers.origin;
+        const isAllowed = isAllowedOrigin(origin, req.headers.host);
+        if (req.method === 'OPTIONS') {
+          res.writeHead(204, { 'Access-Control-Allow-Origin': origin || '*', 'Access-Control-Allow-Methods': 'POST, OPTIONS', 'Access-Control-Allow-Headers': 'Content-Type' });
+          return res.end();
+        }
+        if (req.method !== 'POST' || !isAllowed) return next();
+        let body = '';
+        req.on('data', (c: Buffer) => { body += c.toString(); });
+        req.on('end', () => {
+          try {
+            const parsed = JSON.parse(body || '{}');
+            const ok = agentRuntime.setDailyBudget(String(parsed.agentId || '') as any, Number(parsed.budget));
+            agentCors(req, res);
+            res.writeHead(ok ? 200 : 404);
+            res.end(JSON.stringify(ok ? { ok: true } : { ok: false, error: 'unknown agent or bad budget' }));
+          } catch (e: any) {
+            agentCors(req, res);
+            res.writeHead(400);
+            res.end(JSON.stringify({ ok: false, error: e?.message || 'bad request' }));
+          }
+        });
       });
 
       // POST /api/cortex/agents/spec — expand a terse instruction into a task
