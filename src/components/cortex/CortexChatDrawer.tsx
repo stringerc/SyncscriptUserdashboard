@@ -11,6 +11,7 @@ import type { CortexArtifact } from '../../lib/cortex-artifacts';
 const ArtifactRenderer = lazy(() => import('./artifacts/ArtifactRenderer'));
 import { useCortexChatMessages, setCortexChatMessages, getCortexChatSnapshot } from '../../lib/cortex-chat-store';
 import type { CortexSignalBusPayload } from './CortexVisualizer';
+import { fetchCartesiaTtsAudio } from '../../utils/cartesia-tts';
 
 const DRAWER_CSS = `
   @keyframes cx-drawer-in {
@@ -430,14 +431,12 @@ export function CortexChatDrawer({ open, onClose, payload, onSubmitText }: Corte
       if (dead) return;
       if (idx >= chunks.length) { cleanup(); return; }
       try {
-        const res = await fetch('/api/cortex/tts', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ text: chunks[idx], voice: 'cortana' }),
-        });
-        if (!res.ok) throw new Error(`tts ${res.status}`);
+        // Same voice path as live Cortex speech: Cartesia Sonic cortana →
+        // speakStreamSentence falls back to Kokoro internally.
+        const blob = await fetchCartesiaTtsAudio(chunks[idx], { voiceId: 'cortana' });
+        if (!blob || blob.size < 100) throw new Error('tts empty');
         if (dead) return;
-        const url = URL.createObjectURL(await res.blob());
+        const url = URL.createObjectURL(blob);
         urls.push(url);
         const audio = new Audio(url);
         audioRef.current = audio;
@@ -446,6 +445,28 @@ export function CortexChatDrawer({ open, onClose, payload, onSubmitText }: Corte
         await audio.play();
       } catch {
         if (dead) return;
+        // Cartesia unavailable — try the server TTS chain (Pocket Cortana clone)
+        // before degrading to browser speech.
+        try {
+          const res = await fetch('/api/cortex/tts', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ text: chunks[idx], voice: 'cortana' }),
+          });
+          if (res.ok) {
+            const blob2 = await res.blob();
+            if (blob2.size > 200) {
+              const url2 = URL.createObjectURL(blob2);
+              urls.push(url2);
+              const audio2 = new Audio(url2);
+              audioRef.current = audio2;
+              audio2.onended = () => { idx += 1; void playNext(); };
+              audio2.onerror = () => { idx += 1; void playNext(); };
+              await audio2.play();
+              return;
+            }
+          }
+        } catch { }
         // TTS unreachable — read the remainder via browser speech, whole reply
         const rest = chunks.slice(idx).join(' ');
         try {
