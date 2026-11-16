@@ -130,6 +130,15 @@ export const AGENT_SPECS: AgentSpec[] = [
     modelPin: { tier: 'reason' },
   },
   {
+    id: 'strategist',
+    name: 'STRATEGIST',
+    role: 'Fleet Synthesist',
+    blurb: 'Consumes the task archive, outcomes and rules inventory — clusters failures, ranks interventions, files governed proposals. Proposes; never applies.',
+    concurrency: 1,
+    dailyBudget: 24,
+    modelPin: { tier: 'reason' },
+  },
+  {
     id: 'warden',
     name: 'WARDEN',
     role: 'Systems Custodian',
@@ -179,6 +188,7 @@ export class AgentRuntime {
   private llmBridge: ((opts: { tier?: 'fast' | 'reason' | 'deep'; agentId?: AgentId; model?: string; messages: { role: string; content: string }[]; maxTokens?: number }) => Promise<{ content: string; model?: string; usage?: { tokensIn?: number; tokensOut?: number } }>) | null = null;
   private spawnWorkerFactory: ((spec: SpawnSpec) => WorkerHandler) | null = null;
   private onTaskCompleted: ((task: AgentTask, agent: AgentState) => void) | null = null;
+  private onTaskFinished: ((task: AgentTask, agent: AgentState | undefined) => void) | null = null;
   private proposals = new Map<string, SpawnProposal>();
   private spawnCounter = 0;
   private routines = new Map<string, AgentRoutine>();
@@ -228,6 +238,12 @@ export class AgentRuntime {
   /** Completion hook — vite wires accomplishment logging here. */
   setTaskCompletedHook(fn: (task: AgentTask, agent: AgentState) => void) {
     this.onTaskCompleted = fn;
+  }
+
+  /** Terminal-state hook (completed/failed/vetoed/cancelled) — archive,
+   *  outcome capture, and observability wire here. */
+  setTaskFinishedHook(fn: (task: AgentTask, agent: AgentState | undefined) => void) {
+    this.onTaskFinished = fn;
   }
 
   attachSentinel(sources: ConstructorParameters<typeof ModelSentinel>[2], probeFactory: ConstructorParameters<typeof ModelSentinel>[3]) {
@@ -328,7 +344,7 @@ export class AgentRuntime {
   // deterministic: it re-derives evidence from real task history and
   // rejects fabricated or duplicative requests before they reach a human.
 
-  private static BUILT_INS: ReadonlySet<string> = new Set(['sentinel', 'scout', 'librarian', 'builder', 'reviewer', 'runner', 'distributor', 'forecaster', 'prep', 'warden']);
+  private static BUILT_INS: ReadonlySet<string> = new Set(['sentinel', 'scout', 'librarian', 'builder', 'reviewer', 'runner', 'distributor', 'forecaster', 'prep', 'warden', 'strategist']);
   private static MAX_SPAWNED = 4;
   private static MAX_PENDING_PROPOSALS = 10;
   private static SPAWN_PROPOSAL_TTL_MS = 72 * 3600_000;
@@ -582,6 +598,9 @@ export class AgentRuntime {
     this.emit({ type: 'task.transition', task: { ...task }, at: Date.now() });
     if (status === 'completed' && agent && this.onTaskCompleted) {
       try { this.onTaskCompleted(task, agent); } catch { /* hook must never break runtime */ }
+    }
+    if (['completed', 'failed', 'vetoed', 'cancelled'].includes(status) && this.onTaskFinished) {
+      try { this.onTaskFinished(task, agent); } catch { /* hook must never break runtime */ }
     }
     this.persist();
   }

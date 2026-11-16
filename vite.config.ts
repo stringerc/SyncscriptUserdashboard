@@ -20,6 +20,7 @@ import { getAutonomousVigilance } from './src/lib/cortex-autonomous-vigilance';
 import { deriveSomaticState, type SomaticSample } from './src/lib/cortex-somatic';
 import { getAgentRuntime } from './src/lib/cortex-agents/runtime';
 import { recordAgentOutcome } from './src/lib/cortex-agents/outcomes';
+import { archiveTask, readArchive } from './src/lib/cortex-agents/archive';
 import { registerAgentWorkers, makeEphemeralWorker, expandTaskSpec } from './src/lib/cortex-agents/workers';
 import type { RouteTier } from './src/lib/cortex-agents/types';
 import { normalizeForSpeech } from './src/lib/tts-speech-normalize';
@@ -1014,6 +1015,12 @@ function apiProxyPlugin(): Plugin {
       const agentRuntime = getAgentRuntime();
       registerAgentWorkers(agentRuntime);
       agentRuntime.setSpawnWorkerFactory(makeEphemeralWorker);
+      // Durable evidence layer: every terminal task (completed/failed/vetoed/
+      // cancelled) appends to task-archive.jsonl so research briefs and
+      // failure evidence survive the 200-task in-memory eviction window.
+      agentRuntime.setTaskFinishedHook((task, agent) => {
+        archiveTask(task, agent?.name);
+      });
       // Every completed agent task lands in the daily accomplishments ledger —
       // that's what the morning brief reads, so agent work shows up in briefings.
       // Learning edge, stage 2: every DISTILL_EVERY outcomes, queue a librarian
@@ -9995,6 +10002,35 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
             res.end(JSON.stringify({ ok: false, error: e?.message || 'bad request' }));
           }
         });
+      });
+
+      // GET /api/cortex/agents/archive?agentId=&kind=&status=&limit=&since=
+      // Durable task history — survives the 200-task in-memory window.
+      server.middlewares.use('/api/cortex/agents/archive', (req: any, res: any, next: any) => {
+        const origin = req.headers.origin;
+        if (req.method === 'OPTIONS') {
+          res.writeHead(204, { 'Access-Control-Allow-Origin': origin || '*', 'Access-Control-Allow-Methods': 'GET, OPTIONS', 'Access-Control-Allow-Headers': 'Content-Type' });
+          return res.end();
+        }
+        if (req.method !== 'GET' || !isAllowedOrigin(origin, req.headers.host)) return next();
+        try {
+          const url = new URL(req.url || '/', `http://localhost`);
+          const q = url.searchParams;
+          const records = readArchive({
+            agentId: q.get('agentId') || undefined,
+            kind: q.get('kind') || undefined,
+            status: q.get('status') || undefined,
+            limit: q.get('limit') ? parseInt(q.get('limit')!) : undefined,
+            since: q.get('since') ? parseInt(q.get('since')!) : undefined,
+          });
+          agentCors(req, res);
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ ok: true, count: records.length, records }));
+        } catch (e: any) {
+          agentCors(req, res);
+          res.writeHead(500);
+          res.end(JSON.stringify({ ok: false, error: e?.message || 'archive read failed' }));
+        }
       });
 
       // POST /api/cortex/agents/spec — expand a terse instruction into a task

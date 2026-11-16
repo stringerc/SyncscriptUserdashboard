@@ -19,6 +19,7 @@ import { registerWardenWorker } from './warden';
 import { registerDistributorWorker } from './distribution';
 import { runForecastCycle, type RoutedForecast, type ProbeDeps } from './forecaster';
 import { makePrepWorker } from './prep';
+import { makeStrategistWorker } from './strategist';
 import { getCortexProactiveInitiative } from '../cortex-proactive-initiative';
 import { cortexObsidianMemory } from '../cortex-obsidian-memory';
 import { relevantRules, rulesBlock, RULES_DIR, vaultFolder, listMd } from './rules';
@@ -312,7 +313,20 @@ function parseOutcomeNote(file: string, content: string): AgentOutcome | null {
 function loadOutcomes(): AgentOutcome[] {
   const dir = vaultFolder(LEARNINGS_DIR);
   const out: AgentOutcome[] = [];
-  for (const f of listMd(dir).slice(-80)) {
+  // The learnings folder grows unboundedly (2000+ notes) — scanning every
+  // file per distill is wasteful and arbitrary slice(-80) windows miss
+  // whole clusters. Take the 200 most-recently-modified agent-outcome
+  // notes by mtime instead.
+  const files = listMd(dir)
+    .filter((f) => f.startsWith('agent-'))
+    .map((f) => {
+      try { return { f, mtime: fs.statSync(path.join(dir!, f)).mtimeMs }; }
+      catch { return { f, mtime: 0 }; }
+    })
+    .sort((a, b) => b.mtime - a.mtime)
+    .slice(0, 200)
+    .map((x) => x.f);
+  for (const f of files) {
     try {
       const content = fs.readFileSync(path.join(dir!, f), 'utf-8');
       if (!content.includes('agent-outcome')) continue;
@@ -1411,4 +1425,5 @@ export function registerAgentWorkers(runtime: AgentRuntime) {
     },
   }));
   registerWardenWorker(runtime);
+  runtime.registerWorker('strategist', makeStrategistWorker(runtime));
 }
