@@ -211,6 +211,11 @@ test('routeAskAgent keyword routing + worker-shaped inputs', () => {
   const build = routeAskAgent('fix the login bug');
   assert.equal(build.agentId, 'builder');
   assert.ok(build.input.instruction, 'builder needs input.instruction');
+  // Memory lookups route to librarian recall, not web research.
+  const mem = routeAskAgent('what do we know about the berry farm lead');
+  assert.equal(mem.agentId, 'librarian');
+  assert.equal(mem.kind, 'recall');
+  assert.ok(mem.input.query);
   // Distributor needs structured payloads — free text must NOT route there.
   assert.notEqual(routeAskAgent('publish this to pinterest').agentId, 'distributor');
   // Unknown text defaults to scout research (has a real input.query).

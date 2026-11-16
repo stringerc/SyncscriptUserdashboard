@@ -403,6 +403,11 @@ export function routeAskAgent(text: string): { agentId: string; kind: string; in
   if (/prep|brief|meeting/.test(t)) return { agentId: 'prep', kind: 'prep_brief', input: { ...base, title: text.slice(0, 140) } };
   if (/build|code|implement|fix|write/.test(t)) return { agentId: 'builder', kind: 'build_task', input: { ...base, instruction: text } };
   if (/review|audit|check/.test(t)) return { agentId: 'reviewer', kind: 'review_task', input: { ...base, instruction: text } };
+  // Memory/vault lookups → LIBRARIAN recall. Personal-assistant queries
+  // ("what did we decide", "find that email") live here, not in web research.
+  if (/remember|recall|what do we (know|have)|did we|have we|lookup|who is|who was|contact|email from|message from|notes? on|saved/.test(t)) {
+    return { agentId: 'librarian', kind: 'recall', input: { ...base, query: text } };
+  }
   // Default: scout research — the honest generic capability (web search +
   // reason-tier synthesis). Chit-chat that fits no worker lands here rather
   // than failing on a missing input field.
