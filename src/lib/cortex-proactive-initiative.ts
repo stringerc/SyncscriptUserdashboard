@@ -222,6 +222,7 @@ export class CortexProactiveInitiativeEngine {
         suggestedArgs: { action: 'assess_domain', domain: snapshot.weakDomains[0] },
         requiresApproval: false,
         epistemicConfidence: 0.92,
+        dedupeKey: `calibration:${snapshot.weakDomains.join(',')}`,
         createdAt: Date.now(),
       });
     } else {
@@ -241,6 +242,7 @@ export class CortexProactiveInitiativeEngine {
         suggestedArgs: { command: 'git status --short' },
         requiresApproval: true,
         epistemicConfidence: 0.88,
+        dedupeKey: 'git_drift',
         createdAt: Date.now(),
       });
     } else {
@@ -260,6 +262,7 @@ export class CortexProactiveInitiativeEngine {
         suggestedArgs: { action: 'daily_brief' },
         requiresApproval: false,
         epistemicConfidence: 0.95,
+        dedupeKey: 'free_energy',
         createdAt: Date.now(),
       });
     } else {
@@ -397,9 +400,16 @@ export class CortexProactiveInitiativeEngine {
     let dupes = 0;
     for (const p of proposals) {
       const key = p.dedupeKey || p.id;
-      const dupe = Array.from(this.activeProposals.values()).some(
-        a => (a.dedupeKey || a.id) === key && a.status !== 'dismissed' && a.status !== 'executed'
-      );
+      const dupe = Array.from(this.activeProposals.values()).some((a) => {
+        if ((a.dedupeKey || a.id) !== key) return false;
+        // Answered proposals suppress re-filing for 24h, not forever —
+        // a persistent condition deserves a fresh ask tomorrow, but an
+        // answered one must not nag on every evaluation cycle.
+        if (a.status === 'dismissed' || a.status === 'executed') {
+          return Date.now() - (a.createdAt || 0) < 24 * 3600_000;
+        }
+        return true;
+      });
       if (dupe) { dupes++; continue; }
       const normalized: ProactiveProposal = {
         ...p,
@@ -513,9 +523,13 @@ export class CortexProactiveInitiativeEngine {
     }
 
     const key = input.dedupeKey || input.id || '';
-    const dupe = key && Array.from(this.activeProposals.values()).some(
-      a => (a.dedupeKey || a.id) === key && a.status !== 'dismissed' && a.status !== 'executed'
-    );
+    const dupe = key && Array.from(this.activeProposals.values()).some((a) => {
+      if ((a.dedupeKey || a.id) !== key) return false;
+      if (a.status === 'dismissed' || a.status === 'executed') {
+        return Date.now() - (a.createdAt || 0) < 24 * 3600_000;
+      }
+      return true;
+    });
     if (dupe) {
       this.bump('proposed');
       this.bump('suppressedDedupe');

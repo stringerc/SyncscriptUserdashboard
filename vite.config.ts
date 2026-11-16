@@ -10654,7 +10654,7 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
             const componentId = String(payload?.data?.custom_id || '');
             const isOurs = payload?.type === 1
               || (payload?.type === 2 && cmdName === 'cortex')
-              || (payload?.type === 3 && componentId.startsWith('cx'));
+              || (payload?.type === 3 && (componentId.startsWith('cx') || componentId.startsWith('sx')));
             if (!isOurs) {
               try {
                 const upstream = await fetch('https://kwhnrlzibgfedtxpkbgb.supabase.co/functions/v1/make-server-57781ad9/discord/interactions', {
