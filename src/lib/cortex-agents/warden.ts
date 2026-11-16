@@ -15,6 +15,7 @@ import path from 'node:path';
 import type { WorkerHandler } from './runtime';
 import type { AgentEvent } from './types';
 import { rulesBlock } from './rules';
+import { listIncidents, escalateStaleIncidents } from './incidents';
 
 const PORT = process.env.PORT ? parseInt(process.env.PORT) : 5173;
 const BASE = `http://127.0.0.1:${PORT}`;
@@ -36,7 +37,7 @@ export interface PatrolReport {
   warnings: string[];
 }
 
-type FetchLike = (url: string, init?: { signal?: AbortSignal }) => Promise<{
+type FetchLike = (url: string, init?: { signal?: AbortSignal; headers?: Record<string, string> }) => Promise<{
   ok: boolean; status: number; json(): Promise<unknown>; text(): Promise<string>;
 }>;
 
@@ -76,6 +77,12 @@ export interface PatrolDeps {
     exists(p: string): boolean;
     writable(dir: string): boolean;
     newestMtimeMs(dir: string, suffix: string): number | null;
+  };
+  /** QC probes — incident ledger age + storefront product readiness.
+   *  Injectable so the patrol suite stays unit-testable. */
+  qcProbe?: {
+    incidents(): { open: number; stale: number };
+    productReadiness(): { total: number; ready: number; missing: string[] };
   };
 }
 
@@ -235,6 +242,27 @@ export async function runPatrolChecks(deps: PatrolDeps = {}): Promise<PatrolRepo
     return 'ledger writable';
   }));
 
+  // ── QC: incident ledger aging ──
+  // Stale tickets (open >24h) are untended work — surface them as a
+  // warning every patrol so silence can't masquerade as health.
+  checks.push(await timed('qc.incidents', false, 5000, async () => {
+    if (!deps.qcProbe) return 'skipped (no qc probe wired)';
+    const { open, stale } = deps.qcProbe.incidents();
+    if (stale > 0) throw new Error(`${stale} incident(s) open >24h (${open} total open)`);
+    return open ? `${open} open, none stale` : 'no open incidents';
+  }));
+
+  // ── QC: storefront product readiness ──
+  // Every catalog product must have its deliverable files on disk —
+  // a listing without a ZIP is vaporware, and vaporware must be loud.
+  checks.push(await timed('qc.products', false, 5000, async () => {
+    if (!deps.qcProbe) return 'skipped (no qc probe wired)';
+    const r = deps.qcProbe.productReadiness();
+    if (!r.total) return 'no catalog products';
+    if (r.missing.length) throw new Error(`${r.missing.length}/${r.total} products missing files: ${r.missing.slice(0, 3).join(', ')}${r.missing.length > 3 ? '…' : ''}`);
+    return `${r.ready}/${r.total} products have deliverables`;
+  }));
+
   const anomalies = checks.filter((c) => !c.ok && c.critical).map((c) => `${c.name}: ${c.detail || 'failed'}`);
   const warnings = checks.filter((c) => !c.ok && !c.critical).map((c) => `${c.name}: ${c.detail || 'failed'}`);
   return {
@@ -273,6 +301,41 @@ export function nodeFsProbes() {
   };
 }
 
+/** Real QC probes — incident ledger + storefront catalog on local fs. */
+export function nodeQcProbes() {
+  const storefrontDir = path.join(process.cwd(), 'storefront');
+  const catalogPath = path.join(storefrontDir, 'products', 'catalog-v2.json');
+  const STALE_H = 24;
+  return {
+    incidents() {
+      const open = listIncidents('open');
+      const cutoff = Date.now() - STALE_H * 3600_000;
+      return {
+        open: open.length,
+        stale: open.filter((i) => i.firstSeenAt <= cutoff).length,
+      };
+    },
+    productReadiness() {
+      try {
+        const raw = JSON.parse(fs.readFileSync(catalogPath, 'utf-8'));
+        const products: any[] = Array.isArray(raw) ? raw : (raw.products || []);
+        const missing: string[] = [];
+        let ready = 0;
+        for (const p of products) {
+          const files: string[] = Array.isArray(p.files) ? p.files : [];
+          const hasDeliverable = files.length > 0 && files.every((f) =>
+            fs.existsSync(path.join(storefrontDir, String(f))));
+          if (hasDeliverable) ready++;
+          else missing.push(String(p.slug || p.name || '?'));
+        }
+        return { total: products.length, ready, missing };
+      } catch {
+        return { total: 0, ready: 0, missing: [] };
+      }
+    },
+  };
+}
+
 const wardenWorker: WorkerHandler = async (ctx) => {
   if (ctx.task.kind !== 'patrol')
     throw new Error(`warden: unknown task kind '${ctx.task.kind}' (expected 'patrol')`);
@@ -287,8 +350,13 @@ const wardenWorker: WorkerHandler = async (ctx) => {
       return text.trim().length > 0;
     },
     fsImpl: nodeFsProbes(),
+    qcProbe: nodeQcProbes(),
   });
-  ctx.progress(0.75);
+  ctx.progress(0.8);
+
+  // Escalation sweep: incidents open >24h file deduped investigation
+  // proposals so untended tickets become tracked Inbox work.
+  const escalated = escalateStaleIncidents();
 
   // One cheap synthesis pass ONLY when something is wrong — healthy patrols
   // stay silent so the mission log isn't spammed with good news.
@@ -314,12 +382,13 @@ const wardenWorker: WorkerHandler = async (ctx) => {
       at: report.at, healthy: report.healthy,
       anomalies: report.anomalies, warnings: report.warnings,
       checks: report.checks.map((c) => ({ name: c.name, ok: c.ok, ms: c.ms })),
+      escalated,
     },
     at: Date.now(),
   } as AgentEvent);
 
   ctx.progress(1);
-  return { report, alert };
+  return { report, alert, escalated };
 };
 
 export function registerWardenWorker(runtime: { registerWorker(id: string, h: WorkerHandler): void }) {

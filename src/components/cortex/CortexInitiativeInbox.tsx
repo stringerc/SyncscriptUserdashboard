@@ -288,9 +288,11 @@ interface IncidentTicket {
   title: string;
   status: string;
   count: number;
+  firstSeenAt: number;
   lastSeenAt: number;
   lastError?: string;
   evidence: string[];
+  ageHours?: number;
 }
 
 const CLASS_COLOR: Record<string, string> = {
@@ -476,9 +478,13 @@ export function CortexInitiativeInbox() {
                 <div style={{ fontSize: 9, color: C.red, fontFamily: MONO, letterSpacing: 1, marginBottom: 6, textTransform: 'uppercase' }}>
                   Incidents — {incidents.length} open
                 </div>
-                {incidents.map(inc => (
+                {incidents.map(inc => {
+                  const ageH = inc.ageHours ?? Math.floor((Date.now() - inc.firstSeenAt) / 3600_000);
+                  const stale = ageH >= 24;
+                  const aging = !stale && ageH >= 4;
+                  return (
                   <div key={inc.id} style={{
-                    border: `1px solid ${C.border}`, borderLeft: '3px solid #f87171',
+                    border: `1px solid ${C.border}`, borderLeft: `3px solid ${stale ? '#ef4444' : aging ? '#f59e0b' : '#f87171'}`,
                     borderRadius: 8, padding: '8px 12px', background: C.surface, marginBottom: 6,
                   }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
@@ -489,13 +495,24 @@ export function CortexInitiativeInbox() {
                         {inc.agentName || inc.agentId} · {inc.kind}
                       </span>
                       <span style={{ fontSize: 9, color: C.dim, fontFamily: MONO }}>×{inc.count}</span>
+                      {stale && (
+                        <span style={{ fontSize: 9, fontFamily: MONO, color: '#ef4444', border: '1px solid #ef444455', borderRadius: 3, padding: '0 4px' }}>
+                          STALE {ageH}h — escalation filed
+                        </span>
+                      )}
+                      {aging && (
+                        <span style={{ fontSize: 9, fontFamily: MONO, color: '#f59e0b', border: '1px solid #f59e0b55', borderRadius: 3, padding: '0 4px' }}>
+                          AGING {ageH}h
+                        </span>
+                      )}
                       <span style={{ marginLeft: 'auto', fontSize: 9, color: C.dim, fontFamily: MONO }}>{timeAgo(inc.lastSeenAt)}</span>
                     </div>
                     <div style={{ fontSize: 9, color: C.dim, fontFamily: MONO, marginTop: 4, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                       {inc.title}{inc.lastError ? ` — ${inc.lastError}` : ''}
                     </div>
                   </div>
-                ))}
+                  );
+                })}
               </div>
             )}
             {strategyProps.length > 0 && (

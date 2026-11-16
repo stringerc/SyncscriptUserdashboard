@@ -136,6 +136,39 @@ export function fileBudgetProposal(opts: { agentId: string; agentName: string; c
   return true;
 }
 
+/**
+ * File an investigation proposal for a stale incident (auto-escalation
+ * from the Warden patrol sweep). One pending proposal per incident key —
+ * recurring patrols don't spam the Inbox. Returns true when filed.
+ */
+export function fileIncidentProposal(inc: {
+  key: string; agentId: string; agentName?: string; kind: string;
+  failureClass: string; title: string; count: number;
+  firstSeenAt: number; lastError?: string; evidence: string[];
+}): boolean {
+  const all = readAll();
+  const dedupeId = `incident-${inc.key.replace(/[^a-z0-9]+/gi, '-').slice(0, 60)}`;
+  if (all.some((p) => p.id === dedupeId)) return false;
+  if (all.filter((p) => p.status === 'pending').length >= MAX_PENDING) return false;
+  const ageH = Math.floor((Date.now() - inc.firstSeenAt) / 3600_000);
+  all.push({
+    id: dedupeId,
+    planNote: '',
+    planTaskId: `incident-${inc.key.slice(0, 40)}`,
+    actionIndex: 0,
+    title: `Investigate stale incident: ${inc.agentName || inc.agentId} ${inc.kind} (${inc.failureClass})`,
+    actionClass: 'process',
+    agentId: 'builder',
+    kind: 'task',
+    instruction: `[INCIDENT ESCALATION] Ticket open ${ageH}h, seen ${inc.count}x.\nFailure: ${inc.failureClass} on ${inc.kind}\nTitle: ${inc.title}\nLast error: ${inc.lastError || 'none'}\nEvidence tasks: ${inc.evidence.slice(-5).join(', ')}\nInvestigate root cause and propose or implement a verified fix. The incident auto-resolves only when a matching task completes.`,
+    evidence: inc.evidence.slice(-5),
+    status: 'pending',
+    createdAt: Date.now(),
+  });
+  writeAll(all);
+  return true;
+}
+
 export function listStrategyProposals(status?: string): StrategyProposal[] {
   const all = readAll();
   const filtered = status ? all.filter((p) => p.status === status) : all;

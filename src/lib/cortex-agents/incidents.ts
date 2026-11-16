@@ -14,6 +14,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
+import { fileIncidentProposal } from './strategy-proposals';
 
 const STATE_DIR = process.env.CORTEX_AGENTS_STATE_DIR || path.join(process.cwd(), '.cortex-runtime');
 const INCIDENTS_PATH = path.join(STATE_DIR, 'incidents.json');
@@ -127,8 +128,33 @@ export function resolveIncidentsOnSuccess(agentId: string, kind: string, taskId:
   } catch { return 0; }
 }
 
-export function listIncidents(status?: string): Incident[] {
+export function listIncidents(status?: string): (Incident & { ageHours: number })[] {
   const all = readAll();
+  const now = Date.now();
   const filtered = status ? all.filter((i) => i.status === status) : all;
-  return filtered.sort((a, b) => b.lastSeenAt - a.lastSeenAt).slice(0, 50);
+  return filtered
+    .sort((a, b) => b.lastSeenAt - a.lastSeenAt)
+    .slice(0, 50)
+    .map((i) => ({ ...i, ageHours: Math.floor((now - i.firstSeenAt) / 3600_000) }));
+}
+
+/** An incident open longer than this gets a STRATEGIST investigation
+ *  proposal auto-filed — "untended" becomes tracked work, not silence. */
+export const STALE_INCIDENT_HOURS = 24;
+
+/**
+ * Escalation sweep — called from the Warden patrol. Every open incident
+ * older than STALE_INCIDENT_HOURS files one deduped proposal asking for
+ * investigation. Returns how many new proposals were filed.
+ */
+export function escalateStaleIncidents(): number {
+  try {
+    const cutoff = Date.now() - STALE_INCIDENT_HOURS * 3600_000;
+    let filed = 0;
+    for (const inc of readAll()) {
+      if (inc.status !== 'open' || inc.firstSeenAt > cutoff) continue;
+      if (fileIncidentProposal(inc)) filed++;
+    }
+    return filed;
+  } catch { return 0; }
 }
