@@ -10429,7 +10429,7 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
                   if (!text || text.startsWith('/')) continue;
                   const routed = routeAskAgent(text);
                   const sub = discordDeps.submitTask(routed.agentId, routed.kind, `${rec.title} → ${text}`.slice(0, 140), {
-                    source: 'discord-thread', threadId: tid, followUpOf: rec.taskId, text,
+                    ...routed.input, threadId: tid, followUpOf: rec.taskId,
                   });
                   if (sub?.ok) {
                     rec.pendingTaskIds = [...(rec.pendingTaskIds || []), String(sub.task?.id || '')].filter(Boolean);

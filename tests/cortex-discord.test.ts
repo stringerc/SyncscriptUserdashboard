@@ -200,11 +200,23 @@ test('formatFleetStatus reports zero state without fabricating', () => {
   assert.equal(embeds[0].fields![0].value, '0/— active');
 });
 
-test('routeAskAgent keyword routing', () => {
-  assert.equal(routeAskAgent('research the competitor').agentId, 'scout');
-  assert.equal(routeAskAgent('prep me for the board meeting').agentId, 'prep');
-  assert.equal(routeAskAgent('publish this to pinterest').agentId, 'distributor');
-  assert.equal(routeAskAgent('hello there').agentId, 'runner');
+test('routeAskAgent keyword routing + worker-shaped inputs', () => {
+  const research = routeAskAgent('research the competitor');
+  assert.equal(research.agentId, 'scout');
+  assert.equal(research.kind, 'research');
+  assert.ok(research.input.query, 'scout research needs input.query');
+  const prep = routeAskAgent('prep me for the board meeting');
+  assert.equal(prep.agentId, 'prep');
+  assert.ok(prep.input.title);
+  const build = routeAskAgent('fix the login bug');
+  assert.equal(build.agentId, 'builder');
+  assert.ok(build.input.instruction, 'builder needs input.instruction');
+  // Distributor needs structured payloads — free text must NOT route there.
+  assert.notEqual(routeAskAgent('publish this to pinterest').agentId, 'distributor');
+  // Unknown text defaults to scout research (has a real input.query).
+  const dflt = routeAskAgent('hello there');
+  assert.equal(dflt.agentId, 'scout');
+  assert.ok(dflt.input.query);
 });
 
 // ── Push budget ────────────────────────────────────────────────────

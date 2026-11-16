@@ -391,16 +391,22 @@ function subcommandOpt(payload: any, name: string): string {
   return String(opt?.value ?? '');
 }
 
-/** Route a free-text ask to an agent. Keyword map; default runner. */
-export function routeAskAgent(text: string): { agentId: string; kind: string } {
+/** Route a free-text ask to an agent AND shape the input its worker expects.
+ *  Each worker validates required input fields — sending the wrong shape
+ *  produces an honest task failure, so the router builds them here.
+ *  Distributor is intentionally unrouted: its kinds need structured payloads
+ *  (pin data, reddit targets) that free text can't supply honestly. */
+export function routeAskAgent(text: string): { agentId: string; kind: string; input: Record<string, unknown> } {
   const t = text.toLowerCase();
-  if (/research|search|look up|find out|scan|repo/.test(t)) return { agentId: 'scout', kind: 'research' };
-  if (/forecast|predict|what.*(wrong|right)|risk/.test(t)) return { agentId: 'forecaster', kind: 'forecast_cycle' };
-  if (/prep|brief|meeting/.test(t)) return { agentId: 'prep', kind: 'prep_brief' };
-  if (/build|code|implement|fix|write/.test(t)) return { agentId: 'builder', kind: 'build_task' };
-  if (/distribut|post|publish|pin|reddit|gumroad/.test(t)) return { agentId: 'distributor', kind: 'distribution_task' };
-  if (/review|audit|check/.test(t)) return { agentId: 'reviewer', kind: 'review_task' };
-  return { agentId: 'runner', kind: 'run_task' };
+  const base = { source: 'discord', text };
+  if (/forecast|predict|what.*(wrong|right)|risk/.test(t)) return { agentId: 'forecaster', kind: 'forecast_cycle', input: { ...base } };
+  if (/prep|brief|meeting/.test(t)) return { agentId: 'prep', kind: 'prep_brief', input: { ...base, title: text.slice(0, 140) } };
+  if (/build|code|implement|fix|write/.test(t)) return { agentId: 'builder', kind: 'build_task', input: { ...base, instruction: text } };
+  if (/review|audit|check/.test(t)) return { agentId: 'reviewer', kind: 'review_task', input: { ...base, instruction: text } };
+  // Default: scout research — the honest generic capability (web search +
+  // reason-tier synthesis). Chit-chat that fits no worker lands here rather
+  // than failing on a missing input field.
+  return { agentId: 'scout', kind: 'research', input: { ...base, query: text } };
 }
 
 export async function handleDiscordInteraction(
@@ -486,8 +492,8 @@ export async function handleDiscordInteraction(
     case 'ask': {
       const text = subcommandOpt(payload, 'text').trim();
       if (!text) return { type: 4, data: { content: 'Empty request.', flags: EPHEMERAL } };
-      const { agentId, kind } = routeAskAgent(text);
-      const res = deps.submitTask(agentId, kind, text.slice(0, 140), { source: 'discord', text });
+      const { agentId, kind, input } = routeAskAgent(text);
+      const res = deps.submitTask(agentId, kind, text.slice(0, 140), input);
       if (!res.ok) {
         return { type: 4, data: { content: `Task rejected: ${res.error || 'unknown'}`, flags: EPHEMERAL } };
       }
