@@ -97,13 +97,7 @@ function memoryBlock(entries: AgentMemoryEntry[]): string {
 
 const UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
 
-async function webSearch(query: string, maxResults = 6): Promise<Array<{ title: string; url: string; snippet: string }>> {
-  const res = await fetch(`https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`, {
-    headers: { 'User-Agent': UA },
-    signal: AbortSignal.timeout(10_000),
-  });
-  if (!res.ok) return [];
-  const html = await res.text();
+function parseDdgResults(html: string, maxResults: number) {
   const out: Array<{ title: string; url: string; snippet: string }> = [];
   for (const block of html.split(/class="result results_links/).slice(1)) {
     const m = block.match(/<h2 class="result__title">[\s\S]*?<a[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/i);
@@ -117,6 +111,71 @@ async function webSearch(query: string, maxResults = 6): Promise<Array<{ title: 
     if (out.length >= maxResults) break;
   }
   return out;
+}
+
+function parseDdgLite(html: string, maxResults: number) {
+  const out: Array<{ title: string; url: string; snippet: string }> = [];
+  // lite.duckduckgo.com markup: <a rel="nofollow" href="..." class='result-link'>title</a>
+  // snippets in <td class='result-snippet'>...</td>
+  const blocks = html.split(/<tr[^>]*>/i);
+  for (const block of blocks) {
+    const m = block.match(/<a[^>]*class=['"]result-link['"][^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/i)
+      || block.match(/<a[^>]*href="([^"]+)"[^>]*class=['"]result-link['"][^>]*>([\s\S]*?)<\/a>/i);
+    if (!m) continue;
+    const uddg = m[1].match(/uddg=([^&]+)/);
+    const url = uddg ? decodeURIComponent(uddg[1]) : m[1];
+    if (!/^https?:/.test(url)) continue;
+    const title = m[2].replace(/<[^>]+>/g, '').replace(/&amp;/g, '&').trim();
+    const snip = (block.match(/class=['"]result-snippet['"][^>]*>([\s\S]*?)<\/td>/i)?.[1] || '')
+      .replace(/<[^>]+>/g, '').replace(/&amp;/g, '&').trim();
+    if (title) out.push({ title: title.slice(0, 200), url, snippet: snip.slice(0, 300) });
+    if (out.length >= maxResults) break;
+  }
+  return out;
+}
+
+/** Web search with backend failover. Distinguishes backend failure (throws,
+ *  so telemetry.failureClass records the real cause) from genuinely empty
+ *  results (returns []). Order: DDG html → DDG lite → Mojeek. */
+async function webSearch(query: string, maxResults = 6): Promise<Array<{ title: string; url: string; snippet: string }>> {
+  const q = encodeURIComponent(query);
+  const attempts: Array<{ name: string; url: string; parse: (h: string, n: number) => ReturnType<typeof parseDdgResults> }> = [
+    { name: 'ddg-html', url: `https://html.duckduckgo.com/html/?q=${q}`, parse: parseDdgResults },
+    { name: 'ddg-lite', url: `https://lite.duckduckgo.com/lite/?q=${q}`, parse: parseDdgLite },
+    { name: 'mojeek', url: `https://www.mojeek.com/search?q=${q}`, parse: (h, n) => {
+      const out: Array<{ title: string; url: string; snippet: string }> = [];
+      for (const block of h.split(/<li class="result-standard"/i).slice(1)) {
+        const m = block.match(/<a class="ob" href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/i)
+          || block.match(/<a[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/i);
+        if (!m || !/^https?:/.test(m[1])) continue;
+        const title = m[2].replace(/<[^>]+>/g, '').replace(/&amp;/g, '&').trim();
+        const snip = (block.match(/<p class="s">([\s\S]*?)<\/p>/i)?.[1] || '')
+          .replace(/<[^>]+>/g, '').replace(/&amp;/g, '&').trim();
+        if (title) out.push({ title: title.slice(0, 200), url: m[1], snippet: snip.slice(0, 300) });
+        if (out.length >= n) break;
+      }
+      return out;
+    } },
+  ];
+  const errors: string[] = [];
+  let anyBackendOk = false;
+  for (const a of attempts) {
+    try {
+      const res = await fetch(a.url, { headers: { 'User-Agent': UA }, signal: AbortSignal.timeout(10_000) });
+      if (!res.ok) { errors.push(`${a.name} HTTP ${res.status}`); continue; }
+      anyBackendOk = true;
+      const results = a.parse(await res.text(), maxResults);
+      if (results.length) return results;
+      errors.push(`${a.name} empty`);
+    } catch (e) {
+      errors.push(`${a.name} ${String((e as Error)?.message || e).slice(0, 60)}`);
+    }
+  }
+  // A backend answered but parsed empty → genuinely no results; the caller's
+  // 'no results' error stays honest. Only throw when EVERY backend failed
+  // at HTTP/network level, so telemetry records the real cause.
+  if (anyBackendOk) return [];
+  throw new Error(`web_search backends unreachable: ${errors.join('; ') || 'unknown'}`);
 }
 
 async function fetchPageText(url: string, maxChars = 6000): Promise<string> {

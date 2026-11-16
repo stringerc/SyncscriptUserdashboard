@@ -159,6 +159,28 @@ export async function runPatrolChecks(deps: PatrolDeps = {}): Promise<PatrolRepo
     return 'fast lane answered';
   }));
 
+  // ── External research backends ──
+  // Scout's web_search failovers across DDG html → DDG lite → Mojeek.
+  // Probe each; a dead backend narrows failover silently otherwise.
+  checks.push(await timed('ext.search_backends', false, 25000, async () => {
+    const q = encodeURIComponent('cortex healthcheck');
+    const backends = [
+      { name: 'ddg-html', url: `https://html.duckduckgo.com/html/?q=${q}` },
+      { name: 'ddg-lite', url: `https://lite.duckduckgo.com/lite/?q=${q}` },
+      { name: 'mojeek', url: `https://www.mojeek.com/search?q=${q}` },
+    ];
+    const alive: string[] = [];
+    const down: string[] = [];
+    for (const b of backends) {
+      try {
+        const r = await f(b.url, { headers: { 'User-Agent': 'cortex-warden/1.0' }, signal: AbortSignal.timeout(8000) });
+        (r.ok ? alive : down).push(`${b.name}(${r.status})`);
+      } catch { down.push(b.name); }
+    }
+    if (!alive.length) throw new Error(`all search backends down: ${down.join(', ')}`);
+    return `alive: ${alive.map((a) => a.split('(')[0]).join(', ')}${down.length ? ` · down: ${down.join(', ')}` : ''}`;
+  }));
+
   // ── Neural TTS chain: every configured endpoint probed; if ALL are dead
   // the client silently falls back to robotic browser speechSynthesis.
   checks.push(await timed('tts.neural', true, 15000, async () => {
