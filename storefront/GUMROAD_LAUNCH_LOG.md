@@ -67,3 +67,19 @@ Notes:
 - CORTEX_VISUAL_EVOLUTION_PROMPT.md written: research prompt for
   enterprise-agent tier (moons vs satellites), legal-war planet,
   office-vs-space verdict, animation budget.
+
+## 2026-11-15 (cont.4) — GitHub sync + GPU fix
+
+- Fixed AgentsScene crash: enterprise-orbit block referenced `agents`
+  before declaration → threw every rAF → frozen canvas ("GPU context
+  suspended"). Hoisted agent snapshot above orbit drawing.
+- 18-zone panel grid live (6x3, legacy migration, ⌥ free-drag).
+- Enterprise/satellite tier shipped: distributor = enterprise, spawned
+  agents auto-enterprise; satellite hulls on outer deck.
+- Pushed branch `security-hardening` → GitHub (first full cortex sync,
+  ~2k files). Scrubbed real API keys from 11 doc files before push
+  (OpenRouter/Gemini/etc → REDACTED). NOTE: those keys are compromised —
+  rotate them.
+- .github/workflows/ci.yml written locally (vitest cortex suite + scoped
+  strict tsc) but NOT pushed — OAuth token lacks `workflow` scope.
+  Run `gh auth refresh -s workflow` then I can push it.

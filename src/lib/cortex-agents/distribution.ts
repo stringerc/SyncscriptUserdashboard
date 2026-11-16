@@ -301,20 +301,25 @@ async function runRedditDraft(ctx: AgentContext, payload: Record<string, unknown
   if (!permalink) throw new Error('reddit_draft requires payload.permalink');
   const threadHint = str(payload.threadHint, '');
   ctx.progress(0.2);
-  const draft = await ctx.llm({
-    tier: 'fast',
-    maxTokens: 400,
-    messages: [
-      {
-        role: 'system',
-        content: 'You write Reddit comments for a solo founder who sells AI workflow products on Gumroad. Rules: lead with genuine help, never pitch in the first comment, no links unless the thread explicitly asks for tools, sound like a practitioner not a marketer, 2-4 sentences max, no em-dash, no corporate tone. Output ONLY the comment text.',
-      },
-      {
-        role: 'user',
-        content: `THREAD: ${permalink}${threadHint ? `\nTHREAD CONTEXT: ${threadHint.slice(0, 1500)}` : ''}${context ? `\nPRODUCT TO WEAVE IN NATURALLY (only if it fits): ${context}` : ''}${product ? `\nPRODUCT: ${product}` : ''}\n\nDraft the comment.`,
-      },
-    ],
-  });
+  // Fast lane first; if every fast candidate is down/cooled (provider
+  // brownouts), fall back to reason — a draft is short-form work and a
+  // slower lane beats a dead one.
+  const messages = [
+    {
+      role: 'system' as const,
+      content: 'You write Reddit comments for a solo founder who sells AI workflow products on Gumroad. Rules: lead with genuine help, never pitch in the first comment, no links unless the thread explicitly asks for tools, sound like a practitioner not a marketer, 2-4 sentences max, no em-dash, no corporate tone. Output ONLY the comment text.',
+    },
+    {
+      role: 'user' as const,
+      content: `THREAD: ${permalink}${threadHint ? `\nTHREAD CONTEXT: ${threadHint.slice(0, 1500)}` : ''}${context ? `\nPRODUCT TO WEAVE IN NATURALLY (only if it fits): ${context}` : ''}${product ? `\nPRODUCT: ${product}` : ''}\n\nDraft the comment.`,
+    },
+  ];
+  let draft: string;
+  try {
+    draft = await ctx.llm({ tier: 'fast', maxTokens: 400, messages });
+  } catch {
+    draft = await ctx.llm({ tier: 'reason', maxTokens: 400, messages });
+  }
   const text = String(draft || '').trim().replace(/^"|"$/g, '');
   if (text.length < 20) throw new Error('reddit_draft produced empty/too-short comment');
   ctx.progress(0.7);

@@ -1,12 +1,12 @@
 {
-  "timestamp": "2026-11-15T08:06:12Z",
-  "session_id": "8c3b0aca-3243-4ec1-8768-3382745a5b3b",
+  "timestamp": "2026-11-15T16:37:38Z",
+  "session_id": "f66e264a-626b-41c7-8ed4-54c266cd7022",
   "cwd": "/Users/Apple/syncscript",
   "product_rank_a": "SESSION_START.md + MEMORY.md (product)",
   "git": {
     "branch": "security-hardening",
-    "uncommitted": " M .gitignore\nMM MEMORY.md\nM  README.md\nD  build/assets/index-CqSQY5ev.js\nD  build/assets/index-myw46PUE.css\nD  build/assets/syncscript-logo-CyGO7oXc.png\nD  build/assets/syncscript-main-logo-DZnXhy5e.png\nMM build/index.html\nMM index.html\nMM node_modules/.package-lock.json\nMM node_modules/.vite/deps/@radix-ui_react-avatar@1__1__3.js\nM  node_modules/.vite/deps/@radix-ui_react-avatar@1__1__3.js.map\nD  node_modules/.vite/deps/@radix-ui_react-progress@1__1__2.js\nD  node_modules/.vite/deps/@radix-ui_react-progress@1__1__2.js.map\nM  node_modules/.vite/deps/@radix-ui_react-slot@1__1__2.js\nMM node_modules/.vite/deps/_metadata.json\nD  node_modules/.vite/deps/chunk-6PXSGDAH.js\nD  node_modules/.vite/deps/chunk-6PXSGDAH.js.map\nD  node_modules/.vite/deps/chunk-DRWLMN53.js\nD  node_modules/.vite/deps/chunk-DRWLMN53.js.map\nunknown",
-    "recent_commits": "147d3ed fix(cortex-voice): fix robotic voice fallback and resolve email triage intent hijacking\nc141d12 fix(cortex-voice): implement smart half-duplex gating, single-speaker audio mutex, silent tool feedback, and rich conversational intelligence\ne0b0e5a fix(cortex): eliminate 503 error, harden ReAct loop & Libet veto, add chat verification gate to memory\n7c7f7d3 Update files from Figma Make\n1c2fae6 Update files from Figma Make"
+    "uncommitted": " M .claude/active-task.md\n M .claude/session-state.json\n M .cortex/bus/state.json\n M morning-briefing.md\n M storefront/GUMROAD_LAUNCH_LOG.md\n M storefront/browser/latest.png\n M storefront/browser/latest.txt\n M storefront/distribution-queue.json\n M tsconfig.tsbuildinfo\n?? .github/\n?? .next/\n?? archive/\n?? storefront/assets/dreamina/.jobs/job-mwhw0jh8-b5ac0a.json\n?? storefront/assets/dreamina/meeting-intelligence-kit-alt.png",
+    "recent_commits": "d58025f fix(cortex): persist visualizer chat across proxy resets\n95b5923 fix(cortex): quarter-scale enterprise satellite hulls\nd14245a fix(cortex): halve enterprise satellite hull scale\n2c6bab0 feat(cortex): realistic enterprise satellite hulls on core scene\n6e7bfc3 feat(cortex): visualizer fleet tiers, 18-zone surfaces, distribution engine"
   },
   "recent_files": [
     "/Users/Apple/.claude/CLAUDE.md",

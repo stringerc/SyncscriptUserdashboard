@@ -1,0 +1,28 @@
+name: ci
+
+on:
+  push:
+    branches: [main, security-hardening, cortex-visualizer]
+  pull_request:
+
+jobs:
+  cortex-checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - name: Cortex lib test suite (surfaces, agents, spatial cluster, goals)
+        run: npx vitest run src/lib/__tests__/
+      - name: Typecheck cortex subsystem (libs + agent runtime)
+        run: >-
+          npx tsc --noEmit --strict --skipLibCheck --jsx react-jsx
+          --module esnext --target es2020 --moduleResolution bundler
+          --allowImportingTsExtensions --resolveJsonModule --esModuleInterop
+          --lib es2020,dom,dom.iterable
+          src/lib/cortex-surfaces.ts src/lib/cortex-spatial-cluster.ts
+          src/lib/cortex-artifacts.ts src/lib/cortex-agents/types.ts
+          src/lib/cortex-agents/runtime.ts src/lib/cortex-agents-client.ts

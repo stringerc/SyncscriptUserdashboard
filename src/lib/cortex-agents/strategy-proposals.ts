@@ -114,9 +114,13 @@ export function fileStrategyProposals(opts: {
  */
 export function fileBudgetProposal(opts: { agentId: string; agentName: string; currentBudget: number; suggestedBudget: number; error: string }): boolean {
   const all = readAll();
-  if (all.some((p) => p.status === 'pending' && p.action?.type === 'budgetRaise' && p.action.agentId === opts.agentId)) return false;
-  if (all.filter((p) => p.status === 'pending').length >= MAX_PENDING) return false;
   const day = new Date().toISOString().slice(0, 10);
+  const proposalId = `budget-${opts.agentId}-${day}`;
+  // One raise ask per agent per day, period — pending, approved, or
+  // already-answered all count. Repeated exhaustions after an approved
+  // raise are a workload problem, not a reason to re-ask the same day.
+  if (all.some((p) => p.id === proposalId)) return false;
+  if (all.filter((p) => p.status === 'pending').length >= MAX_PENDING) return false;
   all.push({
     id: `budget-${opts.agentId}-${day}`,
     planNote: '',

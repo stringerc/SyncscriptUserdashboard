@@ -54,6 +54,18 @@ async function loadState() {
 
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
+// Puppeteer has no :has-text() — find clickable elements by their label.
+async function clickByText(page, texts) {
+  return await page.evaluate((ts) => {
+    const els = [...document.querySelectorAll('button, a, [role="button"], [role="radio"], label, summary')];
+    for (const t of ts) {
+      const el = els.find(e => (e.innerText || e.textContent || '').trim().toLowerCase().includes(t.toLowerCase()));
+      if (el) { el.click(); return t; }
+    }
+    return null;
+  }, texts);
+}
+
 async function login(page, email, password) {
   await page.goto("https://gumroad.com/login", { waitUntil: "networkidle2", timeout: 60000 });
   await page.waitForSelector('input[type="email"], input[name="email"], input[placeholder*="email" i]', { timeout: 20000 });
@@ -75,31 +87,19 @@ async function publishProduct(page, product, opts) {
   await page.goto("https://gumroad.com/products/new", { waitUntil: "networkidle2", timeout: 60000 });
   await sleep(1500);
 
-  // Step 1: select "Digital product" (or "E-book and other digital downloads")
-  // Gumroad's UI changes; try multiple selectors.
-  const digitalSelectors = [
-    'input[value="digital"]',
-    'text/Digital product',
-    '[data-product-type="digital"]',
-  ];
-  let clicked = false;
-  for (const sel of digitalSelectors) {
-    try {
-      const el = await page.$(sel);
-      if (el) { await el.click(); clicked = true; break; }
-    } catch {}
-  }
-  if (!clicked) {
-    // Fallback: look for any radio/option containing "digital"
-    const links = await page.$$('text/Digital');
-    if (links.length) { await links[0].click(); clicked = true; }
-  }
+  // Step 1: select "Digital product" — click whatever option mentions it.
+  const clicked = await clickByText(page, ['digital product', 'digital download', 'e-book and other digital', 'digital']);
   if (!clicked) throw new Error("Could not find 'Digital product' option — Gumroad UI may have changed");
+  console.log(`  selected: ${clicked}`);
   await sleep(1000);
 
   // Continue/Next button
-  const nextBtn = await page.$('button:has-text("Next"), button:has-text("Continue"), button[type="submit"]');
-  if (nextBtn) { await nextBtn.click(); await sleep(1500); }
+  const nextClicked = await clickByText(page, ['continue', 'next', 'get started']);
+  if (nextClicked) { console.log(`  step: ${nextClicked}`); await sleep(1500); }
+  else {
+    const submit = await page.$('button[type="submit"]');
+    if (submit) { await submit.click(); await sleep(1500); }
+  }
 
   // Step 2: fill name
   const nameInput = await page.$('input[name*="name" i], input[placeholder*="name" i], input[id*="name" i]');
@@ -149,10 +149,13 @@ async function publishProduct(page, product, opts) {
   }
 
   // Step 7: publish/save
-  const publishBtn = await page.$('button:has-text("Publish"), button:has-text("Save"), button[type="submit"]:has-text("Done")');
-  if (publishBtn) {
-    await publishBtn.click();
+  const pubClicked = await clickByText(page, ['publish', 'save', 'done', 'create product']);
+  if (pubClicked) {
+    console.log(`  publish: ${pubClicked}`);
     await sleep(3000);
+  } else {
+    const submit = await page.$('button[type="submit"]');
+    if (submit) { await submit.click(); await sleep(3000); }
   }
 
   const finalUrl = page.url();

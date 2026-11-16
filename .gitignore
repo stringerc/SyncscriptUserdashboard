@@ -280,3 +280,12 @@ dashboard/test-builder-*.ts
 dashboard/BUILDER_API_KEYS_TEST_RESULTS.md
 supabase/.temp/
 .cache_ggshield/
+
+# Next.js dev/build artifacts
+.next/
+
+# Machine-local browser endpoint override
+storefront/.cdp-url
+
+# Embedded reference repos (not submodules)
+archive/reference-*/

@@ -269,3 +269,23 @@ describe('calendarProbe prep handoff', () => {
     expect(noprep?.handoff?.input.attendees).toEqual(['alice@x.com', 'bob@x.com']);
   });
 });
+
+describe('calibration loop', () => {
+  it('is neutral until 3 outcomes, then adjusts', () => {
+    expect(forecaster.calibrationFactor('fleet')).toBe(1.0);
+    forecaster.recordForecastOutcome('fleet', true);
+    forecaster.recordForecastOutcome('fleet', true);
+    expect(forecaster.calibrationFactor('fleet')).toBe(1.0); // only 2 outcomes
+    forecaster.recordForecastOutcome('fleet', true);
+    expect(forecaster.calibrationFactor('fleet')).toBeGreaterThan(1.0);
+    const c = forecaster.loadCalibration();
+    expect(c.fleet.hits).toBe(3);
+  });
+  it('misses push factor toward the floor', () => {
+    for (let i = 0; i < 5; i++) forecaster.recordForecastOutcome('comms', false);
+    forecaster.recordForecastOutcome('comms', true);
+    const f = forecaster.calibrationFactor('comms');
+    expect(f).toBeLessThan(1.0);
+    expect(f).toBeGreaterThanOrEqual(0.6);
+  });
+});
