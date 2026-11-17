@@ -864,18 +864,24 @@ export const CortexAgentsScene: React.FC = () => {
       // Shift the whole scene right when the roster rail is visible so the
       // orbit clears it (roster ~200px at left).
       const cx = w / 2 + (w >= 900 ? 100 : 0) + p.x, cy = h / 2 + h * 0.05 + p.y;
-      // Nebula drift is ~0.05 rad/s — quantize to 0.2s buckets; the 0.01 rad
-      // step is imperceptible but cuts gradient allocations ~50x.
+      // Deep-space cosmic nebula clouds — layered H-Alpha violet, O-III cyan, and stellar amber
       const nebKey = `${bgKey}|${Math.round(time * 5)}`;
       if (!nebCache || nebCache.key !== nebKey) {
         nebCache = {
           key: nebKey,
-          grads: (['#67e8f9', '#e879f9', '#fbbf24', '#34d399'] as const).map((col, i) => {
-            const na = time * 0.05 + i * 1.7;
-            const nx = cx + Math.cos(na) * w * 0.28, ny = cy + Math.sin(na * 0.8) * h * 0.24;
-            const ng = ctx.createRadialGradient(nx, ny, 0, nx, ny, Math.min(w, h) * 0.34);
-            ng.addColorStop(0, hexA(col, 0.05));
-            ng.addColorStop(1, hexA(col, 0));
+          grads: [
+            { col: '#a855f7', alpha: 0.16, r: 0.44, ox: 0.22, oy: -0.16 },  // Cosmic Violet/Magenta H-Alpha
+            { col: '#06b6d4', alpha: 0.18, r: 0.40, ox: -0.26, oy: 0.18 },  // Electric Cyan O-III Ridge
+            { col: '#f59e0b', alpha: 0.13, r: 0.36, ox: 0.20, oy: 0.22 },   // Stellar Nursery Amber
+            { col: '#3b82f6', alpha: 0.15, r: 0.46, ox: -0.18, oy: -0.20 }, // Deep Space Cobalt Veil
+          ].map((spec, i) => {
+            const na = time * 0.04 + i * 1.6;
+            const nx = cx + spec.ox * w + Math.cos(na) * w * 0.08;
+            const ny = cy + spec.oy * h + Math.sin(na * 0.8) * h * 0.07;
+            const ng = ctx.createRadialGradient(nx, ny, 0, nx, ny, Math.min(w, h) * spec.r);
+            ng.addColorStop(0, hexA(spec.col, spec.alpha));
+            ng.addColorStop(0.55, hexA(spec.col, spec.alpha * 0.35));
+            ng.addColorStop(1, hexA(spec.col, 0));
             return ng;
           }),
         };

@@ -161,18 +161,77 @@ const nebulaFragment = /* glsl */ `
   uniform vec3 uRim;
   varying vec3 vDir;
   ${NOISE_GLSL}
+
+  // Multi-tier domain warping for deep-space interstellar gas dynamics
+  float nebulaNoise(vec3 p, out vec3 q, out vec3 r) {
+    float t = uTime * 0.012;
+    vec3 v1 = vec3(t * 0.8, t * 0.5, -t * 0.4);
+    vec3 v2 = vec3(-t * 0.6, t * 0.9, t * 0.3);
+    vec3 v3 = vec3(t * 0.3, -t * 0.7, t * 0.6);
+
+    // Primary domain warp field
+    q = vec3(
+      fbm(p + v1),
+      fbm(p + vec3(5.2, 1.3, 2.8) + v2),
+      fbm(p + vec3(2.1, 7.4, 4.2) + v3)
+    );
+
+    // Secondary turbulent warp field
+    r = vec3(
+      fbm(p + 2.8 * q + vec3(1.7, 9.2, 3.4) + v1 * 1.3),
+      fbm(p + 2.8 * q + vec3(8.3, 2.8, 6.1) - v2 * 0.8),
+      fbm(p + 2.8 * q + vec3(3.9, 4.5, 1.2) + v3 * 1.1)
+    );
+
+    // Final warped gas density
+    return fbm(p + 3.2 * r);
+  }
+
   void main() {
     vec3 d = normalize(vDir);
-    float t = uTime * 0.016;
-    float n = fbm(d * 2.6 + vec3(t, t * 0.6, -t * 0.4));
-    float n2 = fbm(d * 5.5 - vec3(t * 1.4, t * 0.3, t));
-    float cloud = n * 0.72 + n2 * 0.38;
-    // brighter toward the core (view center)
-    float center = pow(max(dot(d, vec3(0.0, 0.0, 1.0)), 0.0), 3.0);
-    vec3 col = uDeep;
-    col += uRim * cloud * (0.085 + uEnergy * 0.15 + uLevel * 0.09);
-    col += uRim * center * (0.05 + uEnergy * 0.10);
-    gl_FragColor = vec4(col, 1.0);
+
+    // Galactic coordinate orientation: tilt and flatten slightly to form sweeping cosmic band
+    vec3 p = d * 2.2;
+    p.y *= 1.35;
+
+    vec3 q, r;
+    float gas = nebulaNoise(p, q, r);
+    float fineDust = fbm(d * 5.8 + vec3(uTime * 0.01));
+
+    // Carve dark absorption rifts (interstellar dust lanes / Bok globules)
+    float dustRift = smoothstep(0.35, 0.68, r.y * 0.6 + q.x * 0.4);
+    float gasCloud = smoothstep(0.26, 0.76, gas) * (1.0 - dustRift * 0.52);
+
+    // Astronomical ionization color spectrum
+    // 1. Hydrogen-Alpha / Ionized Cosmic Violet-Magenta
+    vec3 colHAlpha = vec3(0.68, 0.18, 0.88);
+    // 2. Oxygen-III / Electric Cyan Ionization Ridge
+    vec3 colOIII = vec3(0.08, 0.78, 0.95);
+    // 3. Protostellar Amber / Gold Cosmic Dust Veins
+    vec3 colAmber = vec3(0.96, 0.58, 0.22);
+    // 4. Deep Indigo Interstellar Void
+    vec3 colSpace = uDeep;
+
+    // Blend cosmic spectrum across warped density fields
+    vec3 nebulaCol = mix(colSpace, colHAlpha, smoothstep(0.30, 0.65, r.x));
+    nebulaCol = mix(nebulaCol, colOIII, smoothstep(0.38, 0.72, q.z));
+    nebulaCol = mix(nebulaCol, colAmber, smoothstep(0.52, 0.84, gas * r.y));
+
+    // Vivid astronomical emission intensity
+    float intensity = gasCloud * (0.32 + uEnergy * 0.18 + uLevel * 0.10);
+
+    // Deep space core ambient
+    vec3 finalCol = colSpace + nebulaCol * intensity;
+
+    // Embedded galactic stardust shimmer in high-density pockets
+    float stardust = pow(fineDust, 4.0) * gasCloud * 0.42;
+    finalCol += vec3(0.9, 0.95, 1.0) * stardust;
+
+    // Center focal glow focused behind central plasma core
+    float centerGlow = pow(max(dot(d, vec3(0.0, 0.0, 1.0)), 0.0), 2.5);
+    finalCol += uRim * centerGlow * (0.04 + uEnergy * 0.06);
+
+    gl_FragColor = vec4(finalCol, 1.0);
   }
 `;
 
