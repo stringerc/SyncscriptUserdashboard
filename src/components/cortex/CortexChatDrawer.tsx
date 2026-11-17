@@ -385,6 +385,23 @@ export function CortexChatDrawer({ open, onClose, payload, onSubmitText }: Corte
     }
   }, [messages, open, payload.text, payload.state, isProcessing, isWaitingAfterUser]);
 
+  // Jump to the latest message on every open and when async history
+  // hydration lands — the drawer is a live console, not an archive.
+  const lastCountRef = useRef(-1);
+  useEffect(() => {
+    if (!open) { lastCountRef.current = -1; return; }
+    const justOpened = lastCountRef.current === -1;
+    const hydrated = lastCountRef.current === 0 && messages.length > 0;
+    lastCountRef.current = messages.length;
+    if (!justOpened && !hydrated) return;
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        const el = scrollRef.current;
+        if (el) el.scrollTop = el.scrollHeight;
+      });
+    });
+  }, [open, messages.length]);
+
   // Stop any in-flight playback when the drawer closes
   useEffect(() => {
     if (open) return;
