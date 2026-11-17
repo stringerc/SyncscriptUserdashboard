@@ -141,7 +141,7 @@ function tickLive(live: LiveSignal, delta: number, t: number) {
   live.think += (thinkTarget - live.think) * Math.min(1, delta * (thinkTarget > live.think ? 1.4 : 0.5));
 }
 
-// ── Nebula shell ─────────────────────────────────────────────────────────
+// ── Nebula shell (JWST Carina "Cosmic Cliffs": Orange clouds engulfed by billowing blue clouds) ──
 
 const nebulaVertex = /* glsl */ `
   varying vec3 vDir;
@@ -167,113 +167,161 @@ const nebulaFragment = /* glsl */ `
     return 0.65 * vnoise(p) + 0.35 * vnoise(p * 2.05 + vec3(11.3, 7.1, 5.7));
   }
 
-  // JWST Carina "Cosmic Cliffs": Warped billowing molecular cloud & fiery ionization crest
-  float cosmicCliffs(vec3 p, out float crest, out vec3 warp) {
-    float t = uTime * 0.010;
-    vec3 w1 = vec3(t * 0.6, t * 0.35, -t * 0.45);
+  // Procedural Cosmic Cliffs Mountain Horizon across azimuth
+  float cliffHorizon(float u) {
+    // Dominant soaring mountain peak in the upper-back-left
+    float leftPeak = 0.38 * exp(-pow((u + 0.55) * 1.5, 2.0));
+    // Flanking right mountain peak
+    float rightPeak = 0.32 * exp(-pow((u - 0.70) * 1.4, 2.0));
+    // Canyon saddle behind central astrolabe core
+    float centerDip = -0.12 * exp(-pow(u * 2.2, 2.0));
+    // Base elevation
+    float base = 0.02;
 
-    // Multi-tier domain warping for organic turbulent folds
-    warp = vec3(
-      fbm2(p * 1.1 + w1),
-      fbm2(p * 1.1 + vec3(5.2, 1.3, 2.8) - w1 * 0.7),
-      fbm2(p * 1.1 + vec3(2.1, 7.4, 4.2) + w1 * 0.5)
-    );
+    // Fractal serrated mountain crags
+    float crag1 = (1.0 - abs(vnoise(vec3(u * 3.2, 0.0, 1.4)) * 2.0 - 1.0)) * 0.14;
+    float crag2 = (1.0 - abs(vnoise(vec3(u * 7.2, 0.0, 4.8)) * 2.0 - 1.0)) * 0.07;
+    float crag3 = (vnoise(vec3(u * 15.0, 0.0, 8.2)) - 0.5) * 0.035;
 
-    vec3 q = p + 2.2 * warp;
-
-    // Mountainous billow noise: combines sharp ridge peaks and soft cumulus folds
-    float ridge = 1.0 - abs(vnoise(q * 1.4));        // Knife-edge mountain ridge
-    float billow = abs(vnoise(q * 2.8 + vec3(1.7))); // Volumetric cumulus folds
-    float detail = vnoise(q * 5.8 + vec3(t * 0.2));  // Wispy surface erosion
-
-    float gas = ridge * 0.52 + (1.0 - billow) * 0.36 + detail * 0.12;
-
-    // The Ionization Crest: Where stellar radiation strikes the edge of the molecular cloud,
-    // creating the dramatic, glowing fiery flame front seen in the JWST Carina Cosmic Cliffs.
-    // Peaks intensely right along the upper perimeter and ridge transitions.
-    crest = smoothstep(0.42, 0.70, ridge) * smoothstep(0.88, 0.52, gas);
-    crest = pow(crest, 1.3);
-
-    return gas;
+    return base + leftPeak + rightPeak + centerDip + crag1 + crag2 + crag3;
   }
 
   void main() {
     vec3 d = normalize(vDir);
 
-    // Distant celestial nebula anchored far back in the upper-left cosmic skybox
-    // Looking forward into the scene is -Z, screen-left is -X, screen-up is +Y.
-    vec3 dirNebula = normalize(vec3(-0.95, 0.48, -0.65));
-    float align = dot(d, dirNebula);
+    // Spherical azimuth (horizontal) and elevation (vertical)
+    // Looking forward is -Z (d.z < 0)
+    float az = atan(d.x, -d.z);
+    float el = d.y;
 
-    // Tight localized falloff: confines the nebula strictly to the far upper-back-left quadrant
-    // Any ray angled towards the center (align < 0.68) or right receives 0.0 gas density
-    float spatialMask = smoothstep(0.68, 0.95, align);
-    spatialMask = pow(spatialMask, 1.8);
+    // Mountain ridge height across azimuth
+    float H = cliffHorizon(az);
+    float deltaY = el - H;
+
+    // Forward vista focus (smooth panoramic immersion across front hemisphere)
+    float forwardMask = smoothstep(0.4, -0.2, d.z);
 
     vec3 colSpace = uDeep;
-    if (spatialMask < 0.001) {
-      float centerGlow = pow(max(dot(d, vec3(0.0, 0.0, -1.0)), 0.0), 3.0);
-      vec3 finalCol = colSpace + uRim * centerGlow * (0.03 + uEnergy * 0.05);
-      gl_FragColor = vec4(finalCol, 1.0);
+    float centerGlow = pow(max(-d.z, 0.0), 3.0);
+    vec3 baseSpace = colSpace + uRim * centerGlow * (0.025 + uEnergy * 0.04);
+
+    // Fast GPU early exit for clear cosmic void above the cliffs (saves ~45% fragment ALU)
+    if (deltaY > 0.32 || forwardMask < 0.001) {
+      vec3 starCoord = d * 55.0;
+      float starN = vnoise(starCoord);
+      float star = pow(max(starN - 0.65, 0.0) / 0.35, 12.0) * 1.6;
+      gl_FragColor = vec4(baseSpace + vec3(0.9, 0.95, 1.0) * star * forwardMask, 1.0);
       return;
     }
 
-    // High-frequency coordinates centered directly on the far-back-left nebula focal point
-    vec3 p = (d - dirNebula) * 5.2;
+    // ── Active Nebula Simulation Zone ──
+    vec3 p = vec3(az * 3.2, deltaY * 4.4, (-d.z) * 2.6);
+    float tBlue = uTime * 0.008;
+    float tFire = uTime * 0.022;
 
-    float crest;
-    vec3 warp;
-    float gas = cosmicCliffs(p, crest, warp);
+    // 3D multi-domain coordinate warping for fluid convection
+    vec3 warp = vec3(
+      fbm2(p * 1.1 + vec3(tBlue * 0.6, tBlue * 0.35, -tBlue * 0.45)),
+      fbm2(p * 1.1 + vec3(5.2, 1.3, 2.8) - vec3(tBlue * 0.5, -tBlue * 0.4, tBlue * 0.3)),
+      fbm2(p * 1.1 + vec3(2.1, 7.4, 4.2) + vec3(tBlue * 0.3, tBlue * 0.5, -tBlue * 0.2))
+    );
 
-    // Interstellar absorption rifts (dark Bok globules & dust lanes carving the cloud)
-    float dustRift = smoothstep(0.30, 0.64, warp.y * 0.6 + warp.x * 0.4);
-    float gasCloud = smoothstep(0.20, 0.76, gas) * (1.0 - dustRift * 0.52);
+    vec3 q = p + 2.1 * warp;
 
-    // ── Astronomical Ionization Color Spectrum (JWST Carina "Cosmic Cliffs") ──
-    // 1. Oxygen-III / Electric Cyan & Cerulean Volumetric Cloud Body
-    vec3 colDeepCobalt   = vec3(0.015, 0.08, 0.18);
-    vec3 colElectricCyan = vec3(0.06, 0.68, 0.92);
-    vec3 colIceCyan      = vec3(0.35, 0.88, 0.98);
+    // ── 1. The Enveloping Blue / Cyan Molecular Cloud Body ──
+    // Volumetric cumulus billow noise: rounded puffy cauliflower lobes
+    float b1 = abs(vnoise(q * 1.5));
+    float b2 = abs(vnoise(q * 3.2 + vec3(2.3, 1.8, 5.1)));
+    float b3 = abs(vnoise(q * 6.8 + vec3(4.1, 7.2, 1.3)));
+    float billow = b1 * 0.50 + b2 * 0.32 + b3 * 0.18;
 
-    // 2. Molten Amber, Solar Fire & Photodissociation Front
-    vec3 colMoltenAmber  = vec3(0.92, 0.32, 0.04);
-    vec3 colFireOrange   = vec3(1.0, 0.58, 0.08);
-    vec3 colSolarGold    = vec3(1.0, 0.85, 0.24);
-    vec3 colWhiteHot     = vec3(1.0, 0.98, 0.88);
+    // Mountain gas envelope: dense below the ridge, fading softly at bottom
+    float blueMask = smoothstep(0.08, -0.22, deltaY) * smoothstep(-0.85, -0.30, el);
+    float blueDensity = blueMask * (1.18 - billow * 0.92);
 
-    // Build the billowing cyan/cerulean cloud body
-    vec3 cloudCol = mix(colDeepCobalt, colElectricCyan, smoothstep(0.30, 0.68, gasCloud));
-    cloudCol = mix(cloudCol, colIceCyan, smoothstep(0.68, 0.88, gasCloud) * 0.7);
+    // Interstellar dark dust rifts & Bok globules silhouetted against the cloud
+    float dustRift = smoothstep(0.34, 0.70, vnoise(q * 2.4 + vec3(8.7, 3.2, 5.9)));
+    blueDensity *= (1.0 - dustRift * 0.55);
+    blueDensity = clamp(blueDensity, 0.0, 1.0);
 
-    // Build the blazing molten golden fire front along the crest
-    vec3 fireCol = mix(colMoltenAmber, colFireOrange, smoothstep(0.18, 0.50, crest));
-    fireCol = mix(fireCol, colSolarGold, smoothstep(0.50, 0.78, crest));
-    fireCol = mix(fireCol, colWhiteHot, smoothstep(0.78, 0.96, crest * (gasCloud + 0.3)));
+    // ── 2. The Internal Engulfed Orange Fire Clouds ──
+    // The fire field sits within the core of the cloud and erupts along the crest
+    vec3 qFire = p + 2.5 * warp + vec3(tFire * 0.7, -tFire * 0.3, tFire * 0.5);
+    float r1 = 1.0 - abs(vnoise(qFire * 2.0) * 2.0 - 1.0);
+    float r2 = 1.0 - abs(vnoise(qFire * 4.4 + vec3(1.7, 3.4, 2.1)) * 2.0 - 1.0);
+    float fireRidge = r1 * 0.62 + r2 * 0.38;
 
-    // Composite the fiery ionization front over the cyan cloud
-    float fireIntensity = smoothstep(0.20, 0.72, crest) * 1.8;
-    vec3 nebulaCol = mix(cloudCol, fireCol, clamp(fireIntensity, 0.0, 1.0));
+    // Vertical ionization streamers (stellar radiation blowing off the cloud)
+    float flameTongues = pow(vnoise(vec3(qFire.x * 5.2, qFire.y * 1.6 + tFire * 1.1, qFire.z * 3.2)), 1.4);
 
-    // Luminous solar core boost on the peak of the ridge
-    nebulaCol += colSolarGold * pow(crest, 2.5) * 0.95;
-    nebulaCol += colWhiteHot * pow(crest, 4.0) * 0.80;
+    // Vertical fire envelope centered at the mountain crest
+    float fireEnvelope = smoothstep(0.18, 0.01, deltaY) * smoothstep(-0.28, 0.03, deltaY);
+    fireEnvelope = pow(fireEnvelope, 0.88);
 
-    // Vivid astronomical emission intensity strictly concentrated in the far back left
-    float intensity = gasCloud * spatialMask * (0.62 + uEnergy * 0.22 + uLevel * 0.15);
+    // Combined raw combustion energy
+    float fireEnergy = fireEnvelope * (fireRidge * 0.55 + flameTongues * 0.45);
+    float fireIntensity = clamp(fireEnergy * (1.9 + uEnergy * 0.6 + uLevel * 0.4), 0.0, 1.0);
 
-    // Deep space core ambient
-    vec3 finalCol = colSpace + nebulaCol * intensity;
+    // ── 3. The "Engulfing" Interaction ──
+    // Cold blue gas billows lap OVER parts of the fire, creating deep layered occlusion
+    // where the orange clouds are literally engulfed and enclosed by the blue clouds!
+    float blueEnclosure = smoothstep(0.42, 0.82, b2) * smoothstep(0.18, 0.65, blueDensity);
+    float surfaceFire = fireIntensity * (1.0 - blueEnclosure * 0.58);
 
-    // Embedded protostellar embers & stardust clusters in the ionization front
-    vec3 dustCoord = (d - dirNebula) * 18.0;
-    float dustNoise = vnoise(dustCoord + vec3(uTime * 0.015));
-    float stardust = pow(max(dustNoise, 0.0), 6.0) * (gasCloud * 0.6 + crest * 1.4) * spatialMask * 2.2;
-    vec3 starTint = mix(vec3(0.8, 0.95, 1.0), vec3(1.0, 0.9, 0.65), crest);
-    finalCol += starTint * stardust;
+    // Searing solar hot core
+    float coreHeat = pow(surfaceFire, 2.2) * smoothstep(0.06, -0.04, deltaY);
 
-    // Center focal glow focused behind central plasma core
-    float centerGlow = pow(max(dot(d, vec3(0.0, 0.0, -1.0)), 0.0), 3.0);
-    finalCol += uRim * centerGlow * (0.03 + uEnergy * 0.05);
+    // ── 4. Astronomical Color Spectrum ──
+    // Enveloping Blue / Cyan Cloud Spectrum
+    vec3 colAbyssCobalt   = vec3(0.012, 0.045, 0.12); // Deep shadowed ravines
+    vec3 colOceanCerulean = vec3(0.035, 0.38, 0.65);  // Mid-density body
+    vec3 colElectricCyan  = vec3(0.05, 0.70, 0.90);   // Glowing cloud folds
+    vec3 colIceTurquoise  = vec3(0.32, 0.88, 0.98);   // Brilliant illuminated crests
+
+    vec3 blueCol = mix(colAbyssCobalt, colOceanCerulean, smoothstep(0.10, 0.45, blueDensity));
+    blueCol = mix(blueCol, colElectricCyan, smoothstep(0.45, 0.75, blueDensity));
+    blueCol = mix(blueCol, colIceTurquoise, smoothstep(0.75, 0.96, blueDensity));
+
+    // Subsurface illumination: the engulfed orange fire illuminates the blue clouds from within!
+    vec3 internalWarmth = vec3(1.0, 0.65, 0.18) * fireIntensity * blueDensity * 0.68;
+    blueCol += internalWarmth;
+
+    // Reactive voice rim tinting
+    blueCol += uRim * (0.04 + uLevel * 0.16) * blueDensity;
+
+    // Engulfed Orange Fire Spectrum
+    vec3 colMoltenAmber = vec3(0.92, 0.28, 0.03); // Deep magma amber
+    vec3 colFireOrange  = vec3(1.0, 0.52, 0.08);  // Blazing combustion flame
+    vec3 colSolarGold   = vec3(1.0, 0.84, 0.20);  // Radiant solar gold
+    vec3 colWhiteHot    = vec3(1.0, 0.98, 0.92);  // Searing thermonuclear core
+
+    vec3 fireCol = mix(colMoltenAmber, colFireOrange, smoothstep(0.06, 0.42, surfaceFire));
+    fireCol = mix(fireCol, colSolarGold, smoothstep(0.42, 0.76, surfaceFire));
+    fireCol = mix(fireCol, colWhiteHot, smoothstep(0.76, 0.98, coreHeat));
+
+    // Composite: Blue clouds enveloping the blazing orange fire
+    vec3 nebulaCol = mix(blueCol, fireCol, clamp(surfaceFire * 1.5, 0.0, 1.0));
+
+    // HDR incandescent solar boost on peaks (triggers Three.js Bloom!)
+    nebulaCol += colSolarGold * pow(coreHeat, 2.0) * 1.9;
+    nebulaCol += colWhiteHot * pow(coreHeat, 3.4) * 1.5;
+
+    // ── 5. Infant Protostars & Embedded Micro-Embers ──
+    vec3 dustCoord = p * 6.0;
+    float dustNoise = vnoise(dustCoord + vec3(uTime * 0.025));
+    float stardust = pow(max(dustNoise, 0.0), 6.0) * (blueDensity * 0.5 + surfaceFire * 2.2) * 3.2;
+    vec3 starTint = mix(vec3(0.8, 0.95, 1.0), vec3(1.0, 0.88, 0.55), surfaceFire);
+    nebulaCol += starTint * stardust;
+
+    // Total gas density blending over deep cosmic space
+    float totalGas = clamp(blueDensity * 0.85 + surfaceFire * 1.25, 0.0, 1.0) * forwardMask;
+    vec3 finalCol = mix(baseSpace, baseSpace + nebulaCol, totalGas * (0.85 + uEnergy * 0.25));
+
+    // Skyward stars shining through thin upper fringes
+    vec3 starCoordSky = d * 55.0;
+    float starNSky = vnoise(starCoordSky);
+    float starSky = pow(max(starNSky - 0.65, 0.0) / 0.35, 12.0) * (1.0 - totalGas * 0.7) * 1.6;
+    finalCol += vec3(0.9, 0.95, 1.0) * starSky * forwardMask;
 
     gl_FragColor = vec4(finalCol, 1.0);
   }
