@@ -581,9 +581,18 @@ const satAgentSort = (a: AgentClient, b: AgentClient) => {
 };
 const satAgentColor = (a: AgentClient) =>
   SAT_AGENT_COLORS[a.id] || (a.spawnSpec ? `hsl(${satSpawnHue(a.id)} 85% 68%)` : '#94a3b8');
-/** Enterprise fleet (revenue agents + self-spawned) gets a real 3D satellite hull. */
+/** Enterprise fleet (revenue agents + self-spawned) gets celestial halo presence. */
 const satIsEnterprise = (a?: AgentClient | null) =>
   !!a && (a.tier === 'enterprise' || !!a.spawnSpec);
+/** Sovereign apex cognitive nodes: Antigravity & Devin. */
+const satIsApex = (a?: AgentClient | null) =>
+  !!a && (a.id === 'antigravity' || a.id === 'devin');
+/** Omni-syndication carrier distribution hub. */
+const satIsDistributor = (a?: AgentClient | null) =>
+  !!a && a.id === 'distributor';
+/** Omnidirectional sensor astrolabes. */
+const satIsSentinel = (a?: AgentClient | null) =>
+  !!a && (a.id === 'sentinel' || a.id === 'warden');
 
 // Soft radial glow sprite texture — shared by all agent vessel halos.
 let glowTex: THREE.CanvasTexture | null = null;
@@ -662,7 +671,7 @@ function Satellites({ live }: { live: React.MutableRefObject<LiveSignal> }) {
   // 3D Crystalline Neural Astrolabe vessels — sacred geometric resonators
   // riding orbit slots for all active agents.
   const satMeshRefs = useRef<(THREE.Group | null)[]>([]);
-  const satCoreRefs = useRef<(THREE.Mesh | null)[]>([]);
+  const satCoreRefs = useRef<((THREE.Group | THREE.Mesh) | null)[]>([]);
   const satCoreMatRefs = useRef<(THREE.MeshStandardMaterial | null)[]>([]);
   const satCageRefs = useRef<(THREE.Mesh | null)[]>([]);
   const satCageMatRefs = useRef<(THREE.MeshPhysicalMaterial | null)[]>([]);
@@ -828,7 +837,7 @@ function Satellites({ live }: { live: React.MutableRefObject<LiveSignal> }) {
         hull.visible = !!agent;
         if (agent && col) {
           hull.position.set(px, py, pz);
-          // Orient: tangential alignment with orbital arc
+          // Orient: tangential alignment with orbital arc + fluid Lissajous drift
           const a2 = a + 0.09;
           const rad2 = s.radius * (agent.spawnSpec ? 1.38 : 1);
           tmpW.set(
@@ -842,90 +851,106 @@ function Satellites({ live }: { live: React.MutableRefObject<LiveSignal> }) {
           tmpCtrl.crossVectors(up, fwd).normalize();
           basisMat.makeBasis(tmpCtrl, up, fwd);
           hull.quaternion.setFromRotationMatrix(basisMat);
-          hull.rotateZ(Math.sin(t * 0.15 + i * 1.7) * 0.05);
+
+          // Ethereal hydrodynamic attitude sway
+          const swayZ = Math.sin(t * 0.45 + i * 1.7) * 0.08 + Math.cos(t * 0.22 + i) * 0.04;
+          const swayX = Math.cos(t * 0.38 + i * 2.1) * 0.06;
+          hull.rotateZ(swayZ);
+          hull.rotateX(swayX);
 
           const ent = satIsEnterprise(agent);
+          const apex = satIsApex(agent);
+          const dist = satIsDistributor(agent);
+          const sent = satIsSentinel(agent);
           const dim = agent.status === 'offline' || agent.status === 'retired';
           const err = agent.status === 'error';
           const wrk = agent.status === 'working';
 
-          // Quantum core: faceted octahedron spinning & pulsing
+          // Quantum core: faceted star tetrahedron spinning & pulsing
           const core = satCoreRefs.current[i];
           const coreMat = satCoreMatRefs.current[i];
           if (core) {
-            core.rotation.x = t * (wrk ? 2.6 : 0.9) + i;
-            core.rotation.y = t * (wrk ? 3.4 : 1.2) + i * 1.4;
+            core.rotation.x = t * (wrk ? (apex ? 3.4 : 2.8) : (apex ? 1.3 : 0.95)) + i;
+            core.rotation.y = t * (wrk ? (apex ? 4.2 : 3.6) : (apex ? 1.6 : 1.25)) + i * 1.4;
             const corePulse = wrk
-              ? 1 + 0.18 * Math.sin(t * 8.5 + i * 2)
+              ? 1 + (apex ? 0.24 : 0.18) * Math.sin(t * 8.5 + i * 2)
               : err
               ? 0.9 + 0.25 * Math.sin(t * 14 + i)
-              : 1 + 0.07 * Math.sin(t * 2.2 + i);
+              : 1 + 0.08 * Math.sin(t * 2.2 + i);
             core.scale.setScalar(corePulse);
           }
           if (coreMat) {
-            coreMat.color.copy(col).lerp(COLOR_WHITE, wrk ? 0.45 : 0.2);
+            coreMat.color.copy(col).lerp(COLOR_WHITE, wrk ? (apex ? 0.6 : 0.45) : 0.25);
             coreMat.emissive.copy(err ? COLOR_CRIMSON : col);
-            coreMat.emissiveIntensity = dim ? 0.18 : wrk ? 1.6 + 0.4 * Math.sin(t * 6) : err ? 1.4 * (0.5 + 0.5 * Math.sin(t * 12)) : 0.85;
+            coreMat.emissiveIntensity = dim
+              ? 0.2
+              : apex
+              ? (wrk ? 2.4 + 0.5 * Math.sin(t * 7) : 1.4)
+              : wrk
+              ? 1.8 + 0.4 * Math.sin(t * 6)
+              : err
+              ? 1.5 * (0.5 + 0.5 * Math.sin(t * 12))
+              : 0.9;
           }
 
-          // Crystalline dodecahedron cage: counter-rotating translucent refraction
+          // Crystalline dodecahedron cage: counter-rotating iridescent refraction
           const cage = satCageRefs.current[i];
           const cageMat = satCageMatRefs.current[i];
           const wireMat = satWireMatRefs.current[i];
           if (cage) {
-            cage.rotation.x = -t * (wrk ? 0.95 : 0.35) + i * 0.7;
-            cage.rotation.y = t * (wrk ? 1.15 : 0.45) + i;
+            cage.rotation.x = -t * (wrk ? 1.05 : 0.4) + i * 0.7;
+            cage.rotation.y = t * (wrk ? 1.25 : 0.5) + i;
           }
           if (cageMat) {
             cageMat.emissive.copy(err ? COLOR_CRIMSON : col);
-            cageMat.emissiveIntensity = dim ? 0.04 : wrk ? 0.45 + 0.15 * Math.sin(t * 4) : 0.2;
-            cageMat.opacity = dim ? 0.3 : 0.82;
+            cageMat.emissiveIntensity = dim ? 0.04 : apex ? (wrk ? 0.6 : 0.3) : wrk ? 0.48 + 0.15 * Math.sin(t * 4) : 0.22;
+            cageMat.opacity = dim ? 0.3 : 0.88;
           }
           if (wireMat) {
             wireMat.color.copy(err ? COLOR_CRIMSON : col);
-            wireMat.opacity = dim ? 0.1 : wrk ? 0.75 + 0.2 * Math.sin(t * 5) : 0.38;
+            wireMat.opacity = dim ? 0.1 : wrk ? 0.8 + 0.2 * Math.sin(t * 5) : 0.42;
           }
 
           // Astrolabe Gimbal Ring 1: equatorial rotation
           const r1 = satRing1Refs.current[i];
           const r1Mat = satRing1MatRefs.current[i];
           if (r1) {
-            r1.rotation.z = t * (wrk ? 2.2 : 0.75) + i * 0.5;
-            r1.rotation.x = Math.sin(t * 0.6 + i) * 0.22;
+            r1.rotation.z = t * (wrk ? 2.4 : 0.8) + i * 0.5;
+            r1.rotation.x = Math.sin(t * 0.6 + i) * 0.24;
           }
           if (r1Mat) {
             r1Mat.color.copy(col).lerp(COLOR_LIGHT_SLATE, 0.45);
             r1Mat.emissive.copy(err ? COLOR_CRIMSON : col);
-            r1Mat.emissiveIntensity = dim ? 0.08 : wrk ? 0.95 : 0.42;
+            r1Mat.emissiveIntensity = dim ? 0.08 : wrk ? 1.1 : 0.5;
           }
 
           // Astrolabe Gimbal Ring 2: polar gyroscopic precession
           const r2 = satRing2Refs.current[i];
           const r2Mat = satRing2MatRefs.current[i];
           if (r2) {
-            r2.rotation.y = -t * (wrk ? 1.9 : 0.65) + i * 0.8;
-            r2.rotation.z = Math.cos(t * 0.5 + i) * 0.22;
+            r2.rotation.y = -t * (wrk ? 2.1 : 0.7) + i * 0.8;
+            r2.rotation.z = Math.cos(t * 0.5 + i) * 0.24;
           }
           if (r2Mat) {
             r2Mat.color.copy(col).lerp(COLOR_SLATE, 0.3);
             r2Mat.emissive.copy(err ? COLOR_CRIMSON : col);
-            r2Mat.emissiveIntensity = dim ? 0.08 : wrk ? 0.85 : 0.38;
+            r2Mat.emissiveIntensity = dim ? 0.08 : wrk ? 0.95 : 0.45;
           }
 
           // Enterprise Celestial Halo & Diamond Shards
           const entGroup = satEnterpriseGroupRefs.current[i];
           const r3Mat = satRing3MatRefs.current[i];
           if (entGroup) {
-            entGroup.visible = ent;
-            if (ent) {
-              entGroup.rotation.z = t * (wrk ? 1.3 : 0.42) + i;
+            entGroup.visible = ent || apex;
+            if (entGroup.visible) {
+              entGroup.rotation.z = t * (wrk ? 1.4 : 0.45) + i;
               entGroup.rotation.x = 0.62 + Math.sin(t * 0.35 + i) * 0.08;
             }
           }
           if (r3Mat) {
-            r3Mat.color.copy(col).lerp(COLOR_WHITE, 0.55);
+            r3Mat.color.copy(col).lerp(COLOR_WHITE, 0.6);
             r3Mat.emissive.copy(err ? COLOR_CRIMSON : col);
-            r3Mat.emissiveIntensity = dim ? 0.1 : wrk ? 1.25 : 0.6;
+            r3Mat.emissiveIntensity = dim ? 0.1 : apex ? (wrk ? 1.5 : 0.9) : wrk ? 1.3 : 0.65;
           }
 
           // Harmonic Field Corona: central additive glow
@@ -933,12 +958,12 @@ function Satellites({ live }: { live: React.MutableRefObject<LiveSignal> }) {
           if (corona) {
             const cm = corona.material as THREE.SpriteMaterial;
             cm.color.copy(err ? COLOR_CRIMSON : col);
-            corona.scale.setScalar((dim ? 0.16 : wrk ? 0.38 + 0.08 * Math.sin(t * 7 + i) : 0.26 + 0.03 * Math.sin(t * 2 + i)) * (ent ? 1.25 : 1));
-            cm.opacity = dim ? 0.12 : wrk ? 0.85 : 0.48;
+            corona.scale.setScalar((dim ? 0.16 : wrk ? 0.42 + 0.08 * Math.sin(t * 7 + i) : 0.28 + 0.03 * Math.sin(t * 2 + i)) * (apex ? 1.4 : ent ? 1.25 : 1));
+            cm.opacity = dim ? 0.12 : wrk ? 0.88 : 0.52;
           }
 
-          // Vessel scale: enterprise tier gets +28% presence, work state expands heartbeat
-          const baseScale = (ent ? 0.32 : 0.25) * (wrk && !dim ? 1 + 0.08 * Math.sin(t * 5.2 + i * 1.7) : 1);
+          // Vessel scale: apex singularities get +38% presence, enterprise get +28%
+          const baseScale = (apex ? 0.36 : ent ? 0.32 : 0.26) * (wrk && !dim ? 1 + 0.08 * Math.sin(t * 5.2 + i * 1.7) : 1);
           hull.scale.setScalar(baseScale);
         }
       }
@@ -1112,58 +1137,75 @@ function Satellites({ live }: { live: React.MutableRefObject<LiveSignal> }) {
             onPointerOver={() => { document.body.style.cursor = 'pointer'; }}
             onPointerOut={() => { document.body.style.cursor = ''; }}
           >
-            {/* ── 1. Inner Quantum Singularity (Faceted Octahedron) ── */}
-            <mesh ref={(el) => { satCoreRefs.current[i] = el; }}>
-              <octahedronGeometry args={[0.04, 0]} />
-              <meshStandardMaterial
-                ref={(el) => { satCoreMatRefs.current[i] = el; }}
-                color="#ffffff"
-                emissive="#67e8f9"
-                emissiveIntensity={1.2}
-                roughness={0.1}
-                metalness={0.9}
-              />
-            </mesh>
+            {/* ── 1. Inner Quantum Singularity (Nested Star Tetrahedron) ── */}
+            <group ref={(el) => { satCoreRefs.current[i] = el; }}>
+              <mesh>
+                <octahedronGeometry args={[0.042, 0]} />
+                <meshStandardMaterial
+                  ref={(el) => { satCoreMatRefs.current[i] = el; }}
+                  color="#ffffff"
+                  emissive="#67e8f9"
+                  emissiveIntensity={1.35}
+                  roughness={0.08}
+                  metalness={0.92}
+                />
+              </mesh>
+              {/* Counter-nested diamond spark forming sacred 3D merkaba */}
+              <mesh rotation={[Math.PI / 4, 0, Math.PI / 4]}>
+                <octahedronGeometry args={[0.024, 0]} />
+                <meshBasicMaterial
+                  color="#ffffff"
+                  transparent
+                  opacity={0.95}
+                />
+              </mesh>
+            </group>
 
-            {/* ── 2. Crystalline Prismatic Shard Hull (Translucent Dodecahedron) ── */}
+            {/* ── 2. Crystalline Prismatic Shard Hull (Iridescent Flint Glass) ── */}
             <mesh ref={(el) => { satCageRefs.current[i] = el; }}>
-              <dodecahedronGeometry args={[0.076, 0]} />
+              <dodecahedronGeometry args={[0.078, 0]} />
               <meshPhysicalMaterial
                 ref={(el) => { satCageMatRefs.current[i] = el; }}
-                color="#e0f2fe"
-                transmission={0.82}
-                thickness={0.35}
-                roughness={0.06}
-                metalness={0.12}
-                ior={1.52}
+                color="#f0f9ff"
+                transmission={0.92}
+                thickness={0.48}
+                roughness={0.04}
+                metalness={0.08}
+                ior={1.62}
+                iridescence={0.85}
+                iridescenceIOR={1.33}
+                clearcoat={1.0}
+                clearcoatRoughness={0.04}
+                attenuationColor="#7dd3fc"
+                attenuationDistance={0.18}
                 transparent
-                opacity={0.85}
+                opacity={0.88}
               />
             </mesh>
 
             {/* ── 3. Geometric Laser Filament (Faceting Wireframe) ── */}
             <mesh>
-              <dodecahedronGeometry args={[0.077, 0]} />
+              <dodecahedronGeometry args={[0.079, 0]} />
               <meshBasicMaterial
                 ref={(el) => { satWireMatRefs.current[i] = el; }}
                 color="#67e8f9"
                 wireframe
                 transparent
-                opacity={0.4}
+                opacity={0.42}
               />
             </mesh>
 
             {/* ── 4. Astrolabe Gimbal Rings (Nested Torus Gyroscopes) ── */}
             {/* Equatorial Ring */}
             <mesh ref={(el) => { satRing1Refs.current[i] = el; }}>
-              <torusGeometry args={[0.115, 0.003, 16, 48]} />
+              <torusGeometry args={[0.118, 0.0032, 16, 56]} />
               <meshStandardMaterial
                 ref={(el) => { satRing1MatRefs.current[i] = el; }}
                 color="#e2e8f0"
                 emissive="#67e8f9"
-                emissiveIntensity={0.5}
-                metalness={0.92}
-                roughness={0.18}
+                emissiveIntensity={0.6}
+                metalness={0.95}
+                roughness={0.12}
               />
             </mesh>
             {/* Polar Ring */}
@@ -1171,14 +1213,14 @@ function Satellites({ live }: { live: React.MutableRefObject<LiveSignal> }) {
               ref={(el) => { satRing2Refs.current[i] = el; }}
               rotation={[Math.PI / 2, 0, 0]}
             >
-              <torusGeometry args={[0.132, 0.003, 16, 48]} />
+              <torusGeometry args={[0.136, 0.0032, 16, 56]} />
               <meshStandardMaterial
                 ref={(el) => { satRing2MatRefs.current[i] = el; }}
                 color="#cbd5e1"
                 emissive="#67e8f9"
-                emissiveIntensity={0.45}
-                metalness={0.92}
-                roughness={0.18}
+                emissiveIntensity={0.55}
+                metalness={0.95}
+                roughness={0.12}
               />
             </mesh>
 

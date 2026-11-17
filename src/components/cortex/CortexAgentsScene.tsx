@@ -97,9 +97,9 @@ const BUSINESS_STATIONS: BusinessStation[] = [
   },
 ];
 
-/** 2D spacestation glyph — same vector language as the agent vessels:
- *  habitat torus around a truss spine, solar wings outboard, blinking
- *  beacon. `s` scales the ~96×56 footprint; drawn upright, never rotates. */
+/** 2D Sacred Foundry Citadel — sovereign enterprise syndication nexus.
+ *  Tri-concentric astrolabe rings with coordinate ticks, micro-diamonds,
+ *  radiant quantum core, and directional flux emitter arrays. */
 function drawStationGlyph(
   ctx: CanvasRenderingContext2D,
   x: number, y: number, s: number,
@@ -107,67 +107,133 @@ function drawStationGlyph(
 ) {
   ctx.save();
   ctx.translate(x, y);
-  // solar wings — dark PV arrays with cyan cell grid, outboard of the hub
-  const wingL = 34 * s, wingY = -3.4 * s, wingH = 6.8 * s;
-  for (const d of [-1, 1]) {
-    const wx = d === 1 ? 9 * s : -9 * s - wingL;
-    ctx.fillStyle = '#0b1226';
-    ctx.fillRect(wx, wingY, wingL, wingH);
-    ctx.strokeStyle = 'rgba(103,232,249,0.45)';
-    ctx.lineWidth = 1;
-    ctx.strokeRect(wx, wingY, wingL, wingH);
-    ctx.strokeStyle = 'rgba(103,232,249,0.16)';
-    for (let gx = wx + 6 * s; gx < wx + wingL - 2; gx += 6 * s) {
-      ctx.beginPath(); ctx.moveTo(gx, wingY); ctx.lineTo(gx, wingY + wingH); ctx.stroke();
+
+  // 1. Ambient coronal flare
+  const pulse = busy ? 0.7 + 0.3 * Math.sin(t * 8) : 0.35 + 0.15 * Math.sin(t * 2);
+  const qg = ctx.createRadialGradient(0, 0, 0, 0, 0, 28 * s);
+  qg.addColorStop(0, hexA(col, pulse * 0.45));
+  qg.addColorStop(0.5, hexA(col, pulse * 0.12));
+  qg.addColorStop(1, 'rgba(0,0,0,0)');
+  ctx.fillStyle = qg;
+  ctx.beginPath();
+  ctx.arc(0, 0, 28 * s, 0, Math.PI * 2);
+  ctx.fill();
+
+  // 2. Counter-rotating outer astrolabe calibration ring
+  ctx.save();
+  ctx.rotate(t * (busy ? 1.4 : 0.45));
+  ctx.strokeStyle = hexA(col, 0.45);
+  ctx.lineWidth = 1 * s;
+  ctx.setLineDash([3 * s, 6 * s]);
+  ctx.beginPath();
+  ctx.arc(0, 0, 22 * s, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.setLineDash([]);
+  // 4 cardinal orbital diamond nodes
+  for (let k = 0; k < 4; k++) {
+    const ka = (k * Math.PI) / 2;
+    const dx = Math.cos(ka) * 22 * s;
+    const dy = Math.sin(ka) * 22 * s;
+    ctx.fillStyle = '#ffffff';
+    ctx.beginPath();
+    ctx.moveTo(dx, dy - 2.5 * s);
+    ctx.lineTo(dx + 2.5 * s, dy);
+    ctx.lineTo(dx, dy + 2.5 * s);
+    ctx.lineTo(dx - 2.5 * s, dy);
+    ctx.closePath();
+    ctx.fill();
+  }
+  ctx.restore();
+
+  // 3. Counter-rotating inner polar ring with micro ticks
+  ctx.save();
+  ctx.rotate(-t * (busy ? 1.8 : 0.6));
+  ctx.strokeStyle = 'rgba(226,232,240,0.7)';
+  ctx.lineWidth = 1.2 * s;
+  ctx.beginPath();
+  ctx.arc(0, 0, 15 * s, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.strokeStyle = hexA(col, 0.85);
+  for (let deg = 0; deg < 8; deg++) {
+    const da = (deg * Math.PI) / 4;
+    ctx.beginPath();
+    ctx.moveTo(Math.cos(da) * 13 * s, Math.sin(da) * 13 * s);
+    ctx.lineTo(Math.cos(da) * 16.5 * s, Math.sin(da) * 16.5 * s);
+    ctx.stroke();
+  }
+  ctx.restore();
+
+  // 4. Central Sacred Hex-Core / Sovereign Prismatic Nexus
+  ctx.fillStyle = '#060a16';
+  ctx.strokeStyle = col;
+  ctx.lineWidth = 1.6 * s;
+  ctx.beginPath();
+  for (let h = 0; h < 6; h++) {
+    const ha = (h * Math.PI) / 3;
+    const hx = Math.cos(ha) * 8.5 * s;
+    const hy = Math.sin(ha) * 8.5 * s;
+    if (h === 0) ctx.moveTo(hx, hy);
+    else ctx.lineTo(hx, hy);
+  }
+  ctx.closePath();
+  ctx.fill();
+  ctx.stroke();
+
+  // 5. Radiating carrier waveforms when busy (omni-syndication flux)
+  if (busy) {
+    for (let w = 1; w <= 3; w++) {
+      const wavePhase = (t * 2.5 + w * 0.7) % 3;
+      const waveR = (9 + wavePhase * 10) * s;
+      const waveAlpha = Math.max(0, 0.7 - (wavePhase / 3) * 0.7);
+      ctx.strokeStyle = hexA(col, waveAlpha);
+      ctx.lineWidth = 1.2 * s;
+      ctx.beginPath();
+      ctx.arc(0, 0, waveR, 0, Math.PI * 2);
+      ctx.stroke();
     }
   }
-  // truss spine
-  ctx.fillStyle = '#26314e';
-  ctx.strokeStyle = 'rgba(199,206,222,0.7)';
-  ctx.fillRect(-9 * s, -1.8 * s, 18 * s, 3.6 * s);
-  ctx.strokeRect(-9 * s, -1.8 * s, 18 * s, 3.6 * s);
-  // habitat torus — the station's signature ring, vertical through the hub
-  ctx.strokeStyle = '#c7cede';
-  ctx.lineWidth = 2.4 * s;
-  ctx.beginPath(); ctx.ellipse(0, 0, 11 * s, 15 * s, 0, 0, Math.PI * 2); ctx.stroke();
-  ctx.strokeStyle = hexA(col, 0.5);
-  ctx.lineWidth = 1 * s;
-  ctx.beginPath(); ctx.ellipse(0, 0, 8.5 * s, 12.5 * s, 0, 0, Math.PI * 2); ctx.stroke();
-  // hub
-  ctx.fillStyle = '#e8c98a';
-  ctx.beginPath(); ctx.arc(0, 0, 3.4 * s, 0, Math.PI * 2); ctx.fill();
-  ctx.strokeStyle = 'rgba(232,201,138,0.9)';
-  ctx.lineWidth = 1;
-  ctx.beginPath(); ctx.arc(0, 0, 4.6 * s, 0, Math.PI * 2); ctx.stroke();
-  // service pods under the ring
-  ctx.fillStyle = '#182642';
-  ctx.fillRect(-4 * s, 13 * s, 3 * s, 5 * s);
-  ctx.fillRect(1 * s, 13 * s, 3 * s, 5 * s);
-  // beacon — strobes faster while the venture is busy
-  const blink = busy ? (Math.sin(t * 9) > 0 ? 1 : 0.25) : 0.45 + 0.3 * Math.sin(t * 2);
-  ctx.fillStyle = hexA(col, blink);
-  ctx.beginPath(); ctx.arc(0, -16 * s, 1.8 * s, 0, Math.PI * 2); ctx.fill();
+
+  // 6. Singularity nucleus
+  const nucG = ctx.createRadialGradient(0, 0, 0, 0, 0, 4.5 * s);
+  nucG.addColorStop(0, '#ffffff');
+  nucG.addColorStop(0.4, col);
+  nucG.addColorStop(1, 'rgba(0,0,0,0)');
+  ctx.fillStyle = nucG;
+  ctx.beginPath();
+  ctx.arc(0, 0, 4.5 * s, 0, Math.PI * 2);
+  ctx.fill();
+
   ctx.restore();
 }
 
-/** Roster glyph — mirrors the canvas vessels: diamond for standard agents,
- *  satellite for enterprise/spawned. Pure SVG so the DOM roster matches. */
+/** Roster glyph — mirrors the sacred astrolabes:
+ *  Sacred multi-ring astrolabe for enterprise/spawned,
+ *  faceted quantum prism for standard agents. Pure SVG. */
 const AgentGlyph: React.FC<{ enterprise?: boolean; color: string }> = ({ enterprise, color }) =>
   enterprise ? (
-    <svg width="30" height="20" viewBox="-22 -13 44 26" style={{ flexShrink: 0 }}>
-      <rect x="-21" y="-5" width="13" height="10" fill={hexA(color, 0.13)} stroke={color} strokeOpacity="0.55" strokeWidth="0.8" />
-      <rect x="8" y="-5" width="13" height="10" fill={hexA(color, 0.13)} stroke={color} strokeOpacity="0.55" strokeWidth="0.8" />
-      <path d="M-17.5 -2.5h6M-17.5 0h6M-17.5 2.5h6M12.5 -2.5h6M12.5 0h6M12.5 2.5h6" stroke={color} strokeOpacity="0.4" strokeWidth="0.7" />
-      <rect x="-6.5" y="-5.8" width="13" height="11.6" rx="2" fill="#0a1120" stroke={color} strokeWidth="1.2" />
-      <rect x="-4.2" y="-1.4" width="8.4" height="2.8" fill={color} opacity="0.45" />
-      <circle cx="0" cy="-7.2" r="1.7" fill="#f87171" />
-      <circle cx="0" cy="0" r="14.5" fill="none" stroke={color} strokeOpacity="0.5" strokeWidth="1" strokeDasharray="3 5" />
+    <svg width="26" height="26" viewBox="-13 -13 26 26" style={{ flexShrink: 0 }}>
+      {/* Outer astrolabe resonance ring */}
+      <circle cx="0" cy="0" r="11" fill="none" stroke={color} strokeOpacity="0.4" strokeWidth="0.8" strokeDasharray="3 3" />
+      {/* Inner polar gimbal ring */}
+      <circle cx="0" cy="0" r="7.5" fill="none" stroke="#e2e8f0" strokeOpacity="0.75" strokeWidth="1" />
+      {/* Sacred faceted diamond core */}
+      <polygon points="0,-6.5 5,0 0,6.5 -5,0" fill="#060a16" stroke={color} strokeWidth="1.2" />
+      {/* 4 Cardinal focus diamond pips */}
+      <circle cx="0" cy="-11" r="1.2" fill="#ffffff" />
+      <circle cx="11" cy="0" r="1.2" fill="#ffffff" />
+      <circle cx="0" cy="11" r="1.2" fill="#ffffff" />
+      <circle cx="-11" cy="0" r="1.2" fill="#ffffff" />
+      {/* Quantum singularity core */}
+      <circle cx="0" cy="0" r="2" fill="#ffffff" />
     </svg>
   ) : (
-    <svg width="20" height="24" viewBox="-12 -14 24 28" style={{ flexShrink: 0 }}>
-      <path d="M0 -11 L8 0 L0 11 L-8 0 Z" fill="#0a1120" stroke={color} strokeWidth="1.4" />
-      <rect x="-3.4" y="-3.4" width="6.8" height="6.8" fill="none" stroke={color} strokeOpacity="0.6" strokeWidth="1" />
-      <circle cx="-2.2" cy="-4.4" r="1.3" fill="rgba(240,249,255,0.45)" />
+    <svg width="20" height="24" viewBox="-10 -12 20 24" style={{ flexShrink: 0 }}>
+      {/* Faceted octahedral prism */}
+      <polygon points="0,-9.5 7,0 0,9.5 -7,0" fill="#060a16" stroke={color} strokeWidth="1.3" />
+      {/* Inner diamond resonance lattice */}
+      <polygon points="0,-4 3.5,0 0,4 -3.5,0" fill="none" stroke={color} strokeOpacity="0.75" strokeWidth="0.8" />
+      {/* Specular glint */}
+      <circle cx="-1.5" cy="-3.5" r="1" fill="#ffffff" opacity="0.85" />
     </svg>
   );
 
@@ -1180,108 +1246,234 @@ export const CortexAgentsScene: React.FC = () => {
           ctx.beginPath(); ctx.arc(0, vr * 1.3, vr * 1.6, 0, Math.PI * 2); ctx.fill();
           ctx.globalCompositeOperation = 'source-over';
         }
-        if (a.id === 'antigravity') {
-          // ── ANTIGRAVITY: Quantum Singularity Spire ──
-          // Sovereign apex vessel: dual tachyon rings + singularity core + quantum aura
+        // ── Cyber-Celestial Sacred Geometry Architecture ──
+        if (a.id === 'antigravity' || a.id === 'devin') {
+          // ── 1. APEX SINGULARITIES: Antigravity & Devin ──
+          // Sovereign apex vessels: dual counter-rotating tachyon rings + Forerunner diamond + quantum core
           const ringRad = vr * 1.75;
           ctx.save();
-          // Counter-rotating tachyon ring 1
-          ctx.rotate(time * 1.6);
-          ctx.strokeStyle = '#c084fc';
+          // Counter-rotating calibration ring 1
+          ctx.rotate(time * (working ? 3.0 : 1.4));
+          ctx.strokeStyle = col;
           ctx.lineWidth = 1.4;
           ctx.setLineDash([7, 5]);
           ctx.beginPath(); ctx.arc(0, 0, ringRad, 0, Math.PI * 2); ctx.stroke();
-          // Counter-rotating tachyon ring 2
-          ctx.rotate(-time * 3.0);
-          ctx.strokeStyle = '#38bdf8';
-          ctx.lineWidth = 1.1;
-          ctx.setLineDash([4, 6]);
-          ctx.beginPath(); ctx.arc(0, 0, ringRad * 1.3, 0, Math.PI * 2); ctx.stroke();
+          // Counter-rotating polar ring 2 with 4 cardinal diamond ticks
+          ctx.rotate(-time * (working ? 4.2 : 2.2));
+          ctx.strokeStyle = '#e0f2fe';
+          ctx.lineWidth = 1.0;
+          ctx.setLineDash([3, 5]);
+          ctx.beginPath(); ctx.arc(0, 0, ringRad * 1.28, 0, Math.PI * 2); ctx.stroke();
           ctx.setLineDash([]);
+          for (let k = 0; k < 4; k++) {
+            const ka = (k * Math.PI) / 2;
+            ctx.fillStyle = '#ffffff';
+            ctx.beginPath();
+            ctx.arc(Math.cos(ka) * ringRad * 1.28, Math.sin(ka) * ringRad * 1.28, 1.4, 0, Math.PI * 2);
+            ctx.fill();
+          }
           ctx.restore();
 
           // Singularity Hull: Forerunner Diamond Prism
           ctx.fillStyle = '#060814';
-          ctx.strokeStyle = working ? '#f472b6' : '#c084fc';
+          ctx.strokeStyle = working ? '#f472b6' : col;
           ctx.lineWidth = working ? 2.6 : 1.9;
           ctx.beginPath();
-          ctx.moveTo(0, -vr * 1.42);
-          ctx.lineTo(vr * 1.05, 0);
-          ctx.lineTo(0, vr * 1.42);
-          ctx.lineTo(-vr * 1.05, 0);
+          ctx.moveTo(0, -vr * 1.45);
+          ctx.lineTo(vr * 1.08, 0);
+          ctx.lineTo(0, vr * 1.45);
+          ctx.lineTo(-vr * 1.08, 0);
           ctx.closePath();
           ctx.fill(); ctx.stroke();
 
-          // Inner Quantum Core
+          // Inner facet lattice
+          ctx.strokeStyle = hexA(col, 0.45);
+          ctx.lineWidth = 1;
+          ctx.beginPath();
+          ctx.moveTo(0, -vr * 1.45); ctx.lineTo(0, vr * 1.45);
+          ctx.moveTo(-vr * 1.08, 0); ctx.lineTo(vr * 1.08, 0);
+          ctx.stroke();
+
+          // Quantum Singularity Core
           const qg = ctx.createRadialGradient(0, 0, 0, 0, 0, vr * 0.72);
           qg.addColorStop(0, '#ffffff');
-          qg.addColorStop(0.35, '#c084fc');
+          qg.addColorStop(0.35, col);
           qg.addColorStop(0.8, '#38bdf8');
-          qg.addColorStop(1, 'rgba(192,132,252,0)');
+          qg.addColorStop(1, 'rgba(0,0,0,0)');
           ctx.fillStyle = qg;
           ctx.beginPath(); ctx.arc(0, 0, vr * 0.72, 0, Math.PI * 2); ctx.fill();
 
-          // Specular Spire Glint
-          ctx.fillStyle = 'rgba(255,255,255,0.9)';
-          ctx.beginPath(); ctx.arc(0, -vr * 0.62, 1.8, 0, Math.PI * 2); ctx.fill();
-        } else if (enterprise) {
-          // ── Satellite: solar wings + bus + blinking beacon + spin ring ──
-          const wingY = vr * 0.36, wingH = vr * 0.72, wingW = vr * 1.25;
-          for (const sgn of [-1, 1] as const) {
-            const x0 = sgn > 0 ? vr * 0.58 : -(vr * 0.58 + wingW);
-            ctx.fillStyle = hexA(col, offline ? 0.05 : 0.13);
-            ctx.fillRect(x0, -wingY, wingW, wingH);
-            ctx.strokeStyle = hexA(col, 0.55);
-            ctx.lineWidth = 0.8;
-            ctx.strokeRect(x0, -wingY, wingW, wingH);
-            ctx.beginPath();
-            for (let g = 1; g < 4; g++) {
-              const gx = x0 + (wingW * g) / 4;
-              ctx.moveTo(gx, -wingY); ctx.lineTo(gx, wingY);
-            }
-            ctx.moveTo(x0, -wingY / 3); ctx.lineTo(x0 + wingW, -wingY / 3);
-            ctx.moveTo(x0, wingY / 3); ctx.lineTo(x0 + wingW, wingY / 3);
-            ctx.stroke();
-          }
-          // bus body
-          ctx.fillStyle = '#0a1120';
-          ctx.strokeStyle = col;
-          ctx.lineWidth = working ? 2 : hot ? 1.7 : 1.2;
-          const bw = vr * 0.95, bh = vr * 0.82, bx = -bw / 2, by = -bh / 2;
-          ctx.beginPath();
-          ctx.roundRect(bx, by, bw, bh, vr * 0.16);
-          ctx.fill(); ctx.stroke();
-          // instrument stripe
-          ctx.fillStyle = hexA(col, 0.45);
-          ctx.fillRect(bx + bw * 0.14, -vr * 0.09, bw * 0.72, vr * 0.18);
-          // specular highlight
-          ctx.fillStyle = 'rgba(240,249,255,0.35)';
-          ctx.beginPath(); ctx.arc(bx + bw * 0.24, by + bh * 0.24, vr * 0.12, 0, Math.PI * 2); ctx.fill();
-          // beacon dome — phase-offset blink per agent
-          const blink = 0.5 + 0.5 * Math.sin(time * 3.4 + i * 2.1);
-          ctx.fillStyle = `rgba(248,113,113,${0.35 + 0.6 * blink})`;
-          ctx.beginPath(); ctx.arc(0, by - vr * 0.05, vr * 0.13, 0, Math.PI * 2); ctx.fill();
-          // rotating dashed acquisition ring
-          ctx.rotate(working ? time * 2.4 : time * 0.4);
-          ctx.strokeStyle = hexA(col, working ? 0.95 : hot ? 0.8 : 0.5);
-          ctx.lineWidth = 1;
-          ctx.setLineDash([4, 7]);
-          ctx.beginPath(); ctx.arc(0, 0, vr * 1.6, 0, Math.PI * 2); ctx.stroke();
+          // Specular glint
+          ctx.fillStyle = 'rgba(255,255,255,0.95)';
+          ctx.beginPath(); ctx.arc(0, -vr * 0.65, 1.8, 0, Math.PI * 2); ctx.fill();
+        } else if (a.id === 'distributor') {
+          // ── 2. OMNI-SYNDICATION HARMONIC ASTROLABE: Distributor ──
+          // Radiant tri-torus wave emitter + hexagonal resonance core
+          const hubR = vr * 1.35;
+          ctx.save();
+          ctx.rotate(time * (working ? 2.5 : 0.8));
+          ctx.strokeStyle = hexA(col, 0.6);
+          ctx.lineWidth = 1.2;
+          ctx.setLineDash([4, 6]);
+          ctx.beginPath(); ctx.arc(0, 0, hubR, 0, Math.PI * 2); ctx.stroke();
           ctx.setLineDash([]);
-        } else {
-          ctx.fillStyle = '#0a1120';
+          // 4 cardinal orbital diamond nodes
+          for (let k = 0; k < 4; k++) {
+            const ka = (k * Math.PI) / 2;
+            const dx = Math.cos(ka) * hubR, dy = Math.sin(ka) * hubR;
+            ctx.fillStyle = '#ffffff';
+            ctx.beginPath();
+            ctx.moveTo(dx, dy - 2); ctx.lineTo(dx + 2, dy); ctx.lineTo(dx, dy + 2); ctx.lineTo(dx - 2, dy);
+            ctx.closePath(); ctx.fill();
+          }
+          ctx.restore();
+
+          // Hexagonal Resonance Core
+          ctx.fillStyle = '#060a16';
           ctx.strokeStyle = col;
-          ctx.lineWidth = working ? 2 : hot ? 1.7 : 1.2;
+          ctx.lineWidth = working ? 2.2 : 1.6;
           ctx.beginPath();
-          ctx.moveTo(0, -vr * 1.18); ctx.lineTo(vr * 0.74, 0); ctx.lineTo(0, vr * 1.18); ctx.lineTo(-vr * 0.74, 0);
-          ctx.closePath(); ctx.fill(); ctx.stroke();
-          // specular highlight
-          ctx.fillStyle = 'rgba(240,249,255,0.35)';
-          ctx.beginPath(); ctx.arc(-vr * 0.18, -vr * 0.3, vr * 0.16, 0, Math.PI * 2); ctx.fill();
-          ctx.rotate(working ? time * 2.4 : time * 0.4);
-          ctx.strokeStyle = hexA(col, working ? 0.95 : hot ? 0.8 : 0.5);
+          for (let h = 0; h < 6; h++) {
+            const ha = (h * Math.PI) / 3;
+            const hx = Math.cos(ha) * vr * 0.95;
+            const hy = Math.sin(ha) * vr * 0.95;
+            if (h === 0) ctx.moveTo(hx, hy);
+            else ctx.lineTo(hx, hy);
+          }
+          ctx.closePath();
+          ctx.fill(); ctx.stroke();
+
+          // Radiating Carrier Waveforms when working
+          if (working) {
+            for (let w = 1; w <= 3; w++) {
+              const wavePhase = (time * 3 + w * 0.8) % 3;
+              const waveR = vr * (1.1 + wavePhase * 0.8);
+              ctx.strokeStyle = hexA(col, Math.max(0, 0.65 - wavePhase * 0.22));
+              ctx.lineWidth = 1.1;
+              ctx.beginPath(); ctx.arc(0, 0, waveR, 0, Math.PI * 2); ctx.stroke();
+            }
+          }
+
+          // Central Nucleus
+          const dg = ctx.createRadialGradient(0, 0, 0, 0, 0, vr * 0.55);
+          dg.addColorStop(0, '#ffffff');
+          dg.addColorStop(0.4, col);
+          dg.addColorStop(1, 'rgba(0,0,0,0)');
+          ctx.fillStyle = dg;
+          ctx.beginPath(); ctx.arc(0, 0, vr * 0.55, 0, Math.PI * 2); ctx.fill();
+        } else if (a.id === 'sentinel' || a.id === 'warden') {
+          // ── 3. OMNIDIRECTIONAL SENSOR ASTROLABE: Sentinel & Warden ──
+          // Continuous planar sweep radar beam + concentric cross-hair reticle
+          ctx.save();
+          // Radar sweep line
+          const sweepAngle = time * (working ? 6.0 : 2.4);
+          ctx.strokeStyle = hexA(col, 0.8);
+          ctx.lineWidth = 1.4;
+          ctx.beginPath();
+          ctx.moveTo(0, 0);
+          ctx.lineTo(Math.cos(sweepAngle) * vr * 1.5, Math.sin(sweepAngle) * vr * 1.5);
+          ctx.stroke();
+          // Radar scan sector gradient
+          const sg = ctx.createRadialGradient(0, 0, 0, 0, 0, vr * 1.5);
+          sg.addColorStop(0, hexA(col, 0.35));
+          sg.addColorStop(1, 'rgba(0,0,0,0)');
+          ctx.fillStyle = sg;
+          ctx.beginPath();
+          ctx.moveTo(0, 0);
+          ctx.arc(0, 0, vr * 1.5, sweepAngle - 0.7, sweepAngle);
+          ctx.closePath();
+          ctx.fill();
+          ctx.restore();
+
+          // Calibrated Outer Ring
+          ctx.strokeStyle = hexA(col, 0.5);
           ctx.lineWidth = 1;
-          ctx.strokeRect(-vr * 0.28, -vr * 0.28, vr * 0.56, vr * 0.56);
+          ctx.beginPath(); ctx.arc(0, 0, vr * 1.4, 0, Math.PI * 2); ctx.stroke();
+
+          // Faceted Sensor Octagon
+          ctx.fillStyle = '#060a16';
+          ctx.strokeStyle = col;
+          ctx.lineWidth = working ? 2.2 : 1.6;
+          ctx.beginPath();
+          for (let o = 0; o < 8; o++) {
+            const oa = (o * Math.PI) / 4;
+            const ox = Math.cos(oa) * vr * 0.85;
+            const oy = Math.sin(oa) * vr * 0.85;
+            if (o === 0) ctx.moveTo(ox, oy);
+            else ctx.lineTo(ox, oy);
+          }
+          ctx.closePath();
+          ctx.fill(); ctx.stroke();
+
+          // Sensor Core Tachyon Pip
+          ctx.fillStyle = working ? '#ffffff' : col;
+          ctx.beginPath(); ctx.arc(0, 0, vr * 0.35, 0, Math.PI * 2); ctx.fill();
+        } else if (a.id === 'builder' || a.id === 'runner') {
+          // ── 4. HYPER-TESSERACT MATRIX: Builder & Runner ──
+          // Isometric 4D hypercube lattice rotating on diagonal axes
+          ctx.save();
+          ctx.rotate(time * (working ? 2.6 : 0.7));
+          // Outer isometric cube
+          ctx.fillStyle = '#060a16';
+          ctx.strokeStyle = col;
+          ctx.lineWidth = working ? 2.0 : 1.4;
+          const cw = vr * 0.88;
+          ctx.beginPath();
+          ctx.strokeRect(-cw, -cw, cw * 2, cw * 2);
+          // Inner rotated hypercube
+          ctx.rotate(Math.PI / 4);
+          ctx.strokeStyle = hexA(col, 0.75);
+          ctx.strokeRect(-cw * 0.65, -cw * 0.65, cw * 1.3, cw * 1.3);
+          ctx.restore();
+
+          // Central Kinetic Spark
+          ctx.fillStyle = '#ffffff';
+          ctx.beginPath(); ctx.arc(0, 0, vr * 0.32, 0, Math.PI * 2); ctx.fill();
+        } else {
+          // ── 5. SACRED VECTOR ASTROLABE: Specialists & Spawned Fleet ──
+          // Concentric celestial ring with faceted octahedron prism
+          if (enterprise) {
+            ctx.save();
+            ctx.rotate(time * (working ? 2.2 : 0.6));
+            ctx.strokeStyle = hexA(col, 0.55);
+            ctx.lineWidth = 1;
+            ctx.setLineDash([4, 6]);
+            ctx.beginPath(); ctx.arc(0, 0, vr * 1.5, 0, Math.PI * 2); ctx.stroke();
+            ctx.setLineDash([]);
+            // 4 orbital micro-focus diamonds
+            for (let k = 0; k < 4; k++) {
+              const ka = (k * Math.PI) / 2;
+              ctx.fillStyle = '#ffffff';
+              ctx.beginPath();
+              ctx.arc(Math.cos(ka) * vr * 1.5, Math.sin(ka) * vr * 1.5, 1.2, 0, Math.PI * 2);
+              ctx.fill();
+            }
+            ctx.restore();
+          }
+
+          // Faceted Diamond Hull
+          ctx.fillStyle = '#060a16';
+          ctx.strokeStyle = col;
+          ctx.lineWidth = working ? 2.2 : hot ? 1.8 : 1.3;
+          ctx.beginPath();
+          ctx.moveTo(0, -vr * 1.22);
+          ctx.lineTo(vr * 0.78, 0);
+          ctx.lineTo(0, vr * 1.22);
+          ctx.lineTo(-vr * 0.78, 0);
+          ctx.closePath();
+          ctx.fill(); ctx.stroke();
+
+          // Internal Resonance Lattice
+          ctx.save();
+          ctx.rotate(time * (working ? 2.0 : 0.5));
+          ctx.strokeStyle = hexA(col, working ? 0.9 : 0.45);
+          ctx.lineWidth = 1;
+          ctx.strokeRect(-vr * 0.32, -vr * 0.32, vr * 0.64, vr * 0.64);
+          ctx.restore();
+
+          // Specular glint
+          ctx.fillStyle = 'rgba(255,255,255,0.9)';
+          ctx.beginPath(); ctx.arc(-vr * 0.2, -vr * 0.32, 1.6, 0, Math.PI * 2); ctx.fill();
         }
         ctx.restore();
         ctx.globalAlpha = 1;
