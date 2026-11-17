@@ -175,111 +175,116 @@ const nebulaFragment = /* glsl */ `
     float centerGlow = pow(max(dot(d, vec3(0.0, 0.0, -1.0)), 0.0), 3.0);
     vec3 baseSpace = colSpace + uRim * centerGlow * (0.03 + uEnergy * 0.05);
 
-    // ── Distant Bipolar "Butterfly" Cosmic Nebula (Inspired by User Ref #3 & #5) ──
-    // Lowered 3x from top-left ceiling down to eye-level to the left of the Cortex Core
+    // ── Distant Majestic Spiral Galaxy (Inspired by User Ref #6 & #9) ──
+    // Lowered 3x to eye level to the left of the Cortex Core
     // Looking forward into the scene is -Z, screen-left is -X, screen-up is +Y
-    vec3 dirNebula = normalize(vec3(-0.74, 0.11, -0.66));
+    vec3 dirGalaxy = normalize(vec3(-0.74, 0.11, -0.66));
 
     // Construct local tangent space coordinate frame on the celestial sphere
     vec3 upVec = vec3(0.0, 1.0, 0.0);
-    vec3 rightVec = normalize(cross(upVec, dirNebula));
-    vec3 localUp = cross(dirNebula, rightVec);
+    vec3 rightVec = normalize(cross(upVec, dirGalaxy));
+    vec3 localUp = cross(dirGalaxy, rightVec);
 
-    vec3 diff = d - dirNebula;
+    vec3 diff = d - dirGalaxy;
     float lx = dot(diff, rightVec);
     float ly = dot(diff, localUp);
 
-    // Diagonal tilt (~32 degrees) across the sky like Image #3's cosmic wings
-    const float cosA = 0.848;
-    const float sinA = 0.530;
-    float u = lx * cosA - ly * sinA;  // Major axis along the billowing wings
-    float v = lx * sinA + ly * cosA;  // Minor axis across the central waist
+    // Position angle rotation in the sky plane (phi ~ 28 degrees)
+    const float cosPhi = 0.883;
+    const float sinPhi = 0.469;
+    float gx = lx * cosPhi - ly * sinPhi;
+    float gy = lx * sinPhi + ly * cosPhi;
 
-    // Compact celestial scale (same distance user loved, with an elegant diagonal aspect ratio)
-    const float rx = 0.155;
-    const float ry = 0.092;
-    float rDist = sqrt((u * u) / (rx * rx) + (v * v) / (ry * ry));
+    // Oblique 3D galactic inclination (~58 degrees tilt into deep space)
+    const float tiltAspect = 0.50; // Foreshortened minor axis
+    float px = gx;
+    float py = gy / tiltAspect;
 
-    // GPU Fast Early Exit: outside the distant celestial nebula, render pure dark velvet space
+    // Polar coordinates in the un-squashed galactic disk plane
+    float r = length(vec2(px, py));
+    float angle = atan(py, px);
+
+    // Compact celestial scale (same distance user loved)
+    const float R_gal = 0.145;
+    float s = r / R_gal; // Normalized radius: 0.0 at central supermassive nucleus, 1.0 at outer rim
+
+    // GPU Fast Early Exit: outside the distant galaxy, render pure dark velvet space
     // Zero fake stars, zero stardust speckles, zero fragments — real 3D stars handled by Starfield!
-    if (rDist > 1.0) {
+    if (s > 1.05) {
       gl_FragColor = vec4(baseSpace, 1.0);
       return;
     }
 
     // Outer boundary smooth feathered falloff into the pristine void
-    float outerFade = smoothstep(1.0, 0.74, rDist);
+    float outerFade = smoothstep(1.05, 0.78, s);
 
-    // Local high-frequency coordinates for volumetric billows and gas dynamics
-    vec3 p = vec3(u * 48.0, v * 58.0, dot(diff, dirNebula) * 48.0);
-    float t = uTime * 0.012;
-    vec3 drift = vec3(t * 0.5, -t * 0.35, t * 0.25);
+    // Slow majestic galactic rotation
+    float t = uTime * 0.008;
+    float rotAngle = angle - t;
 
-    // Multi-tier domain warping for fluid gas filaments
-    vec3 q = vec3(fbm2(p + drift), fbm2(p + vec3(3.2, 1.4, 6.1)), fbm2(p + vec3(7.1, 4.3, 2.5)));
-    vec3 r = vec3(fbm2(p + 2.4 * q + vec3(1.7, 8.2, 3.4)), fbm2(p + 2.4 * q + vec3(5.3, 2.7, 8.1)), fbm2(p + 2.4 * q));
-    float gas = fbm(p + 2.6 * r);
+    // ── 1. Logarithmic Spiral Arms (2-Armed Grand Design Spiral) ──
+    // Winding formula: arms curve logarithmically outwards
+    const float windFactor = 4.4;
+    float armAngle = rotAngle - windFactor * sqrt(s);
+    float armWave = cos(2.0 * armAngle); // Two primary spiral arms (symmetric)
+    float armDensity = smoothstep(-0.15, 0.88, armWave);
 
-    // Cauliflower cumulus billow lobes (convex rounded cloud heads)
-    float billow = 1.0 - abs(2.0 * vnoise(p * 2.0 + q * 1.5) - 1.0);
+    // High-definition stellar cluster turbulence along the spiral arms
+    vec3 pTurb = vec3(px * 55.0, py * 55.0, dot(diff, dirGalaxy) * 50.0);
+    float armFBM = fbm(pTurb + vec3(t * 0.4, 0.0, -t * 0.3));
+    float armGas = armDensity * (0.62 + 0.38 * armFBM);
 
-    // Bipolar hourglass wing flaring (pinched at waist, expanding outwards into billowing lobes)
-    float wingProfile = smoothstep(0.038 + 0.52 * abs(u), 0.0, abs(v));
-    float wingGas = (gas * 0.52 + billow * 0.48) * wingProfile;
+    // Radial arm envelope: emerges outside core (s > 0.18) and sweeps to disk edge (s ~ 0.95)
+    float armEnvelope = smoothstep(0.16, 0.42, s) * smoothstep(1.0, 0.65, s);
+    float spiralArms = armGas * armEnvelope;
 
-    // Interstellar absorption dust rifts carving deep crevices across the waist and wings
-    float dustRift = smoothstep(0.34, 0.68, r.y * 0.6 + q.x * 0.4);
-    float nebulaBody = smoothstep(0.18, 0.76, wingGas) * (1.0 - dustRift * 0.46);
+    // Dark interstellar dust lanes (trailing along the inner edges of the spiral arms like Ref #9)
+    float dustAngle = armAngle - 0.28;
+    float dustWave = cos(2.0 * dustAngle);
+    float dustLane = smoothstep(0.40, 0.88, dustWave) * armEnvelope * fbm2(pTurb * 1.6);
 
-    // ── 1. 60% Blue Billowing Wings & Outer Envelope (Electric Cyan / Deep Cerulean) ──
-    vec3 colCobaltDeep    = vec3(0.012, 0.048, 0.16); // Deep shadowed cosmic ravines
-    vec3 colCeruleanOcean = vec3(0.038, 0.38, 0.70);  // Mid-density volumetric cloud body
-    vec3 colElectricCyan  = vec3(0.08, 0.76, 0.95);   // Luminous ionized cyan folds
-    vec3 colIceTurquoise  = vec3(0.44, 0.88, 0.98);   // Brilliant illuminated outer crests
+    // ── 2. 60% Blue Radiant Spiral Arms & Ionized Starburst Regions ──
+    vec3 colCobaltDeep    = vec3(0.015, 0.05, 0.18); // Deep interstellar ravines
+    vec3 colCeruleanOcean = vec3(0.04, 0.40, 0.74);  // Dense spiral arm stars
+    vec3 colElectricCyan  = vec3(0.10, 0.78, 0.96);  // Radiant OB star clusters
+    vec3 colIceTurquoise  = vec3(0.55, 0.92, 1.0);   // Luminous ionized shock crests
 
-    vec3 blueCol = mix(colCobaltDeep, colCeruleanOcean, smoothstep(0.10, 0.45, nebulaBody));
-    blueCol = mix(blueCol, colElectricCyan, smoothstep(0.45, 0.75, nebulaBody));
-    blueCol = mix(blueCol, colIceTurquoise, smoothstep(0.75, 0.95, nebulaBody));
-    blueCol += uRim * (0.04 + uLevel * 0.16) * nebulaBody;
+    vec3 blueArmCol = mix(colCobaltDeep, colCeruleanOcean, smoothstep(0.06, 0.40, spiralArms));
+    blueArmCol = mix(blueArmCol, colElectricCyan, smoothstep(0.40, 0.74, spiralArms));
+    blueArmCol = mix(blueArmCol, colIceTurquoise, smoothstep(0.74, 0.95, spiralArms));
+    blueArmCol += uRim * (0.04 + uLevel * 0.16) * spiralArms;
 
-    // ── 2. 40% Fiery Orange Searing Spine & Molten Combustion Core ──
-    // Molten fire erupts along the central diagonal spine and is cradled within the blue wings
-    float spineDist = abs(v) / (0.035 + 0.38 * abs(u));
-    float spineFire = smoothstep(0.85, 0.0, spineDist);
-    float fireVeins = smoothstep(0.28, 0.72, r.x * 0.5 + q.y * 0.5 + spineFire * 0.45) * smoothstep(0.14, 0.70, nebulaBody);
+    // ── 3. 40% Golden-Orange Central Galactic Bulge & Core ──
+    // Dense spherical stellar population, central bar, and supermassive nucleus
+    float bulge = exp(-s * 6.8);
+    float corePeak = exp(-s * 32.0);
+    float barStructure = smoothstep(0.35, 0.0, length(vec2(px * 1.5, py * 0.68))) * 0.55;
+    float orangeCore = bulge + barStructure;
 
-    vec3 colMoltenAmber = vec3(0.92, 0.28, 0.03); // Deep magma amber
-    vec3 colFireOrange  = vec3(1.0, 0.54, 0.06);  // Blazing thermal flame
-    vec3 colSolarGold   = vec3(1.0, 0.85, 0.18);  // Radiant incandescent gold
-    vec3 colWhiteHot    = vec3(1.0, 0.98, 0.92);  // Searing thermonuclear white
+    vec3 colMoltenAmber = vec3(0.92, 0.28, 0.03); // Deep magma dust envelope
+    vec3 colSolarGold   = vec3(1.0, 0.82, 0.18);  // Dense older stellar population
+    vec3 colWhiteHot    = vec3(1.0, 0.98, 0.92);  // Searing galactic nucleus
 
-    vec3 fireCol = mix(colMoltenAmber, colFireOrange, smoothstep(0.08, 0.44, fireVeins));
-    fireCol = mix(fireCol, colSolarGold, smoothstep(0.44, 0.78, fireVeins));
-    fireCol = mix(fireCol, colWhiteHot, smoothstep(0.78, 0.96, fireVeins));
+    vec3 coreCol = mix(colMoltenAmber, colSolarGold, smoothstep(0.10, 0.55, orangeCore));
+    coreCol = mix(coreCol, colWhiteHot, corePeak * 2.2);
 
-    // ── 3. Central Stellar Nursery Core (Incandescent Newborn Star Cluster) ──
-    float coreRadius = length(vec2(u * 1.3, v * 2.0));
-    float coreGlow = exp(-coreRadius * 46.0);
-    float coreCorona = exp(-coreRadius * 16.0) * 0.65;
-    vec3 centralCore = colWhiteHot * coreGlow * 3.0 + colSolarGold * coreCorona;
+    // ── 4. Balanced Composite: Exactly 60% Blue Spiral Arms & 40% Orange Core ──
+    float coreWeight = smoothstep(0.52, 0.14, s);
+    vec3 galaxyCol = mix(blueArmCol * spiralArms * (1.0 - dustLane * 0.55), coreCol * orangeCore, coreWeight);
 
-    // ── 4. Balanced Composite: Exactly 60% Blue Wings & 40% Orange Fire ──
-    float fireMix = smoothstep(0.16, 0.66, fireVeins) * 0.88;
-    vec3 nebulaCol = mix(blueCol, fireCol, fireMix);
+    // Warm core scatter: golden bulge warmly backlights inner spiral arm boundaries
+    galaxyCol += vec3(1.0, 0.65, 0.18) * orangeCore * spiralArms * 0.35;
 
-    // Warm subsurface scatter: orange fire warmly illuminates the cyan cloud edges
-    nebulaCol += vec3(1.0, 0.62, 0.16) * fireVeins * nebulaBody * 0.38;
-
-    // Solar flare peak hot spots (triggers Three.js Bloom!)
-    nebulaCol += colSolarGold * pow(fireVeins, 2.5) * 1.6;
-    nebulaCol += centralCore;
+    // Supermassive nucleus bloom & hot core
+    galaxyCol += colWhiteHot * corePeak * 3.4;
+    galaxyCol += colSolarGold * pow(orangeCore, 2.8) * 1.6;
 
     // Seamless outer boundary fade into pure void
-    nebulaCol *= outerFade;
+    galaxyCol *= outerFade;
 
     // Final composition
-    float intensity = nebulaBody * (0.82 + uEnergy * 0.25 + uLevel * 0.15) + coreGlow * 1.5;
-    vec3 finalCol = baseSpace + nebulaCol * intensity;
+    float intensity = (spiralArms * 0.88 + orangeCore * 1.45) * (0.82 + uEnergy * 0.25 + uLevel * 0.15) + corePeak * 1.5;
+    vec3 finalCol = baseSpace + galaxyCol * intensity;
 
     gl_FragColor = vec4(finalCol, 1.0);
   }
