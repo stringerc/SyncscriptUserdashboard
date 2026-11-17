@@ -20,6 +20,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { agentsClient, type AgentsSnapshotClient, type AgentClient, type AgentTaskClient, type ModelClient } from '../../lib/cortex-agents-client';
 import { cortexSignalBus } from './CortexVisualizer';
 import { CortexTowerPanel } from './CortexTowerPanel';
+import { CortexFoundryNav } from './CortexFoundryNav';
 
 const AGENT_COLORS: Record<string, string> = {
   antigravity: '#c084fc',
@@ -370,7 +371,7 @@ const AgentDossierPanel: React.FC<{ agent: AgentClient; snap: AgentsSnapshotClie
   return (
     <div style={dockLeft ? {
       // Docked to the roster rail: extends rightward from it, vertically centered.
-      position: 'absolute', left: 242, top: '50%', transform: 'translateY(-50%)', zIndex: 7,
+      position: 'absolute', left: 290, top: '50%', transform: 'translateY(-50%)', zIndex: 7,
       width: 520, maxWidth: 'calc(100vw - 240px)', maxHeight: '74vh', display: 'flex', flexDirection: 'column',
       background: 'linear-gradient(165deg, rgba(8,14,24,0.94), rgba(5,8,15,0.9))',
       border: `1px solid ${hexA(col, 0.35)}`, borderLeft: `3px solid ${col}`, borderRadius: 3, padding: '12px 16px',
@@ -1720,7 +1721,7 @@ export const CortexAgentsScene: React.FC = () => {
       {/* ── Left rail: Mission Control Roster — Apollo Flight Hierarchy ── */}
       {!narrow && (
         <div style={{
-          position: 'absolute', left: 16, top: '50%', transform: 'translateY(-50%)', zIndex: 5,
+          position: 'absolute', left: 64, top: '50%', transform: 'translateY(-50%)', zIndex: 5,
           width: 218, fontFamily: MONO,
           background: 'rgba(4,8,18,0.85)', border: '1px solid rgba(103,232,249,0.18)',
           borderRadius: 4, backdropFilter: 'blur(8px)', overflow: 'hidden',
@@ -2004,6 +2005,12 @@ export const CortexAgentsScene: React.FC = () => {
         <OmniSyndicationPanel onClose={() => setSelectedStation(null)} dockLeft={!narrow} />
       )}
 
+      <CortexFoundryNav
+        snap={snap}
+        onSelectAgent={setSelectedAgent}
+        selectedAgent={selectedAgent}
+        onOpenTower={() => setTowerOpen(true)}
+      />
       {towerOpen && <CortexTowerPanel onClose={() => setTowerOpen(false)} />}
 
       <div style={{ position: 'absolute', inset: 0, zIndex: 8, pointerEvents: 'none', background: 'repeating-linear-gradient(0deg, rgba(255,255,255,0.012) 0px, rgba(255,255,255,0.012) 1px, transparent 1px, transparent 3px)' }} />
