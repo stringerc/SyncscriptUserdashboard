@@ -190,60 +190,62 @@ const nebulaFragment = /* glsl */ `
   void main() {
     vec3 d = normalize(vDir);
 
-    // Far-back-left nebula center direction in camera/world space
-    // Looking forward into the scene is -Z, left is -X, up is +Y.
-    vec3 dirNebula = normalize(vec3(-0.76, 0.42, -0.72));
+    // Distant celestial nebula anchored far back in the upper-left cosmic skybox
+    // Looking forward into the scene is -Z, screen-left is -X, screen-up is +Y.
+    vec3 dirNebula = normalize(vec3(-0.95, 0.48, -0.65));
     float align = dot(d, dirNebula);
 
-    // Localized spatial falloff anchoring the nebula specifically in the far back left
-    float spatialMask = smoothstep(0.38, 0.88, align);
-    spatialMask = pow(spatialMask, 1.4);
+    // Tight localized falloff: confines the nebula strictly to the far upper-back-left quadrant
+    // Any ray angled towards the center (align < 0.70) or right receives 0.0 gas density
+    float spatialMask = smoothstep(0.70, 0.95, align);
+    spatialMask = pow(spatialMask, 1.8);
 
     vec3 colSpace = uDeep;
     if (spatialMask < 0.001) {
-      float centerGlow = pow(max(dot(d, vec3(0.0, 0.0, 1.0)), 0.0), 2.5);
-      vec3 finalCol = colSpace + uRim * centerGlow * (0.04 + uEnergy * 0.06);
+      float centerGlow = pow(max(dot(d, vec3(0.0, 0.0, -1.0)), 0.0), 3.0);
+      vec3 finalCol = colSpace + uRim * centerGlow * (0.03 + uEnergy * 0.05);
       gl_FragColor = vec4(finalCol, 1.0);
       return;
     }
 
-    // Coordinates centered and scaled around the far-back-left nebula region
-    vec3 p = (d - dirNebula * 0.5) * 3.2;
+    // High-frequency coordinates centered directly on the far-back-left nebula focal point
+    // Higher scale multiplier (5.8) renders delicate, distant cosmic filaments rather than large close clouds
+    vec3 p = (d - dirNebula) * 5.8;
 
     vec3 q, r;
     float gas = nebulaNoise(p, q, r);
-    float fineDust = fbm(d * 6.5 + vec3(uTime * 0.01));
+    float fineDust = fbm((d - dirNebula) * 11.0 + vec3(uTime * 0.012));
 
-    // Carve dark absorption rifts (interstellar dust lanes / Bok globules)
-    float dustRift = smoothstep(0.35, 0.68, r.y * 0.6 + q.x * 0.4);
-    float gasCloud = smoothstep(0.24, 0.74, gas) * (1.0 - dustRift * 0.55);
+    // Carve dark interstellar absorption rifts (Bok globules & dark dust lanes)
+    float dustRift = smoothstep(0.32, 0.66, r.y * 0.6 + q.x * 0.4);
+    float gasCloud = smoothstep(0.22, 0.72, gas) * (1.0 - dustRift * 0.58);
 
     // Astronomical ionization color spectrum
-    // 1. Hydrogen-Alpha / Ionized Cosmic Violet-Magenta
-    vec3 colHAlpha = vec3(0.70, 0.20, 0.90);
+    // 1. Hydrogen-Alpha / Ionized Cosmic Violet-Magenta Core
+    vec3 colHAlpha = vec3(0.72, 0.18, 0.92);
     // 2. Oxygen-III / Electric Cyan Ionization Ridge
-    vec3 colOIII = vec3(0.08, 0.82, 0.98);
-    // 3. Protostellar Amber / Gold Cosmic Dust Veins
-    vec3 colAmber = vec3(0.96, 0.60, 0.24);
+    vec3 colOIII = vec3(0.08, 0.84, 0.98);
+    // 3. Protostellar Amber / Stellar Nursery Cosmic Dust Veins
+    vec3 colAmber = vec3(0.98, 0.62, 0.22);
 
     // Blend cosmic spectrum across warped density fields
     vec3 nebulaCol = mix(colSpace, colHAlpha, smoothstep(0.30, 0.65, r.x));
     nebulaCol = mix(nebulaCol, colOIII, smoothstep(0.38, 0.72, q.z));
     nebulaCol = mix(nebulaCol, colAmber, smoothstep(0.50, 0.82, gas * r.y));
 
-    // Vivid astronomical emission intensity concentrated in the far back left
-    float intensity = gasCloud * spatialMask * (0.42 + uEnergy * 0.20 + uLevel * 0.12);
+    // Vivid astronomical emission intensity strictly concentrated in the far back left
+    float intensity = gasCloud * spatialMask * (0.44 + uEnergy * 0.20 + uLevel * 0.12);
 
     // Deep space core ambient
     vec3 finalCol = colSpace + nebulaCol * intensity;
 
     // Embedded galactic stardust shimmer in high-density pockets
-    float stardust = pow(fineDust, 4.0) * gasCloud * spatialMask * 0.45;
-    finalCol += vec3(0.9, 0.95, 1.0) * stardust;
+    float stardust = pow(fineDust, 4.2) * gasCloud * spatialMask * 0.48;
+    finalCol += vec3(0.92, 0.96, 1.0) * stardust;
 
     // Center focal glow focused behind central plasma core
-    float centerGlow = pow(max(dot(d, vec3(0.0, 0.0, 1.0)), 0.0), 2.5);
-    finalCol += uRim * centerGlow * (0.04 + uEnergy * 0.06);
+    float centerGlow = pow(max(dot(d, vec3(0.0, 0.0, -1.0)), 0.0), 3.0);
+    finalCol += uRim * centerGlow * (0.03 + uEnergy * 0.05);
 
     gl_FragColor = vec4(finalCol, 1.0);
   }
