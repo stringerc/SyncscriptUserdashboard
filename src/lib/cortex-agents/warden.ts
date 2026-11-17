@@ -92,6 +92,9 @@ export interface RepoHygieneReport {
 
 /** Stale-work threshold: dirty for less than this is someone mid-task. */
 export const REPO_STALE_HOURS = 4;
+/** Minimum gap between repo_hygiene incident re-fires while one is open. */
+export const REPO_INCIDENT_REFIRE_MS = 2 * 60 * 60 * 1000;
+let lastRepoHygieneIncidentAt = 0;
 
 /** Real git probe — porcelain status + mtime aging. Injectable for tests. */
 export function nodeRepoProbe(repoRoot = process.cwd()): () => RepoHygieneReport {
@@ -507,17 +510,26 @@ const wardenWorker: WorkerHandler = async (ctx) => {
 
   // Stale uncommitted work → incident ticket; the 60s sweeper turns it
   // into an Inbox proposal. Warden detects and escalates — never commits.
+  // Re-fire cooldown: a persistent condition (e.g. an unresolved deletion)
+  // would otherwise increment the ticket every patrol and keep it looking
+  // freshly-broken forever. One open ticket + a refresh every 2h is enough.
   const repoCheck = report.checks.find((c) => c.name === 'repo.hygiene');
   if (repoCheck && !repoCheck.ok) {
-    recordIncidentFailure({
-      taskId: ctx.task.id,
-      agentId: 'warden',
-      agentName: 'WARDEN',
-      kind: 'repo_hygiene',
-      title: 'Aging uncommitted work in syncscript tree',
-      failureClass: 'hygiene_stale',
-      error: repoCheck.detail,
-    });
+    const alreadyOpen = listIncidents('open').some(
+      (i) => i.agentId === 'warden' && i.kind === 'repo_hygiene',
+    );
+    if (!alreadyOpen || Date.now() - lastRepoHygieneIncidentAt > REPO_INCIDENT_REFIRE_MS) {
+      lastRepoHygieneIncidentAt = Date.now();
+      recordIncidentFailure({
+        taskId: ctx.task.id,
+        agentId: 'warden',
+        agentName: 'WARDEN',
+        kind: 'repo_hygiene',
+        title: 'Aging uncommitted work in syncscript tree',
+        failureClass: 'hygiene_stale',
+        error: repoCheck.detail,
+      });
+    }
   }
 
   ctx.progress(1);

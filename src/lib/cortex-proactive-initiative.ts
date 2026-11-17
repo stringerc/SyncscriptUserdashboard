@@ -275,11 +275,39 @@ export class CortexProactiveInitiativeEngine {
     try {
       const res = await fetch('/api/cortex/initiative/ledger/approved', { cache: 'no-store' });
       const data = await res.json();
-      const approved: Array<{ id: string }> = Array.isArray(data?.proposals) ? data.proposals : [];
+      const approved: Array<Record<string, any>> = Array.isArray(data?.proposals) ? data.proposals : [];
       let picked = 0;
       for (const ap of approved) {
-        const local = this.activeProposals.get(ap.id);
-        if (!local) continue; // unknown locally — leave approved for a host that has it
+        // Stale approvals (>24h) are left for the Crew — firing an ancient
+        // intent is worse than asking again.
+        if (Number(ap.approvedAtMs) && Date.now() - Number(ap.approvedAtMs) > 24 * 3600_000) continue;
+        let local = this.activeProposals.get(ap.id);
+        if (!local) {
+          // Approved server-side but unknown locally (evicted from the
+          // localStorage window or approved while this tab was closed).
+          // Materialize it so the governed execTool path can run it.
+          const materialized: ProactiveProposal = {
+            id: String(ap.id),
+            category: (ap.category as InitiativeCategory) || 'system_resonance',
+            title: String(ap.title || ap.id),
+            summary: String(ap.description || ap.summary || ''),
+            urgency: (ap.urgency as ProactiveProposal['urgency']) || 'medium',
+            suggestedTool: String(ap.suggestedTool || ''),
+            suggestedArgs: ap.suggestedArgs && typeof ap.suggestedArgs === 'object' ? ap.suggestedArgs : {},
+            requiresApproval: Boolean(ap.requiresApproval),
+            epistemicConfidence: Number(ap.confidence ?? ap.epistemicConfidence) || 0,
+            createdAt: Number(ap.createdAtMs) || Date.now(),
+            autonomyTier: (ap.autonomyTier as 0 | 1 | 2) ?? tierFor(ap),
+            status: 'pending',
+            source: (ap.source as ProactiveProposal['source']) || 'sensor',
+            dedupeKey: ap.dedupeKey ? String(ap.dedupeKey) : undefined,
+            why: ap.rationale ? String(ap.rationale) : undefined,
+          };
+          if (!materialized.suggestedTool) continue;
+          this.activeProposals.set(materialized.id, materialized);
+          local = materialized;
+          this.saveState();
+        }
         if (local.status === 'executed' || local.status === 'failed' || local.status === 'dismissed') continue;
         // 'accepted' with no result means execTool never reported back (page
         // reload mid-flight). Re-dispatch only if it's been stuck >90s so we
@@ -508,10 +536,14 @@ export class CortexProactiveInitiativeEngine {
       const key = p.dedupeKey || p.id;
       const dupe = Array.from(this.activeProposals.values()).some((a) => {
         if ((a.dedupeKey || a.id) !== key) return false;
-        // Answered proposals suppress re-filing for 24h, not forever —
-        // a persistent condition deserves a fresh ask tomorrow, but an
-        // answered one must not nag on every evaluation cycle.
-        if (a.status === 'dismissed' || a.status === 'executed') {
+        // Answered proposals suppress re-filing — dismissed for 24h,
+        // executed for 72h (work was done; a persistent condition does not
+        // deserve a fresh card every day). An answered one must not nag on
+        // every evaluation cycle.
+        if (a.status === 'executed') {
+          return Date.now() - (a.createdAt || 0) < 72 * 3600_000;
+        }
+        if (a.status === 'dismissed') {
           return Date.now() - (a.createdAt || 0) < 24 * 3600_000;
         }
         return true;
@@ -631,7 +663,10 @@ export class CortexProactiveInitiativeEngine {
     const key = input.dedupeKey || input.id || '';
     const dupe = key && Array.from(this.activeProposals.values()).some((a) => {
       if ((a.dedupeKey || a.id) !== key) return false;
-      if (a.status === 'dismissed' || a.status === 'executed') {
+      if (a.status === 'executed') {
+        return Date.now() - (a.createdAt || 0) < 72 * 3600_000;
+      }
+      if (a.status === 'dismissed') {
         return Date.now() - (a.createdAt || 0) < 24 * 3600_000;
       }
       return true;
