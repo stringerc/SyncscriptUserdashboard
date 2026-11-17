@@ -15,6 +15,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import type { WorkerHandler } from './runtime';
 import { rulesBlock } from './rules';
+import { drainSafePending, listProposals, isSafeAutoProposal } from '../cortex-initiative-ledger';
 
 const RUNTIME_DIR = process.env.CORTEX_AGENTS_STATE_DIR || path.join(process.cwd(), '.cortex-runtime');
 const BRIEFS_DIR = path.join(RUNTIME_DIR, 'prep-briefs');
@@ -472,6 +473,23 @@ export function makePrepWorker(deps: {
 
     if (kind === 'prep_sweep') return runSweep(ctx);
     if (kind === 'engagement_plan') return buildEngagementPlan(ctx, input);
+    if (kind === 'initiative_drain') {
+      // Drain the server-side initiative ledger: approve safe tier-1
+      // proposals so the client picks them up on its next poll. Tier-2 and
+      // non-whitelisted tools stay pending for the Crew — never auto-approved.
+      const drain = drainSafePending('agent:prep');
+      const pending = listProposals({ status: 'pending' });
+      const awaitingCrew = pending.filter((p) => !isSafeAutoProposal(p));
+      return {
+        ok: true,
+        approved: drain.approved.map((p) => ({ id: p.id, title: p.title, tool: p.suggestedTool })),
+        approvedCount: drain.approved.length,
+        awaitingCrew: awaitingCrew.slice(0, 20).map((p) => ({
+          id: p.id, title: p.title, tool: p.suggestedTool, tier: p.autonomyTier,
+        })),
+        awaitingCrewCount: awaitingCrew.length,
+      };
+    }
 
     const meeting = {
       title: String(input.title || input.query || input.meeting || '').trim(),

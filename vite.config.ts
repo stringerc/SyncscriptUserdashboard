@@ -47,6 +47,17 @@ const AGENT_LABELS_SAFE: Record<string, string> = {
   forecaster: 'FORECASTER', prep: 'PREP',
 };
 import { getCortexProactiveInitiative } from './src/lib/cortex-proactive-initiative';
+import {
+  syncProposals as ledgerSyncProposals,
+  listProposals as ledgerListProposals,
+  pendingDecisions as ledgerPendingDecisions,
+  approvedAwaitingPickup as ledgerApprovedPickup,
+  approveProposal as ledgerApprove,
+  dismissProposal as ledgerDismiss,
+  reportExecuted as ledgerReportExecuted,
+  drainSafePending as ledgerDrainSafe,
+  isSafeAutoProposal,
+} from './src/lib/cortex-initiative-ledger';
 import { getWorldState, formatWorldStateHeader } from './src/lib/cortex-world-state';
 
 /** Short SHA for deploy verification (Vercel sets VERCEL_GIT_COMMIT_SHA at build time). */
@@ -9839,6 +9850,121 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
           'Cache-Control': 'no-store',
         });
         res.end(JSON.stringify({ ok: true, snapshot, sources, timestamp: Date.now() }));
+      });
+
+      // ── Initiative Ledger (/api/cortex/initiative/ledger/*) ──
+      // Server-side mirror of the client Initiative Inbox so console agents
+      // can see/approve proposals while the visualizer tab is closed.
+      // The client engine stays the executor; the server never runs tools.
+      const ledgerJson = (res: any, code: number, body: any) => {
+        res.writeHead(code, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+        res.end(JSON.stringify(body));
+      };
+      const ledgerPost = (req: any, res: any, fn: (body: any) => { code?: number; body: any }) => {
+        let raw = '';
+        req.on('data', (c: Buffer) => { raw += c.toString(); if (raw.length > 500000) req.destroy(); });
+        req.on('end', () => {
+          try {
+            const body = JSON.parse(raw || '{}');
+            const out = fn(body);
+            ledgerJson(res, out.code || 200, out.body);
+          } catch (e: any) {
+            ledgerJson(res, 500, { ok: false, error: e?.message || 'ledger error' });
+          }
+        });
+      };
+
+      // POST /sync {proposals:[...]} — client pushes its engine state.
+      server.middlewares.use('/api/cortex/initiative/ledger/sync', (req: any, res: any, next: any) => {
+        if (req.method === 'OPTIONS') {
+          res.writeHead(204, { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Methods': 'GET, POST, OPTIONS', 'Access-Control-Allow-Headers': 'Content-Type' });
+          return res.end();
+        }
+        if (req.method !== 'POST') return next();
+        ledgerPost(req, res, (body) => ({
+          body: { ok: true, ...ledgerSyncProposals(Array.isArray(body?.proposals) ? body.proposals : []) },
+        }));
+      });
+
+      // GET /?status=&limit= — full ledger read.
+      server.middlewares.use('/api/cortex/initiative/ledger', (req: any, res: any, next: any) => {
+        if (req.method !== 'GET') return next();
+        try {
+          const url = new URL(req.url || '/', 'http://localhost');
+          const status = url.searchParams.get('status') as any;
+          const limit = Number(url.searchParams.get('limit')) || undefined;
+          ledgerJson(res, 200, { ok: true, proposals: ledgerListProposals({ status, limit }) });
+        } catch (e: any) {
+          ledgerJson(res, 500, { ok: false, error: e?.message || 'ledger read failed' });
+        }
+      });
+
+      // GET /approved — proposals an agent approved, awaiting client pickup.
+      server.middlewares.use('/api/cortex/initiative/ledger/approved', (req: any, res: any, next: any) => {
+        if (req.method !== 'GET') return next();
+        try {
+          ledgerJson(res, 200, { ok: true, proposals: ledgerApprovedPickup() });
+        } catch (e: any) {
+          ledgerJson(res, 500, { ok: false, error: e?.message || 'approved read failed' });
+        }
+      });
+
+      // POST /decide {id, action:'approve'|'dismiss', by, note?, drainSafe?}
+      // Crew/agent decision endpoint. Agents may only approve safe-auto proposals
+      // unless `by` indicates crew authority — enforced via isSafeAutoProposal.
+      server.middlewares.use('/api/cortex/initiative/ledger/decide', (req: any, res: any, next: any) => {
+        if (req.method === 'OPTIONS') {
+          res.writeHead(204, { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Methods': 'GET, POST, OPTIONS', 'Access-Control-Allow-Headers': 'Content-Type' });
+          return res.end();
+        }
+        if (req.method !== 'POST') return next();
+        ledgerPost(req, res, (body) => {
+          const id = String(body?.id || '');
+          const action = String(body?.action || '');
+          const by = String(body?.by || 'crew').slice(0, 80);
+          const note = body?.note ? String(body.note).slice(0, 500) : undefined;
+          if (action === 'drain') {
+            const out = ledgerDrainSafe(by);
+            return { body: { ok: true, approved: out.approved.map((p) => p.id), skipped: out.skipped } };
+          }
+          if (!id) return { code: 400, body: { ok: false, error: 'id required' } };
+          if (action === 'approve') {
+            const p = ledgerListProposals({ limit: 500 }).find((x) => x.id === id);
+            if (!p) return { code: 404, body: { ok: false, error: 'proposal not found' } };
+            const agentActor = /^agent[:/]|prep|warden|sentinel|strategist|brief|debrief|forecaster|distributor/i.test(by);
+            if (agentActor && !isSafeAutoProposal(p)) {
+              return { code: 403, body: { ok: false, error: 'agent may only approve safe tier-1 proposals; this needs the Crew' } };
+            }
+            const done = ledgerApprove(id, by, note);
+            return done
+              ? { body: { ok: true, proposal: done } }
+              : { code: 409, body: { ok: false, error: 'proposal not pending' } };
+          }
+          if (action === 'dismiss') {
+            const done = ledgerDismiss(id, by, note);
+            return done
+              ? { body: { ok: true, proposal: done } }
+              : { code: 409, body: { ok: false, error: 'proposal already terminal' } };
+          }
+          return { code: 400, body: { ok: false, error: 'action must be approve|dismiss|drain' } };
+        });
+      });
+
+      // POST /executed {id, ok, summary} — client reports execTool outcome.
+      server.middlewares.use('/api/cortex/initiative/ledger/executed', (req: any, res: any, next: any) => {
+        if (req.method === 'OPTIONS') {
+          res.writeHead(204, { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Methods': 'POST, OPTIONS', 'Access-Control-Allow-Headers': 'Content-Type' });
+          return res.end();
+        }
+        if (req.method !== 'POST') return next();
+        ledgerPost(req, res, (body) => {
+          const id = String(body?.id || '');
+          if (!id) return { code: 400, body: { ok: false, error: 'id required' } };
+          const done = ledgerReportExecuted(id, body?.ok !== false, String(body?.summary || ''));
+          return done
+            ? { body: { ok: true, proposal: done } }
+            : { code: 404, body: { ok: false, error: 'proposal not found' } };
+        });
       });
 
       // ── Somatic signal ingest (/api/cortex/initiative/somatic) ──

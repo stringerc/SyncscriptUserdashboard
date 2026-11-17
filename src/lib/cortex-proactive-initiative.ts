@@ -40,6 +40,7 @@ export interface ProactiveProposal {
   dismissed?: boolean;
   autonomyTier?: 0 | 1 | 2;
   status?: 'pending' | 'accepted' | 'dismissed' | 'snoozed' | 'executed' | 'failed';
+  acceptedAt?: number;
   snoozedUntil?: number;
   executionResult?: { ok: boolean; summary: string; at: number };
   source?: 'engine' | 'sensor' | 'llm' | 'voice';
@@ -106,6 +107,49 @@ function tierFor(p: { requiresApproval?: boolean; autonomyTier?: 0 | 1 | 2 }): 0
   return p.requiresApproval ? 2 : 1;
 }
 
+// ── Safe auto-allow (Part B) ───────────────────────────────────────
+// Tier<=1 proposals on whitelisted read/announce tools may self-accept
+// without trust graduation. Mirrors SAFE_AUTO_TOOLS in
+// cortex-initiative-ledger.ts — keep the two sets in sync.
+const SAFE_AUTO_TOOLS = new Set([
+  'cortex_goals',
+  'cortex_metacognition',
+  'cortex_accomplishments',
+]);
+function isSafeAutoClient(tool: string, tier: number, requiresApproval: boolean): boolean {
+  return tier <= 1 && !requiresApproval && SAFE_AUTO_TOOLS.has(tool);
+}
+
+// ── Server ledger sync ─────────────────────────────────────────────
+// Pushes proposal state to /api/cortex/initiative/ledger/* so console
+// agents can see/approve while this tab is closed. Fire-and-forget;
+// the server ledger never executes anything itself.
+let ledgerSyncTimer: ReturnType<typeof setTimeout> | null = null;
+
+function ledgerPost(path: string, body: unknown): void {
+  if (typeof window === 'undefined' || typeof fetch !== 'function') return;
+  try {
+    void fetch(path, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    }).catch(() => {});
+  } catch {}
+}
+
+function scheduleLedgerSync(engine: CortexProactiveInitiativeEngine): void {
+  if (typeof window === 'undefined' || typeof fetch !== 'function') return;
+  if (ledgerSyncTimer) return;
+  ledgerSyncTimer = setTimeout(() => {
+    ledgerSyncTimer = null;
+    engine.pushLedgerSync();
+  }, 2000);
+}
+
+function reportLedgerExecuted(id: string, ok: boolean, summary: string): void {
+  ledgerPost('/api/cortex/initiative/ledger/executed', { id, ok, summary });
+}
+
 // ── Proactive Initiative Engine ────────────────────────────────────
 
 export class CortexProactiveInitiativeEngine {
@@ -129,12 +173,14 @@ export class CortexProactiveInitiativeEngine {
       } catch {
         this.metrics = this.freshMetrics();
       }
-      if (!this.metrics.today || !this.metrics.lifetime) this.metrics = this.freshMetrics();
+      const m = this.metrics as RestraintMetrics;
+      if (!m.today || !m.lifetime) this.metrics = this.freshMetrics();
     }
-    if (this.metrics.day !== todayKey()) {
-      this.metrics = { day: todayKey(), today: emptyCounters(), lifetime: this.metrics.lifetime };
+    const cur = this.metrics as RestraintMetrics;
+    if (cur.day !== todayKey()) {
+      this.metrics = { day: todayKey(), today: emptyCounters(), lifetime: cur.lifetime };
     }
-    return this.metrics;
+    return this.metrics as RestraintMetrics;
   }
 
   private bump(field: keyof RestraintCounters, n = 1): void {
@@ -190,6 +236,66 @@ export class CortexProactiveInitiativeEngine {
       const arr = Array.from(this.activeProposals.values()).slice(-50);
       persistentStore.setItem(STORAGE_KEY, JSON.stringify(arr));
     } catch {}
+    scheduleLedgerSync(this);
+  }
+
+  /** Push the full proposal set to the server-side initiative ledger. */
+  public pushLedgerSync(): void {
+    if (typeof window === 'undefined' || typeof fetch !== 'function') return;
+    const proposals = Array.from(this.activeProposals.values()).map((p) => ({
+      id: p.id,
+      title: p.title,
+      description: p.summary,
+      category: p.category,
+      urgency: p.urgency,
+      confidence: p.epistemicConfidence,
+      rationale: p.why || '',
+      suggestedTool: p.suggestedTool,
+      suggestedArgs: p.suggestedArgs,
+      requiresApproval: p.requiresApproval,
+      autonomyTier: p.autonomyTier ?? tierFor(p),
+      source: p.source || 'engine',
+      dedupeKey: p.dedupeKey,
+      status: p.status || 'pending',
+      createdAtMs: p.createdAt,
+      snoozedUntilMs: p.snoozedUntil,
+      executionResult: p.executionResult
+        ? { ok: p.executionResult.ok, summary: p.executionResult.summary, atMs: p.executionResult.at }
+        : undefined,
+    }));
+    ledgerPost('/api/cortex/initiative/ledger/sync', { proposals });
+  }
+
+  /**
+   * Poll the server ledger for agent-approved proposals and run them through
+   * the normal accept→execTool path. Called by the initiative sensor each tick.
+   */
+  public async pickupApprovedProposals(): Promise<number> {
+    if (typeof window === 'undefined' || typeof fetch !== 'function') return 0;
+    try {
+      const res = await fetch('/api/cortex/initiative/ledger/approved', { cache: 'no-store' });
+      const data = await res.json();
+      const approved: Array<{ id: string }> = Array.isArray(data?.proposals) ? data.proposals : [];
+      let picked = 0;
+      for (const ap of approved) {
+        const local = this.activeProposals.get(ap.id);
+        if (!local) continue; // unknown locally — leave approved for a host that has it
+        if (local.status === 'executed' || local.status === 'failed' || local.status === 'dismissed') continue;
+        // 'accepted' with no result means execTool never reported back (page
+        // reload mid-flight). Re-dispatch only if it's been stuck >90s so we
+        // don't double-run an in-flight execution.
+        if (local.status === 'accepted' && !local.executionResult) {
+          const stuckMs = Date.now() - (local.acceptedAt || local.createdAt || 0);
+          if (stuckMs < 90_000) continue;
+        } else if (local.status === 'accepted') {
+          continue;
+        }
+        if (this.acceptProposal(ap.id)) picked++;
+      }
+      return picked;
+    } catch {
+      return 0;
+    }
   }
 
   private upsert(proposal: ProactiveProposal): void {
@@ -436,7 +542,7 @@ export class CortexProactiveInitiativeEngine {
       const ledger = getCortexTrustLedger();
       for (const p of admitted) {
         const tier = p.autonomyTier ?? (p.requiresApproval ? 2 : 1);
-        if (ledger.isAutoAllowed(p.suggestedTool, tier)) {
+        if (ledger.isAutoAllowed(p.suggestedTool, tier) || isSafeAutoClient(p.suggestedTool, tier, p.requiresApproval)) {
           ledger.logEvent(p.suggestedTool, tier, 'auto_executed', p.title);
           this.acceptProposal(p.id);
         }
@@ -550,8 +656,8 @@ export class CortexProactiveInitiativeEngine {
     // Trust Ladder: graduated domains execute without a card (still audited).
     try {
       const ledger = getCortexTrustLedger();
-      const tier = proposal.autonomyTier;
-      if (ledger.isAutoAllowed(proposal.suggestedTool, tier)) {
+      const tier = proposal.autonomyTier ?? tierFor(proposal);
+      if (ledger.isAutoAllowed(proposal.suggestedTool, tier) || isSafeAutoClient(proposal.suggestedTool, tier, proposal.requiresApproval)) {
         ledger.logEvent(proposal.suggestedTool, tier, 'auto_executed', proposal.title);
         this.acceptProposal(proposal.id);
       }
@@ -563,6 +669,7 @@ export class CortexProactiveInitiativeEngine {
     const p = this.activeProposals.get(id);
     if (!p || p.status === 'executed' || p.status === 'dismissed') return false;
     p.status = 'accepted';
+    p.acceptedAt = Date.now();
     this.bump('accepted');
     this.saveState();
     this.notify();
@@ -595,6 +702,7 @@ export class CortexProactiveInitiativeEngine {
         result.summary,
       );
     } catch {}
+    reportLedgerExecuted(id, result.ok, result.summary);
     this.saveState();
     this.notify();
   }

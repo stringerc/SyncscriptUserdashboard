@@ -78,6 +78,8 @@ export function startInitiativeSensor(opts?: {
           if (snap.sleepDebtHours === undefined) snap.sleepDebtHours = local.sleepDebtHours;
         }
         await engine.evaluateInitiatives(snap);
+        // Pick up proposals an agent approved server-side while we were away.
+        await engine.pickupApprovedProposals();
         // Weekly goal-drift review rides the same cadence (internally gated to 7d).
         const commits7d = Number(snap.commitsLast7d ?? snap.commits_last_7d ?? 0);
         getCortexGoals().reviewGoals({ commits_per_week: commits7d });

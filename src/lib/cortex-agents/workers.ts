@@ -1958,6 +1958,16 @@ export function registerAgentWorkers(runtime: AgentRuntime) {
       }
     },
   }));
+  // Prep doubles as the initiative-inbox drain: approves safe tier-1
+  // proposals server-side so the client executes them on next poll.
+  // Tier-2/consequential proposals stay pending for the Crew.
+  runtime.addRoutine({
+    agentId: 'prep',
+    kind: 'initiative_drain',
+    title: 'Initiative Inbox Drain (15m)',
+    everyMinutes: 15,
+    enabled: true,
+  });
   registerWardenWorker(runtime);
   runtime.registerWorker('strategist', makeStrategistWorker(runtime));
   runtime.registerWorker('brief', makeBriefWorker());
