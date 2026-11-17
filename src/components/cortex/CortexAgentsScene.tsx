@@ -357,7 +357,10 @@ const TaskRow: React.FC<{ t: AgentTaskClient; now: number }> = ({ t, now }) => {
 const AgentDossierPanel: React.FC<{ agent: AgentClient; snap: AgentsSnapshotClient; now: number; onClose: () => void; dockLeft?: boolean }> = ({ agent: a, snap, now, onClose, dockLeft }) => {
   const [dossierOpen, setDossierOpen] = useState(false);
   const [deepOpen, setDeepOpen] = useState(false);
-  const [deep, setDeep] = useState<{ archive: any[]; incidents: any[]; proposals: any[]; counsel: any[] } | null>(null);
+  const [deep, setDeep] = useState<{ archive: any[]; incidents: any[]; proposals: any[]; counsel: any[]; routines: any[] } | null>(null);
+  const [memQuery, setMemQuery] = useState('');
+  const [memHits, setMemHits] = useState<any[] | null>(null);
+  const [memLoading, setMemLoading] = useState(false);
   const col = AGENT_COLORS[a.id] || `hsl(${spawnHue(a.id)}, 70%, 65%)`;
 
   // Deep record — durable memory beyond the 200-task window, counsel
@@ -370,7 +373,8 @@ const AgentDossierPanel: React.FC<{ agent: AgentClient; snap: AgentsSnapshotClie
       fetch('/api/cortex/agents/incidents?status=open', { cache: 'no-store' }).then((r) => r.json()),
       fetch('/api/cortex/agents/proposals', { cache: 'no-store' }).then((r) => r.json()),
       fetch('/api/cortex/counsel/sessions', { cache: 'no-store' }).then((r) => r.json()),
-    ]).then(([arc, inc, prop, cs]) => {
+      fetch('/api/cortex/agents/routines', { cache: 'no-store' }).then((r) => r.json()),
+    ]).then(([arc, inc, prop, cs, rot]) => {
       if (dead) return;
       const sessions: any[] = (cs as any)?.value?.sessions || [];
       const counselRows: any[] = [];
@@ -384,16 +388,29 @@ const AgentDossierPanel: React.FC<{ agent: AgentClient; snap: AgentsSnapshotClie
         incidents: ((inc as any)?.value?.incidents || []).filter((i: any) => i.agentId === a.id),
         proposals: ((prop as any)?.value?.proposals || []).filter((p: any) => p.agentId === a.id),
         counsel: counselRows,
+        routines: ((rot as any)?.value?.routines || []).filter((r: any) => r.agentId === a.id),
       });
     });
     return () => { dead = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [deepOpen]);
+
+  const searchMemory = async () => {
+    const q = memQuery.trim();
+    if (!q) { setMemHits(null); return; }
+    setMemLoading(true);
+    try {
+      const r = await fetch(`/api/cortex/agents/memory?agentId=${encodeURIComponent(a.id)}&q=${encodeURIComponent(q)}&limit=15`, { cache: 'no-store' });
+      const j: any = await r.json();
+      setMemHits(j?.hits || []);
+    } catch { setMemHits([]); }
+    setMemLoading(false);
+  };
   const current = a.currentTaskId ? snap.tasks.find((t) => t.id === a.currentTaskId) : null;
   const agentTasks = snap.tasks.filter((t) => t.agentId === a.id);
   const decided = agentTasks.filter((t) => t.status === 'completed' || t.status === 'failed' || t.status === 'vetoed');
   const tsr = decided.length ? Math.round((decided.filter((t) => t.status === 'completed').length / decided.length) * 100) : null;
-  const recent = agentTasks.slice(0, 8);
+  const recent = agentTasks;
   const beatAge = a.lastHeartbeatAt ? now - a.lastHeartbeatAt : null;
   const beatCol = beatAge == null ? DIM : beatAge < 30_000 ? '#34d399' : beatAge < 120_000 ? '#fbbf24' : '#f87171';
   const spawn = a.spawnSpec;
@@ -481,7 +498,7 @@ const AgentDossierPanel: React.FC<{ agent: AgentClient; snap: AgentsSnapshotClie
           <span>BUDGET {a.dailyBudget}/DAY</span>
           <span style={{ marginLeft: 'auto', color: DIM }}>{recent.length} RECENT</span>
         </div>
-        <div className="ambient-scrollbar" style={{ overflowY: 'auto', maxHeight: 150, flexShrink: 1 }}>
+        <div className="ambient-scrollbar" style={{ overflowY: 'auto', maxHeight: 190, flexShrink: 1 }}>
           {recent.map((t) => <TaskRow key={t.id} t={t} now={now} />)}
           {!recent.length && <div style={{ fontSize: 8, color: DIM, fontFamily: MONO, padding: '4px 0' }}>NO TASK HISTORY — AWAITING FIRST ASSIGNMENT</div>}
         </div>
@@ -557,6 +574,14 @@ const AgentDossierPanel: React.FC<{ agent: AgentClient; snap: AgentsSnapshotClie
                 </div>
               )) : <div style={{ color: '#34d399', paddingLeft: 6 }}>CLEAN — NO OPEN INCIDENTS</div>}
 
+              <div style={{ color: 'rgba(203,213,225,0.85)', margin: '6px 0 2px' }}>STANDING ORDERS</div>
+              {deep.routines.length ? deep.routines.map((r) => (
+                <div key={r.id} style={{ paddingLeft: 6 }}>
+                  <span style={{ color: r.enabled === false ? DIM : '#38bdf8' }}>{r.enabled === false ? 'PAUSED' : 'EVERY ' + Math.round((r.everyMinutes || 0)) + 'm'}</span>
+                  <span style={{ color: DIM }}> · {String(r.title || r.kind || '').slice(0, 64)}</span>
+                </div>
+              )) : <div style={{ color: DIM, paddingLeft: 6 }}>NO ROUTINES — RESPONDS ONLY WHEN TASKED</div>}
+
               <div style={{ color: 'rgba(203,213,225,0.85)', margin: '6px 0 2px' }}>DURABLE MEMORY (ARCHIVE)</div>
               {deep.archive.length ? deep.archive.slice(0, 10).map((r, i) => (
                 <div key={r.id || i} style={{ paddingLeft: 6 }}>
@@ -565,6 +590,27 @@ const AgentDossierPanel: React.FC<{ agent: AgentClient; snap: AgentsSnapshotClie
                   {r.outcome ? <span style={{ color: DIM }}> [{String(r.outcome).slice(0, 30)}]</span> : null}
                 </div>
               )) : <div style={{ color: DIM, paddingLeft: 6 }}>NO ARCHIVED RECORDS</div>}
+
+              <div style={{ color: 'rgba(203,213,225,0.85)', margin: '6px 0 2px' }}>MEMORY SEARCH</div>
+              <div style={{ display: 'flex', gap: 4, paddingLeft: 6, marginBottom: 3 }}>
+                <input
+                  value={memQuery}
+                  onChange={(e) => setMemQuery(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === 'Enter') searchMemory(); }}
+                  placeholder="search this agent's record…"
+                  style={{ flex: 1, background: 'rgba(148,163,184,0.08)', border: '1px solid rgba(148,163,184,0.25)', borderRadius: 2, color: INK, fontFamily: MONO, fontSize: 8, padding: '3px 6px', outline: 'none' }}
+                />
+                <button onClick={searchMemory} style={{ background: 'rgba(56,189,248,0.12)', border: '1px solid rgba(56,189,248,0.4)', color: '#38bdf8', fontFamily: MONO, fontSize: 8, fontWeight: 700, padding: '2px 8px', borderRadius: 2, cursor: 'pointer' }}>{memLoading ? '…' : 'SEARCH'}</button>
+              </div>
+              {memHits !== null && (
+                memHits.length ? memHits.map((h) => (
+                  <div key={h.id} style={{ paddingLeft: 6 }}>
+                    <span style={{ color: h.status === 'completed' ? '#34d399' : h.status === 'failed' ? '#f87171' : DIM }}>{String(h.status || '?').toUpperCase()}</span>
+                    <span style={{ color: DIM }}> · {String(h.title || '').slice(0, 60)}</span>
+                    <div style={{ color: 'rgba(148,163,184,0.55)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{h.snippet}</div>
+                  </div>
+                )) : <div style={{ color: DIM, paddingLeft: 6 }}>NO MATCHES IN RECORD</div>
+              )}
             </>
           )}
         </div>

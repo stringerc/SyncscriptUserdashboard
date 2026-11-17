@@ -10503,6 +10503,43 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
         }
       });
 
+      // GET /api/cortex/agents/memory?q=&agentId=&limit= — full-text search
+      // over the durable task archive (title/kind/result/error). Engram v1:
+      // lexical match, not semantic — honest scope until the librarian
+      // vector store lands.
+      server.middlewares.use('/api/cortex/agents/memory', (req: any, res: any, next: any) => {
+        const origin = req.headers.origin;
+        if (req.method === 'OPTIONS') {
+          res.writeHead(204, { 'Access-Control-Allow-Origin': origin || '*', 'Access-Control-Allow-Methods': 'GET, OPTIONS', 'Access-Control-Allow-Headers': 'Content-Type' });
+          return res.end();
+        }
+        if (req.method !== 'GET' || !isAllowedOrigin(origin, req.headers.host)) return next();
+        try {
+          const url = new URL(req.url || '/', `http://localhost`);
+          const q = String(url.searchParams.get('q') || '').toLowerCase().slice(0, 120);
+          const agentId = url.searchParams.get('agentId') || undefined;
+          const limit = Math.min(50, Math.max(1, parseInt(url.searchParams.get('limit') || '20', 10) || 20));
+          const records = readArchive({ agentId, limit: 500 });
+          const hits = records
+            .map((r) => {
+              const hay = `${r.title} ${r.kind} ${r.error || ''} ${typeof r.result === 'string' ? r.result : JSON.stringify(r.result ?? '')}`.toLowerCase();
+              if (q && !hay.includes(q)) return null;
+              const idx = q ? hay.indexOf(q) : 0;
+              const snippet = hay.slice(Math.max(0, idx - 60), idx + 160).replace(/\s+/g, ' ').trim();
+              return { id: r.id, kind: r.kind, title: r.title, status: r.status, createdAt: r.createdAt, model: r.model, error: r.error, snippet };
+            })
+            .filter(Boolean)
+            .slice(0, limit);
+          agentCors(req, res);
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ ok: true, query: q, agentId: agentId || null, count: hits.length, hits }));
+        } catch (e: any) {
+          agentCors(req, res);
+          res.writeHead(500);
+          res.end(JSON.stringify({ ok: false, error: e?.message || 'memory search failed' }));
+        }
+      });
+
       // Shared approve/dismiss path for strategy proposals — used by the
       // proposals POST endpoint, Discord buttons, and the Foundry inbox.
       // Approval dispatches the underlying action (budget raise, devin_task,
