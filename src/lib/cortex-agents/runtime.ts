@@ -167,6 +167,15 @@ export const AGENT_SPECS: AgentSpec[] = [
     modelPin: { tier: 'reason' },
   },
   {
+    id: 'debrief',
+    name: 'DEBRIEF',
+    role: 'Shutdown Reviewer',
+    blurb: 'Composes the evening debrief — verified day ledger, evidence-attached gap questions, tomorrow\'s if-then plan, one reflection prompt, closing signal. Reconciles plan-vs-verified; never claims attention it can\'t see.',
+    concurrency: 1,
+    dailyBudget: 10,
+    modelPin: { tier: 'reason' },
+  },
+  {
     id: 'devin',
     name: 'DEVIN',
     role: 'Principal Architect',
@@ -376,7 +385,7 @@ export class AgentRuntime {
   // deterministic: it re-derives evidence from real task history and
   // rejects fabricated or duplicative requests before they reach a human.
 
-  private static BUILT_INS: ReadonlySet<string> = new Set(['sentinel', 'scout', 'librarian', 'builder', 'reviewer', 'runner', 'distributor', 'forecaster', 'prep', 'warden', 'strategist', 'brief']);
+  private static BUILT_INS: ReadonlySet<string> = new Set(['sentinel', 'scout', 'librarian', 'builder', 'reviewer', 'runner', 'distributor', 'forecaster', 'prep', 'warden', 'strategist', 'brief', 'debrief']);
   private static MAX_SPAWNED = 4;
   private static MAX_PENDING_PROPOSALS = 10;
   private static SPAWN_PROPOSAL_TTL_MS = 72 * 3600_000;

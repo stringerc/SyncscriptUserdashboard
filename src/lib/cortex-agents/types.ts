@@ -12,7 +12,7 @@
 
 // Widened: spawned agents get dynamic ids (`spawn-<n>`).
 // The literals remain the built-ins; `(string & {})` keeps autocomplete for them.
-export type AgentId = 'antigravity' | 'sentinel' | 'scout' | 'librarian' | 'builder' | 'devin' | 'reviewer' | 'runner' | 'distributor' | 'warden' | 'prep' | 'forecaster' | 'strategist' | 'brief' | (string & {});
+export type AgentId = 'antigravity' | 'sentinel' | 'scout' | 'librarian' | 'builder' | 'devin' | 'reviewer' | 'runner' | 'distributor' | 'warden' | 'prep' | 'forecaster' | 'strategist' | 'brief' | 'debrief' | (string & {});
 
 export type AgentStatus =
   | 'offline'   // never heartbeated or heartbeat stale

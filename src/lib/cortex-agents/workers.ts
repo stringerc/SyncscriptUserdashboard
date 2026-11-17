@@ -20,6 +20,7 @@ import { registerDistributorWorker } from './distribution';
 import { runForecastCycle, type RoutedForecast, type ProbeDeps } from './forecaster';
 import { makePrepWorker } from './prep';
 import { makeBriefWorker } from './brief';
+import { makeDebriefWorker } from './debrief';
 import { makeRadarSweepWorker } from './radar';
 import { makeStrategistWorker } from './strategist';
 import { getCortexProactiveInitiative } from '../cortex-proactive-initiative';
@@ -1953,4 +1954,5 @@ export function registerAgentWorkers(runtime: AgentRuntime) {
   registerWardenWorker(runtime);
   runtime.registerWorker('strategist', makeStrategistWorker(runtime));
   runtime.registerWorker('brief', makeBriefWorker());
+  runtime.registerWorker('debrief', makeDebriefWorker());
 }
