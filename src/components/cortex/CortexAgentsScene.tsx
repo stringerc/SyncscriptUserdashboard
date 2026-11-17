@@ -864,16 +864,16 @@ export const CortexAgentsScene: React.FC = () => {
       // Shift the whole scene right when the roster rail is visible so the
       // orbit clears it (roster ~200px at left).
       const cx = w / 2 + (w >= 900 ? 100 : 0) + p.x, cy = h / 2 + h * 0.05 + p.y;
-      // Deep-space cosmic nebula — anchored firmly in the far back-left corner of the skybox
+      // JWST Carina "Cosmic Cliffs" — Billowing Electric Cyan Cloud & Molten Amber Ridge
       const nebKey = `${bgKey}|${Math.round(time * 5)}`;
       if (!nebCache || nebCache.key !== nebKey) {
         nebCache = {
           key: nebKey,
           grads: [
-            { col: '#a855f7', alpha: 0.18, r: 0.22, ox: -0.45, oy: -0.32 },  // Cosmic Violet H-Alpha Core (Far Back-Left)
-            { col: '#06b6d4', alpha: 0.20, r: 0.18, ox: -0.40, oy: -0.27 },  // Electric Cyan Ionization Ridge (Far Back-Left)
-            { col: '#f59e0b', alpha: 0.15, r: 0.16, ox: -0.48, oy: -0.35 },  // Stellar Nursery Amber Vein (Far Back-Left)
-            { col: '#3b82f6', alpha: 0.16, r: 0.24, ox: -0.42, oy: -0.30 },  // Deep Space Cobalt Veil (Far Back-Left)
+            { col: '#06b6d4', alpha: 0.22, r: 0.24, ox: -0.44, oy: -0.28 },  // Electric Cyan Billowing Cloud Body
+            { col: '#f97316', alpha: 0.25, r: 0.18, ox: -0.42, oy: -0.34 },  // Molten Amber-Fire Ridge Crest
+            { col: '#eab308', alpha: 0.20, r: 0.14, ox: -0.40, oy: -0.36 },  // Solar Gold Incandescent Core
+            { col: '#0284c7', alpha: 0.18, r: 0.28, ox: -0.46, oy: -0.26 },  // Deep Cerulean Cosmic Shadow Base
           ].map((spec, i) => {
             const na = time * 0.04 + i * 1.6;
             const nx = cx + spec.ox * w + Math.cos(na) * w * 0.02;
