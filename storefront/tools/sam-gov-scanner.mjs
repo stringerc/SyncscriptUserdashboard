@@ -1,4 +1,3 @@
-#!/usr/bin/env node
 /**
  * Sovereign GovTech Autonomous Capture Fabric (SG-ACF)
  * SAM.gov & CDAO Tradewinds Multi-Vector Ingestion Scanner
