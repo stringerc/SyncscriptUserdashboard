@@ -864,20 +864,22 @@ export const CortexAgentsScene: React.FC = () => {
       // Shift the whole scene right when the roster rail is visible so the
       // orbit clears it (roster ~200px at left).
       const cx = w / 2 + (w >= 900 ? 100 : 0) + p.x, cy = h / 2 + h * 0.05 + p.y;
-      // Original domain-warped cosmic nebula: 60% Blue, 40% Orange, clumped cauliflower clouds pushed far into deep distance
-      const nebKey = `${bgKey}|${Math.round(time * 5)}`;
+      // Distant Supernova Remnant (Exploded Star): 60% Blue, 40% Orange, 5x further in upper-left distance
+      const nebKey = `${bgKey}|${Math.round(time * 4)}`;
       if (!nebCache || nebCache.key !== nebKey) {
         nebCache = {
           key: nebKey,
           grads: [
-            // 60% Blue Volumetric Cloud Clumps (compact, pushed further back in distance, a little to the left)
-            { col: '#0284c7', alpha: 0.22, r: 0.18, ox: -0.32, oy: -0.18 },  // Deep oceanic cerulean base
-            { col: '#06b6d4', alpha: 0.24, r: 0.14, ox: -0.30, oy: -0.20 },  // Electric cyan billowing cloud body
-            { col: '#38bdf8', alpha: 0.16, r: 0.10, ox: -0.28, oy: -0.22 },  // Ice-turquoise crest
-            // 40% Orange Fiery Combustion Cores (engulfed along ridge and cloud bellies)
-            { col: '#ea580c', alpha: 0.30, r: 0.10, ox: -0.30, oy: -0.19 },  // Molten amber flame
-            { col: '#f97316', alpha: 0.24, r: 0.07, ox: -0.29, oy: -0.20 },  // Blazing flame orange
-            { col: '#facc15', alpha: 0.22, r: 0.05, ox: -0.28, oy: -0.21 },  // Solar gold incandescent core
+            // 60% Blue Synchrotron Gas Cavity & Ionized Shell (compact, 5x further away)
+            { col: '#0284c7', alpha: 0.26, r: 0.065, ox: -0.35, oy: -0.22 },  // Deep cerulean cavity
+            { col: '#06b6d4', alpha: 0.28, r: 0.048, ox: -0.35, oy: -0.22 },  // Ionized cyan shock front
+            { col: '#38bdf8', alpha: 0.20, r: 0.032, ox: -0.35, oy: -0.22 },  // Luminous inner rim
+            // 40% Orange Ejecta Filaments & Shock Boundary
+            { col: '#ea580c', alpha: 0.32, r: 0.038, ox: -0.34, oy: -0.21 },  // Magma shock filament
+            { col: '#f97316', alpha: 0.26, r: 0.024, ox: -0.34, oy: -0.21 },  // Flame ejecta ridge
+            { col: '#facc15', alpha: 0.24, r: 0.015, ox: -0.35, oy: -0.22 },  // Incandescent gold rim
+            // Central White-Hot Pulsar Remnant Core
+            { col: '#ffffff', alpha: 0.75, r: 0.006, ox: -0.35, oy: -0.22 },  // Pinpoint pulsar core
           ].map((spec, i) => {
             const na = time * 0.04 + i * 1.6;
             const nx = cx + spec.ox * w + Math.cos(na) * w * 0.02;
