@@ -354,7 +354,7 @@ const TaskRow: React.FC<{ t: AgentTaskClient; now: number }> = ({ t, now }) => {
   );
 };
 
-const AgentDossierPanel: React.FC<{ agent: AgentClient; snap: AgentsSnapshotClient; now: number; onClose: () => void; dockLeft?: boolean; pinned?: boolean; onTogglePin?: () => void }> = ({ agent: a, snap, now, onClose, dockLeft, pinned, onTogglePin }) => {
+const AgentDossierPanel: React.FC<{ agent: AgentClient; snap: AgentsSnapshotClient; now: number; onClose: () => void; dockLeft?: boolean; pinned?: boolean; onTogglePin?: () => void; stackIndex?: number }> = ({ agent: a, snap, now, onClose, dockLeft, pinned, onTogglePin, stackIndex = 0 }) => {
   const [dossierOpen, setDossierOpen] = useState(false);
   const [deepOpen, setDeepOpen] = useState(false);
   const [deep, setDeep] = useState<{ archive: any[]; incidents: any[]; proposals: any[]; counsel: any[]; routines: any[] } | null>(null);
@@ -446,7 +446,7 @@ const AgentDossierPanel: React.FC<{ agent: AgentClient; snap: AgentsSnapshotClie
   const statusCol = STATUS_COLOR[a.status] || DIM;
 
   const freeStyle: React.CSSProperties = pos ? {
-    position: 'absolute', left: pos.x, top: pos.y, transform: 'none', zIndex: 9,
+    position: 'absolute', left: pos.x, top: pos.y, transform: 'none', zIndex: 9 + stackIndex,
     width: pinned ? 600 : 520, maxWidth: 'calc(100vw - 40px)', maxHeight: '86vh',
     display: 'flex', flexDirection: 'column',
     background: 'linear-gradient(165deg, rgba(8,14,24,0.96), rgba(5,8,15,0.92))',
@@ -457,7 +457,7 @@ const AgentDossierPanel: React.FC<{ agent: AgentClient; snap: AgentsSnapshotClie
   return (
     <div style={pos ? freeStyle : dockLeft ? {
       // Docked to the roster rail: extends rightward from it, vertically centered.
-      position: 'absolute', left: 290, top: '50%', transform: 'translateY(-50%)', zIndex: 7,
+      position: 'absolute', left: 290 + stackIndex * 30, top: '50%', transform: 'translateY(-50%)', zIndex: 7 + stackIndex,
       width: pinned ? 600 : 520, maxWidth: 'calc(100vw - 240px)', maxHeight: pinned ? '84vh' : '74vh', display: 'flex', flexDirection: 'column',
       background: 'linear-gradient(165deg, rgba(8,14,24,0.94), rgba(5,8,15,0.9))',
       border: `1px solid ${hexA(col, 0.35)}`, borderLeft: `3px solid ${col}`, borderRadius: 3, padding: '12px 16px',
@@ -868,9 +868,34 @@ export const CortexAgentsScene: React.FC = () => {
   const [snap, setSnap] = useState<AgentsSnapshotClient>(snapRef.current);
   const [events, setEvents] = useState(agentsClient.events);
   const [selectedAgent, setSelectedAgent] = useState<string | null>(null);
-  const [pinnedAgentId, setPinnedAgentId] = useState<string | null>(null);
+  const [dossiers, setDossiers] = useState<{ id: string; pinned: boolean }[]>([]);
   const [selectedStation, setSelectedStation] = useState<string | null>(null);
   const [towerOpen, setTowerOpen] = useState(false);
+  // Multi-dossier: up to 4 agent files open at once for comparison.
+  // PINNED files survive station/background clears and cap eviction.
+  const MAX_DOSSIERS = 4;
+  const toggleDossier = (id: string) => {
+    setDossiers((ds) => {
+      if (ds.some((d) => d.id === id)) return ds.filter((d) => d.id !== id);
+      if (ds.length >= MAX_DOSSIERS) {
+        const j = ds.findIndex((d) => !d.pinned);
+        if (j < 0) return ds;
+        return [...ds.filter((_, k) => k !== j), { id, pinned: false }];
+      }
+      return [...ds, { id, pinned: false }];
+    });
+    setSelectedAgent((cur) => (dossiers.some((d) => d.id === id) ? (cur === id ? null : cur) : id));
+  };
+  const closeDossier = (id: string) => {
+    setDossiers((ds) => ds.filter((d) => d.id !== id));
+    setSelectedAgent((cur) => (cur === id ? null : cur));
+  };
+  const togglePinDossier = (id: string) =>
+    setDossiers((ds) => ds.map((d) => (d.id === id ? { ...d, pinned: !d.pinned } : d)));
+  const clearEphemeralDossiers = () => {
+    setSelectedAgent(null);
+    setDossiers((ds) => ds.filter((d) => d.pinned));
+  };
   const [nowTs, setNowTs] = useState(() => Date.now());
   const [narrow, setNarrow] = useState(() => typeof window !== 'undefined' && window.innerWidth < 900);
   const reducedMotion = useRef(false);
@@ -982,7 +1007,7 @@ export const CortexAgentsScene: React.FC = () => {
         if (Math.hypot(mx - sx, my - sy) < 45) {
           hitStation = true;
           setSelectedStation((cur) => (cur === st.id ? null : st.id));
-          setSelectedAgent(null);
+          clearEphemeralDossiers();
         }
       });
 
@@ -990,7 +1015,7 @@ export const CortexAgentsScene: React.FC = () => {
         agents.forEach((a) => {
           const { x: ax, y: ay } = agentPos(agents, a, w, h, cx, cy, time);
           if (Math.hypot(mx - ax, my - ay) < 34) {
-            setSelectedAgent((cur) => (cur === a.id ? null : a.id));
+            toggleDossier(a.id);
             setSelectedStation(null);
           }
         });
@@ -1960,7 +1985,7 @@ export const CortexAgentsScene: React.FC = () => {
                 return (
                   <div
                     key={item.id}
-                    onClick={() => { if (a) setSelectedAgent(active ? null : a.id); }}
+                    onClick={() => { if (a) toggleDossier(a.id); }}
                     style={{
                       display: 'flex', alignItems: 'center', gap: 6, padding: '3.5px 6px',
                       borderRadius: 2, marginBottom: 2, cursor: a ? 'pointer' : 'default',
@@ -2008,7 +2033,7 @@ export const CortexAgentsScene: React.FC = () => {
                 return (
                   <div
                     key={a.id}
-                    onClick={() => setSelectedAgent(active ? null : a.id)}
+                    onClick={() => toggleDossier(a.id)}
                     style={{
                       display: 'flex', alignItems: 'center', gap: 6, padding: '3px 6px',
                       borderRadius: 2, marginBottom: 2, cursor: 'pointer',
@@ -2132,7 +2157,7 @@ export const CortexAgentsScene: React.FC = () => {
         const left = (narrow ? 50 : 57) + Math.cos(baseA) * (narrow ? 36 : 33);
         const top = 50 + Math.sin(baseA) * 28;
         return (
-          <div key={a.id} onClick={() => setSelectedAgent(selectedAgent === a.id ? null : a.id)}
+          <div key={a.id} onClick={() => toggleDossier(a.id)}
             style={{
               position: 'absolute', left: `${left}%`, top: `${top}%`, transform: 'translate(-50%,-100%)',
               zIndex: 6, width: 250, cursor: 'pointer',
@@ -2170,22 +2195,21 @@ export const CortexAgentsScene: React.FC = () => {
         );
       })}
 
-      {(() => {
-        // Selection wins; a pinned dossier survives deselect/background click.
-        const shownId = selectedAgent || pinnedAgentId;
-        if (!shownId) return null;
-        const a = agents.find(x => x.id === shownId);
+      {dossiers.map((d, i) => {
+        const a = agents.find(x => x.id === d.id);
         if (!a) return null;
         return (
           <AgentDossierPanel
+            key={d.id}
             agent={a} snap={snap} now={nowTs}
-            pinned={pinnedAgentId === a.id}
-            onTogglePin={() => setPinnedAgentId(p => (p === a.id ? null : a.id))}
-            onClose={() => { setSelectedAgent(null); setPinnedAgentId(null); }}
+            pinned={d.pinned}
+            onTogglePin={() => togglePinDossier(d.id)}
+            onClose={() => closeDossier(d.id)}
+            stackIndex={i}
             dockLeft={!narrow}
           />
         );
-      })()}
+      })}
 
       {selectedStation && (
         <OmniSyndicationPanel onClose={() => setSelectedStation(null)} dockLeft={!narrow} />
@@ -2193,7 +2217,7 @@ export const CortexAgentsScene: React.FC = () => {
 
       <CortexFoundryNav
         snap={snap}
-        onSelectAgent={setSelectedAgent}
+        onSelectAgent={(id) => { if (id) toggleDossier(id); else clearEphemeralDossiers(); }}
         selectedAgent={selectedAgent}
         onOpenTower={() => setTowerOpen(true)}
       />

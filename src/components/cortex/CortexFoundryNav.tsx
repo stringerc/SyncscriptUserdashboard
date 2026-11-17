@@ -299,7 +299,7 @@ export function CortexFoundryNav({ snap, onSelectAgent, selectedAgent, onOpenTow
                     <Lamp status={status} />
                     {e.id && a ? (
                       <button
-                        onClick={() => onSelectAgent(selectedAgent === a.id ? null : a.id)}
+                        onClick={() => onSelectAgent(a.id)}
                         style={{
                           flex: 1, textAlign: 'left', background: 'none', border: 'none', cursor: 'pointer', padding: 0,
                           color: selectedAgent === a.id ? '#7dd3fc' : INK, fontFamily: MONO, fontSize: 10.5,
