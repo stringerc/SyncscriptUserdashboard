@@ -50,9 +50,33 @@ const agentSort = (a: AgentClient, b: AgentClient) => {
   if (ib >= 0) return 1;
   return a.id.localeCompare(b.id);
 };
-/** Enterprise fleet (revenue agents + self-spawned) flies the outer satellite deck. */
-const agentTier = (a?: AgentClient | null): 'enterprise' | 'standard' =>
-  a?.tier === 'enterprise' || !!a?.spawnSpec ? 'enterprise' : 'standard';
+/**
+ * Apollo Mission Control Orbital Tiers:
+ *  - 'console': Flight Console Specialists (closest to Cortex Core on the inner ring)
+ *  - 'support': Support Craft & Specialist Agents (standard mid ring)
+ *  - 'enterprise': Enterprise fleet & spawned vessels (outer satellite deck)
+ */
+export const FLIGHT_CONSOLE_SPECIALIST_IDS = new Set([
+  'antigravity', // GUIDANCE (Strategy · Vision)
+  'builder',     // FLIGHT CONTROLS (Execute · Builder)
+  'runner',      // FLIGHT CONTROLS (Execute · Runner)
+  'sentinel',    // EECOM (Power/Compute · Models Health)
+  'forecaster',  // FDO (Trajectory · Orbits)
+  'warden',      // SURGEON (Quality Gate · Safety)
+  'strategist',  // FLIGHT DIRECTOR
+]);
+
+export type AgentOrbitTier = 'console' | 'support' | 'enterprise';
+
+export const agentOrbitTier = (a?: AgentClient | null): AgentOrbitTier => {
+  if (!a) return 'support';
+  if (a.tier === 'enterprise' || !!a.spawnSpec) return 'enterprise';
+  if (FLIGHT_CONSOLE_SPECIALIST_IDS.has(a.id)) return 'console';
+  return 'support';
+};
+
+const agentTier = (a?: AgentClient | null): 'enterprise' | 'console' | 'support' =>
+  agentOrbitTier(a);
 const INK = '#e0f2fe';
 const DIM = 'rgba(148,163,184,0.55)';
 const MONO = "'IBM Plex Mono', monospace";
@@ -363,8 +387,8 @@ const AgentDossierPanel: React.FC<{ agent: AgentClient; snap: AgentsSnapshotClie
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', flexShrink: 0 }}>
         <span style={{ fontSize: 11, letterSpacing: '0.3em', color: col, fontFamily: MONO, fontWeight: 700 }}>
           {a.name}
-          <span style={{ fontSize: 7, letterSpacing: 0.1, color: agentTier(a) === 'enterprise' ? '#fbbf24' : DIM, marginLeft: 8, verticalAlign: 'middle' }}>
-            {agentTier(a) === 'enterprise' ? 'ENTERPRISE' : 'STANDARD'}
+          <span style={{ fontSize: 7, letterSpacing: 0.1, color: agentOrbitTier(a) === 'enterprise' ? '#fbbf24' : agentOrbitTier(a) === 'console' ? '#38bdf8' : DIM, marginLeft: 8, verticalAlign: 'middle' }}>
+            {agentOrbitTier(a) === 'enterprise' ? 'ENTERPRISE' : agentOrbitTier(a) === 'console' ? 'FLIGHT CONSOLE' : 'SUPPORT CRAFT'}
           </span>
         </span>
         <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -829,15 +853,15 @@ export const CortexAgentsScene: React.FC = () => {
     });
 
     const agentPos = (agents: AgentClient[], agent: AgentClient, w: number, h: number, cx: number, cy: number, t: number) => {
-      const tier = agentTier(agent);
-      const group = agents.filter((x) => agentTier(x) === tier);
+      const tier = agentOrbitTier(agent);
+      const group = agents.filter((x) => agentOrbitTier(x) === tier);
       const i = Math.max(0, group.indexOf(agent));
       const n = Math.max(group.length, 1);
-      const baseA = (i / n) * Math.PI * 2 - Math.PI / 2 + (tier === 'enterprise' ? 0.31 : 0);
-      const wob = reducedMotion.current ? 0 : Math.sin(t * 0.6 + i * 1.9 + (tier === 'enterprise' ? 2.2 : 0)) * 0.06;
-      const k = tier === 'enterprise' ? 1.24 : 1;
+      const baseA = (i / n) * Math.PI * 2 - Math.PI / 2 + (tier === 'enterprise' ? 0.31 : tier === 'console' ? 0.18 : 0);
+      const wob = reducedMotion.current ? 0 : Math.sin(t * 0.6 + i * 1.9 + (tier === 'enterprise' ? 2.2 : tier === 'console' ? 1.2 : 0)) * 0.05;
+      const k = tier === 'console' ? 0.60 : tier === 'enterprise' ? 1.28 : 1.0;
       const rx = Math.min(w * 0.37, 580) * k, ry = Math.min(h * 0.32, 320) * k;
-      return { x: cx + Math.cos(baseA + wob) * rx, y: cy + Math.sin(baseA + wob) * ry, a: baseA };
+      return { x: cx + Math.cos(baseA + wob) * rx, y: cy + Math.sin(baseA + wob) * ry, a: baseA, tier };
     };
 
     const draw = (now: number) => {
@@ -1041,20 +1065,56 @@ export const CortexAgentsScene: React.FC = () => {
       const s = snapRef.current;
       const agents = (s.agents || []).slice().sort(agentSort);
 
-      // orbit ellipse
-      ctx.strokeStyle = 'rgba(103,232,249,0.10)';
-      ctx.lineWidth = 1;
-      ctx.setLineDash([2, 7]);
-      ctx.beginPath(); ctx.ellipse(cx, cy, Math.min(w * 0.37, 580), Math.min(h * 0.32, 320), 0, 0, Math.PI * 2); ctx.stroke();
-      // enterprise satellite deck — outer orbital ring (gold, distinct from moon orbit)
-      const hasEnterprise = agents.some((a) => agentTier(a) === 'enterprise');
-      if (hasEnterprise) {
-        ctx.strokeStyle = 'rgba(251,191,36,0.16)';
-        ctx.beginPath(); ctx.ellipse(cx, cy, Math.min(w * 0.37, 580) * 1.24, Math.min(h * 0.32, 320) * 1.24, 0, 0, Math.PI * 2); ctx.stroke();
+      // ── Three Hierarchical Orbital Rings ──
+      const baseRx = Math.min(w * 0.37, 580);
+      const baseRy = Math.min(h * 0.32, 320);
+
+      // 1. Inner Ring — Flight Consoles (Specialists closest to Cortex Core)
+      const hasConsoles = agents.some((a) => agentOrbitTier(a) === 'console');
+      if (hasConsoles) {
+        ctx.strokeStyle = 'rgba(56,189,248,0.24)';
+        ctx.lineWidth = 1.2;
+        ctx.setLineDash([4, 6]);
+        ctx.beginPath();
+        ctx.ellipse(cx, cy, baseRx * 0.60, baseRy * 0.60, 0, 0, Math.PI * 2);
+        ctx.stroke();
+
+        ctx.font = `700 7px ${MONO}`;
+        ctx.textAlign = 'center';
+        ctx.fillStyle = 'rgba(56,189,248,0.6)';
+        ctx.fillText('FLIGHT CONSOLES // SPECIALIST RING', cx, cy - baseRy * 0.60 - 7);
+      }
+
+      // 2. Mid Ring — Support Craft
+      const hasSupport = agents.some((a) => agentOrbitTier(a) === 'support');
+      if (hasSupport) {
+        ctx.strokeStyle = 'rgba(103,232,249,0.12)';
+        ctx.lineWidth = 1;
+        ctx.setLineDash([2, 7]);
+        ctx.beginPath();
+        ctx.ellipse(cx, cy, baseRx, baseRy, 0, 0, Math.PI * 2);
+        ctx.stroke();
+
         ctx.font = `7px ${MONO}`;
         ctx.textAlign = 'center';
-        ctx.fillStyle = 'rgba(251,191,36,0.4)';
-        ctx.fillText('ENTERPRISE DECK', cx, cy - Math.min(h * 0.32, 320) * 1.24 - 8);
+        ctx.fillStyle = 'rgba(103,232,249,0.35)';
+        ctx.fillText('SUPPORT CRAFT // MID ORBIT', cx, cy - baseRy - 8);
+      }
+
+      // 3. Outer Ring — Enterprise Satellite Deck (Missions)
+      const hasEnterprise = agents.some((a) => agentOrbitTier(a) === 'enterprise');
+      if (hasEnterprise) {
+        ctx.strokeStyle = 'rgba(251,191,36,0.18)';
+        ctx.lineWidth = 1;
+        ctx.setLineDash([4, 8]);
+        ctx.beginPath();
+        ctx.ellipse(cx, cy, baseRx * 1.28, baseRy * 1.28, 0, 0, Math.PI * 2);
+        ctx.stroke();
+
+        ctx.font = `7px ${MONO}`;
+        ctx.textAlign = 'center';
+        ctx.fillStyle = 'rgba(251,191,36,0.5)';
+        ctx.fillText('ENTERPRISE DECK', cx, cy - baseRy * 1.28 - 8);
       }
       ctx.setLineDash([]);
 
@@ -1486,7 +1546,9 @@ export const CortexAgentsScene: React.FC = () => {
         ctx.fillText(a.name, ax, ay + vr * 1.15 + 16);
         ctx.fillStyle = errored ? '#f87171' : working ? col : DIM;
         ctx.font = `8px ${MONO}`;
-        ctx.fillText(`${enterprise ? 'SAT·' : ''}${a.status.toUpperCase()}`, ax, ay + vr * 1.15 + 27);
+        const tier = agentOrbitTier(a);
+        const tierPrefix = tier === 'enterprise' ? 'SAT·' : tier === 'console' ? 'CON·' : '';
+        ctx.fillText(`${tierPrefix}${a.status.toUpperCase()}`, ax, ay + vr * 1.15 + 27);
       });
 
       // ── 5b. Enterprise stations — businesses on the outer orbit ──
