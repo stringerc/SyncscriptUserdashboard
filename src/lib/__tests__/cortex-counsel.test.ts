@@ -188,3 +188,101 @@ describe('Cortex Counsel', () => {
     expect(list[0].question).toBe('b');
   });
 });
+
+// ── Internal console position worker + Discord decide buttons ──────
+
+const { runCounselPosition } = await import('../cortex-agents/counsel-position');
+const { handleDiscordInteraction } = await import('../cortex-discord');
+
+function stubCtx(sessionId: string, llmJson: string) {
+  return {
+    task: { kind: 'counsel_position', input: { sessionId } },
+    progress: () => {},
+    llm: async () => llmJson,
+  } as any;
+}
+
+describe('counsel_position worker', () => {
+  beforeEach(() => {
+    fs.rmSync(path.join(tmp, 'counsel'), { recursive: true, force: true });
+  });
+  afterEach(() => fs.rmSync(tmp, { recursive: true, force: true }));
+
+  const GO_JSON = JSON.stringify({
+    stance: 'go', confidence: 0.7,
+    keyEvidence: ['endpoint verified 200'], risks: [], requiredConditions: [],
+    reasoning: 'evidence-backed go',
+  });
+
+  it('files an evidence-backed position on an open session', async () => {
+    const { session } = conveneCounsel({ question: 'ship it?', members: ['sentinel', 'user'] });
+    const res: any = await runCounselPosition(stubCtx(session!.id, GO_JSON), 'sentinel', 'EECOM');
+    expect(res.filed).toBe(true);
+    expect(res.round).toBe(1);
+    const s = getCounselSession(session!.id)!;
+    expect(s.positions.some((p) => p.member === 'sentinel' && p.round === 1)).toBe(true);
+  });
+
+  it('refuses non-member consoles and closed sessions', async () => {
+    const { session } = conveneCounsel({ question: 'q', members: ['devin', 'user'] });
+    const res: any = await runCounselPosition(stubCtx(session!.id, GO_JSON), 'sentinel', 'EECOM');
+    expect(res.error).toMatch(/not a member/);
+
+    const c = conveneCounsel({ question: 'q2', members: ['sentinel', 'user'] });
+    cancelCounsel(c.session!.id, 'user');
+    const res2: any = await runCounselPosition(stubCtx(c.session!.id, GO_JSON), 'sentinel', 'EECOM');
+    expect(res2.error).toMatch(/not collecting|not found|cancelled/i);
+  });
+
+  it('dedupes a second filing in the same round', async () => {
+    const { session } = conveneCounsel({ question: 'q', members: ['sentinel', 'user'] });
+    await runCounselPosition(stubCtx(session!.id, GO_JSON), 'sentinel', 'EECOM');
+    const res: any = await runCounselPosition(stubCtx(session!.id, GO_JSON), 'sentinel', 'EECOM');
+    expect(res.error).toMatch(/already filed/);
+  });
+});
+
+describe('Discord counsel buttons', () => {
+  beforeEach(() => {
+    fs.rmSync(path.join(tmp, 'counsel'), { recursive: true, force: true });
+  });
+  afterEach(() => fs.rmSync(tmp, { recursive: true, force: true }));
+
+  const deps: any = {
+    ownerId: 'OWNER',
+    decideCounsel: (sid: string, decision: string) => decideCounsel(sid, decision as any, 'discord:OWNER'),
+  };
+  const click = (customId: string, userId = 'OWNER') =>
+    handleDiscordInteraction({ type: 3, user: { id: userId }, data: { custom_id: customId } }, deps);
+
+  it('owner GO button records a poll verdict', async () => {
+    const { session } = conveneCounsel({ question: 'q', lane: 'reversible' });
+    filePosition(session!.id, validPos);
+    openRebuttal(session!.id); closeRebuttal(session!.id);
+    recordSynthesis(session!.id, { by: 's', stanceTable: [], agreements: [], conflicts: [], unresolvedObjections: [], recommendation: 'go', text: 'x' });
+    expect(getCounselSession(session!.id)!.status).toBe('poll');
+
+    const res: any = await click(`counsel:go:${session!.id}`);
+    expect(res.type).toBe(7);
+    expect(getCounselSession(session!.id)!.status).toBe('cleared');
+  });
+
+  it('non-owner is rejected before the button handler', async () => {
+    const { session } = conveneCounsel({ question: 'q' });
+    const res: any = await click(`counsel:nogo:${session!.id}`, 'RANDO');
+    expect(res.type).toBe(4);
+    expect(getCounselSession(session!.id)!.status).not.toBe('cleared');
+  });
+
+  it('double-decision on a decided session reports failure honestly', async () => {
+    const { session } = conveneCounsel({ question: 'q', lane: 'reversible' });
+    filePosition(session!.id, validPos);
+    openRebuttal(session!.id); closeRebuttal(session!.id);
+    recordSynthesis(session!.id, { by: 's', stanceTable: [], agreements: [], conflicts: [], unresolvedObjections: [], recommendation: 'go', text: 'x' });
+    await click(`counsel:go:${session!.id}`);
+    const res2: any = await click(`counsel:nogo:${session!.id}`);
+    expect(res2.type).toBe(7);
+    expect(String(res2.data.content)).toMatch(/Could not resolve|already/i);
+    expect(getCounselSession(session!.id)!.status).toBe('cleared');
+  });
+});

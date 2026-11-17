@@ -16,6 +16,7 @@ import type { WorkerHandler } from './runtime';
 import type { AgentEvent } from './types';
 import { rulesBlock } from './rules';
 import { listIncidents } from './incidents';
+import { runCounselPosition } from './counsel-position';
 
 const PORT = process.env.PORT ? parseInt(process.env.PORT) : 5173;
 const BASE = `http://127.0.0.1:${PORT}`;
@@ -340,6 +341,8 @@ export function nodeQcProbes() {
 }
 
 const wardenWorker: WorkerHandler = async (ctx) => {
+  if (ctx.task.kind === 'counsel_position')
+    return runCounselPosition(ctx, 'warden', 'SURGEON — quality & blast-radius counsel (read-only)');
   if (ctx.task.kind !== 'patrol')
     throw new Error(`warden: unknown task kind '${ctx.task.kind}' (expected 'patrol')`);
 
@@ -384,6 +387,29 @@ const wardenWorker: WorkerHandler = async (ctx) => {
     },
     at: Date.now(),
   } as AgentEvent);
+
+  // ── Pillar 1: Autonomous Immune System ──
+  // When an anomaly is detected, auto-dispatch a self-healing mission to Antigravity (or Devin failover)
+  if (!report.healthy && report.anomalies.length > 0) {
+    const anomalySummary = report.anomalies[0].slice(0, 72);
+    try {
+      fetch(`${BASE}/api/cortex/agents/task`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          agentId: 'antigravity',
+          kind: 'heal_anomaly',
+          title: `Autonomous Anomaly Repair: ${anomalySummary}`,
+          input: {
+            anomalies: report.anomalies,
+            warnings: report.warnings,
+            instruction: `Analyze and resolve the system anomaly flagged by Warden: ${report.anomalies.join('; ')}. Verify with npm run verify:cortex before completing.`,
+            autoHeal: true,
+          },
+        }),
+      }).catch(() => {});
+    } catch {}
+  }
 
   ctx.progress(1);
   return { report, alert };

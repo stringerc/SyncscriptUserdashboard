@@ -1541,23 +1541,67 @@ function apiProxyPlugin(): Plugin {
         }
       };
 
+      /** Discord message with interactive GO/NO-GO buttons for a poll. */
+      const counselDiscordPollCard = async (s: any) => {
+        const token = process.env.DISCORD_BOT_TOKEN;
+        const channel = process.env.DISCORD_CHANNEL_BRIEFS || process.env.DISCORD_CHANNEL_ID;
+        if (!token || !channel) return;
+        const board = pollBoard(s);
+        const content = [
+          `⚖️ **Counsel poll — ${s.id}** (${s.lane.toUpperCase()})`,
+          `**${s.question}**`,
+          ...board.stances.map((x: any) => `• ${x.member.toUpperCase()}: ${x.stance.toUpperCase()}${typeof x.confidence === 'number' ? ` (${Math.round(x.confidence * 100)}%)` : ''}`),
+          board.counts.noResponse > 0 ? `• (${board.counts.noResponse} member(s) did not respond)` : '',
+          s.synthesis?.text ? `\n*${s.synthesis.text.slice(0, 400)}*` : '',
+        ].filter(Boolean).join('\n');
+        try {
+          await discordApi('POST', `/channels/${channel}/messages`, {
+            token,
+            body: {
+              content: content.slice(0, 1900),
+              components: [{
+                type: 1,
+                components: [
+                  { type: 2, style: 3, label: 'GO', custom_id: `counsel:go:${s.id}` },
+                  { type: 2, style: 4, label: 'NO-GO', custom_id: `counsel:nogo:${s.id}` },
+                ],
+              }],
+            },
+          });
+        } catch (e: any) {
+          console.warn('[counsel] discord poll card failed:', String(e?.message || e).slice(0, 160));
+        }
+      };
+
+      /** Dispatch counsel_position tasks to internal consoles for a session.
+       *  Called on convene and rebuttal_open so members auto-file. */
+      const dispatchCounselPositions = (sessionId: string) => {
+        const s = getCounselSession(sessionId);
+        if (!s || !['positions', 'rebuttal'].includes(s.status)) return;
+        for (const c of COUNSEL_CONSOLES) {
+          if (c.adapter !== 'internal' || c.id === 'strategist' || c.id === 'user') continue;
+          if (!s.members.includes(c.id)) continue;
+          const round = s.status === 'rebuttal' ? 2 : 1;
+          if (s.positions.some((p) => p.member === c.id && p.round === round)) continue;
+          agentRuntime.submitTask(c.id as any, 'counsel_position',
+            `Counsel ${sessionId} R${round}: ${s.question.slice(0, 80)}`,
+            { sessionId });
+        }
+      };
+
       const counselSweep = async () => {
         try {
           // 1. Notify Discord once per session entering poll.
           for (const s of listCounselSessions({ status: 'poll' })) {
             if (s.discordNotifiedAt) continue;
-            const board = pollBoard(s);
-            const lines = [
-              `⚖️ **Counsel poll — ${s.id}** (${s.lane.toUpperCase()})`,
-              `**${s.question}**`,
-              ...board.stances.map((x: any) => `• ${x.member.toUpperCase()}: ${x.stance.toUpperCase()}${typeof x.confidence === 'number' ? ` (${Math.round(x.confidence * 100)}%)` : ''}`),
-              board.counts.noResponse > 0 ? `• (${board.counts.noResponse} member(s) did not respond)` : '',
-              s.synthesis?.text ? `\n*${s.synthesis.text.slice(0, 400)}*` : '',
-              `\nAwaiting GO/NO-GO — Foundry tower board or POST /api/cortex/counsel/action`,
-            ].filter(Boolean);
-            await counselDiscordPost(lines.join('\n'));
+            await counselDiscordPollCard(s);
             markCounselDiscordNotified(s.id);
           }
+
+          // 1b. Auto-dispatch position tasks for active sessions (covers
+          //     STRATEGIST-convened sessions too; idempotent per round).
+          for (const s of listCounselSessions({ status: 'positions' })) dispatchCounselPositions(s.id);
+          for (const s of listCounselSessions({ status: 'rebuttal' })) dispatchCounselPositions(s.id);
 
           // 2. Auto-flag pending hard-class proposals lacking a counsel session.
           //    actionClass code|infra = cross-domain → deserves deliberation.
@@ -1579,6 +1623,7 @@ function apiProxyPlugin(): Plugin {
               });
               if (r.session) {
                 console.log(`[counsel] auto-flagged proposal ${p.id} → ${r.session.id}`);
+                dispatchCounselPositions(r.session.id);
               } else {
                 break; // daily cap or validation — stop trying
               }
@@ -10436,6 +10481,7 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
               members: Array.isArray(body.members) ? body.members : undefined,
               sourceProposalId: typeof body.proposalId === 'string' ? body.proposalId : undefined,
             });
+            if (r.session) dispatchCounselPositions(r.session.id);
             return r.session
               ? { body: { ok: true, session: r.session } }
               : { code: 400, body: { ok: false, error: r.error } };
@@ -10474,6 +10520,7 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
             }
             case 'rebuttal_open': {
               const r = openRebuttal(sid);
+              if (r.ok) dispatchCounselPositions(sid);
               return r.ok ? { body: { ok: true, session: r.session } } : { code: 400, body: { ok: false, error: r.error } };
             }
             case 'rebuttal_close': {
@@ -10901,6 +10948,10 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
           }
           decideStrategyProposal(id, 'approved', `dispatched ${t.task.id}`, t.task.id);
           return { ok: true, note: `dispatched to ${p.agentId} (${t.task.id})` };
+        },
+        decideCounsel: (sessionId: string, decision: 'go' | 'no-go', userId: string) => {
+          const r = decideCounsel(sessionId, decision, `discord:${userId}`);
+          return r.ok ? { ok: true, note: `verdict ${decision} recorded` } : { ok: false, note: r.error };
         },
         submitTask: (agentId: string, kind: string, title: string, input?: any) =>
           agentRuntime.submitTask(agentId as any, kind, title, input) as any,

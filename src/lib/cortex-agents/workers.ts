@@ -23,6 +23,7 @@ import { makeBriefWorker } from './brief';
 import { makeDebriefWorker } from './debrief';
 import { makeRadarSweepWorker } from './radar';
 import { makeStrategistWorker } from './strategist';
+import { runCounselPosition } from './counsel-position';
 import { getCortexProactiveInitiative } from '../cortex-proactive-initiative';
 import { cortexObsidianMemory } from '../cortex-obsidian-memory';
 import { relevantRules, rulesBlock, RULES_DIR, vaultFolder, listMd } from './rules';
@@ -429,6 +430,9 @@ async function distillLearnings(ctx: AgentContext): Promise<unknown> {
 const sentinelWorker: WorkerHandler = async (ctx) => {
   const kind = ctx.task.kind;
   ctx.progress(0.3);
+  if (kind === 'counsel_position') {
+    return runCounselPosition(ctx, 'sentinel', 'EECOM — compute/power & model-health counsel');
+  }
   if (kind === 'catalog_scan') {
     // Sentinel's autonomous loop already scans; this is a manual pulse.
     ctx.progress(1);
@@ -1295,6 +1299,9 @@ export function makeEphemeralWorker(spec: SpawnSpec): WorkerHandler {
 
 const forecasterWorker = (runtime: AgentRuntime): WorkerHandler => async (ctx) => {
   const kind = ctx.task.kind || 'forecast_cycle';
+  if (kind === 'counsel_position') {
+    return runCounselPosition(ctx, 'forecaster', 'FDO — trajectory & forecast counsel');
+  }
   if (kind !== 'forecast_cycle' && kind !== 'forecast_status') {
     throw new Error(`forecaster: unknown task kind '${kind}'`);
   }

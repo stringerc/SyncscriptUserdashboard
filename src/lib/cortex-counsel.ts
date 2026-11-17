@@ -196,7 +196,7 @@ export function conveneCounsel(opts: {
   }
 
   const validIds = new Set(COUNSEL_CONSOLES.map((c) => c.id));
-  const members = (opts.members || ['strategist', 'devin', 'warden', 'user'])
+  const members = (opts.members || ['strategist', 'devin', 'sentinel', 'forecaster', 'warden', 'user'])
     .filter((m) => validIds.has(m));
   if (members.length < 2) return { error: 'at least 2 valid members required' };
 

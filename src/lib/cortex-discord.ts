@@ -81,6 +81,8 @@ export interface DiscordDeps {
    *  server-side (budget apply / task dispatch / devin session gate). */
   listStrategyProposals?: () => any[];
   decideStrategyProposal?: (id: string, decision: 'approved' | 'dismissed') => Promise<{ ok: boolean; note?: string }> | { ok: boolean; note?: string };
+  /** Counsel poll GO/NO-GO buttons — decides a counsel session. */
+  decideCounsel?: (sessionId: string, decision: 'go' | 'no-go', userId: string) => Promise<{ ok: boolean; note?: string }> | { ok: boolean; note?: string };
   submitTask: (agentId: string, kind: string, title: string, input?: any) => { ok: boolean; task?: { id?: string }; error?: string };
   /** Fire-and-forget hook invoked after a successful /cortex ask — used to
    *  spawn the task thread. Receives the raw interaction payload + job info. */
@@ -500,6 +502,24 @@ export async function handleDiscordInteraction(
           content: res.ok
             ? `**${sm[1] === 'ok' ? 'Approved' : 'Dismissed'}** \`${sm[2]}\` by <@${userId}>${res.note ? ` — ${res.note}` : ''}`
             : `Could not resolve \`${sm[2]}\` — ${res.note || 'already decided or unknown.'}`,
+          embeds: payload?.message?.embeds || [],
+          components: [],
+        },
+      };
+    }
+    // Counsel poll buttons (counsel:go|nogo:<sessionId>) → Go/No-Go verdict.
+    const cm = customId.match(/^counsel:(go|nogo):(.+)$/);
+    if (cm) {
+      if (!deps.decideCounsel) {
+        return { type: 4, data: { content: 'Counsel decisions are not wired on this host.', flags: EPHEMERAL } };
+      }
+      const res = await deps.decideCounsel(cm[2], cm[1] === 'go' ? 'go' : 'no-go', userId);
+      return {
+        type: 7,
+        data: {
+          content: res.ok
+            ? `**${cm[1] === 'go' ? 'GO' : 'NO-GO'}** on counsel poll \`${cm[2]}\` by <@${userId}>${res.note ? ` — ${res.note}` : ''}`
+            : `Could not resolve counsel poll \`${cm[2]}\` — ${res.note || 'already decided or unknown.'}`,
           embeds: payload?.message?.embeds || [],
           components: [],
         },
