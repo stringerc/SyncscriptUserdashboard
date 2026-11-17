@@ -1082,6 +1082,37 @@ const runnerWorker: WorkerHandler = async (ctx) => {
     try { parsed = JSON.parse(stdout.slice(stdout.indexOf('CALENDAR_CREATE:') + 17).trim()); } catch {}
     const ok = parsed ? Object.values(parsed).every((r: any) => r?.ok) : out?.ok === true;
     ctx.progress(1);
+
+    // Gap-fill: mirror server-created events into calendar-upcoming.json so
+    // tomorrow's brief sees them even if the client feed is stale. Also
+    // close the loop on the originating LifeEvent (candidate → added).
+    if (ok) {
+      try {
+        const feedPath = path.join(process.cwd(), '.cortex-runtime', 'calendar-upcoming.json');
+        const feed = JSON.parse(fs.readFileSync(feedPath, 'utf8'));
+        const events = Array.isArray(feed?.events) ? feed.events : [];
+        const startMs = new Date(String(ev.startISO)).getTime();
+        const endMs = ev.endISO ? new Date(String(ev.endISO)).getTime() : startMs + 3600_000;
+        if (Number.isFinite(startMs) && !events.some((e: any) => String(e?.title || '') === String(ev.title))) {
+          events.push({
+            id: `radar-${Date.now().toString(36)}`,
+            title: String(ev.title), start: startMs, end: endMs,
+            attendees: [], source: 'life-radar',
+          });
+          fs.writeFileSync(feedPath, JSON.stringify({ events: events.slice(-100) }));
+        }
+      } catch {}
+      try {
+        const lifeId = String(ctx.task.input.lifeEventId || '');
+        if (lifeId) {
+          const lf = path.join(process.cwd(), '.cortex-runtime', 'life-events.json');
+          const ledger = JSON.parse(fs.readFileSync(lf, 'utf8'));
+          const le = (ledger.events || []).find((e: any) => e.id === lifeId);
+          if (le) { le.status = 'added'; le.updatedAt = Date.now(); fs.writeFileSync(lf, JSON.stringify(ledger, null, 1)); }
+        }
+      } catch {}
+    }
+
     return {
       calendarEvent: { title: ev.title, startISO: ev.startISO, calendars },
       ok,

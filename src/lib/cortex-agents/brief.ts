@@ -21,6 +21,7 @@ import {
 } from '../cortex-morning-brief';
 import { discordApi } from '../cortex-discord';
 import { listStrategyProposals } from './strategy-proposals';
+import { getCortexEnergySpineBridge } from '../cortex-energy-spine';
 
 const RUNTIME_DIR = process.env.CORTEX_AGENTS_STATE_DIR || path.join(process.cwd(), '.cortex-runtime');
 const BRIEFS_DIR = path.join(RUNTIME_DIR, 'briefs');
@@ -206,13 +207,26 @@ async function gatherBriefData(now: number): Promise<{ data: BriefData; raw: Rec
 
   const longDate = new Date(now).toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });
 
+  // Circadian peak window — honest absence if the bridge can't compute one.
+  let energyPeak: BriefData['energyPeak'];
+  try {
+    const peak = getCortexEnergySpineBridge().getNextPeakEnergyWindow(new Date(now));
+    if (peak.startTime.getTime() < end) {
+      energyPeak = {
+        start: peak.startTime.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }),
+        end: peak.endTime.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }),
+        label: `${peak.startTime.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}–${peak.endTime.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })} (bio-energy ${Math.round(peak.energyScore * 100)}%)`,
+      };
+    }
+  } catch {}
+
   const data: BriefData = {
     dayKey,
     longDate,
     greeting,
     decisions,
     events: workEvents,
-    energyPeak: undefined, // filled by energy-spine bridge if available — honest absence otherwise
+    energyPeak,
     stats,
     watchItems: watchItems.slice(0, 12),
     personalEvents,
