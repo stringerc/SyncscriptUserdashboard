@@ -1,21 +1,29 @@
+/// <reference path="../cortana/r3f-jsx.d.ts" />
 /**
- * CortexAgentsScene — "The Nexus Foundry" Space Air Traffic Control (SATC) Command Deck.
+ * CortexAgentsScene — "The Nexus Foundry" 3D Space Air Traffic Control (SATC) Command Deck.
  *
- * Implements the 4-Tier Orbital Space Air Traffic Control architecture directly mapped
- * to the master visual artwork (/images/cortex_satc_nexus_foundry.jpg):
- *  - Central Crystalline Spire & Golden Astrolabe Core with Voice-Reactive Luminescence.
- *  - Tier 3 (Upper Zenith): The Counsel Deck Flagship Battlecruisers (Antigravity, Devin, Strategist)
- *    with Dynamic Photon Datalink Lattice & Counsel Deliberation Grid.
- *  - Tier 1 (Inner Track): Active High-Speed Vector Flight Corridor with glowing cyan plasma wakes
- *    and forward-projected task trajectory vectors.
- *  - Tier 2 (Mid Track): Orbital Holding Patterns (Stack Alpha FL120 & Stack Bravo FL240)
+ * Full Real-Time 3D React Three Fiber (R3F) Simulation:
+ *  - Centerpiece: 3D Crystalline Spire & Interlocking Golden Astrolabe Gyroscope Rings
+ *    with real-time voice-reactive luminescence.
+ *  - Tier 3 (Upper Zenith): Three Massive 3D Counsel Battlecruisers (Antigravity, Devin, Strategist)
+ *    linked by the 3D Glowing Counsel Datalink Laser Lattice with pulsing photon packets.
+ *  - Tier 1 (Inner Runway): 3D High-Speed Active Flight Corridor with banking delta-wing spaceships,
+ *    glowing cyan engine wakes, and forward vector trajectory lines.
+ *  - Tier 2 (Mid Runway): 3D Staggered Orbital Holding Patterns (Stack Alpha & Bravo)
  *    with synchronized port (red) / starboard (green) anti-collision navigation strobes.
- *  - Tier 4 (Lower Nadir): Enterprise Mooring Berth 01 (Omni Syndication) with magnetic docking clamps.
- *  - 360° Planar Radar Sweep with real-time target ping flashes & Mode-S transponder blips.
- *  - Aviation Flight Progress Strips, Mission Control Telemetry, and Interactive Dossiers.
+ *  - Tier 4 (Outer Ring): 3D Industrial Space Station with 24 Radial Docking Piers, moored freighters
+ *    with amber engine exhausts, and the Sovereign Omni Syndication Docking Citadel.
+ *  - 3D Planar Radar Sweep Plane revolving across the airspace with real-time target pings.
+ *  - 3D Camera with cinematic downward angle & pointer parallax depth.
+ *  - Seamless DOM Flight Strips, Telemetry HUD, Task Feeds, Dossiers, and Tower Command Panel.
  */
 
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { Canvas, useFrame, useThree } from '@react-three/fiber';
+import { PerformanceMonitor } from '@react-three/drei';
+import { EffectComposer, Bloom, Vignette } from '@react-three/postprocessing';
+import * as THREE from 'three';
+
 import {
   agentsClient,
   type AgentsSnapshotClient,
@@ -142,31 +150,7 @@ const hexA = (hex: string, a: number) => {
   return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`;
 };
 
-const prand = (i: number, salt: number) => {
-  const x = Math.sin(i * 127.1 + salt * 311.7) * 43758.5453;
-  return x - Math.floor(x);
-};
-
-// ── Enterprise Mooring Berths (Tier 4) ──
-interface BusinessStation {
-  id: string;
-  name: string;
-  callsign: string;
-  squawk: string;
-  statusUrl?: string;
-}
-
-const BUSINESS_STATIONS: BusinessStation[] = [
-  {
-    id: 'omni-syndication',
-    name: 'OMNI // SYNDICATION',
-    callsign: 'OMNI-X',
-    squawk: '7000',
-    statusUrl: '/api/cortex/distribution/status',
-  },
-];
-
-/** Roster Aviation Glyph */
+// ── Roster Aviation SVG Glyph ──
 const AgentGlyph: React.FC<{ tier: 'counsel' | 'enterprise' | 'standard'; color: string }> = ({ tier, color }) =>
   tier === 'counsel' ? (
     <svg width="24" height="24" viewBox="-12 -12 24 24" style={{ flexShrink: 0 }}>
@@ -607,10 +591,788 @@ const OmniSyndicationPanel: React.FC<{
   );
 };
 
-// ── Main Scene Component ──
+// ── 3D Scene Primitives & Models ──
+
+/** 3D Twinkling Deep Space Starfield */
+function DeepSpace3D() {
+  const pointsRef = useRef<THREE.Points>(null);
+  const count = 2200;
+
+  const [geo, mat] = useMemo(() => {
+    const g = new THREE.BufferGeometry();
+    const pos = new Float32Array(count * 3);
+    const col = new Float32Array(count * 3);
+    for (let i = 0; i < count; i++) {
+      const r = 40 + Math.random() * 90;
+      const theta = Math.random() * Math.PI * 2;
+      const phi = Math.acos(2 * Math.random() - 1);
+      pos[i * 3] = r * Math.sin(phi) * Math.cos(theta);
+      pos[i * 3 + 1] = r * Math.sin(phi) * Math.sin(theta) * 0.75;
+      pos[i * 3 + 2] = r * Math.cos(phi);
+
+      const isCyan = Math.random() > 0.45;
+      col[i * 3] = isCyan ? 0.65 : 1.0;
+      col[i * 3 + 1] = isCyan ? 0.9 : 0.95;
+      col[i * 3 + 2] = 1.0;
+    }
+    g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    g.setAttribute('color', new THREE.BufferAttribute(col, 3));
+
+    const m = new THREE.PointsMaterial({
+      size: 0.38,
+      vertexColors: true,
+      transparent: true,
+      opacity: 0.85,
+    });
+    return [g, m];
+  }, [count]);
+
+  useFrame((_, delta) => {
+    if (pointsRef.current) {
+      pointsRef.current.rotation.y += delta * 0.008;
+    }
+  });
+
+  return <primitive object={useMemo(() => new THREE.Points(geo, mat), [geo, mat])} ref={pointsRef} />;
+}
+
+/** The Central 3D Crystalline Obelisk / Spire */
+function CentralSpire3D({ voiceLevel }: { voiceLevel: number }) {
+  const meshRef = useRef<THREE.Mesh>(null);
+  const lightRef = useRef<THREE.PointLight>(null);
+
+  const crystalMesh = useMemo(() => {
+    const geo = new THREE.CylinderGeometry(0, 2.2, 16, 6);
+    const mat = new THREE.MeshStandardMaterial({
+      color: '#00f0ff',
+      emissive: '#00b4d8',
+      emissiveIntensity: 0.8,
+      roughness: 0.15,
+      metalness: 0.2,
+      transparent: true,
+      opacity: 0.9,
+    });
+    return new THREE.Mesh(geo, mat);
+  }, []);
+
+  useFrame((_, delta) => {
+    if (meshRef.current) {
+      meshRef.current.rotation.y += delta * 0.18;
+      const pulse = Math.sin(Date.now() * 0.003) * 0.15;
+      (meshRef.current.material as THREE.MeshStandardMaterial).emissiveIntensity = 0.8 + voiceLevel * 2.5 + pulse;
+    }
+    if (lightRef.current) {
+      lightRef.current.intensity = 3.5 + voiceLevel * 7;
+    }
+  });
+
+  return (
+    <group position={[0, 4, 0]}>
+      <primitive object={crystalMesh} ref={meshRef} scale={[1, 1.25, 1]} />
+      <pointLight ref={lightRef} color="#38bdf8" intensity={3.5} distance={28} />
+    </group>
+  );
+}
+
+/** 3 Interlocking Golden Astrolabe / Gyroscope Rings */
+function GoldenAstrolabe3D() {
+  const ring1Ref = useRef<THREE.Mesh>(null);
+  const ring2Ref = useRef<THREE.Mesh>(null);
+  const ring3Ref = useRef<THREE.Mesh>(null);
+
+  const goldMat = useMemo(
+    () =>
+      new THREE.MeshStandardMaterial({
+        color: '#f59e0b',
+        emissive: '#78350f',
+        emissiveIntensity: 0.35,
+        metalness: 0.92,
+        roughness: 0.2,
+      }),
+    []
+  );
+
+  const [r1, r2, r3] = useMemo(() => {
+    const g1 = new THREE.TorusGeometry(5.2, 0.38, 16, 72);
+    const g2 = new THREE.TorusGeometry(5.8, 0.34, 16, 72);
+    const g3 = new THREE.TorusGeometry(6.4, 0.30, 16, 72);
+    const m1 = new THREE.Mesh(g1, goldMat);
+    m1.rotation.x = Math.PI / 2;
+    const m2 = new THREE.Mesh(g2, goldMat);
+    m2.rotation.set(0.9, 0.4, 0);
+    const m3 = new THREE.Mesh(g3, goldMat);
+    m3.rotation.set(-0.8, -0.5, 0.6);
+    return [m1, m2, m3];
+  }, [goldMat]);
+
+  useFrame((_, delta) => {
+    if (ring1Ref.current) ring1Ref.current.rotation.y += delta * 0.22;
+    if (ring2Ref.current) ring2Ref.current.rotation.z -= delta * 0.18;
+    if (ring3Ref.current) ring3Ref.current.rotation.x += delta * 0.15;
+  });
+
+  return (
+    <group position={[0, 4, 0]}>
+      <primitive object={r1} ref={ring1Ref} />
+      <primitive object={r2} ref={ring2Ref} />
+      <primitive object={r3} ref={ring3Ref} />
+    </group>
+  );
+}
+
+/** 3D Counsel Battlecruiser Model */
+function CounselCruiser3D({
+  name,
+  callsign,
+  position,
+  rotation,
+  color,
+  isWorking,
+  isHovered,
+  isSelected,
+  onPointerOver,
+  onPointerOut,
+  onClick,
+}: {
+  name: string;
+  callsign: string;
+  position: [number, number, number];
+  rotation: [number, number, number];
+  color: string;
+  isWorking: boolean;
+  isHovered: boolean;
+  isSelected: boolean;
+  onPointerOver: () => void;
+  onPointerOut: () => void;
+  onClick: () => void;
+}) {
+  const groupRef = useRef<THREE.Group>(null);
+
+  const cruiserMesh = useMemo(() => {
+    const grp = new THREE.Group();
+    const hullMat = new THREE.MeshStandardMaterial({
+      color: '#070c18',
+      metalness: 0.85,
+      roughness: 0.35,
+    });
+    const trimMat = new THREE.MeshStandardMaterial({
+      color,
+      emissive: color,
+      emissiveIntensity: 0.6,
+      metalness: 0.5,
+    });
+
+    // Main Arrowhead Hull
+    const prow = new THREE.Mesh(new THREE.ConeGeometry(2.4, 7, 4), hullMat);
+    prow.position.set(0, 0, 1);
+    prow.rotation.y = Math.PI / 4;
+    grp.add(prow);
+
+    // Bridge Deck Superstructure
+    const bridge = new THREE.Mesh(new THREE.BoxGeometry(1.8, 1.2, 3), hullMat);
+    bridge.position.set(0, 0.9, -1);
+    grp.add(bridge);
+
+    // Observation Bridge Slit
+    const slit = new THREE.Mesh(new THREE.BoxGeometry(1.5, 0.25, 0.2), trimMat);
+    slit.position.set(0, 1.2, 0);
+    grp.add(slit);
+
+    // Outrigger Wing Sponsons
+    const wingL = new THREE.Mesh(new THREE.BoxGeometry(2.2, 0.4, 3.2), hullMat);
+    wingL.position.set(-2.4, -0.2, -1.2);
+    const wingR = new THREE.Mesh(new THREE.BoxGeometry(2.2, 0.4, 3.2), hullMat);
+    wingR.position.set(2.4, -0.2, -1.2);
+    grp.add(wingL);
+    grp.add(wingR);
+
+    // Twin Aft Warp Nacelles
+    const nacL = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.5, 1.8, 12), trimMat);
+    nacL.position.set(-1.2, 0, -3.2);
+    nacL.rotation.x = Math.PI / 2;
+    const nacR = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.5, 1.8, 12), trimMat);
+    nacR.position.set(1.2, 0, -3.2);
+    nacR.rotation.x = Math.PI / 2;
+    grp.add(nacL);
+    grp.add(nacR);
+
+    // Engine Exhaust Flares
+    const flameMat = new THREE.MeshBasicMaterial({ color: '#38bdf8', transparent: true, opacity: 0.8 });
+    const flameL = new THREE.Mesh(new THREE.ConeGeometry(0.6, 2.5, 12), flameMat);
+    flameL.position.set(-1.2, 0, -4.5);
+    flameL.rotation.x = Math.PI / 2;
+    const flameR = new THREE.Mesh(new THREE.ConeGeometry(0.6, 2.5, 12), flameMat);
+    flameR.position.set(1.2, 0, -4.5);
+    flameR.rotation.x = Math.PI / 2;
+    grp.add(flameL);
+    grp.add(flameR);
+
+    return grp;
+  }, [color]);
+
+  useFrame(() => {
+    if (groupRef.current) {
+      groupRef.current.position.y = position[1] + Math.sin(Date.now() * 0.0015 + position[0]) * 0.25;
+    }
+  });
+
+  return (
+    <group
+      ref={groupRef}
+      position={position}
+      rotation={rotation}
+      onPointerOver={(e) => { e.stopPropagation(); onPointerOver(); }}
+      onPointerOut={(e) => { e.stopPropagation(); onPointerOut(); }}
+      onClick={(e) => { e.stopPropagation(); onClick(); }}
+      scale={isHovered || isSelected ? [1.12, 1.12, 1.12] : [1, 1, 1]}
+    >
+      <primitive object={cruiserMesh} />
+    </group>
+  );
+}
+
+/** 3D Counsel Datalink Laser Lattice */
+function CounselLattice3D({
+  p1,
+  p2,
+  p3,
+  spirePos,
+}: {
+  p1: [number, number, number];
+  p2: [number, number, number];
+  p3: [number, number, number];
+  spirePos: [number, number, number];
+}) {
+  const lineMesh = useMemo(() => {
+    const geo = new THREE.BufferGeometry();
+    const pts = [
+      ...p1, ...p2,
+      ...p2, ...p3,
+      ...p3, ...p1,
+      ...p1, ...spirePos,
+      ...p2, ...spirePos,
+      ...p3, ...spirePos,
+    ];
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(pts, 3));
+    const mat = new THREE.LineBasicMaterial({
+      color: '#67e8f9',
+      transparent: true,
+      opacity: 0.6,
+    });
+    return new THREE.LineSegments(geo, mat);
+  }, [p1, p2, p3, spirePos]);
+
+  const p1Mesh = useMemo(() => new THREE.Mesh(new THREE.SphereGeometry(0.28, 8, 8), new THREE.MeshBasicMaterial({ color: '#ffffff' })), []);
+  const p2Mesh = useMemo(() => new THREE.Mesh(new THREE.SphereGeometry(0.28, 8, 8), new THREE.MeshBasicMaterial({ color: '#38bdf8' })), []);
+  const p3Mesh = useMemo(() => new THREE.Mesh(new THREE.SphereGeometry(0.28, 8, 8), new THREE.MeshBasicMaterial({ color: '#c084fc' })), []);
+
+  const photon1Ref = useRef<THREE.Mesh>(null);
+  const photon2Ref = useRef<THREE.Mesh>(null);
+  const photon3Ref = useRef<THREE.Mesh>(null);
+
+  useFrame(() => {
+    const t = (Date.now() * 0.001) % 1;
+    if (photon1Ref.current) {
+      photon1Ref.current.position.set(
+        p1[0] + (p2[0] - p1[0]) * t,
+        p1[1] + (p2[1] - p1[1]) * t,
+        p1[2] + (p2[2] - p1[2]) * t
+      );
+    }
+    if (photon2Ref.current) {
+      photon2Ref.current.position.set(
+        p2[0] + (p3[0] - p2[0]) * t,
+        p2[1] + (p3[1] - p2[1]) * t,
+        p2[2] + (p3[2] - p2[2]) * t
+      );
+    }
+    if (photon3Ref.current) {
+      photon3Ref.current.position.set(
+        p1[0] + (spirePos[0] - p1[0]) * t,
+        p1[1] + (spirePos[1] - p1[1]) * t,
+        p1[2] + (spirePos[2] - p1[2]) * t
+      );
+    }
+  });
+
+  return (
+    <group>
+      <primitive object={lineMesh} />
+      <primitive object={p1Mesh} ref={photon1Ref} />
+      <primitive object={p2Mesh} ref={photon2Ref} />
+      <primitive object={p3Mesh} ref={photon3Ref} />
+    </group>
+  );
+}
+
+/** 3D Inner Flight Runway & Moving Active Spaceships */
+function ActiveRunway3D({
+  activeAgents,
+  onHover,
+  onClick,
+}: {
+  activeAgents: AgentClient[];
+  onHover: (id: string | null) => void;
+  onClick: (id: string) => void;
+}) {
+  const radius = 10.5;
+  const numActive = Math.max(activeAgents.length, 1);
+
+  const runwayMesh = useMemo(() => {
+    const geo = new THREE.RingGeometry(radius - 0.8, radius + 0.8, 64);
+    const mat = new THREE.MeshStandardMaterial({
+      color: '#071526',
+      emissive: '#0284c7',
+      emissiveIntensity: 0.35,
+      roughness: 0.4,
+      side: THREE.DoubleSide,
+    });
+    const m = new THREE.Mesh(geo, mat);
+    m.rotation.x = Math.PI / 2;
+    return m;
+  }, [radius]);
+
+  return (
+    <group position={[0, -0.2, 0]}>
+      <primitive object={runwayMesh} />
+      {activeAgents.map((a, i) => {
+        const col = AGENT_COLORS[a.id] || '#38bdf8';
+        return (
+          <ActiveShip3D
+            key={a.id}
+            agent={a}
+            index={i}
+            total={numActive}
+            radius={radius}
+            color={col}
+            onHover={onHover}
+            onClick={onClick}
+          />
+        );
+      })}
+    </group>
+  );
+}
+
+function ActiveShip3D({
+  agent,
+  index,
+  total,
+  radius,
+  color,
+  onHover,
+  onClick,
+}: {
+  agent: AgentClient;
+  index: number;
+  total: number;
+  radius: number;
+  color: string;
+  onHover: (id: string | null) => void;
+  onClick: (id: string) => void;
+}) {
+  const shipRef = useRef<THREE.Group>(null);
+
+  const craftMesh = useMemo(() => {
+    const grp = new THREE.Group();
+    // Delta-wing fighter
+    const cone = new THREE.Mesh(
+      new THREE.ConeGeometry(0.7, 1.8, 3),
+      new THREE.MeshStandardMaterial({ color: '#081020', emissive: color, emissiveIntensity: 0.6 })
+    );
+    cone.rotation.x = Math.PI / 2;
+    grp.add(cone);
+
+    // Glowing Ion Engine Wake
+    const wake = new THREE.Mesh(
+      new THREE.ConeGeometry(0.35, 1.4, 8),
+      new THREE.MeshBasicMaterial({ color: '#00f0ff', transparent: true, opacity: 0.75 })
+    );
+    wake.position.set(0, 0, -1.2);
+    wake.rotation.x = Math.PI / 2;
+    grp.add(wake);
+
+    return grp;
+  }, [color]);
+
+  useFrame(() => {
+    const t = Date.now() * 0.0006;
+    const ang = (index / total) * Math.PI * 2 + t * 0.8;
+    if (shipRef.current) {
+      shipRef.current.position.set(Math.cos(ang) * radius, 0.3, Math.sin(ang) * radius);
+      shipRef.current.rotation.y = -ang;
+      shipRef.current.rotation.z = -0.35; // bank inward
+    }
+  });
+
+  return (
+    <group
+      ref={shipRef}
+      onPointerOver={(e) => { e.stopPropagation(); onHover(agent.id); }}
+      onPointerOut={(e) => { e.stopPropagation(); onHover(null); }}
+      onClick={(e) => { e.stopPropagation(); onClick(agent.id); }}
+    >
+      <primitive object={craftMesh} />
+    </group>
+  );
+}
+
+/** 3D Mid Orbital Holding Runway & Patrol Ships */
+function HoldingRunway3D({
+  holdingAgents,
+  onHover,
+  onClick,
+}: {
+  holdingAgents: AgentClient[];
+  onHover: (id: string | null) => void;
+  onClick: (id: string) => void;
+}) {
+  const radius = 16.5;
+  const numHolding = Math.max(holdingAgents.length, 1);
+
+  const runwayMesh = useMemo(() => {
+    const geo = new THREE.RingGeometry(radius - 0.6, radius + 0.6, 64);
+    const mat = new THREE.MeshStandardMaterial({
+      color: '#050c18',
+      emissive: '#1e3a8a',
+      emissiveIntensity: 0.25,
+      roughness: 0.5,
+      side: THREE.DoubleSide,
+    });
+    const m = new THREE.Mesh(geo, mat);
+    m.rotation.x = Math.PI / 2;
+    return m;
+  }, [radius]);
+
+  return (
+    <group position={[0, -0.6, 0]}>
+      <primitive object={runwayMesh} />
+      {holdingAgents.map((a, i) => {
+        const col = AGENT_COLORS[a.id] || '#94a3b8';
+        return (
+          <HoldingShip3D
+            key={a.id}
+            agent={a}
+            index={i}
+            total={numHolding}
+            radius={radius}
+            color={col}
+            onHover={onHover}
+            onClick={onClick}
+          />
+        );
+      })}
+    </group>
+  );
+}
+
+function HoldingShip3D({
+  agent,
+  index,
+  total,
+  radius,
+  color,
+  onHover,
+  onClick,
+}: {
+  agent: AgentClient;
+  index: number;
+  total: number;
+  radius: number;
+  color: string;
+  onHover: (id: string | null) => void;
+  onClick: (id: string) => void;
+}) {
+  const shipRef = useRef<THREE.Group>(null);
+  const portStrobe = useRef<THREE.Mesh>(null);
+  const stbdStrobe = useRef<THREE.Mesh>(null);
+  const isCounter = index % 2 === 1;
+
+  const [craftMesh, pMesh, sMesh] = useMemo(() => {
+    const grp = new THREE.Group();
+    const oct = new THREE.Mesh(
+      new THREE.OctahedronGeometry(0.7, 0),
+      new THREE.MeshStandardMaterial({ color: '#080e1a', emissive: color, emissiveIntensity: 0.4 })
+    );
+    grp.add(oct);
+
+    const port = new THREE.Mesh(new THREE.SphereGeometry(0.12, 6, 6), new THREE.MeshBasicMaterial({ color: '#ef4444' }));
+    port.position.set(-0.8, 0, 0);
+    const stbd = new THREE.Mesh(new THREE.SphereGeometry(0.12, 6, 6), new THREE.MeshBasicMaterial({ color: '#22c55e' }));
+    stbd.position.set(0.8, 0, 0);
+    grp.add(port);
+    grp.add(stbd);
+
+    return [grp, port, stbd];
+  }, [color]);
+
+  useFrame(() => {
+    const t = Date.now() * 0.0003;
+    const ang = (index / total) * Math.PI * 2 + t * (isCounter ? -0.4 : 0.4);
+    if (shipRef.current) {
+      shipRef.current.position.set(Math.cos(ang) * radius, 0.2, Math.sin(ang) * radius);
+      shipRef.current.rotation.y = isCounter ? ang : -ang;
+    }
+
+    const flash = Math.sin(Date.now() * 0.008) > 0.6;
+    (pMesh.material as THREE.MeshBasicMaterial).color.set(flash ? '#ef4444' : '#450a0a');
+    (sMesh.material as THREE.MeshBasicMaterial).color.set(flash ? '#22c55e' : '#052e16');
+  });
+
+  return (
+    <group
+      ref={shipRef}
+      onPointerOver={(e) => { e.stopPropagation(); onHover(agent.id); }}
+      onPointerOut={(e) => { e.stopPropagation(); onHover(null); }}
+      onClick={(e) => { e.stopPropagation(); onClick(agent.id); }}
+    >
+      <primitive object={craftMesh} />
+    </group>
+  );
+}
+
+/** 3D Outer Ring Space Station with Radial Docking Piers */
+function OuterStationRing3D({
+  onOmniClick,
+}: {
+  onOmniClick: () => void;
+}) {
+  const innerR = 22.5;
+  const outerR = 25.5;
+
+  const stationGroup = useMemo(() => {
+    const grp = new THREE.Group();
+    const ringGeo = new THREE.RingGeometry(innerR, outerR, 72);
+    const stationMat = new THREE.MeshStandardMaterial({
+      color: '#080f1e',
+      emissive: '#0369a1',
+      emissiveIntensity: 0.25,
+      roughness: 0.6,
+      metalness: 0.8,
+      side: THREE.DoubleSide,
+    });
+    const ringMesh = new THREE.Mesh(ringGeo, stationMat);
+    ringMesh.rotation.x = Math.PI / 2;
+    grp.add(ringMesh);
+
+    const pierMat = new THREE.MeshStandardMaterial({ color: '#050a14', metalness: 0.85, roughness: 0.4 });
+    const amberMat = new THREE.MeshBasicMaterial({ color: '#fbbf24' });
+
+    for (let i = 0; i < 24; i++) {
+      const ang = (i / 24) * Math.PI * 2;
+      const isOmni = i === 6; // forward nadir berth
+      const px = Math.cos(ang) * (outerR + 2.2);
+      const pz = Math.sin(ang) * (outerR + 2.2);
+
+      const pierGrp = new THREE.Group();
+      pierGrp.position.set(px, 0, pz);
+      pierGrp.rotation.y = -ang + Math.PI / 2;
+
+      const arm = new THREE.Mesh(new THREE.BoxGeometry(1.4, 0.6, 4.4), pierMat);
+      pierGrp.add(arm);
+
+      const ship = new THREE.Mesh(new THREE.BoxGeometry(1.1, 0.8, 3.2), isOmni ? amberMat : pierMat);
+      ship.position.set(0, 0.4, 0.8);
+      pierGrp.add(ship);
+
+      const exhaust = new THREE.Mesh(new THREE.SphereGeometry(0.25, 6, 6), new THREE.MeshBasicMaterial({ color: '#fb923c' }));
+      exhaust.position.set(0, 0.4, 2.5);
+      pierGrp.add(exhaust);
+
+      grp.add(pierGrp);
+    }
+
+    return grp;
+  }, [innerR, outerR]);
+
+  return (
+    <group position={[0, -1.2, 0]} onClick={onOmniClick}>
+      <primitive object={stationGroup} />
+    </group>
+  );
+}
+
+/** 3D Planar Radar Sweep Plane */
+function RadarSweep3D() {
+  const sweepRef = useRef<THREE.Group>(null);
+  const sweepR = 28;
+
+  const sweepGroup = useMemo(() => {
+    const grp = new THREE.Group();
+    const sweepGeo = new THREE.RingGeometry(0.1, sweepR, 32, 1, 0, 0.45);
+    const sweepMat = new THREE.MeshBasicMaterial({
+      color: '#38bdf8',
+      transparent: true,
+      opacity: 0.15,
+      side: THREE.DoubleSide,
+    });
+    const sMesh = new THREE.Mesh(sweepGeo, sweepMat);
+    sMesh.rotation.x = Math.PI / 2;
+    grp.add(sMesh);
+
+    // Leading edge line
+    const lineGeo = new THREE.BufferGeometry();
+    lineGeo.setAttribute(
+      'position',
+      new THREE.Float32BufferAttribute([0, 0, 0, Math.cos(0.45) * sweepR, 0, Math.sin(0.45) * sweepR], 3)
+    );
+    const lineMat = new THREE.LineBasicMaterial({ color: '#e0f2fe', transparent: true, opacity: 0.8 });
+    grp.add(new THREE.Line(lineGeo, lineMat));
+
+    return grp;
+  }, [sweepR]);
+
+  useFrame((_, delta) => {
+    if (sweepRef.current) {
+      sweepRef.current.rotation.y += delta * 0.45;
+    }
+  });
+
+  return (
+    <group ref={sweepRef} position={[0, -0.4, 0]}>
+      <primitive object={sweepGroup} />
+    </group>
+  );
+}
+
+/** 3D Camera Rig with Cinematic Downward Perspective & Parallax */
+function CameraRig3D() {
+  const { camera, pointer } = useThree();
+
+  useFrame(() => {
+    const targetX = pointer.x * 4;
+    const targetY = 18 - pointer.y * 3;
+    const targetZ = 34;
+
+    camera.position.x += (targetX - camera.position.x) * 0.05;
+    camera.position.y += (targetY - camera.position.y) * 0.05;
+    camera.position.z += (targetZ - camera.position.z) * 0.05;
+    camera.lookAt(0, 1.5, -2);
+  });
+
+  return null;
+}
+
+// ── Complete 3D Scene Assembly ──
+function SpaceAirTrafficScene({
+  agents,
+  voiceLevel,
+  hoveredAgent,
+  selectedAgent,
+  onHover,
+  onClick,
+  onOmniClick,
+}: {
+  agents: AgentClient[];
+  voiceLevel: number;
+  hoveredAgent: string | null;
+  selectedAgent: string | null;
+  onHover: (id: string | null) => void;
+  onClick: (id: string) => void;
+  onOmniClick: () => void;
+}) {
+  const standardAgents = agents.filter(a => agentTier(a) !== 'counsel');
+  const activeAgents = standardAgents.filter(a => a.status === 'working');
+  const holdingAgents = standardAgents.filter(a => a.status !== 'working');
+
+  const posAG: [number, number, number] = [-16, 10, -10];
+  const posDev: [number, number, number] = [16, 9, -12];
+  const posStrat: [number, number, number] = [-2, 14, -18];
+  const spireApex: [number, number, number] = [0, 12, 0];
+
+  const ag = agents.find(a => a.id === 'antigravity');
+  const dev = agents.find(a => a.id === 'devin');
+  const strat = agents.find(a => a.id === 'strategist') || agents.find(a => a.id === 'reviewer');
+
+  return (
+    <>
+      <CameraRig3D />
+      <ambientLight intensity={0.4} />
+      <directionalLight position={[10, 25, 15]} intensity={1.2} />
+      <directionalLight position={[-15, 10, -10]} intensity={0.6} color="#38bdf8" />
+
+      {/* 1. Deep Space & Twinkling Stars */}
+      <DeepSpace3D />
+
+      {/* 2. Central Crystalline Spire & Interlocking Golden Astrolabe Rings */}
+      <CentralSpire3D voiceLevel={voiceLevel} />
+      <GoldenAstrolabe3D />
+
+      {/* 3. Tier 3: The 3 Counsel Flagship Battlecruisers */}
+      {ag && (
+        <CounselCruiser3D
+          name="ANTIGRAVITY"
+          callsign="AG-01"
+          position={posAG}
+          rotation={[0.1, 0.45, -0.05]}
+          color="#c084fc"
+          isWorking={ag.status === 'working'}
+          isHovered={hoveredAgent === 'antigravity'}
+          isSelected={selectedAgent === 'antigravity'}
+          onPointerOver={() => onHover('antigravity')}
+          onPointerOut={() => onHover(null)}
+          onClick={() => onClick('antigravity')}
+        />
+      )}
+
+      {dev && (
+        <CounselCruiser3D
+          name="DEVIN"
+          callsign="DEV-02"
+          position={posDev}
+          rotation={[0.1, -0.45, 0.05]}
+          color="#38bdf8"
+          isWorking={dev.status === 'working'}
+          isHovered={hoveredAgent === 'devin'}
+          isSelected={selectedAgent === 'devin'}
+          onPointerOver={() => onHover('devin')}
+          onPointerOut={() => onHover(null)}
+          onClick={() => onClick('devin')}
+        />
+      )}
+
+      {strat && (
+        <CounselCruiser3D
+          name={strat.name}
+          callsign="STR-03"
+          position={posStrat}
+          rotation={[0.2, 0, 0]}
+          color="#e879f9"
+          isWorking={strat.status === 'working'}
+          isHovered={hoveredAgent === strat.id}
+          isSelected={selectedAgent === strat.id}
+          onPointerOver={() => onHover(strat.id)}
+          onPointerOut={() => onHover(null)}
+          onClick={() => onClick(strat.id)}
+        />
+      )}
+
+      {/* 3D Counsel Datalink Lattice */}
+      <CounselLattice3D p1={posAG} p2={posDev} p3={posStrat} spirePos={spireApex} />
+
+      {/* 4. Tier 1: Inner Glowing Runway Track & Moving Active Ships */}
+      <ActiveRunway3D activeAgents={activeAgents} onHover={onHover} onClick={onClick} />
+
+      {/* 5. Tier 2: Mid Orbital Holding Runway & Holding Patrol Ships */}
+      <HoldingRunway3D holdingAgents={holdingAgents} onHover={onHover} onClick={onClick} />
+
+      {/* 6. Tier 4: Outer Ring Station & Radial Mooring Piers */}
+      <OuterStationRing3D onOmniClick={onOmniClick} />
+
+      {/* 7. 3D Planar Radar Sweep */}
+      <RadarSweep3D />
+
+      {/* Post-Processing Bloom & Vignette */}
+      <EffectComposer>
+        <Bloom luminanceThreshold={0.3} luminanceSmoothing={0.9} intensity={1.2} />
+        <Vignette eskil={false} offset={0.15} darkness={0.8} />
+      </EffectComposer>
+    </>
+  );
+}
+
+// ── Main Exported Component with HUD Overlays ──
 export const CortexAgentsScene: React.FC = () => {
-  const canvasRef = useRef<HTMLCanvasElement | null>(null);
-  const containerRef = useRef<HTMLDivElement | null>(null);
   const snapRef = useRef<AgentsSnapshotClient>({ agents: [], models: [], tasks: [], matrix: {}, offline: true });
   const [snap, setSnap] = useState<AgentsSnapshotClient>(snapRef.current);
   const [events, setEvents] = useState(agentsClient.events);
@@ -619,12 +1381,8 @@ export const CortexAgentsScene: React.FC = () => {
   const [towerOpen, setTowerOpen] = useState(false);
   const [nowTs, setNowTs] = useState(() => Date.now());
   const [narrow, setNarrow] = useState(() => typeof window !== 'undefined' && window.innerWidth < 900);
-  const reducedMotion = useRef(false);
-  const voiceLevel = useRef(0);
-  const voiceState = useRef<string>('idle');
-  const mouse = useRef({ x: 0.5, y: 0.5, inside: false });
-  const hoverTarget = useRef<{ id: string; type: 'agent' | 'station' } | null>(null);
-  const stationStatus = useRef<Record<string, { busy: boolean; state: 'idle' | 'busy' | 'error' | 'unknown' }>>({});
+  const [hoveredAgent, setHoveredAgent] = useState<string | null>(null);
+  const [voiceLevel, setVoiceLevel] = useState(0);
 
   useEffect(() => {
     agentsClient.start();
@@ -636,14 +1394,12 @@ export const CortexAgentsScene: React.FC = () => {
     snapRef.current = agentsClient.snapshot;
     setSnap(agentsClient.snapshot);
     setEvents([...agentsClient.events]);
-    reducedMotion.current = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false;
     return () => { unsub(); };
   }, []);
 
   useEffect(() => {
     const unsubBus = cortexSignalBus.subscribe((p) => {
-      voiceLevel.current = p.level ?? 0;
-      voiceState.current = p.state ?? 'idle';
+      setVoiceLevel(p.level ?? 0);
     });
     return unsubBus;
   }, []);
@@ -654,613 +1410,11 @@ export const CortexAgentsScene: React.FC = () => {
   }, []);
 
   useEffect(() => {
-    let alive = true;
-    const poll = () => {
-      for (const st of BUSINESS_STATIONS) {
-        if (!st.statusUrl) continue;
-        fetch(st.statusUrl, { cache: 'no-store' })
-          .then((r) => r.json())
-          .then((j: any) => {
-            if (!alive || !j?.ok) return;
-            const tasks: any[] = j.tasks || [];
-            const busy = j.distributor?.status === 'working'
-              || tasks.some((t) => t.status === 'running' || t.status === 'queued');
-            const errored = j.distributor?.status === 'error';
-            stationStatus.current[st.id] = {
-              busy: !!busy,
-              state: errored ? 'error' : busy ? 'busy' : 'idle',
-            };
-          })
-          .catch(() => {});
-      }
-    };
-    poll();
-    const iv = setInterval(poll, 15_000);
-    return () => { alive = false; clearInterval(iv); };
-  }, []);
-
-  useEffect(() => {
     const onR = () => setNarrow(window.innerWidth < 900);
     window.addEventListener('resize', onR);
     return () => window.removeEventListener('resize', onR);
   }, []);
 
-  useEffect(() => {
-    const canvas = canvasRef.current;
-    const container = containerRef.current;
-    if (!canvas || !container) return;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
-
-    const resize = () => {
-      const dpr = Math.min(window.devicePixelRatio || 1, 2);
-      canvas.width = Math.max(1, Math.floor(container.clientWidth * dpr));
-      canvas.height = Math.max(1, Math.floor(container.clientHeight * dpr));
-      canvas.style.width = `${container.clientWidth}px`;
-      canvas.style.height = `${container.clientHeight}px`;
-    };
-    resize();
-    const ro = new ResizeObserver(resize);
-    ro.observe(container);
-
-    const onMouse = (ev: MouseEvent) => {
-      const r = canvas.getBoundingClientRect();
-      mouse.current = { x: (ev.clientX - r.left) / r.width, y: (ev.clientY - r.top) / r.height, inside: true };
-    };
-    const onLeave = () => { mouse.current.inside = false; };
-
-    // ── Coordinate Mapping to Master Artwork (1376x768) ──
-    const getArtworkBounds = (w: number, h: number) => {
-      const xOff = narrow ? 0 : 100;
-      const areaW = w - xOff;
-      const areaH = h;
-      const imgAspect = 1376 / 768;
-      const areaAspect = areaW / areaH;
-      let imgW: number, imgH: number, imgX: number, imgY: number;
-
-      if (areaAspect > imgAspect) {
-        imgH = areaH;
-        imgW = areaH * imgAspect;
-        imgX = xOff + (areaW - imgW) / 2;
-        imgY = 0;
-      } else {
-        imgW = areaW;
-        imgH = areaW / imgAspect;
-        imgX = xOff;
-        imgY = (areaH - imgH) / 2;
-      }
-      return { imgX, imgY, imgW, imgH };
-    };
-
-    const getCraftCoordinates = (
-      agents: AgentClient[],
-      w: number,
-      h: number,
-      t: number,
-    ) => {
-      const { imgX, imgY, imgW, imgH } = getArtworkBounds(w, h);
-      const toX = (u: number) => imgX + u * imgW;
-      const toY = (v: number) => imgY + v * imgH;
-
-      const map = new Map<string, {
-        x: number; y: number; heading: number; tier: 'counsel' | 'active' | 'holding' | 'enterprise';
-        flightLevel: string; squawk: string; callsign: string; role: string;
-      }>();
-
-      // 1. Tier 3: The 3 Counsel Flagship Battlecruisers in Artwork
-      // Left Cruiser: Antigravity
-      const ag = agents.find(a => a.id === 'antigravity');
-      if (ag) {
-        const flight = getFlightData(ag);
-        map.set('antigravity', {
-          x: toX(0.258), y: toY(0.248), heading: 0.12, tier: 'counsel',
-          flightLevel: flight.defaultLane, squawk: flight.squawk, callsign: flight.callsign, role: flight.role,
-        });
-      }
-
-      // Right Cruiser: Devin
-      const dev = agents.find(a => a.id === 'devin');
-      if (dev) {
-        const flight = getFlightData(dev);
-        map.set('devin', {
-          x: toX(0.758), y: toY(0.208), heading: -0.15, tier: 'counsel',
-          flightLevel: flight.defaultLane, squawk: flight.squawk, callsign: flight.callsign, role: flight.role,
-        });
-      }
-
-      // Top-Center Cruiser: Strategist / Reviewer
-      const strat = agents.find(a => a.id === 'strategist') || agents.find(a => a.id === 'reviewer');
-      if (strat) {
-        const flight = getFlightData(strat);
-        map.set(strat.id, {
-          x: toX(0.442), y: toY(0.155), heading: 0, tier: 'counsel',
-          flightLevel: flight.defaultLane, squawk: flight.squawk, callsign: flight.callsign, role: flight.role,
-        });
-      }
-
-      // Remaining agents distributed along the real flight decks in the artwork
-      const standardAgents = agents.filter(a => a.id !== 'antigravity' && a.id !== 'devin' && a.id !== strat?.id);
-      const activeAgents = standardAgents.filter(a => a.status === 'working');
-      const holdingAgents = standardAgents.filter(a => a.status !== 'working');
-
-      // 2. Tier 1: Inner Glowing Runway Track (Small fast vector crafts)
-      // Ellipse Center: (0.50, 0.553), rx: 0.22*imgW, ry: 0.088*imgH
-      const innerCx = toX(0.50);
-      const innerCy = toY(0.553);
-      const innerRx = 0.225 * imgW;
-      const innerRy = 0.088 * imgH;
-
-      const numActive = Math.max(activeAgents.length, 1);
-      activeAgents.forEach((a, i) => {
-        const flight = getFlightData(a);
-        const ang = (i / numActive) * Math.PI * 2 + (reducedMotion.current ? 0 : t * 0.32);
-        const x = innerCx + Math.cos(ang) * innerRx;
-        const y = innerCy + Math.sin(ang) * innerRy;
-        const heading = ang + Math.PI / 2;
-        map.set(a.id, {
-          x, y, heading, tier: 'active',
-          flightLevel: 'FL180 [ACTIVE]', squawk: flight.squawk, callsign: flight.callsign, role: flight.role,
-        });
-      });
-
-      // 3. Tier 2: Mid Glowing Runway Deck (Holding Craft with Navigation Strobes)
-      // Ellipse Center: (0.50, 0.560), rx: 0.33*imgW, ry: 0.135*imgH
-      const midCx = toX(0.50);
-      const midCy = toY(0.560);
-      const midRx = 0.332 * imgW;
-      const midRy = 0.135 * imgH;
-
-      const numHolding = Math.max(holdingAgents.length, 1);
-      holdingAgents.forEach((a, i) => {
-        const flight = getFlightData(a);
-        const isCounter = i % 2 === 1;
-        const ang = (i / numHolding) * Math.PI * 2 + (reducedMotion.current ? 0 : t * (isCounter ? -0.06 : 0.08));
-        const x = midCx + Math.cos(ang) * midRx;
-        const y = midCy + Math.sin(ang) * midRy;
-        const heading = ang + (isCounter ? -Math.PI / 2 : Math.PI / 2);
-        map.set(a.id, {
-          x, y, heading, tier: isCounter ? 'holding' : 'holding',
-          flightLevel: isCounter ? 'FL240 [REV]' : 'FL120 [CONT]', squawk: flight.squawk, callsign: flight.callsign, role: flight.role,
-        });
-      });
-
-      return map;
-    };
-
-    const onClick = (ev: MouseEvent) => {
-      const r = canvas.getBoundingClientRect();
-      const w = r.width, h = r.height;
-      const agents = (snapRef.current.agents || []).slice().sort(agentSort);
-      const { imgX, imgY, imgW, imgH } = getArtworkBounds(w, h);
-      const mx = ev.clientX - r.left, my = ev.clientY - r.top;
-
-      let hit = false;
-
-      // 1. Check Primary Nadir Mooring Berth (Omni Syndication) at (u=0.50, v=0.835)
-      const omniX = imgX + 0.50 * imgW;
-      const omniY = imgY + 0.835 * imgH;
-      if (Math.hypot(mx - omniX, my - omniY) < 55) {
-        hit = true;
-        setSelectedStation(cur => cur === 'omni-syndication' ? null : 'omni-syndication');
-        setSelectedAgent(null);
-      }
-
-      // 2. Check Agents / Starships
-      if (!hit) {
-        const coords = getCraftCoordinates(agents, w, h, time);
-        agents.forEach((a) => {
-          const pt = coords.get(a.id);
-          const hitRadius = pt?.tier === 'counsel' ? 65 : 36;
-          if (pt && Math.hypot(mx - pt.x, my - pt.y) < hitRadius) {
-            hit = true;
-            setSelectedAgent(cur => cur === a.id ? null : a.id);
-            setSelectedStation(null);
-          }
-        });
-      }
-    };
-
-    canvas.addEventListener('mousemove', onMouse);
-    canvas.addEventListener('mouseleave', onLeave);
-    canvas.addEventListener('click', onClick);
-
-    interface Trail { x: number; y: number; life: number }
-    const trails = new Map<string, Trail[]>();
-    let raf = 0, time = 0, last = performance.now();
-
-    const draw = (now: number) => {
-      const dt = Math.min((now - last) / 1000, 0.1); last = now;
-      if (!reducedMotion.current) time += dt;
-      const dpr = Math.min(window.devicePixelRatio || 1, 2);
-      const w = canvas.width / dpr, h = canvas.height / dpr;
-
-      ctx.save();
-      ctx.scale(dpr, dpr);
-      ctx.clearRect(0, 0, w, h);
-
-      const { imgX, imgY, imgW, imgH } = getArtworkBounds(w, h);
-      const toX = (u: number) => imgX + u * imgW;
-      const toY = (v: number) => imgY + v * imgH;
-
-      const agents = (snapRef.current.agents || []).slice().sort(agentSort);
-      const craftCoords = getCraftCoordinates(agents, w, h, time);
-
-      // Core Coordinates
-      const coreX = toX(0.50);
-      const coreY = toY(0.468);
-      const astrolabeY = toY(0.553);
-      const vl = voiceLevel.current;
-
-      // ── 1. Voice-Reactive Luminescent Aura on Central Monolith ──
-      ctx.save();
-      ctx.globalCompositeOperation = 'lighter';
-      const corePulse = 0.5 + 0.5 * Math.sin(time * 2.5);
-      const flareR = 80 * (1 + vl * 0.8 + corePulse * 0.15);
-      const coreG = ctx.createRadialGradient(coreX, coreY, 0, coreX, coreY, flareR);
-      coreG.addColorStop(0, `rgba(224,242,254,${0.65 + vl * 0.35})`);
-      coreG.addColorStop(0.3, `rgba(56,189,248,${0.35 + vl * 0.35})`);
-      coreG.addColorStop(0.7, 'rgba(56,189,248,0.08)');
-      coreG.addColorStop(1, 'rgba(0,0,0,0)');
-      ctx.fillStyle = coreG;
-      ctx.beginPath();
-      ctx.arc(coreX, coreY, flareR, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.restore();
-
-      // ── 2. The Counsel Datalink Lattice (Photons on the Artwork Web) ──
-      const agPt = craftCoords.get('antigravity');
-      const devPt = craftCoords.get('devin');
-      const stratPt = agents.find(a => a.id === 'strategist' || a.id === 'reviewer');
-      const stratCoords = stratPt ? craftCoords.get(stratPt.id) : null;
-
-      const drawLatticePacket = (x1: number, y1: number, x2: number, y2: number, col: string, offset: number) => {
-        const prog = (time * 0.85 + offset) % 1;
-        const px = x1 + (x2 - x1) * prog;
-        const py = y1 + (y2 - y1) * prog;
-        ctx.save();
-        ctx.globalCompositeOperation = 'lighter';
-        ctx.fillStyle = '#ffffff';
-        ctx.beginPath(); ctx.arc(px, py, 2.5, 0, Math.PI * 2); ctx.fill();
-        ctx.fillStyle = hexA(col, 0.85);
-        ctx.beginPath(); ctx.arc(px, py, 5.5, 0, Math.PI * 2); ctx.fill();
-        ctx.restore();
-      };
-
-      if (agPt && devPt) drawLatticePacket(agPt.x, agPt.y, devPt.x, devPt.y, '#38bdf8', 0);
-      if (agPt) drawLatticePacket(agPt.x, agPt.y, coreX, coreY, '#c084fc', 0.33);
-      if (devPt) drawLatticePacket(devPt.x, devPt.y, coreX, coreY, '#38bdf8', 0.66);
-      if (stratCoords && agPt) drawLatticePacket(stratCoords.x, stratCoords.y, agPt.x, agPt.y, '#e879f9', 0.5);
-
-      // ── 3. 360° Planar Radar Sweep & Ping Intersections ──
-      const sweepAngle = (time * 0.62) % (Math.PI * 2);
-      const sweepMaxR = 0.50 * imgW;
-
-      ctx.save();
-      // Semi-transparent phosphor wake sector
-      const sectorArc = 0.42;
-      const swGrad = ctx.createRadialGradient(coreX, astrolabeY, 0, coreX, astrolabeY, sweepMaxR);
-      swGrad.addColorStop(0, 'rgba(56,189,248,0.20)');
-      swGrad.addColorStop(0.5, 'rgba(56,189,248,0.06)');
-      swGrad.addColorStop(1, 'rgba(56,189,248,0)');
-      ctx.fillStyle = swGrad;
-      ctx.beginPath();
-      ctx.moveTo(coreX, astrolabeY);
-      ctx.arc(coreX, astrolabeY, sweepMaxR, sweepAngle - sectorArc, sweepAngle);
-      ctx.closePath();
-      ctx.fill();
-
-      // Sharp sweep line
-      ctx.strokeStyle = 'rgba(224,242,254,0.75)';
-      ctx.lineWidth = 1.4;
-      ctx.beginPath();
-      ctx.moveTo(coreX, astrolabeY);
-      ctx.lineTo(coreX + Math.cos(sweepAngle) * sweepMaxR, astrolabeY + Math.sin(sweepAngle) * sweepMaxR);
-      ctx.stroke();
-      ctx.restore();
-
-      // Ping detection on all tracked craft
-      craftCoords.forEach((craft) => {
-        const dx = craft.x - coreX;
-        const dy = craft.y - astrolabeY;
-        let ang = Math.atan2(dy, dx);
-        if (ang < 0) ang += Math.PI * 2;
-        let diff = (sweepAngle - ang) % (Math.PI * 2);
-        if (diff < 0) diff += Math.PI * 2;
-        if (diff < 0.28) {
-          const pingFactor = 1 - diff / 0.28;
-          ctx.save();
-          ctx.globalCompositeOperation = 'lighter';
-          ctx.strokeStyle = `rgba(165,243,252,${pingFactor * 0.8})`;
-          ctx.lineWidth = 1.2;
-          ctx.beginPath();
-          ctx.arc(craft.x, craft.y, 8 + (1 - pingFactor) * 26, 0, Math.PI * 2);
-          ctx.stroke();
-          ctx.restore();
-        }
-      });
-
-      // ── 4. Hover Detection ──
-      let bestTarget: { id: string; type: 'agent' | 'station' } | null = null;
-      if (mouse.current.inside) {
-        const mx = mouse.current.x * w, my = mouse.current.y * h;
-        let bestDist = 45;
-
-        // Check Omni station at Berth 01
-        const omniX = toX(0.50);
-        const omniY = toY(0.835);
-        const dOmni = Math.hypot(mx - omniX, my - omniY);
-        if (dOmni < 55 && dOmni < bestDist) {
-          bestDist = dOmni;
-          bestTarget = { id: 'omni-syndication', type: 'station' };
-        }
-
-        // Check craft & cruisers
-        agents.forEach((a) => {
-          const pt = craftCoords.get(a.id);
-          if (pt) {
-            const hitR = pt.tier === 'counsel' ? 65 : 36;
-            const d = Math.hypot(mx - pt.x, my - pt.y);
-            if (d < hitR && d < bestDist) {
-              bestDist = d;
-              bestTarget = { id: a.id, type: 'agent' };
-            }
-          }
-        });
-        hoverTarget.current = bestTarget;
-        canvas.style.cursor = bestTarget ? 'pointer' : 'crosshair';
-      } else {
-        hoverTarget.current = null;
-        canvas.style.cursor = 'crosshair';
-      }
-
-      // ── 5. Draw Dynamic Craft Layers Over Artwork ──
-      agents.forEach((a) => {
-        const pt = craftCoords.get(a.id);
-        if (!pt) return;
-
-        const col = AGENT_COLORS[a.id] || (a.spawnSpec ? `hsl(${spawnHue(a.id)} 85% 68%)` : '#94a3b8');
-        const working = a.status === 'working';
-        const isHovered = hoverTarget.current?.type === 'agent' && hoverTarget.current.id === a.id;
-        const isSelected = selectedAgent === a.id;
-        const hot = isHovered || isSelected;
-
-        // Active Craft: Luminous Cyan Engine Trail
-        if (pt.tier === 'active') {
-          const tr = trails.get(a.id) || [];
-          tr.push({ x: pt.x, y: pt.y, life: 1 });
-          if (tr.length > 28) tr.shift();
-          trails.set(a.id, tr);
-
-          for (let k = tr.length - 1; k >= 0; k--) {
-            const tp = tr[k];
-            tp.life -= dt * 1.8;
-            if (tp.life <= 0) { tr.splice(k, 1); continue; }
-            ctx.globalCompositeOperation = 'lighter';
-            ctx.fillStyle = `rgba(56,189,248,${tp.life * 0.4})`;
-            ctx.beginPath(); ctx.arc(tp.x, tp.y, 2.5 * tp.life + 0.5, 0, Math.PI * 2); ctx.fill();
-            ctx.globalCompositeOperation = 'source-over';
-          }
-
-          // Active Vector Heading Projection
-          const vLen = 48;
-          const vx = pt.x + Math.cos(pt.heading) * vLen;
-          const vy = pt.y + Math.sin(pt.heading) * vLen;
-          ctx.save();
-          ctx.strokeStyle = 'rgba(56,189,248,0.85)';
-          ctx.lineWidth = 1.2;
-          ctx.setLineDash([4, 3]);
-          ctx.beginPath();
-          ctx.moveTo(pt.x, pt.y);
-          ctx.lineTo(vx, vy);
-          ctx.stroke();
-          ctx.setLineDash([]);
-          ctx.fillStyle = '#ffffff';
-          ctx.beginPath(); ctx.arc(vx, vy, 2, 0, Math.PI * 2); ctx.fill();
-          ctx.restore();
-        }
-
-        // Holding Craft: Synchronized Port/Starboard Navigation Strobes
-        if (pt.tier === 'holding') {
-          const flash = Math.sin(time * 6) > 0.6;
-          ctx.save();
-          // Port (Red)
-          ctx.fillStyle = flash ? '#ef4444' : 'rgba(239,68,68,0.3)';
-          ctx.beginPath(); ctx.arc(pt.x - 6, pt.y, 1.8, 0, Math.PI * 2); ctx.fill();
-          // Starboard (Green)
-          ctx.fillStyle = flash ? '#22c55e' : 'rgba(34,197,94,0.3)';
-          ctx.beginPath(); ctx.arc(pt.x + 6, pt.y, 1.8, 0, Math.PI * 2); ctx.fill();
-          ctx.restore();
-        }
-
-        // Craft / Cruiser Target Reticle & Callsign Badge
-        if (pt.tier === 'counsel') {
-          // Counsel Cruiser Target Box
-          ctx.save();
-          ctx.strokeStyle = hexA(col, hot ? 0.9 : 0.45);
-          ctx.lineWidth = 1;
-          const bw = 55, bh = 22;
-          // Corner brackets
-          [[-1, -1], [1, -1], [-1, 1], [1, 1]].forEach(([sx, sy]) => {
-            ctx.beginPath();
-            ctx.moveTo(pt.x + sx * bw, pt.y + sy * bh - sy * 6);
-            ctx.lineTo(pt.x + sx * bw, pt.y + sy * bh);
-            ctx.lineTo(pt.x + sx * bw - sx * 6, pt.y + sy * bh);
-            ctx.stroke();
-          });
-
-          // Callsign Tag
-          ctx.font = `700 8px ${MONO}`;
-          ctx.textAlign = 'center';
-          ctx.fillStyle = col;
-          ctx.fillText(pt.callsign, pt.x, pt.y - bh - 6);
-          ctx.font = `7px ${MONO}`;
-          ctx.fillStyle = 'rgba(224,242,254,0.7)';
-          ctx.fillText(a.name.toUpperCase(), pt.x, pt.y + bh + 12);
-          ctx.restore();
-        } else {
-          // Standard / Active Craft Blip
-          ctx.save();
-          ctx.fillStyle = '#ffffff';
-          ctx.beginPath(); ctx.arc(pt.x, pt.y, 2.2, 0, Math.PI * 2); ctx.fill();
-          ctx.strokeStyle = col;
-          ctx.lineWidth = 1;
-          ctx.beginPath(); ctx.arc(pt.x, pt.y, 5, 0, Math.PI * 2); ctx.stroke();
-
-          ctx.font = `700 8px ${MONO}`;
-          ctx.textAlign = 'center';
-          ctx.fillStyle = INK;
-          ctx.fillText(pt.callsign, pt.x, pt.y + 14);
-          ctx.restore();
-        }
-
-        // Tactical Hover Card
-        if (hot) {
-          const boxW = 165, boxH = 50;
-          const bx = Math.min(Math.max(pt.x + 20, 10), w - boxW - 10);
-          const by = Math.min(Math.max(pt.y - 25, 10), h - boxH - 10);
-
-          ctx.save();
-          ctx.fillStyle = 'rgba(6,10,22,0.94)';
-          ctx.strokeStyle = hexA(col, 0.85);
-          ctx.lineWidth = 1;
-          ctx.fillRect(bx, by, boxW, boxH);
-          ctx.strokeRect(bx, by, boxW, boxH);
-
-          ctx.strokeStyle = hexA(col, 0.5);
-          ctx.beginPath();
-          ctx.moveTo(pt.x, pt.y);
-          ctx.lineTo(bx, by + 12);
-          ctx.stroke();
-
-          ctx.textAlign = 'left';
-          ctx.font = `700 8px ${MONO}`;
-          ctx.fillStyle = col;
-          ctx.fillText(`${pt.callsign} // ${a.name}`, bx + 8, by + 12);
-          ctx.font = `7px ${MONO}`;
-          ctx.fillStyle = 'rgba(203,213,225,0.85)';
-          ctx.fillText(`ALT: ${pt.flightLevel} | SQWK: ${pt.squawk}`, bx + 8, by + 23);
-          ctx.fillText(`ROLE: ${pt.role.slice(0, 24)}`, bx + 8, by + 33);
-          ctx.fillStyle = working ? '#34d399' : DIM;
-          ctx.fillText(`STATUS: ${a.status.toUpperCase()}`, bx + 8, by + 43);
-          ctx.restore();
-        }
-      });
-
-      // ── 6. Tier 4: Enterprise Mooring Berth 01 (Omni Syndication) ──
-      const omniX = toX(0.50);
-      const omniY = toY(0.835);
-      const stt = stationStatus.current['omni-syndication'] || { busy: false, state: 'unknown' as const };
-      const omniHot = hoverTarget.current?.type === 'station' && hoverTarget.current.id === 'omni-syndication';
-      const omniSelected = selectedStation === 'omni-syndication';
-
-      ctx.save();
-      ctx.strokeStyle = omniHot || omniSelected ? '#fbbf24' : 'rgba(251,191,36,0.6)';
-      ctx.lineWidth = 1.4;
-      ctx.strokeRect(omniX - 38, omniY - 18, 76, 36);
-
-      // Flowing umbilical energy particles when busy
-      if (stt.busy) {
-        ctx.fillStyle = '#fbbf24';
-        const flowY = omniY - 18 + ((time * 30) % 36);
-        ctx.beginPath(); ctx.arc(omniX, flowY, 2.5, 0, Math.PI * 2); ctx.fill();
-      }
-
-      ctx.font = `700 8px ${MONO}`;
-      ctx.textAlign = 'center';
-      ctx.fillStyle = '#fbbf24';
-      ctx.fillText('OMNI // SYNDICATION', omniX, omniY + 30);
-      ctx.font = `7px ${MONO}`;
-      ctx.fillStyle = stt.state === 'error' ? '#f87171' : stt.busy ? '#fbbf24' : DIM;
-      ctx.fillText(`BERTH 01 · ${stt.state.toUpperCase()} · SQWK 7000`, omniX, omniY + 40);
-      ctx.restore();
-
-      // ── 7. Inter-Agent Communications (`agent.comm`) ──
-      const recentComms = events.filter((e) => e.type === 'agent.comm' && (Date.now() - e.at < 12_000));
-      recentComms.forEach((comm: any) => {
-        const fromPt = craftCoords.get(comm.from);
-        const toPt = (comm.to === 'cortex' || comm.to === 'all') ? { x: coreX, y: coreY } : craftCoords.get(comm.to);
-
-        if (fromPt && toPt) {
-          ctx.save();
-          ctx.globalCompositeOperation = 'lighter';
-          const age = Math.min(1, (Date.now() - comm.at) / 12_000);
-          const alpha = (1 - age) * 0.9;
-          const commCol = AGENT_COLORS[comm.from] || '#c084fc';
-
-          ctx.strokeStyle = hexA(commCol, alpha * 0.8);
-          ctx.lineWidth = 1.8;
-          ctx.setLineDash([8, 4]);
-          ctx.beginPath();
-          ctx.moveTo(fromPt.x, fromPt.y);
-          ctx.lineTo(toPt.x, toPt.y);
-          ctx.stroke();
-          ctx.setLineDash([]);
-
-          const pProg = (((Date.now() - comm.at) * 0.0025) % 1);
-          const ptx = fromPt.x + (toPt.x - fromPt.x) * pProg;
-          const pty = fromPt.y + (toPt.y - fromPt.y) * pProg;
-          ctx.fillStyle = '#ffffff';
-          ctx.beginPath(); ctx.arc(ptx, pty, 3, 0, Math.PI * 2); ctx.fill();
-          ctx.fillStyle = hexA(commCol, 0.9);
-          ctx.beginPath(); ctx.arc(ptx, pty, 6, 0, Math.PI * 2); ctx.fill();
-
-          const midX = (fromPt.x + toPt.x) / 2;
-          const midY = (fromPt.y + toPt.y) / 2 - 14;
-          ctx.font = '700 8px monospace';
-          const txt = `📡 ${String(comm.from).toUpperCase()} ➔ ${String(comm.to).toUpperCase()}: ${String(comm.message || '').slice(0, 36)}`;
-          const tw = ctx.measureText(txt).width;
-          ctx.fillStyle = 'rgba(6,10,22,0.92)';
-          ctx.strokeStyle = hexA(commCol, alpha * 0.9);
-          ctx.lineWidth = 1;
-          ctx.fillRect(midX - tw / 2 - 6, midY - 7, tw + 12, 14);
-          ctx.strokeRect(midX - tw / 2 - 6, midY - 7, tw + 12, 14);
-          ctx.fillStyle = hexA(commCol, 0.95);
-          ctx.textAlign = 'center';
-          ctx.textBaseline = 'middle';
-          ctx.fillText(txt, midX, midY);
-          ctx.restore();
-        }
-      });
-
-      // ── 8. Tactical Targeting Reticle ──
-      if (mouse.current.inside && !reducedMotion.current) {
-        const mx = mouse.current.x * w, my = mouse.current.y * h;
-        ctx.strokeStyle = 'rgba(165,243,252,0.5)';
-        ctx.lineWidth = 1;
-        const R = 15;
-        [[-1, 0], [1, 0], [0, -1], [0, 1]].forEach(([dx, dy]) => {
-          ctx.beginPath();
-          ctx.moveTo(mx + dx * R * 0.5, my + dy * R * 0.5);
-          ctx.lineTo(mx + dx * R, my + dy * R);
-          ctx.stroke();
-        });
-        ctx.beginPath(); ctx.arc(mx, my, 2, 0, Math.PI * 2); ctx.stroke();
-
-        const bearing = ((Math.atan2(my - astrolabeY, mx - coreX) * 180 / Math.PI) + 360) % 360;
-        const distNM = (Math.hypot(mx - coreX, my - astrolabeY) / (0.45 * imgW) * 60).toFixed(1);
-        ctx.font = `7px ${MONO}`;
-        ctx.textAlign = 'left';
-        ctx.fillStyle = 'rgba(165,243,252,0.7)';
-        ctx.fillText(`BRG ${bearing.toFixed(0).padStart(3, '0')}°  RNG ${distNM} NM`, mx + 16, my - 10);
-      }
-
-      ctx.restore();
-      raf = requestAnimationFrame(draw);
-    };
-
-    raf = requestAnimationFrame(draw);
-    const onVis = () => { if (document.hidden) cancelAnimationFrame(raf); else raf = requestAnimationFrame(draw); };
-    document.addEventListener('visibilitychange', onVis);
-    return () => {
-      cancelAnimationFrame(raf); ro.disconnect();
-      document.removeEventListener('visibilitychange', onVis);
-      canvas.removeEventListener('mousemove', onMouse);
-      canvas.removeEventListener('mouseleave', onLeave);
-      canvas.removeEventListener('click', onClick);
-    };
-  }, [selectedAgent, selectedStation, narrow]);
-
-  // ── Overlay Derived Data ──
   const agents = snap.agents || [];
   const workingCount = agents.filter(a => a.status === 'working').length;
   const holdingCount = agents.filter(a => a.status !== 'working').length;
@@ -1275,26 +1429,24 @@ export const CortexAgentsScene: React.FC = () => {
   };
 
   return (
-    <div ref={containerRef} style={{ position: 'absolute', inset: 0, background: '#020308', overflow: 'hidden' }}>
-      {/* ── Photographic Master Artwork Backdrop ── */}
-      <img
-        src="/images/cortex_satc_nexus_foundry.jpg"
-        alt="Cortex SATC Nexus Foundry"
-        style={{
-          position: 'absolute',
-          left: narrow ? 0 : 100,
-          top: 0,
-          width: narrow ? '100%' : 'calc(100% - 100px)',
-          height: '100%',
-          objectFit: 'contain',
-          pointerEvents: 'none',
-          userSelect: 'none',
-          zIndex: 1,
-        }}
-      />
-
-      {/* ── Dynamic Simulation & Interactivity Canvas ── */}
-      <canvas ref={canvasRef} style={{ position: 'absolute', inset: 0, zIndex: 2 }} />
+    <div style={{ position: 'absolute', inset: 0, background: '#010206', overflow: 'hidden' }}>
+      {/* ── Real-Time 3D Space Air Traffic Control Canvas ── */}
+      <Canvas
+        camera={{ position: [0, 18, 36], fov: 42 }}
+        dpr={Math.min(typeof window !== 'undefined' ? window.devicePixelRatio : 1, 2)}
+        style={{ position: 'absolute', inset: 0, zIndex: 1 }}
+      >
+        <PerformanceMonitor />
+        <SpaceAirTrafficScene
+          agents={agents}
+          voiceLevel={voiceLevel}
+          hoveredAgent={hoveredAgent}
+          selectedAgent={selectedAgent}
+          onHover={setHoveredAgent}
+          onClick={(id) => { setSelectedAgent(id); setSelectedStation(null); }}
+          onOmniClick={() => { setSelectedStation('omni-syndication'); setSelectedAgent(null); }}
+        />
+      </Canvas>
 
       {/* Screen Corner Reticles */}
       {(['top-left', 'top-right', 'bottom-left', 'bottom-right'] as const).map(pos => (
@@ -1310,12 +1462,12 @@ export const CortexAgentsScene: React.FC = () => {
       ))}
 
       {/* ── Top Center: Space Air Traffic Control Command Header ── */}
-      <div style={{ position: 'absolute', top: 16, left: '50%', transform: 'translateX(-50%)', zIndex: 5, textAlign: 'center' }}>
+      <div style={{ position: 'absolute', top: 16, left: '50%', transform: 'translateX(-50%)', zIndex: 5, textAlign: 'center', pointerEvents: 'auto' }}>
         <div style={{ fontSize: 13, letterSpacing: '0.55em', fontWeight: 700, color: 'rgba(224,242,254,0.95)', fontFamily: MONO, textShadow: '0 0 18px rgba(103,232,249,0.5)' }}>
           NEXUS FOUNDRY // AIR TRAFFIC CONTROL
         </div>
         <div style={{ fontSize: 8, letterSpacing: '0.25em', color: 'rgba(148,233,255,0.55)', fontFamily: MONO, marginTop: 4 }}>
-          {workingCount} IN FLIGHT · {holdingCount} IN HOLDING STACKS · COUNSEL LATTICE: SYNCHRONIZED
+          {workingCount} ACTIVE IN FLIGHT · {holdingCount} IN HOLDING STACKS · COUNSEL LATTICE: SYNCHRONIZED
         </div>
         <button
           onClick={() => setTowerOpen(o => !o)}
@@ -1330,14 +1482,14 @@ export const CortexAgentsScene: React.FC = () => {
       </div>
 
       {/* ── Right Rail: Air Traffic Radar Telemetry ── */}
-      <div style={{ position: 'absolute', right: 22, top: '50%', transform: 'translateY(-50%)', zIndex: 5, fontFamily: MONO, fontSize: 8, letterSpacing: '0.18em', color: 'rgba(148,233,255,0.4)', lineHeight: 2, textAlign: 'right' }}>
+      <div style={{ position: 'absolute', right: 22, top: '50%', transform: 'translateY(-50%)', zIndex: 5, fontFamily: MONO, fontSize: 8, letterSpacing: '0.18em', color: 'rgba(148,233,255,0.4)', lineHeight: 2, textAlign: 'right', pointerEvents: 'none' }}>
         <div style={{ color: 'rgba(165,243,252,0.65)', letterSpacing: '0.28em', marginBottom: 4 }}>SPACE AIR TRAFFIC CONTROL</div>
-        <div>RADAR SWEEP: 0.62 HZ // PRIMARY</div>
+        <div>RADAR SWEEP: 0.45 HZ // 3D PRIMARY</div>
         <div>AIRSPACE: CLASS-ALPHA GOVERNED</div>
         <div>FLIGHT RULES: IFR STRICT</div>
         <div>IFF TRANSPONDERS: MODE-S ACTIVE</div>
         <div>HOLDING STACKS: ALPHA / BRAVO</div>
-        <div>COUNSEL LATTICE: SYNCHRONIZED</div>
+        <div>COUNSEL LATTICE: 3D MESH ACTIVE</div>
         <div>MODELS VERIFIED: {healthyModels}/{(snap.models || []).length}</div>
         <div style={{ marginTop: 8, borderTop: '1px solid rgba(103,232,249,0.14)', paddingTop: 8 }}>
           EVENT BUS: {snap.runtime?.eventCount ?? 0}
@@ -1352,7 +1504,7 @@ export const CortexAgentsScene: React.FC = () => {
           position: 'absolute', left: 16, top: '50%', transform: 'translateY(-50%)', zIndex: 5,
           width: 200, fontFamily: MONO,
           background: 'rgba(4,8,18,0.72)', border: '1px solid rgba(103,232,249,0.14)',
-          borderRadius: 4, backdropFilter: 'blur(8px)', overflow: 'hidden',
+          borderRadius: 4, backdropFilter: 'blur(8px)', overflow: 'hidden', pointerEvents: 'auto',
         }}>
           <div style={{
             padding: '7px 10px', borderBottom: '1px solid rgba(103,232,249,0.14)',
@@ -1380,8 +1532,8 @@ export const CortexAgentsScene: React.FC = () => {
                     background: active ? hexA(col, 0.12) : 'transparent',
                     opacity: offline ? 0.55 : 1,
                   }}
-                  onMouseEnter={e => { if (!active) (e.currentTarget as HTMLElement).style.background = 'rgba(103,232,249,0.05)'; }}
-                  onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = active ? hexA(col, 0.12) : 'transparent'; }}
+                  onMouseEnter={() => setHoveredAgent(a.id)}
+                  onMouseLeave={() => setHoveredAgent(null)}
                 >
                   <AgentGlyph tier={tier} color={col} />
                   <div style={{ flex: 1, minWidth: 0 }}>
@@ -1403,11 +1555,6 @@ export const CortexAgentsScene: React.FC = () => {
                 </div>
               );
             })}
-            {agents.length === 0 && (
-              <div style={{ padding: '12px 10px', color: 'rgba(148,233,255,0.3)', letterSpacing: '0.15em', fontSize: 8 }}>
-                NO CRAFT IN AIRSPACE
-              </div>
-            )}
           </div>
         </div>
       )}
@@ -1417,7 +1564,7 @@ export const CortexAgentsScene: React.FC = () => {
         position: 'absolute', right: 22, bottom: 40, zIndex: 5, width: 310,
         fontFamily: MONO, fontSize: 8, letterSpacing: '0.1em',
         background: 'rgba(4,8,18,0.78)', border: '1px solid rgba(103,232,249,0.16)',
-        borderRadius: 4, backdropFilter: 'blur(8px)', overflow: 'hidden',
+        borderRadius: 4, backdropFilter: 'blur(8px)', overflow: 'hidden', pointerEvents: 'auto',
       }}>
         <div style={{
           padding: '7px 10px', borderBottom: '1px solid rgba(103,232,249,0.14)',
@@ -1471,7 +1618,7 @@ export const CortexAgentsScene: React.FC = () => {
       </div>
 
       {snap.offline && (
-        <div style={{ position: 'absolute', bottom: 76, left: '50%', transform: 'translateX(-50%)', zIndex: 7, fontFamily: MONO, fontSize: 10, letterSpacing: '0.3em', color: '#fb923c', background: 'rgba(30,15,5,0.8)', border: '1px solid rgba(251,146,60,0.4)', padding: '8px 20px', borderRadius: 3 }}>
+        <div style={{ position: 'absolute', bottom: 76, left: '50%', transform: 'translateX(-50%)', zIndex: 7, fontFamily: MONO, fontSize: 10, letterSpacing: '0.3em', color: '#fb923c', background: 'rgba(30,15,5,0.8)', border: '1px solid rgba(251,146,60,0.4)', padding: '8px 20px', borderRadius: 3, pointerEvents: 'none' }}>
           ◌ AIRSPACE TRANSPONDERS OFFLINE — IS DEV SERVER RUNNING?
         </div>
       )}
@@ -1485,19 +1632,22 @@ export const CortexAgentsScene: React.FC = () => {
         </div>
       )}
 
+      {/* Selected Dossier Modal */}
       {selectedAgent && (() => {
         const a = agents.find(x => x.id === selectedAgent);
         if (!a) return null;
         return <AgentDossierPanel agent={a} snap={snap} now={nowTs} onClose={() => setSelectedAgent(null)} dockLeft={!narrow} />;
       })()}
 
+      {/* Omni Syndication Modal */}
       {selectedStation && (
         <OmniSyndicationPanel onClose={() => setSelectedStation(null)} dockLeft={!narrow} />
       )}
 
+      {/* Tower Modal */}
       {towerOpen && <CortexTowerPanel onClose={() => setTowerOpen(false)} />}
 
-      {/* Subtle CRT Radar Scanline */}
+      {/* Subtle CRT Scanline */}
       <div style={{ position: 'absolute', inset: 0, zIndex: 8, pointerEvents: 'none', background: 'repeating-linear-gradient(0deg, rgba(255,255,255,0.01) 0px, rgba(255,255,255,0.01) 1px, transparent 1px, transparent 3px)' }} />
     </div>
   );
