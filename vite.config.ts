@@ -28,7 +28,8 @@ import { enqueueDistributionItem, DISTRIBUTION_ITEM_TYPES } from './src/lib/cort
 import {
   COUNSEL_CONSOLES, conveneCounsel, filePosition, openRebuttal, closeRebuttal,
   recordSynthesis, decideCounsel, cancelCounsel, pollBoard,
-  getCounselSession, listCounselSessions,
+  getCounselSession, listCounselSessions, markCounselDiscordNotified,
+  autoClearCounselPolls, pollBoard,
 } from './src/lib/cortex-counsel';
 import type { RouteTier } from './src/lib/cortex-agents/types';
 import { normalizeForSpeech } from './src/lib/tts-speech-normalize';
@@ -1526,6 +1527,72 @@ function apiProxyPlugin(): Plugin {
         } catch {}
       };
 
+      // ── Counsel sweep: Discord poll notifications, auto-flag hard-class
+      // proposals for deliberation, and the configurable auto-clear rule.
+      // Runs on the ambient tick; every transition is idempotent.
+      const counselDiscordPost = async (content: string) => {
+        const token = process.env.DISCORD_BOT_TOKEN;
+        const channel = process.env.DISCORD_CHANNEL_BRIEFS || process.env.DISCORD_CHANNEL_ID;
+        if (!token || !channel) return;
+        try {
+          await discordApi('POST', `/channels/${channel}/messages`, { token, body: { content: content.slice(0, 1900) } });
+        } catch (e: any) {
+          console.warn('[counsel] discord notify failed:', String(e?.message || e).slice(0, 160));
+        }
+      };
+
+      const counselSweep = async () => {
+        try {
+          // 1. Notify Discord once per session entering poll.
+          for (const s of listCounselSessions({ status: 'poll' })) {
+            if (s.discordNotifiedAt) continue;
+            const board = pollBoard(s);
+            const lines = [
+              `⚖️ **Counsel poll — ${s.id}** (${s.lane.toUpperCase()})`,
+              `**${s.question}**`,
+              ...board.stances.map((x: any) => `• ${x.member.toUpperCase()}: ${x.stance.toUpperCase()}${typeof x.confidence === 'number' ? ` (${Math.round(x.confidence * 100)}%)` : ''}`),
+              board.counts.noResponse > 0 ? `• (${board.counts.noResponse} member(s) did not respond)` : '',
+              s.synthesis?.text ? `\n*${s.synthesis.text.slice(0, 400)}*` : '',
+              `\nAwaiting GO/NO-GO — Foundry tower board or POST /api/cortex/counsel/action`,
+            ].filter(Boolean);
+            await counselDiscordPost(lines.join('\n'));
+            markCounselDiscordNotified(s.id);
+          }
+
+          // 2. Auto-flag pending hard-class proposals lacking a counsel session.
+          //    actionClass code|infra = cross-domain → deserves deliberation.
+          //    Daily cap inside conveneCounsel bounds the burn.
+          if (process.env.CORTEX_COUNSEL_AUTOFLAG !== '0') {
+            const sessions = listCounselSessions({});
+            const linked = new Set(sessions.map((s) => s.sourceProposalId).filter(Boolean));
+            const flaggedClasses = new Set(['code', 'infra']);
+            const candidates = listStrategyProposals('pending')
+              .filter((p: any) => flaggedClasses.has(String(p.actionClass || '').toLowerCase()) && !linked.has(p.id))
+              .sort((a: any, b: any) => a.createdAt - b.createdAt)
+              .slice(0, 3);
+            for (const p of candidates) {
+              const r = conveneCounsel({
+                question: `Deliberate proposal ${p.id}: ${p.title}`,
+                context: `Auto-flagged from strategy-proposals. class=${p.actionClass} agent=${p.agentId}\nevidence: ${(p.evidence || []).join('; ').slice(0, 800)}`,
+                lane: 'reversible',
+                sourceProposalId: p.id,
+              });
+              if (r.session) {
+                console.log(`[counsel] auto-flagged proposal ${p.id} → ${r.session.id}`);
+              } else {
+                break; // daily cap or validation — stop trying
+              }
+            }
+          }
+
+          // 3. Auto-clear sweep (env-gated, hard lane never auto-clears).
+          const n = autoClearCounselPolls();
+          if (n > 0) console.log(`[counsel] auto-cleared ${n} poll(s)`);
+        } catch (e: any) {
+          console.warn('[counsel] sweep failed:', String(e?.message || e).slice(0, 160));
+        }
+      };
+
       const ambientDiskTrend = (pct: number) => {
         if (pct < 0) return;
         healthState.diskSamples.push({ ts: Date.now(), pct });
@@ -1685,6 +1752,7 @@ function apiProxyPlugin(): Plugin {
           }
           await ambientServiceCheck();
           await ambientWorldStateCheck();
+          await counselSweep();
           await ambientLLMObserve();
           await ambientDaily();
         } catch {}
@@ -10334,7 +10402,16 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
                     const pos = JSON.parse(fsSync.readFileSync(path.join(posDir, f), 'utf8'));
                     pos.member = pos.member || m[2];
                     const r = filePosition(m[1], pos);
-                    if (r.ok) fsSync.unlinkSync(path.join(posDir, f)); // consumed
+                    const fp = path.join(posDir, f);
+                    if (r.ok) {
+                      fsSync.unlinkSync(fp); // consumed
+                    } else {
+                      // Dead letter: session closed or invalid — preserve for
+                      // audit but stop retrying every poll.
+                      const rejDir = path.join(posDir, 'rejected');
+                      fsSync.mkdirSync(rejDir, { recursive: true });
+                      fsSync.renameSync(fp, path.join(rejDir, `${Date.now()}-${f}`));
+                    }
                   } catch {}
                 }
               }

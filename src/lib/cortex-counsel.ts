@@ -101,6 +101,10 @@ export interface CounselSession {
   };
   /** Strategy proposal this session deliberates, if convened from one. */
   sourceProposalId?: string;
+  /** Set when the poll card was pushed to Discord — notify once. */
+  discordNotifiedAt?: number;
+  /** Set when auto-clear rules fired — audit distinguishes human vs auto. */
+  autoCleared?: boolean;
   createdAt: number;
   positionDeadline: number;
   updatedAt: number;
@@ -373,6 +377,40 @@ export function reconcileCounselSessions(): number {
     }
   }
   return touched;
+}
+
+/** Mark a session's poll as Discord-notified (idempotent). */
+export function markCounselDiscordNotified(id: string): boolean {
+  const s = readSession(id);
+  if (!s || s.discordNotifiedAt) return false;
+  s.discordNotifiedAt = Date.now();
+  writeSession(s);
+  return true;
+}
+
+/** Auto-clear sweep: reversible-lane polls with zero no-go votes may
+ *  self-clear after the configured timeout — ONLY when
+ *  CORTEX_COUNSEL_AUTO_CLEAR is enabled. Hard lane can never auto-clear. */
+export function autoClearCounselPolls(opts?: { now?: number; pollTimeoutMs?: number }): number {
+  if (process.env.CORTEX_COUNSEL_AUTO_CLEAR !== '1') return 0;
+  const now = opts?.now ?? Date.now();
+  const timeout = opts?.pollTimeoutMs ?? Number(process.env.CORTEX_COUNSEL_POLL_TIMEOUT_MIN || 120) * 60_000;
+  let cleared = 0;
+  for (const id of listSessionFiles()) {
+    const s = readSession(id);
+    if (!s || s.status !== 'poll' || s.lane === 'hard') continue;
+    if (now - s.createdAt < timeout) continue;
+    const board = pollBoard(s);
+    if (board.counts.noGo > 0) continue; // any standing objection blocks auto-clear
+    if (board.counts.go + board.counts.conditional === 0) continue; // need at least one actual position
+    s.status = 'cleared';
+    s.autoCleared = true;
+    s.verdict = { decision: 'go', by: 'auto-counsel', note: `auto-cleared: ${board.counts.go} go / ${board.counts.conditional} conditional / ${board.counts.noGo} no-go after ${Math.round(timeout / 60000)}m`, at: now };
+    writeSession(s);
+    audit('auto_cleared', { id: s.id, counts: board.counts });
+    cleared++;
+  }
+  return cleared;
 }
 
 export function getCounselSession(id: string): CounselSession | null {

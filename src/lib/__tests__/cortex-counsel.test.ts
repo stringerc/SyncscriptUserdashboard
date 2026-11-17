@@ -18,6 +18,8 @@ const {
   pollBoard,
   listCounselSessions,
   getCounselSession,
+  markCounselDiscordNotified,
+  autoClearCounselPolls,
 } = await import('../cortex-counsel');
 
 const validPos = {
@@ -117,6 +119,65 @@ describe('Cortex Counsel', () => {
     const { session } = conveneCounsel({ question: 'q' });
     expect(cancelCounsel(session!.id, 'chris').ok).toBe(true);
     expect(cancelCounsel(session!.id, 'chris').ok).toBe(false);
+  });
+
+  it('auto-clear respects env gate, lane, no-go votes, and timeout', () => {
+    // Build a poll-stage reversible session with only go/conditional votes.
+    const { session } = conveneCounsel({ question: 'auto?', lane: 'reversible' });
+    filePosition(session!.id, validPos);
+    openRebuttal(session!.id);
+    closeRebuttal(session!.id);
+    recordSynthesis(session!.id, {
+      by: 'strategist', stanceTable: [], agreements: [], conflicts: [],
+      unresolvedObjections: [], recommendation: 'go', text: 'go',
+    });
+    expect(getCounselSession(session!.id)!.status).toBe('poll');
+
+    // Gate OFF by default → nothing clears.
+    expect(autoClearCounselPolls()).toBe(0);
+
+    // Gate ON but timeout not reached → nothing clears.
+    process.env.CORTEX_COUNSEL_AUTO_CLEAR = '1';
+    expect(autoClearCounselPolls()).toBe(0);
+
+    // Timeout reached → clears with autoCleared flag.
+    const future = Date.now() + 200 * 60_000;
+    expect(autoClearCounselPolls({ now: future, pollTimeoutMs: 120 * 60_000 })).toBe(1);
+    const cleared = getCounselSession(session!.id)!;
+    expect(cleared.status).toBe('cleared');
+    expect(cleared.autoCleared).toBe(true);
+    expect(cleared.verdict!.by).toBe('auto-counsel');
+    delete process.env.CORTEX_COUNSEL_AUTO_CLEAR;
+  });
+
+  it('auto-clear never fires on hard lane or with a no-go vote', () => {
+    process.env.CORTEX_COUNSEL_AUTO_CLEAR = '1';
+    const future = Date.now() + 300 * 60_000;
+
+    // Hard lane poll.
+    const h = conveneCounsel({ question: 'hard?', lane: 'hard' });
+    filePosition(h.session!.id, validPos);
+    openRebuttal(h.session!.id); closeRebuttal(h.session!.id);
+    recordSynthesis(h.session!.id, { by: 's', stanceTable: [], agreements: [], conflicts: [], unresolvedObjections: [], recommendation: 'go', text: 'x' });
+    expect(autoClearCounselPolls({ now: future, pollTimeoutMs: 1 })).toBe(0);
+    expect(getCounselSession(h.session!.id)!.status).toBe('poll');
+
+    // Reversible but a member said no-go.
+    const n = conveneCounsel({ question: 'nogo?', lane: 'reversible' });
+    filePosition(n.session!.id, { ...validPos, stance: 'no-go' });
+    openRebuttal(n.session!.id); closeRebuttal(n.session!.id);
+    recordSynthesis(n.session!.id, { by: 's', stanceTable: [], agreements: [], conflicts: [], unresolvedObjections: [], recommendation: 'no-go', text: 'x' });
+    expect(autoClearCounselPolls({ now: future, pollTimeoutMs: 1 })).toBe(0);
+    expect(getCounselSession(n.session!.id)!.status).toBe('poll');
+    delete process.env.CORTEX_COUNSEL_AUTO_CLEAR;
+  });
+
+  it('discord notify marker is idempotent', () => {
+    const { session } = conveneCounsel({ question: 'q' });
+    // Not in poll yet — mark anyway is allowed (sweep only calls on poll);
+    // marker itself is a plain flag.
+    expect(markCounselDiscordNotified(session!.id)).toBe(true);
+    expect(markCounselDiscordNotified(session!.id)).toBe(false);
   });
 
   it('lists sessions newest-first', () => {
