@@ -167,66 +167,47 @@ const nebulaFragment = /* glsl */ `
     return 0.65 * vnoise(p) + 0.35 * vnoise(p * 2.05 + vec3(11.3, 7.1, 5.7));
   }
 
-  // Procedural Cosmic Cliffs Mountain Horizon across azimuth
-  float cliffHorizon(float u) {
-    // Dominant soaring mountain peak in the upper-back-left
-    float leftPeak = 0.38 * exp(-pow((u + 0.55) * 1.5, 2.0));
-    // Flanking right mountain peak
-    float rightPeak = 0.32 * exp(-pow((u - 0.70) * 1.4, 2.0));
-    // Canyon saddle behind central astrolabe core
-    float centerDip = -0.12 * exp(-pow(u * 2.2, 2.0));
-    // Base elevation
-    float base = 0.02;
-
-    // Fractal serrated mountain crags
-    float crag1 = (1.0 - abs(vnoise(vec3(u * 3.2, 0.0, 1.4)) * 2.0 - 1.0)) * 0.14;
-    float crag2 = (1.0 - abs(vnoise(vec3(u * 7.2, 0.0, 4.8)) * 2.0 - 1.0)) * 0.07;
-    float crag3 = (vnoise(vec3(u * 15.0, 0.0, 8.2)) - 0.5) * 0.035;
-
-    return base + leftPeak + rightPeak + centerDip + crag1 + crag2 + crag3;
-  }
-
   void main() {
     vec3 d = normalize(vDir);
 
-    // Spherical azimuth (horizontal) and elevation (vertical)
-    // Looking forward is -Z (d.z < 0)
-    float az = atan(d.x, -d.z);
-    float el = d.y;
-
-    // Mountain ridge height across azimuth
-    float H = cliffHorizon(az);
-    float deltaY = el - H;
-
-    // Forward vista focus (smooth panoramic immersion across front hemisphere)
-    float forwardMask = smoothstep(0.4, -0.2, d.z);
-
+    // Deep cosmic space base: pitch-black velvet with subtle ambient rim glow
     vec3 colSpace = uDeep;
-    float centerGlow = pow(max(-d.z, 0.0), 3.0);
+    float centerGlow = pow(max(dot(d, vec3(0.0, 0.0, -1.0)), 0.0), 3.0);
     vec3 baseSpace = colSpace + uRim * centerGlow * (0.025 + uEnergy * 0.04);
 
-    // Fast GPU early exit for clear cosmic void above the cliffs (saves ~45% fragment ALU)
-    if (deltaY > 0.32 || forwardMask < 0.001) {
-      vec3 starCoord = d * 55.0;
+    // Distant celestial nebula anchored way off in the upper-back-left deep space
+    // Looking forward is -Z, screen-left is -X, screen-up is +Y
+    vec3 dirNebula = normalize(vec3(-0.76, 0.44, -0.68));
+    float align = dot(d, dirNebula);
+
+    // Fractal boundary modulation: creates organic wisps and gas filaments at the nebula perimeter
+    float boundaryWisp = (fbm2(d * 4.5 + vec3(uTime * 0.005)) - 0.5) * 0.09;
+    float spatialMask = smoothstep(0.66 + boundaryWisp, 0.92, align);
+    spatialMask = pow(spatialMask, 1.4);
+
+    // ── GPU Fast Early Exit ──
+    // If the ray points outside the distant nebula, render pure starry deep space instantly
+    if (spatialMask < 0.001) {
+      vec3 starCoord = d * 60.0;
       float starN = vnoise(starCoord);
-      float star = pow(max(starN - 0.65, 0.0) / 0.35, 12.0) * 1.6;
-      gl_FragColor = vec4(baseSpace + vec3(0.9, 0.95, 1.0) * star * forwardMask, 1.0);
+      float star = pow(max(starN - 0.65, 0.0) / 0.35, 12.0) * 1.5;
+      gl_FragColor = vec4(baseSpace + vec3(0.9, 0.95, 1.0) * star, 1.0);
       return;
     }
 
-    // ── Active Nebula Simulation Zone ──
-    vec3 p = vec3(az * 3.2, deltaY * 4.4, (-d.z) * 2.6);
+    // ── High-Resolution Celestial Coordinates for the Distant Nebula ──
+    vec3 p = (d - dirNebula) * 6.5;
     float tBlue = uTime * 0.008;
     float tFire = uTime * 0.022;
 
-    // 3D multi-domain coordinate warping for fluid convection
+    // 3D Multi-domain coordinate warping for organic turbulent folds
     vec3 warp = vec3(
       fbm2(p * 1.1 + vec3(tBlue * 0.6, tBlue * 0.35, -tBlue * 0.45)),
       fbm2(p * 1.1 + vec3(5.2, 1.3, 2.8) - vec3(tBlue * 0.5, -tBlue * 0.4, tBlue * 0.3)),
       fbm2(p * 1.1 + vec3(2.1, 7.4, 4.2) + vec3(tBlue * 0.3, tBlue * 0.5, -tBlue * 0.2))
     );
 
-    vec3 q = p + 2.1 * warp;
+    vec3 q = p + 2.2 * warp;
 
     // ── 1. The Enveloping Blue / Cyan Molecular Cloud Body ──
     // Volumetric cumulus billow noise: rounded puffy cauliflower lobes
@@ -235,41 +216,40 @@ const nebulaFragment = /* glsl */ `
     float b3 = abs(vnoise(q * 6.8 + vec3(4.1, 7.2, 1.3)));
     float billow = b1 * 0.50 + b2 * 0.32 + b3 * 0.18;
 
-    // Mountain gas envelope: dense below the ridge, fading softly at bottom
-    float blueMask = smoothstep(0.08, -0.22, deltaY) * smoothstep(-0.85, -0.30, el);
-    float blueDensity = blueMask * (1.18 - billow * 0.92);
+    // Mountainous billow gas density
+    float ridge = 1.0 - abs(vnoise(q * 1.4));
+    float blueGas = ridge * 0.48 + (1.0 - billow) * 0.42 + 0.10;
 
-    // Interstellar dark dust rifts & Bok globules silhouetted against the cloud
-    float dustRift = smoothstep(0.34, 0.70, vnoise(q * 2.4 + vec3(8.7, 3.2, 5.9)));
-    blueDensity *= (1.0 - dustRift * 0.55);
+    // Interstellar dark dust rifts (Bok globules) carving high-contrast canyons
+    float dustRift = smoothstep(0.32, 0.68, vnoise(q * 2.5 + vec3(8.7, 3.2, 5.9)));
+    float blueDensity = smoothstep(0.18, 0.78, blueGas) * (1.0 - dustRift * 0.55);
     blueDensity = clamp(blueDensity, 0.0, 1.0);
 
     // ── 2. The Internal Engulfed Orange Fire Clouds ──
-    // The fire field sits within the core of the cloud and erupts along the crest
+    // Fire sits in the thermodynamic core and surges along the crest
     vec3 qFire = p + 2.5 * warp + vec3(tFire * 0.7, -tFire * 0.3, tFire * 0.5);
     float r1 = 1.0 - abs(vnoise(qFire * 2.0) * 2.0 - 1.0);
     float r2 = 1.0 - abs(vnoise(qFire * 4.4 + vec3(1.7, 3.4, 2.1)) * 2.0 - 1.0);
-    float fireRidge = r1 * 0.62 + r2 * 0.38;
+    float fireRidge = r1 * 0.60 + r2 * 0.40;
 
-    // Vertical ionization streamers (stellar radiation blowing off the cloud)
+    // Vertical ionization striations (stellar radiation licking into space)
     float flameTongues = pow(vnoise(vec3(qFire.x * 5.2, qFire.y * 1.6 + tFire * 1.1, qFire.z * 3.2)), 1.4);
 
-    // Vertical fire envelope centered at the mountain crest
-    float fireEnvelope = smoothstep(0.18, 0.01, deltaY) * smoothstep(-0.28, 0.03, deltaY);
-    fireEnvelope = pow(fireEnvelope, 0.88);
+    // Ionization crest mask
+    float fireCrest = smoothstep(0.38, 0.72, ridge) * smoothstep(0.88, 0.45, blueGas);
+    fireCrest = pow(fireCrest, 1.2);
 
-    // Combined raw combustion energy
-    float fireEnergy = fireEnvelope * (fireRidge * 0.55 + flameTongues * 0.45);
-    float fireIntensity = clamp(fireEnergy * (1.9 + uEnergy * 0.6 + uLevel * 0.4), 0.0, 1.0);
+    float fireEnergy = fireCrest * (fireRidge * 0.55 + flameTongues * 0.45);
+    float fireIntensity = clamp(fireEnergy * (2.1 + uEnergy * 0.6 + uLevel * 0.4), 0.0, 1.0);
 
     // ── 3. The "Engulfing" Interaction ──
     // Cold blue gas billows lap OVER parts of the fire, creating deep layered occlusion
     // where the orange clouds are literally engulfed and enclosed by the blue clouds!
-    float blueEnclosure = smoothstep(0.42, 0.82, b2) * smoothstep(0.18, 0.65, blueDensity);
-    float surfaceFire = fireIntensity * (1.0 - blueEnclosure * 0.58);
+    float blueEnclosure = smoothstep(0.40, 0.82, b2) * smoothstep(0.20, 0.70, blueDensity);
+    float surfaceFire = fireIntensity * (1.0 - blueEnclosure * 0.55);
 
-    // Searing solar hot core
-    float coreHeat = pow(surfaceFire, 2.2) * smoothstep(0.06, -0.04, deltaY);
+    // Searing solar core heat on peak ridges
+    float coreHeat = pow(surfaceFire, 2.2);
 
     // ── 4. Astronomical Color Spectrum ──
     // Enveloping Blue / Cyan Cloud Spectrum
@@ -278,11 +258,11 @@ const nebulaFragment = /* glsl */ `
     vec3 colElectricCyan  = vec3(0.05, 0.70, 0.90);   // Glowing cloud folds
     vec3 colIceTurquoise  = vec3(0.32, 0.88, 0.98);   // Brilliant illuminated crests
 
-    vec3 blueCol = mix(colAbyssCobalt, colOceanCerulean, smoothstep(0.10, 0.45, blueDensity));
-    blueCol = mix(blueCol, colElectricCyan, smoothstep(0.45, 0.75, blueDensity));
-    blueCol = mix(blueCol, colIceTurquoise, smoothstep(0.75, 0.96, blueDensity));
+    vec3 blueCol = mix(colAbyssCobalt, colOceanCerulean, smoothstep(0.12, 0.48, blueDensity));
+    blueCol = mix(blueCol, colElectricCyan, smoothstep(0.48, 0.78, blueDensity));
+    blueCol = mix(blueCol, colIceTurquoise, smoothstep(0.78, 0.96, blueDensity));
 
-    // Subsurface illumination: the engulfed orange fire illuminates the blue clouds from within!
+    // Subsurface illumination: engulfed orange fire illuminates the blue clouds from within!
     vec3 internalWarmth = vec3(1.0, 0.65, 0.18) * fireIntensity * blueDensity * 0.68;
     blueCol += internalWarmth;
 
@@ -307,21 +287,22 @@ const nebulaFragment = /* glsl */ `
     nebulaCol += colWhiteHot * pow(coreHeat, 3.4) * 1.5;
 
     // ── 5. Infant Protostars & Embedded Micro-Embers ──
-    vec3 dustCoord = p * 6.0;
+    vec3 dustCoord = (d - dirNebula) * 18.0;
     float dustNoise = vnoise(dustCoord + vec3(uTime * 0.025));
-    float stardust = pow(max(dustNoise, 0.0), 6.0) * (blueDensity * 0.5 + surfaceFire * 2.2) * 3.2;
+    float stardust = pow(max(dustNoise, 0.0), 6.0) * (blueDensity * 0.5 + surfaceFire * 2.2) * spatialMask * 3.2;
     vec3 starTint = mix(vec3(0.8, 0.95, 1.0), vec3(1.0, 0.88, 0.55), surfaceFire);
     nebulaCol += starTint * stardust;
 
-    // Total gas density blending over deep cosmic space
-    float totalGas = clamp(blueDensity * 0.85 + surfaceFire * 1.25, 0.0, 1.0) * forwardMask;
-    vec3 finalCol = mix(baseSpace, baseSpace + nebulaCol, totalGas * (0.85 + uEnergy * 0.25));
+    // ── 6. Final Blending into the Vast Cosmic Void ──
+    // The nebula is a distinct celestial structure surrounded by deep space
+    float emissionIntensity = (blueDensity * 0.80 + surfaceFire * 1.30) * spatialMask * (0.75 + uEnergy * 0.25);
+    vec3 finalCol = baseSpace + nebulaCol * emissionIntensity;
 
-    // Skyward stars shining through thin upper fringes
-    vec3 starCoordSky = d * 55.0;
+    // Stars shining in deep space all around and through thin outer wisps
+    vec3 starCoordSky = d * 60.0;
     float starNSky = vnoise(starCoordSky);
-    float starSky = pow(max(starNSky - 0.65, 0.0) / 0.35, 12.0) * (1.0 - totalGas * 0.7) * 1.6;
-    finalCol += vec3(0.9, 0.95, 1.0) * starSky * forwardMask;
+    float starSky = pow(max(starNSky - 0.65, 0.0) / 0.35, 12.0) * (1.0 - emissionIntensity * 0.6) * 1.5;
+    finalCol += vec3(0.9, 0.95, 1.0) * starSky;
 
     gl_FragColor = vec4(finalCol, 1.0);
   }
