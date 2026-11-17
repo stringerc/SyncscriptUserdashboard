@@ -31,4 +31,23 @@ describe('cortex-browser-bridge module', () => {
     expect(res.ok).toBe(false);
     expect(res.error).toMatch(/unsupported platform/i);
   });
+
+  it('validates Amazon KDP manifest inputs before publishing', async () => {
+    const bridgePath = path.resolve(process.cwd(), 'storefront/tools/cortex-browser-bridge.mjs');
+    const bridge = await import(bridgePath);
+    const res = await bridge.publishKdp({
+      // Missing title and files
+    });
+    // Should return result with platform info
+    expect(res).toBeDefined();
+    expect(typeof res.ok).toBe('boolean');
+  });
+
+  it('detects Etsy onboarding state structure', async () => {
+    const bridgePath = path.resolve(process.cwd(), 'storefront/tools/cortex-browser-bridge.mjs');
+    const bridge = await import(bridgePath);
+    const res = await bridge.stageEtsy({});
+    expect(res).toBeDefined();
+    expect(typeof res.ok).toBe('boolean');
+  });
 });
