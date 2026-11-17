@@ -864,20 +864,20 @@ export const CortexAgentsScene: React.FC = () => {
       // Shift the whole scene right when the roster rail is visible so the
       // orbit clears it (roster ~200px at left).
       const cx = w / 2 + (w >= 900 ? 100 : 0) + p.x, cy = h / 2 + h * 0.05 + p.y;
-      // Deep-space cosmic nebula clouds — layered H-Alpha violet, O-III cyan, and stellar amber
+      // Deep-space cosmic nebula — anchored specifically in the far back left of the scene
       const nebKey = `${bgKey}|${Math.round(time * 5)}`;
       if (!nebCache || nebCache.key !== nebKey) {
         nebCache = {
           key: nebKey,
           grads: [
-            { col: '#a855f7', alpha: 0.16, r: 0.44, ox: 0.22, oy: -0.16 },  // Cosmic Violet/Magenta H-Alpha
-            { col: '#06b6d4', alpha: 0.18, r: 0.40, ox: -0.26, oy: 0.18 },  // Electric Cyan O-III Ridge
-            { col: '#f59e0b', alpha: 0.13, r: 0.36, ox: 0.20, oy: 0.22 },   // Stellar Nursery Amber
-            { col: '#3b82f6', alpha: 0.15, r: 0.46, ox: -0.18, oy: -0.20 }, // Deep Space Cobalt Veil
+            { col: '#a855f7', alpha: 0.18, r: 0.34, ox: -0.32, oy: -0.22 },  // Cosmic Violet H-Alpha Core (Back-Left)
+            { col: '#06b6d4', alpha: 0.20, r: 0.30, ox: -0.26, oy: -0.16 },  // Electric Cyan Ionization Ridge (Back-Left)
+            { col: '#f59e0b', alpha: 0.15, r: 0.25, ox: -0.36, oy: -0.26 },  // Stellar Nursery Amber Vein (Far Back-Left)
+            { col: '#3b82f6', alpha: 0.16, r: 0.36, ox: -0.28, oy: -0.19 },  // Deep Space Cobalt Veil (Back-Left)
           ].map((spec, i) => {
             const na = time * 0.04 + i * 1.6;
-            const nx = cx + spec.ox * w + Math.cos(na) * w * 0.08;
-            const ny = cy + spec.oy * h + Math.sin(na * 0.8) * h * 0.07;
+            const nx = cx + spec.ox * w + Math.cos(na) * w * 0.04;
+            const ny = cy + spec.oy * h + Math.sin(na * 0.8) * h * 0.04;
             const ng = ctx.createRadialGradient(nx, ny, 0, nx, ny, Math.min(w, h) * spec.r);
             ng.addColorStop(0, hexA(spec.col, spec.alpha));
             ng.addColorStop(0.55, hexA(spec.col, spec.alpha * 0.35));
