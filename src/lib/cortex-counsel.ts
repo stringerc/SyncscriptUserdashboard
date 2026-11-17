@@ -52,13 +52,18 @@ export interface CounselConsole {
 
 /** The console roster — Mission Control positions. */
 export const COUNSEL_CONSOLES: CounselConsole[] = [
-  { id: 'strategist', callSign: 'FLIGHT DIRECTOR', role: 'Synthesizes the poll', adapter: 'internal' },
-  { id: 'antigravity', callSign: 'GUIDANCE', role: 'Architecture & strategy counsel', adapter: 'file-drop' },
-  { id: 'devin', callSign: 'FLIGHT DYNAMICS', role: 'Engineering & verification counsel', adapter: 'devin' },
-  { id: 'sentinel', callSign: 'EECOM', role: 'Compute/power & model-health counsel', adapter: 'internal' },
-  { id: 'forecaster', callSign: 'FDO', role: 'Trajectory & forecast counsel', adapter: 'internal' },
-  { id: 'warden', callSign: 'SURGEON', role: 'Quality & blast-radius counsel (read-only)', adapter: 'internal' },
-  { id: 'user', callSign: 'CREW COMMANDER', role: 'Final GO/NO-GO authority', adapter: 'manual' },
+  { id: 'user', callSign: 'THE CREW (CHRIS)', role: 'Holds veto · Final GO/NO-GO · Approves Hard-lane only', adapter: 'manual' },
+  { id: 'strategist', callSign: 'FLIGHT DIRECTOR (CORTEX)', role: 'Owns the console · Decides, never flies mission herself', adapter: 'internal' },
+  { id: 'antigravity', callSign: 'GUIDANCE (ANTIGRAV)', role: 'Strategy & Vision', adapter: 'file-drop' },
+  { id: 'builder', callSign: 'FLIGHT CONTROLS (BUILDER)', role: 'Execute · Workspace & code compiler', adapter: 'internal' },
+  { id: 'runner', callSign: 'FLIGHT CONTROLS (RUNNER)', role: 'Execute · Rapid process runtime', adapter: 'internal' },
+  { id: 'sentinel', callSign: 'EECOM (SENTINEL)', role: 'Power / Compute (電力/計算) · Models health', adapter: 'internal' },
+  { id: 'capcom', callSign: 'CAPCOM (VOICE)', role: 'Talk to Crew · Real-time voice stream', adapter: 'internal' },
+  { id: 'forecaster', callSign: 'FDO (TRAJECTORY)', role: 'Predict Orbits & Forecasts', adapter: 'internal' },
+  { id: 'warden', callSign: 'SURGEON (WARDEN)', role: 'Quality Gate & Blast-radius safety', adapter: 'internal' },
+  { id: 'devin', callSign: 'SUPPORT CRAFT (DEVIN)', role: 'Engineering verification & execution', adapter: 'devin' },
+  { id: 'scout', callSign: 'SUPPORT CRAFT (SCOUT)', role: 'Recon & Web Intelligence', adapter: 'internal' },
+  { id: 'librarian', callSign: 'SUPPORT CRAFT (LIBRARIAN)', role: 'Engram Vector Archive', adapter: 'internal' },
 ];
 
 export interface CounselPosition {

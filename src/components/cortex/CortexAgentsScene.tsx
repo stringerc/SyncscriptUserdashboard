@@ -346,7 +346,7 @@ const AgentDossierPanel: React.FC<{ agent: AgentClient; snap: AgentsSnapshotClie
   return (
     <div style={dockLeft ? {
       // Docked to the roster rail: extends rightward from it, vertically centered.
-      position: 'absolute', left: 216, top: '50%', transform: 'translateY(-50%)', zIndex: 7,
+      position: 'absolute', left: 242, top: '50%', transform: 'translateY(-50%)', zIndex: 7,
       width: 520, maxWidth: 'calc(100vw - 240px)', maxHeight: '74vh', display: 'flex', flexDirection: 'column',
       background: 'linear-gradient(165deg, rgba(8,14,24,0.94), rgba(5,8,15,0.9))',
       border: `1px solid ${hexA(col, 0.35)}`, borderLeft: `3px solid ${col}`, borderRadius: 3, padding: '12px 16px',
@@ -1655,67 +1655,159 @@ export const CortexAgentsScene: React.FC = () => {
         <div>STATE: {snap.offline ? 'OFFLINE' : 'LIVE'}</div>
       </div>
 
-      {/* ── Left rail: agent roster — vessel glyph + name, click opens dossier ── */}
+      {/* ── Left rail: Mission Control Roster — Apollo Flight Hierarchy ── */}
       {!narrow && (
         <div style={{
           position: 'absolute', left: 16, top: '50%', transform: 'translateY(-50%)', zIndex: 5,
-          width: 188, fontFamily: MONO,
-          background: 'rgba(4,8,18,0.55)', border: '1px solid rgba(103,232,249,0.12)',
-          borderRadius: 4, backdropFilter: 'blur(6px)', overflow: 'hidden',
+          width: 218, fontFamily: MONO,
+          background: 'rgba(4,8,18,0.85)', border: '1px solid rgba(103,232,249,0.18)',
+          borderRadius: 4, backdropFilter: 'blur(8px)', overflow: 'hidden',
+          boxShadow: '0 0 32px rgba(0,0,0,0.7)',
         }}>
           <div style={{
-            padding: '7px 10px', borderBottom: '1px solid rgba(103,232,249,0.14)',
-            color: 'rgba(165,243,252,0.75)', fontWeight: 700, letterSpacing: '0.28em', fontSize: 8,
+            padding: '8px 10px', borderBottom: '1px solid rgba(103,232,249,0.16)',
+            color: 'rgba(165,243,252,0.9)', fontWeight: 800, letterSpacing: '0.22em', fontSize: 8.5,
             display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+            background: 'linear-gradient(90deg, rgba(56,189,248,0.12), transparent)',
           }}>
-            <span>ROSTER</span>
-            <span style={{ color: 'rgba(148,233,255,0.35)', letterSpacing: '0.15em' }}>{agents.length}</span>
+            <span>MISSION CONTROL ROSTER</span>
+            <span style={{ color: '#fbbf24', fontSize: 7, letterSpacing: '0.12em' }}>APOLLO MAPPING</span>
           </div>
-          <div className="ambient-scrollbar" style={{ maxHeight: '62vh', overflowY: 'auto', scrollbarWidth: 'thin' }}>
-            {agents.slice().sort(agentSort).map(a => {
-              const col = AGENT_COLORS[a.id] || (a.spawnSpec ? `hsl(${spawnHue(a.id)} 85% 68%)` : '#94a3b8');
-              const enterprise = agentTier(a) === 'enterprise';
-              const offline = a.status === 'offline' || a.status === 'retired';
-              const active = selectedAgent === a.id;
-              const statusCol = a.status === 'working' ? col : a.status === 'error' ? '#f87171' : offline ? 'rgba(100,116,139,0.8)' : 'rgba(148,163,184,0.5)';
-              return (
-                <div key={a.id}
-                  onClick={() => setSelectedAgent(active ? null : a.id)}
-                  style={{
-                    display: 'flex', alignItems: 'center', gap: 8,
-                    padding: '6px 10px', cursor: 'pointer',
-                    borderBottom: '1px solid rgba(148,233,255,0.05)',
-                    background: active ? hexA(col, 0.10) : 'transparent',
-                    opacity: offline ? 0.55 : 1,
-                  }}
-                  onMouseEnter={e => { if (!active) (e.currentTarget as HTMLElement).style.background = 'rgba(103,232,249,0.05)'; }}
-                  onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = active ? hexA(col, 0.10) : 'transparent'; }}
-                >
-                  <AgentGlyph enterprise={enterprise} color={col} />
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{
-                      fontSize: 9, letterSpacing: '0.14em', fontWeight: 700,
-                      color: active ? col : 'rgba(224,242,254,0.9)',
-                      whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
-                    }}>
-                      {a.name}
-                    </div>
-                    <div style={{ fontSize: 7, letterSpacing: '0.18em', color: statusCol, marginTop: 1 }}>
-                      {enterprise ? 'SAT·' : ''}{a.status.toUpperCase()}
-                    </div>
-                  </div>
-                  <span style={{
-                    width: 5, height: 5, borderRadius: '50%', background: statusCol, flexShrink: 0,
-                    boxShadow: a.status === 'working' ? `0 0 6px ${col}` : 'none',
-                  }} />
-                </div>
-              );
-            })}
-            {agents.length === 0 && (
-              <div style={{ padding: '12px 10px', color: 'rgba(148,233,255,0.3)', letterSpacing: '0.15em', fontSize: 8 }}>
-                NO AGENTS REGISTERED
+          <div className="ambient-scrollbar" style={{ maxHeight: '72vh', overflowY: 'auto', scrollbarWidth: 'thin', padding: '6px 8px' }}>
+            {/* 1. THE CREW (Chris) */}
+            <div style={{ marginBottom: 6, padding: '5px 7px', background: 'rgba(251,191,36,0.06)', border: '1px solid rgba(251,191,36,0.3)', borderRadius: 3 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <span style={{ fontSize: 7.5, fontWeight: 800, letterSpacing: '0.16em', color: '#fbbf24' }}>THE CREW (CHRIS)</span>
+                <span style={{ width: 5.5, height: 5.5, borderRadius: '50%', background: '#fbbf24', boxShadow: '0 0 6px #fbbf24' }} />
               </div>
-            )}
+              <div style={{ fontSize: 7, color: 'rgba(254,240,138,0.9)', marginTop: 2 }}>HOLDS VETO · FINAL GO / NO-GO</div>
+              <div style={{ fontSize: 6.5, color: DIM, marginTop: 1 }}>Approves Hard-lane only</div>
+            </div>
+
+            {/* 2. FLIGHT DIRECTOR — CORTEX CORE */}
+            <div
+              onClick={() => setTowerOpen(true)}
+              style={{
+                marginBottom: 6, padding: '5px 7px', background: 'rgba(56,189,248,0.06)',
+                border: '1px solid rgba(56,189,248,0.32)', borderRadius: 3, cursor: 'pointer',
+              }}
+              title="Click to open Flight Director Console"
+            >
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <span style={{ fontSize: 7.5, fontWeight: 800, letterSpacing: '0.16em', color: '#38bdf8' }}>FLIGHT DIRECTOR</span>
+                <span style={{ width: 5.5, height: 5.5, borderRadius: '50%', background: '#34d399', boxShadow: '0 0 6px #34d399' }} />
+              </div>
+              <div style={{ fontSize: 7, color: 'rgba(224,242,254,0.9)', marginTop: 2 }}>CORTEX CORE (STRATEGIST)</div>
+              <div style={{ fontSize: 6.5, color: DIM, marginTop: 1 }}>Owns console · Decides, never flies</div>
+            </div>
+
+            {/* 3. FLIGHT CONSOLES (Specialists) */}
+            <div style={{ marginBottom: 6 }}>
+              <div style={{ fontSize: 6.8, fontWeight: 700, letterSpacing: '0.2em', color: 'rgba(165,243,252,0.65)', padding: '2px 3px', marginBottom: 2 }}>
+                FLIGHT CONSOLES (SPECIALISTS)
+              </div>
+              {[
+                { id: 'antigravity', callSign: 'GUIDANCE', agentId: 'antigravity', desc: 'Strategy · Vision', col: '#c084fc' },
+                { id: 'builder', callSign: 'FLT CONTROLS', agentId: 'builder', desc: 'Execute (Builder)', col: '#34d399' },
+                { id: 'runner', callSign: 'FLT CONTROLS', agentId: 'runner', desc: 'Execute (Runner)', col: '#a3e635' },
+                { id: 'sentinel', callSign: 'EECOM', agentId: 'sentinel', desc: 'Power/Compute (電力/計算)', col: '#67e8f9' },
+                { id: 'capcom', callSign: 'CAPCOM', agentId: 'voice', desc: 'Talk to Crew (Voice)', col: '#f472b6', isVoice: true },
+                { id: 'forecaster', callSign: 'FDO', agentId: 'forecaster', desc: 'Trajectory · Orbits', col: '#2dd4bf' },
+                { id: 'warden', callSign: 'SURGEON', agentId: 'warden', desc: 'Quality Gate · Safety', col: '#818cf8' },
+              ].map(item => {
+                const a = agents.find(x => x.id === item.agentId);
+                const active = a && selectedAgent === a.id;
+                const status = item.isVoice ? (voiceState.current || 'idle') : (a?.status || 'standby');
+                const lampCol = status === 'working' || status === 'active' || status === 'speaking' ? '#34d399' : status === 'error' ? '#f87171' : 'rgba(148,163,184,0.45)';
+                return (
+                  <div
+                    key={item.id}
+                    onClick={() => { if (a) setSelectedAgent(active ? null : a.id); }}
+                    style={{
+                      display: 'flex', alignItems: 'center', gap: 6, padding: '3.5px 6px',
+                      borderRadius: 2, marginBottom: 2, cursor: a ? 'pointer' : 'default',
+                      background: active ? hexA(item.col, 0.16) : 'rgba(15,23,42,0.45)',
+                      border: `1px solid ${active ? hexA(item.col, 0.45) : 'rgba(148,163,184,0.08)'}`,
+                    }}
+                  >
+                    <span style={{ fontSize: 7, fontWeight: 700, color: item.col, minWidth: 60, letterSpacing: '0.06em' }}>{item.callSign}</span>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 7.5, color: active ? '#ffffff' : 'rgba(224,242,254,0.85)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {a?.name || item.desc}
+                      </div>
+                      <div style={{ fontSize: 6.5, color: DIM }}>{item.desc}</div>
+                    </div>
+                    <span style={{ width: 4.5, height: 4.5, borderRadius: '50%', background: lampCol, flexShrink: 0, boxShadow: lampCol === '#34d399' ? '0 0 5px #34d399' : 'none' }} />
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* 4. THE COUNSEL */}
+            <div
+              onClick={() => setTowerOpen(true)}
+              style={{
+                marginBottom: 6, padding: '5px 7px', background: 'rgba(192,132,252,0.06)',
+                border: '1px solid rgba(192,132,252,0.3)', borderRadius: 3, cursor: 'pointer',
+              }}
+            >
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <span style={{ fontSize: 7.5, fontWeight: 800, letterSpacing: '0.16em', color: '#c084fc' }}>THE COUNSEL</span>
+                <span style={{ fontSize: 6.5, color: '#fbbf24' }}>GO/NO-GO ➔</span>
+              </div>
+              <div style={{ fontSize: 6.5, color: DIM, marginTop: 1 }}>Specialists file · Director synthesizes</div>
+            </div>
+
+            {/* 5. SUPPORT CRAFT */}
+            <div style={{ marginBottom: 6 }}>
+              <div style={{ fontSize: 6.8, fontWeight: 700, letterSpacing: '0.2em', color: 'rgba(165,243,252,0.65)', padding: '2px 3px', marginBottom: 2 }}>
+                SUPPORT CRAFT (AGENTS)
+              </div>
+              {agents.filter(a => !['strategist', 'antigravity', 'builder', 'runner', 'sentinel', 'forecaster', 'warden'].includes(a.id)).map(a => {
+                const col = AGENT_COLORS[a.id] || (a.spawnSpec ? `hsl(${spawnHue(a.id)} 85% 68%)` : '#94a3b8');
+                const active = selectedAgent === a.id;
+                const statusCol = a.status === 'working' ? col : a.status === 'error' ? '#f87171' : 'rgba(148,163,184,0.45)';
+                return (
+                  <div
+                    key={a.id}
+                    onClick={() => setSelectedAgent(active ? null : a.id)}
+                    style={{
+                      display: 'flex', alignItems: 'center', gap: 6, padding: '3px 6px',
+                      borderRadius: 2, marginBottom: 2, cursor: 'pointer',
+                      background: active ? hexA(col, 0.16) : 'transparent',
+                      borderBottom: '1px solid rgba(148,233,255,0.04)',
+                    }}
+                  >
+                    <AgentGlyph enterprise={agentTier(a) === 'enterprise'} color={col} />
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 7.5, fontWeight: 700, color: active ? col : 'rgba(224,242,254,0.85)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {a.name}
+                      </div>
+                      <div style={{ fontSize: 6.5, color: DIM }}>{a.role.slice(0, 24)}</div>
+                    </div>
+                    <span style={{ width: 4.5, height: 4.5, borderRadius: '50%', background: statusCol, flexShrink: 0 }} />
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* 6. MISSIONS & GROUND SEGMENT */}
+            <div style={{ borderTop: '1px solid rgba(103,232,249,0.12)', paddingTop: 5, marginTop: 4 }}>
+              <div style={{ fontSize: 6.8, fontWeight: 700, letterSpacing: '0.2em', color: 'rgba(165,243,252,0.65)', padding: '2px 3px', marginBottom: 2 }}>
+                MISSIONS (PIPELINES)
+              </div>
+              <div style={{ fontSize: 6.5, color: DIM, padding: '1px 3px', display: 'flex', justifyContent: 'space-between' }}>
+                <span>SHYNED · LAWBOT · STORES</span>
+                <span style={{ color: '#34d399' }}>ACTIVE</span>
+              </div>
+              <div style={{ fontSize: 6.8, fontWeight: 700, letterSpacing: '0.2em', color: 'rgba(165,243,252,0.65)', padding: '2px 3px', marginTop: 4, marginBottom: 2 }}>
+                GROUND SEGMENT
+              </div>
+              <div style={{ fontSize: 6.5, color: DIM, padding: '1px 3px', display: 'flex', justifyContent: 'space-between' }}>
+                <span>MAC (LOCAL) + ORACLE (TDRS)</span>
+                <span style={{ color: '#34d399' }}>● LINKED</span>
+              </div>
+            </div>
           </div>
         </div>
       )}

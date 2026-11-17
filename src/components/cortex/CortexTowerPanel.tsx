@@ -124,32 +124,42 @@ export const CortexTowerPanel: React.FC<{ onClose: () => void }> = ({ onClose })
         </div>
         {error && <div style={{ fontSize: 9, color: '#f87171', margin: '6px 0' }}>TELEMETRY ERROR: {error}</div>}
 
+        {/* The Crew */}
+        <Section title="THE CREW (YOU, CHRIS)" right={<span style={{ fontSize: 7, color: '#fbbf24', letterSpacing: '0.15em' }}>● FINAL GO / NO-GO AUTHORITY</span>}>
+          <div style={{ display: 'flex', gap: 18, fontSize: 8, color: DIM, flexWrap: 'wrap', alignItems: 'center' }}>
+            <span>AUTHORITY — <span style={{ color: '#fbbf24', fontWeight: 700 }}>HOLDS VETO</span></span>
+            <span>CLEARANCE LANE — <span style={{ color: '#a5f3fc' }}>APPROVES HARD-LANE ONLY</span></span>
+            <span>STATUS — <span style={{ color: '#34d399' }}>● COCKPIT COMMAND ACTIVE</span></span>
+          </div>
+        </Section>
+
         {/* Flight Director */}
-        <Section title="FLIGHT DIRECTOR">
-          <div style={{ display: 'flex', gap: 18, fontSize: 9, color: DIM, flexWrap: 'wrap' }}>
-            <span>CORTEX CORE — <span style={{ color: '#34d399' }}>● NOMINAL</span></span>
-            <span>INSTANCE — {data?.worldState?.topology?.instance?.toUpperCase() || '—'}</span>
-            <span>ORACLE — {data?.worldState?.fleet?.oracleAlive ? '● UP' : '○ DOWN'}</span>
-            <span>OPEN INCIDENTS — {data?.incidents?.open ?? '—'}</span>
+        <Section title="FLIGHT DIRECTOR — CORTEX CORE">
+          <div style={{ display: 'flex', gap: 18, fontSize: 8, color: DIM, flexWrap: 'wrap' }}>
+            <span>CONSOLE — <span style={{ color: '#34d399' }}>● NOMINAL</span></span>
+            <span>MANDATE — Owns the console. Decides, never flies the mission herself.</span>
+            <span>INSTANCE — {data?.worldState?.topology?.instance?.toUpperCase() || 'MAC'}</span>
+            <span>ORACLE (TDRS) — {data?.worldState?.fleet?.oracleAlive ? '● LINKED' : '○ DOWN'}</span>
+            <span>OPEN INCIDENTS — {data?.incidents?.open ?? 0}</span>
           </div>
         </Section>
 
         {/* Console positions */}
-        <Section title="CONSOLE POSITIONS — THE COUNSEL ROSTER">
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(230px, 1fr))', gap: 6 }}>
+        <Section title="CONSOLE POSITIONS — THE COUNSEL ROSTER" right={<span style={{ fontSize: 7, color: 'rgba(165,243,252,0.6)' }}>APOLLO MISSION CONTROL MAPPING</span>}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))', gap: 6 }}>
             {(data?.consoles || []).map(c => (
               <div key={c.id} style={{
-                border: '1px solid rgba(103,232,249,0.12)', borderRadius: 3,
-                padding: '6px 9px', background: 'rgba(103,232,249,0.03)',
+                border: '1px solid rgba(103,232,249,0.14)', borderRadius: 3,
+                padding: '7px 10px', background: 'rgba(103,232,249,0.03)',
               }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <span style={{ fontSize: 8, letterSpacing: '0.15em', color: 'rgba(165,243,252,0.8)', fontWeight: 700 }}>{c.callSign}</span>
+                  <span style={{ fontSize: 8, letterSpacing: '0.15em', color: 'rgba(165,243,252,0.9)', fontWeight: 700 }}>{c.callSign}</span>
                   <span style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 7, color: DIM }}>
                     <span style={{ width: 6, height: 6, borderRadius: '50%', background: LAMP_COLOR[c.lamp] || LAMP_COLOR.idle, boxShadow: c.lamp === 'working' ? '0 0 6px #34d399' : 'none' }} />
                     {(c.agentStatus || c.lamp).toUpperCase()}
                   </span>
                 </div>
-                <div style={{ fontSize: 7, color: DIM, marginTop: 3 }}>{c.id.toUpperCase()} — {c.role}</div>
+                <div style={{ fontSize: 7, color: 'rgba(203,213,225,0.7)', marginTop: 3 }}>{c.id.toUpperCase()} — {c.role}</div>
                 {c.counselSessions > 0 && <div style={{ fontSize: 7, color: '#fbbf24', marginTop: 2 }}>{c.counselSessions} SESSION{c.counselSessions > 1 ? 'S' : ''}</div>}
               </div>
             ))}
@@ -260,14 +270,51 @@ export const CortexTowerPanel: React.FC<{ onClose: () => void }> = ({ onClose })
           </div>
         </Section>
 
-        {/* Missions */}
-        <Section title="MISSIONS — PIPELINE HEALTH">
-          {(data?.missions || []).length === 0 && <div style={{ fontSize: 8, color: DIM }}>No pipeline telemetry.</div>}
-          {(data?.missions || []).map((m, i) => (
-            <div key={i} style={{ fontSize: 8, color: DIM, padding: '2px 0' }}>
-              {m.name.toUpperCase()} — {m.status.toUpperCase()} ×{m.count}
+        {/* Missions (Pipelines = Products) */}
+        <Section title="MISSIONS — PIPELINES = PRODUCTS (SHYNED, LAWBOT, STORES)">
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: 6 }}>
+            <div style={{ border: '1px solid rgba(251,191,36,0.18)', borderRadius: 3, padding: '6px 9px', background: 'rgba(251,191,36,0.03)' }}>
+              <div style={{ fontSize: 8, color: '#fbbf24', fontWeight: 700 }}>SHYNED PRODUCT LINE</div>
+              <div style={{ fontSize: 7, color: DIM, marginTop: 2 }}>High-velocity automated venture pipeline</div>
             </div>
-          ))}
+            <div style={{ border: '1px solid rgba(56,189,248,0.18)', borderRadius: 3, padding: '6px 9px', background: 'rgba(56,189,248,0.03)' }}>
+              <div style={{ fontSize: 8, color: '#38bdf8', fontWeight: 700 }}>LAWBOT COMPLIANCE</div>
+              <div style={{ fontSize: 7, color: DIM, marginTop: 2 }}>Audit & legal verification pipeline</div>
+            </div>
+            <div style={{ border: '1px solid rgba(52,211,153,0.18)', borderRadius: 3, padding: '6px 9px', background: 'rgba(52,211,153,0.03)' }}>
+              <div style={{ fontSize: 8, color: '#34d399', fontWeight: 700 }}>OMNI STORE SYNDICATION</div>
+              <div style={{ fontSize: 7, color: DIM, marginTop: 2 }}>Chrome · Edge · Firefox · WebStores</div>
+            </div>
+          </div>
+          {(data?.missions || []).length > 0 && (
+            <div style={{ marginTop: 6, display: 'flex', gap: 12, fontSize: 7, color: DIM, flexWrap: 'wrap' }}>
+              {(data?.missions || []).map((m, i) => (
+                <span key={i}>{m.name.toUpperCase()} [{m.status.toUpperCase()} ×{m.count}]</span>
+              ))}
+            </div>
+          )}
+        </Section>
+
+        {/* Ground Segment (Mac + Oracle = TDRS Satellite + Local Tower) */}
+        <Section title="GROUND SEGMENT (MAC + ORACLE = TDRS SATELLITE + LOCAL TOWER)" right={<span style={{ fontSize: 7, color: data?.worldState?.fleet?.oracleAlive ? '#34d399' : '#fbbf24' }}>● DUAL-TOPOLOGY</span>}>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+            <div style={{ border: '1px solid rgba(103,232,249,0.14)', borderRadius: 3, padding: '7px 10px', background: 'rgba(103,232,249,0.03)' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <span style={{ fontSize: 8, fontWeight: 700, color: '#a5f3fc' }}>LOCAL TOWER — MAC HOST</span>
+                <span style={{ fontSize: 7, color: '#34d399' }}>● LOCAL PRIMARY</span>
+              </div>
+              <div style={{ fontSize: 7, color: DIM, marginTop: 3 }}>Desktop runtime · Local files & workspace · Voice loop</div>
+            </div>
+            <div style={{ border: '1px solid rgba(103,232,249,0.14)', borderRadius: 3, padding: '7px 10px', background: 'rgba(103,232,249,0.03)' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <span style={{ fontSize: 8, fontWeight: 700, color: '#a5f3fc' }}>TDRS SATELLITE — ORACLE CLOUD</span>
+                <span style={{ fontSize: 7, color: data?.worldState?.fleet?.oracleAlive ? '#34d399' : '#f87171' }}>
+                  {data?.worldState?.fleet?.oracleAlive ? '● ORBIT LINKED' : '○ DEGRADED'}
+                </span>
+              </div>
+              <div style={{ fontSize: 7, color: DIM, marginTop: 3 }}>Remote autonomous compute node · SWR telemetry sync</div>
+            </div>
+          </div>
         </Section>
       </div>
     </div>
