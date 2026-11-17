@@ -375,6 +375,26 @@ export async function runGumroadPublish(ctx: AgentContext, payload: Record<strin
   return runOmniPublish(ctx, { ...payload, platform: 'gumroad' });
 }
 
+/**
+ * Closed-loop HTTP verifier for the Sentinel stage.
+ * Probes candidate URLs with HEAD/GET requests to confirm active public HTTP 200 availability.
+ */
+export async function verifyPublicUrl(url: string, timeoutMs = 8000): Promise<{ ok: boolean; status?: number; error?: string }> {
+  try {
+    const res = await fetch(url, { method: 'HEAD', signal: AbortSignal.timeout(timeoutMs) });
+    const ok = res.status >= 200 && res.status < 400;
+    return { ok, status: res.status };
+  } catch (err: any) {
+    try {
+      const getRes = await fetch(url, { method: 'GET', signal: AbortSignal.timeout(timeoutMs) });
+      const ok = getRes.status >= 200 && getRes.status < 400;
+      return { ok, status: getRes.status };
+    } catch (e: any) {
+      return { ok: false, error: e?.message || String(e) };
+    }
+  }
+}
+
 export const ITEM_HANDLERS: Record<string, (ctx: AgentContext, p: Record<string, unknown>) => Promise<unknown>> = {
   reddit_scan: runRedditScan,
   reddit_comment: runRedditComment,

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { runOmniPublish, ITEM_HANDLERS, enqueueDistributionItem } from '../cortex-agents/distribution';
+import { runOmniPublish, ITEM_HANDLERS, enqueueDistributionItem, verifyPublicUrl } from '../cortex-agents/distribution';
 import type { AgentContext } from '../cortex-agents/runtime';
 
 describe('cortex-distribution-pipeline', () => {
@@ -10,6 +10,18 @@ describe('cortex-distribution-pipeline', () => {
     expect(ITEM_HANDLERS.redbubble_publish).toBeDefined();
     expect(ITEM_HANDLERS.gumroad_publish).toBeDefined();
   });
+
+  it('verifies public URL with closed-loop HTTP probe', async () => {
+    // Verified live product on Gumroad
+    const res = await verifyPublicUrl('https://syncmaster1.gumroad.com/l/sovereign-real-estate-os');
+    expect(res).toBeDefined();
+    expect(res.ok).toBe(true);
+    expect(res.status).toBe(200);
+
+    // Non-existent or invalid domain
+    const badRes = await verifyPublicUrl('https://this-is-a-completely-invalid-subdomain-12345.com');
+    expect(badRes.ok).toBe(false);
+  }, 15000);
 
   it('enqueues omni_publish queue item with deduplication', () => {
     const payload = { productId: 'sovereign-real-estate-os', platform: 'all', dryRun: true };

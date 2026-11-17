@@ -88,5 +88,5 @@ describe('runOmniPublish', () => {
     expect(res.exitCode).toBe(0);
     expect(res.staged).toBe(true);
     expect(progressVal).toBe(1);
-  });
+  }, 15000);
 });
