@@ -1,26 +1,33 @@
 /**
- * CortexAgentsScene — "The Nexus Foundry" Agents command deck.
+ * CortexAgentsScene — "The Nexus Foundry" Space Air Traffic Control (SATC) Command Deck.
  *
- * Zero-dependency Canvas2D command deck:
- *  - Nebula backdrop, animated perspective grid, parallax starfield,
- *    shooting stars, mouse reticle with telemetry readout.
- *  - Layered reactor core: plasma orb, rune rings, ember sparks,
- *    breathing with Cortex's real voice level.
- *  - Agent vessels on orbital rings with motion trails, specular
- *    highlights, data conduits, shockwave transitions.
- *  - Model constellation: twinkling health stars, filament web,
- *    labeled flagship models.
- *  - HUD chrome: corner brackets, telemetry columns, event ticker,
- *    task windows, agent dossier.
- *
- * Every visual state traces to the live agentsClient snapshot/events.
+ * 4-Tier Orbital Space Air Traffic Control Architecture:
+ *  - Centerpiece: Cortex Air Traffic Control Spire with 360° Planar Radar Sweep,
+ *    Tactical Transponder Beacon, Range Rings (15NM, 30NM, 45NM, 60NM), Azimuth Grid.
+ *  - Tier 3 (Upper Zenith): The Counsel Deck & Flagship Carrier Terminals
+ *    (Antigravity, Devin, Strategist/Claude Code) with Holographic Datalink Lattice.
+ *  - Tier 1 (Inner Ring): High-Speed Active Flight Corridor with forward-projected
+ *    vector heading trajectories, chevrons, and twin ion engine particle wakes.
+ *  - Tier 2 (Mid-Tier Stacks): Staggered Orbital Holding Patterns (Stack Alpha FL120 &
+ *    Stack Bravo FL240) with anti-collision navigation strobes and waypoint fixes.
+ *  - Tier 4 (Lower Nadir): Enterprise Mooring Berths with mechanical docking gantries,
+ *    clamp assemblies, and Omni Syndication sovereign flux waveguides.
+ *  - Tactical HUD: Aviation flight progress strips, mode-S squawk transponders,
+ *    tactical radar callouts, live comm conduits, mission log, and dossiers.
  */
 
 import React, { useEffect, useRef, useState } from 'react';
-import { agentsClient, type AgentsSnapshotClient, type AgentClient, type AgentTaskClient, type ModelClient } from '../../lib/cortex-agents-client';
+import {
+  agentsClient,
+  type AgentsSnapshotClient,
+  type AgentClient,
+  type AgentTaskClient,
+  type ModelClient,
+} from '../../lib/cortex-agents-client';
 import { cortexSignalBus } from './CortexVisualizer';
 import { CortexTowerPanel } from './CortexTowerPanel';
 
+// ── Color & Identity Systems ──
 const AGENT_COLORS: Record<string, string> = {
   antigravity: '#c084fc',
   devin: '#38bdf8',
@@ -36,13 +43,69 @@ const AGENT_COLORS: Record<string, string> = {
   forecaster: '#2dd4bf',
   strategist: '#e879f9',
 };
-const AGENT_ORDER = ['antigravity', 'sentinel', 'scout', 'librarian', 'builder', 'devin', 'reviewer', 'runner', 'distributor', 'warden', 'prep', 'forecaster', 'strategist'];
-// Deterministic hue for spawned agents from their callSign — stable across renders.
+
+const AGENT_ORDER = [
+  'antigravity',
+  'devin',
+  'strategist',
+  'sentinel',
+  'scout',
+  'librarian',
+  'builder',
+  'reviewer',
+  'runner',
+  'distributor',
+  'warden',
+  'prep',
+  'forecaster',
+];
+
+// Tactical Aviation Callsigns, Roles & Squawk Codes
+interface SatcProfile {
+  callsign: string;
+  role: string;
+  squawk: string;
+  defaultLane: string;
+  tier: 'counsel' | 'enterprise' | 'standard';
+}
+
+const SATC_PROFILES: Record<string, SatcProfile> = {
+  antigravity: { callsign: 'AG-01', role: 'APEX STRATEGIST', squawk: '7701', defaultLane: 'FL380 [HARD]', tier: 'counsel' },
+  devin: { callsign: 'DEV-02', role: 'AUTONOMOUS ENG', squawk: '4210', defaultLane: 'FL340 [HARD]', tier: 'counsel' },
+  strategist: { callsign: 'STR-03', role: 'CHIEF STRATEGIST', squawk: '5520', defaultLane: 'FL320 [HARD]', tier: 'counsel' },
+  reviewer: { callsign: 'REV-04', role: 'AUDIT COUNSEL', squawk: '5540', defaultLane: 'FL300 [HARD]', tier: 'counsel' },
+  sentinel: { callsign: 'SNT-05', role: 'RADAR GUARDIAN', squawk: '1240', defaultLane: 'FL240 [REV]', tier: 'standard' },
+  scout: { callsign: 'SCT-06', role: 'AIRSPACE RECON', squawk: '1250', defaultLane: 'FL240 [REV]', tier: 'standard' },
+  builder: { callsign: 'BLD-07', role: 'SYSTEM FORGE', squawk: '1270', defaultLane: 'FL240 [REV]', tier: 'standard' },
+  warden: { callsign: 'WRD-08', role: 'PERIMETER GATE', squawk: '1290', defaultLane: 'FL240 [REV]', tier: 'standard' },
+  forecaster: { callsign: 'FCT-09', role: 'TRAJECTORY PREDICT', squawk: '1320', defaultLane: 'FL240 [REV]', tier: 'standard' },
+  librarian: { callsign: 'LIB-10', role: 'KNOWLEDGE NAV', squawk: '1260', defaultLane: 'FL120 [CONT]', tier: 'standard' },
+  runner: { callsign: 'RUN-11', role: 'VECTOR RUNNER', squawk: '1280', defaultLane: 'FL120 [CONT]', tier: 'standard' },
+  prep: { callsign: 'PRP-12', role: 'FLIGHT STAGING', squawk: '1310', defaultLane: 'FL120 [CONT]', tier: 'standard' },
+  distributor: { callsign: 'DST-13', role: 'SYNDICATION CARRIER', squawk: '3150', defaultLane: 'FL120 [CONT]', tier: 'enterprise' },
+};
+
 const spawnHue = (id: string) => {
   let h = 0;
   for (const ch of id) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
   return h % 360;
 };
+
+const getFlightData = (a: AgentClient): SatcProfile => {
+  if (SATC_PROFILES[a.id]) return SATC_PROFILES[a.id];
+  const h = spawnHue(a.id);
+  const num = 20 + (h % 79);
+  const sq = (1000 + (h * 19) % 6777).toString(8).padStart(4, '0');
+  const isEnt = a.tier === 'enterprise' || !!a.spawnSpec;
+  return {
+    callsign: `${a.id.slice(0, 3).toUpperCase()}-${num}`,
+    role: a.role ? a.role.toUpperCase() : 'MISSION CRAFT',
+    squawk: sq,
+    defaultLane: isEnt ? 'FL120 [CONT]' : 'FL240 [REV]',
+    tier: isEnt ? 'enterprise' : 'standard',
+  };
+};
+
 const agentSort = (a: AgentClient, b: AgentClient) => {
   const ia = AGENT_ORDER.indexOf(a.id), ib = AGENT_ORDER.indexOf(b.id);
   if (ia >= 0 && ib >= 0) return ia - ib;
@@ -50,9 +113,14 @@ const agentSort = (a: AgentClient, b: AgentClient) => {
   if (ib >= 0) return 1;
   return a.id.localeCompare(b.id);
 };
-/** Enterprise fleet (revenue agents + self-spawned) flies the outer satellite deck. */
-const agentTier = (a?: AgentClient | null): 'enterprise' | 'standard' =>
-  a?.tier === 'enterprise' || !!a?.spawnSpec ? 'enterprise' : 'standard';
+
+const agentTier = (a?: AgentClient | null): 'counsel' | 'enterprise' | 'standard' => {
+  if (!a) return 'standard';
+  if (a.id === 'antigravity' || a.id === 'devin' || a.id === 'strategist' || a.id === 'reviewer') return 'counsel';
+  if (a.tier === 'enterprise' || a.id === 'distributor' || !!a.spawnSpec) return 'enterprise';
+  return 'standard';
+};
+
 const INK = '#e0f2fe';
 const DIM = 'rgba(148,163,184,0.55)';
 const MONO = "'IBM Plex Mono', monospace";
@@ -65,42 +133,44 @@ function modelStarColor(m: ModelClient): string {
     default: return 'rgba(148,163,184,0.4)';
   }
 }
+
 const fmtElapsed = (ms: number) => {
   const s = Math.max(0, Math.floor(ms / 1000));
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
 };
+
 const hexA = (hex: string, a: number) => {
   const n = parseInt(hex.slice(1), 16);
   return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`;
 };
+
 const prand = (i: number, salt: number) => {
   const x = Math.sin(i * 127.1 + salt * 311.7) * 43758.5453;
   return x - Math.floor(x);
 };
 
-// ── Enterprise stations — the outer orbit is for businesses, not agents.
-// Each entry is a running venture with its own sprite + live status feed.
-// `busy` drives the activity animation (orbiting sparks, pulsing ring).
+// ── Enterprise Mooring Berths (Tier 4) ──
 interface BusinessStation {
   id: string;
   name: string;
+  callsign: string;
+  squawk: string;
   statusUrl?: string;
-  phase: number;
   size: { w: number; h: number };
 }
+
 const BUSINESS_STATIONS: BusinessStation[] = [
   {
     id: 'omni-syndication',
     name: 'OMNI // SYNDICATION',
+    callsign: 'OMNI-X',
+    squawk: '7000',
     statusUrl: '/api/cortex/distribution/status',
-    phase: 0.9,
     size: { w: 104, h: 56 },
   },
 ];
 
-/** 2D Sacred Foundry Citadel — sovereign enterprise syndication nexus.
- *  Tri-concentric astrolabe rings with coordinate ticks, micro-diamonds,
- *  radiant quantum core, and directional flux emitter arrays. */
+/** Draw Sacred Enterprise Station Glyph with Mooring Clamps */
 function drawStationGlyph(
   ctx: CanvasRenderingContext2D,
   x: number, y: number, s: number,
@@ -110,31 +180,48 @@ function drawStationGlyph(
   ctx.translate(x, y);
 
   // 1. Ambient coronal flare
-  const pulse = busy ? 0.7 + 0.3 * Math.sin(t * 8) : 0.35 + 0.15 * Math.sin(t * 2);
-  const qg = ctx.createRadialGradient(0, 0, 0, 0, 0, 28 * s);
-  qg.addColorStop(0, hexA(col, pulse * 0.45));
-  qg.addColorStop(0.5, hexA(col, pulse * 0.12));
+  const pulse = busy ? 0.75 + 0.25 * Math.sin(t * 8) : 0.35 + 0.15 * Math.sin(t * 2);
+  const qg = ctx.createRadialGradient(0, 0, 0, 0, 0, 32 * s);
+  qg.addColorStop(0, hexA(col, pulse * 0.5));
+  qg.addColorStop(0.5, hexA(col, pulse * 0.15));
   qg.addColorStop(1, 'rgba(0,0,0,0)');
   ctx.fillStyle = qg;
   ctx.beginPath();
-  ctx.arc(0, 0, 28 * s, 0, Math.PI * 2);
+  ctx.arc(0, 0, 32 * s, 0, Math.PI * 2);
   ctx.fill();
 
-  // 2. Counter-rotating outer astrolabe calibration ring
+  // 2. Heavy Industrial Mooring Clamp Brackets
+  ctx.strokeStyle = 'rgba(148,163,184,0.45)';
+  ctx.lineWidth = 1.4 * s;
+  for (let c = 0; c < 3; c++) {
+    const ca = (c * Math.PI * 2) / 3 + Math.PI / 6;
+    const cx1 = Math.cos(ca) * 26 * s, cy1 = Math.sin(ca) * 26 * s;
+    const cx2 = Math.cos(ca) * 36 * s, cy2 = Math.sin(ca) * 36 * s;
+    ctx.beginPath();
+    ctx.moveTo(cx1, cy1);
+    ctx.lineTo(cx2, cy2);
+    ctx.stroke();
+    // Mooring shoe
+    ctx.fillStyle = '#1e293b';
+    ctx.fillRect(cx2 - 3 * s, cy2 - 3 * s, 6 * s, 6 * s);
+    ctx.strokeRect(cx2 - 3 * s, cy2 - 3 * s, 6 * s, 6 * s);
+  }
+
+  // 3. Counter-rotating outer calibration ring
   ctx.save();
   ctx.rotate(t * (busy ? 1.4 : 0.45));
-  ctx.strokeStyle = hexA(col, 0.45);
+  ctx.strokeStyle = hexA(col, 0.5);
   ctx.lineWidth = 1 * s;
-  ctx.setLineDash([3 * s, 6 * s]);
+  ctx.setLineDash([4 * s, 5 * s]);
   ctx.beginPath();
-  ctx.arc(0, 0, 22 * s, 0, Math.PI * 2);
+  ctx.arc(0, 0, 24 * s, 0, Math.PI * 2);
   ctx.stroke();
   ctx.setLineDash([]);
-  // 4 cardinal orbital diamond nodes
+  // Cardinal diamond nodes
   for (let k = 0; k < 4; k++) {
     const ka = (k * Math.PI) / 2;
-    const dx = Math.cos(ka) * 22 * s;
-    const dy = Math.sin(ka) * 22 * s;
+    const dx = Math.cos(ka) * 24 * s;
+    const dy = Math.sin(ka) * 24 * s;
     ctx.fillStyle = '#ffffff';
     ctx.beginPath();
     ctx.moveTo(dx, dy - 2.5 * s);
@@ -146,33 +233,33 @@ function drawStationGlyph(
   }
   ctx.restore();
 
-  // 3. Counter-rotating inner polar ring with micro ticks
+  // 4. Counter-rotating inner polar ring with micro ticks
   ctx.save();
   ctx.rotate(-t * (busy ? 1.8 : 0.6));
   ctx.strokeStyle = 'rgba(226,232,240,0.7)';
   ctx.lineWidth = 1.2 * s;
   ctx.beginPath();
-  ctx.arc(0, 0, 15 * s, 0, Math.PI * 2);
+  ctx.arc(0, 0, 16 * s, 0, Math.PI * 2);
   ctx.stroke();
   ctx.strokeStyle = hexA(col, 0.85);
   for (let deg = 0; deg < 8; deg++) {
     const da = (deg * Math.PI) / 4;
     ctx.beginPath();
-    ctx.moveTo(Math.cos(da) * 13 * s, Math.sin(da) * 13 * s);
-    ctx.lineTo(Math.cos(da) * 16.5 * s, Math.sin(da) * 16.5 * s);
+    ctx.moveTo(Math.cos(da) * 14 * s, Math.sin(da) * 14 * s);
+    ctx.lineTo(Math.cos(da) * 18 * s, Math.sin(da) * 18 * s);
     ctx.stroke();
   }
   ctx.restore();
 
-  // 4. Central Sacred Hex-Core / Sovereign Prismatic Nexus
+  // 5. Central Sovereign Hexagonal Citadel
   ctx.fillStyle = '#060a16';
   ctx.strokeStyle = col;
-  ctx.lineWidth = 1.6 * s;
+  ctx.lineWidth = 1.8 * s;
   ctx.beginPath();
   for (let h = 0; h < 6; h++) {
     const ha = (h * Math.PI) / 3;
-    const hx = Math.cos(ha) * 8.5 * s;
-    const hy = Math.sin(ha) * 8.5 * s;
+    const hx = Math.cos(ha) * 9.5 * s;
+    const hy = Math.sin(ha) * 9.5 * s;
     if (h === 0) ctx.moveTo(hx, hy);
     else ctx.lineTo(hx, hy);
   }
@@ -180,11 +267,11 @@ function drawStationGlyph(
   ctx.fill();
   ctx.stroke();
 
-  // 5. Radiating carrier waveforms when busy (omni-syndication flux)
+  // 6. Radiating carrier waveforms when busy
   if (busy) {
     for (let w = 1; w <= 3; w++) {
       const wavePhase = (t * 2.5 + w * 0.7) % 3;
-      const waveR = (9 + wavePhase * 10) * s;
+      const waveR = (10 + wavePhase * 11) * s;
       const waveAlpha = Math.max(0, 0.7 - (wavePhase / 3) * 0.7);
       ctx.strokeStyle = hexA(col, waveAlpha);
       ctx.lineWidth = 1.2 * s;
@@ -194,24 +281,31 @@ function drawStationGlyph(
     }
   }
 
-  // 6. Singularity nucleus
-  const nucG = ctx.createRadialGradient(0, 0, 0, 0, 0, 4.5 * s);
+  // 7. Singularity nucleus
+  const nucG = ctx.createRadialGradient(0, 0, 0, 0, 0, 5 * s);
   nucG.addColorStop(0, '#ffffff');
   nucG.addColorStop(0.4, col);
   nucG.addColorStop(1, 'rgba(0,0,0,0)');
   ctx.fillStyle = nucG;
   ctx.beginPath();
-  ctx.arc(0, 0, 4.5 * s, 0, Math.PI * 2);
+  ctx.arc(0, 0, 5 * s, 0, Math.PI * 2);
   ctx.fill();
 
   ctx.restore();
 }
 
-/** Roster glyph — mirrors the sacred astrolabes:
- *  Sacred multi-ring astrolabe for enterprise/spawned,
- *  faceted quantum prism for standard agents. Pure SVG. */
-const AgentGlyph: React.FC<{ enterprise?: boolean; color: string }> = ({ enterprise, color }) =>
-  enterprise ? (
+/** Roster Aviation Glyph */
+const AgentGlyph: React.FC<{ tier: 'counsel' | 'enterprise' | 'standard'; color: string }> = ({ tier, color }) =>
+  tier === 'counsel' ? (
+    <svg width="26" height="26" viewBox="-13 -13 26 26" style={{ flexShrink: 0 }}>
+      {/* Outer tachyon resonance ring */}
+      <circle cx="0" cy="0" r="11" fill="none" stroke={color} strokeOpacity="0.6" strokeWidth="1" strokeDasharray="3 3" />
+      {/* Flagship carrier delta hull */}
+      <polygon points="0,-10 9,6 0,2 -9,6" fill="#060a16" stroke={color} strokeWidth="1.3" />
+      {/* Tachyon core */}
+      <circle cx="0" cy="0" r="2.2" fill="#ffffff" />
+    </svg>
+  ) : tier === 'enterprise' ? (
     <svg width="26" height="26" viewBox="-13 -13 26 26" style={{ flexShrink: 0 }}>
       {/* Outer astrolabe resonance ring */}
       <circle cx="0" cy="0" r="11" fill="none" stroke={color} strokeOpacity="0.4" strokeWidth="0.8" strokeDasharray="3 3" />
@@ -219,11 +313,6 @@ const AgentGlyph: React.FC<{ enterprise?: boolean; color: string }> = ({ enterpr
       <circle cx="0" cy="0" r="7.5" fill="none" stroke="#e2e8f0" strokeOpacity="0.75" strokeWidth="1" />
       {/* Sacred faceted diamond core */}
       <polygon points="0,-6.5 5,0 0,6.5 -5,0" fill="#060a16" stroke={color} strokeWidth="1.2" />
-      {/* 4 Cardinal focus diamond pips */}
-      <circle cx="0" cy="-11" r="1.2" fill="#ffffff" />
-      <circle cx="11" cy="0" r="1.2" fill="#ffffff" />
-      <circle cx="0" cy="11" r="1.2" fill="#ffffff" />
-      <circle cx="-11" cy="0" r="1.2" fill="#ffffff" />
       {/* Quantum singularity core */}
       <circle cx="0" cy="0" r="2" fill="#ffffff" />
     </svg>
@@ -241,34 +330,27 @@ const AgentGlyph: React.FC<{ enterprise?: boolean; color: string }> = ({ enterpr
 function eventLine(e: { type: string; at: number; [k: string]: unknown }): string {
   const t = new Date(e.at).toLocaleTimeString('en-US', { hour12: false });
   switch (e.type) {
-    case 'agent.status': return `${t}  ${String(e.agentId).toUpperCase()} → ${String(e.status).toUpperCase()}`;
+    case 'agent.status': return `${t}  ATC // ${String(e.agentId).toUpperCase()} ➔ ${String(e.status).toUpperCase()}`;
     case 'task.transition': {
       const task = e.task as any;
-      return `${t}  ${String(task?.agentId || '?').toUpperCase()} ${String(task?.status || '').toUpperCase()} — ${String(task?.title || '').slice(0, 42)}`;
+      return `${t}  FLIGHT // ${String(task?.agentId || '?').toUpperCase()} ${String(task?.status || '').toUpperCase()} — ${String(task?.title || '').slice(0, 38)}`;
     }
-    case 'task.progress': return `${t}  TASK ${String(e.taskId).slice(-6)} → ${Math.round(Number(e.progress) * 100)}%`;
+    case 'task.progress': return `${t}  TRACK ${String(e.taskId).slice(-6)} ➔ ${Math.round(Number(e.progress) * 100)}% VECTOR`;
     case 'model.health': {
       const m = e.model as any;
-      return `${t}  MODEL ${String(m?.status || '?').toUpperCase()} ${String(m?.id || '').split('/').pop()?.slice(0, 30)}`;
-    }
-    case 'model.discovered': {
-      const m = e.model as any;
-      return `${t}  DISCOVERED ${String(m?.id || '').split('/').pop()?.slice(0, 34)}`;
+      return `${t}  BRAIN ${String(m?.status || '?').toUpperCase()} ${String(m?.id || '').split('/').pop()?.slice(0, 28)}`;
     }
     case 'agent.comm': {
       const from = String(e.from || 'ANTIGRAVITY').toUpperCase();
       const to = String(e.to || 'ALL').toUpperCase();
-      return `${t}  📡 ${from} ➔ ${to}: ${String(e.message || '').slice(0, 52)}`;
+      return `${t}  📡 ${from} ➔ ${to}: ${String(e.message || '').slice(0, 50)}`;
     }
-    case 'matrix.changed': return `${t}  MATRIX ${String(e.tier).toUpperCase()} lane re-ordered`;
+    case 'matrix.changed': return `${t}  AIRSPACE ${String(e.tier).toUpperCase()} corridor re-balanced`;
     default: return `${t}  ${e.type}`;
   }
 }
 
-// ── Agent dossier — NOW / RECORD / DOSSIER (CORTEX_AGENT_DOSSIER_SPEC.md) ──
-// Zone A answers "what is it doing right now"; Zone B "how has it performed";
-// Zone C "what is it allowed to be". Progressive disclosure, MCC doctrine.
-
+// ── Agent Dossier & Sub-Panels ──
 const STATUS_COLOR: Record<string, string> = {
   working: '#34d399', idle: '#67e8f9', error: '#f87171',
   cooldown: '#fbbf24', offline: DIM, retired: DIM,
@@ -342,33 +424,35 @@ const AgentDossierPanel: React.FC<{ agent: AgentClient; snap: AgentsSnapshotClie
   const spawn = a.spawnSpec;
   const ttlLeft = spawn?.ttlHours && a.spawnedAt ? a.spawnedAt + spawn.ttlHours * 3_600_000 - now : null;
   const statusCol = STATUS_COLOR[a.status] || DIM;
+  const flight = getFlightData(a);
 
   return (
     <div style={dockLeft ? {
-      // Docked to the roster rail: extends rightward from it, vertically centered.
-      position: 'absolute', left: 216, top: '50%', transform: 'translateY(-50%)', zIndex: 7,
-      width: 520, maxWidth: 'calc(100vw - 240px)', maxHeight: '74vh', display: 'flex', flexDirection: 'column',
-      background: 'linear-gradient(165deg, rgba(8,14,24,0.94), rgba(5,8,15,0.9))',
-      border: `1px solid ${hexA(col, 0.35)}`, borderLeft: `3px solid ${col}`, borderRadius: 3, padding: '12px 16px',
-      backdropFilter: 'blur(14px)', boxShadow: `0 0 40px ${hexA(col, 0.15)}`, overflow: 'hidden',
+      position: 'absolute', left: 220, top: '50%', transform: 'translateY(-50%)', zIndex: 7,
+      width: 530, maxWidth: 'calc(100vw - 250px)', maxHeight: '74vh', display: 'flex', flexDirection: 'column',
+      background: 'linear-gradient(165deg, rgba(8,14,24,0.95), rgba(4,7,16,0.92))',
+      border: `1px solid ${hexA(col, 0.4)}`, borderLeft: `3px solid ${col}`, borderRadius: 3, padding: '14px 18px',
+      backdropFilter: 'blur(16px)', boxShadow: `0 0 44px ${hexA(col, 0.18)}`, overflow: 'hidden',
     } : {
       position: 'absolute', bottom: 18, left: '50%', transform: 'translateX(-50%)', zIndex: 7,
       width: 560, maxWidth: '92vw', maxHeight: '62vh', display: 'flex', flexDirection: 'column',
-      background: 'linear-gradient(165deg, rgba(8,14,24,0.94), rgba(5,8,15,0.9))',
-      border: `1px solid ${hexA(col, 0.35)}`, borderRadius: 3, padding: '12px 16px',
-      backdropFilter: 'blur(14px)', boxShadow: `0 0 40px ${hexA(col, 0.15)}`, overflow: 'hidden',
+      background: 'linear-gradient(165deg, rgba(8,14,24,0.95), rgba(4,7,16,0.92))',
+      border: `1px solid ${hexA(col, 0.4)}`, borderRadius: 3, padding: '14px 18px',
+      backdropFilter: 'blur(16px)', boxShadow: `0 0 44px ${hexA(col, 0.18)}`, overflow: 'hidden',
     }}>
       <style>{'@keyframes cortexPulse { 0%,100% { opacity: 1; } 50% { opacity: 0.35; } }'}</style>
       {/* ── ZONE A: NOW ── */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', flexShrink: 0 }}>
-        <span style={{ fontSize: 11, letterSpacing: '0.3em', color: col, fontFamily: MONO, fontWeight: 700 }}>
-          {a.name}
-          <span style={{ fontSize: 7, letterSpacing: 0.1, color: agentTier(a) === 'enterprise' ? '#fbbf24' : DIM, marginLeft: 8, verticalAlign: 'middle' }}>
-            {agentTier(a) === 'enterprise' ? 'ENTERPRISE' : 'STANDARD'}
+        <div>
+          <span style={{ fontSize: 11, letterSpacing: '0.3em', color: col, fontFamily: MONO, fontWeight: 700 }}>
+            {flight.callsign} // {a.name}
           </span>
-        </span>
+          <span style={{ fontSize: 7, letterSpacing: 0.15, color: flight.tier === 'counsel' ? '#c084fc' : flight.tier === 'enterprise' ? '#fbbf24' : '#67e8f9', marginLeft: 8, verticalAlign: 'middle', border: '1px solid rgba(255,255,255,0.15)', padding: '1px 5px', borderRadius: 2 }}>
+            {flight.tier.toUpperCase()} DECK · {flight.defaultLane}
+          </span>
+        </div>
         <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <span style={{ fontSize: 8, color: DIM, fontFamily: MONO }}>{a.role}</span>
+          <span style={{ fontSize: 8, color: DIM, fontFamily: MONO }}>SQWK {flight.squawk}</span>
           <button onClick={onClose} style={{ background: 'none', border: 'none', color: DIM, cursor: 'pointer', fontSize: 11, fontFamily: MONO, padding: 0 }}>✕</button>
         </span>
       </div>
@@ -403,7 +487,7 @@ const AgentDossierPanel: React.FC<{ agent: AgentClient; snap: AgentsSnapshotClie
         </div>
       ) : (
         <div style={{ fontSize: 9, color: DIM, fontFamily: MONO, marginTop: 8, flexShrink: 0 }}>
-          {a.status === 'working' ? 'TASK DISPATCHING…' : 'NO ACTIVE TASK — STANDING BY'}
+          {a.status === 'working' ? 'FLIGHT VECTOR DISPATCHING…' : 'HOLDING ORBIT — STANDING BY FOR FLIGHT CLEARANCE'}
         </div>
       )}
 
@@ -416,34 +500,38 @@ const AgentDossierPanel: React.FC<{ agent: AgentClient; snap: AgentsSnapshotClie
       {/* ── ZONE B: RECORD ── */}
       <div style={{ marginTop: 10, flexShrink: 0 }}>
         <div style={{ display: 'flex', gap: 14, fontSize: 8, color: 'rgba(148,233,255,0.55)', fontFamily: MONO, marginBottom: 4 }}>
-          <span>{a.tasksCompleted} DONE</span><span>{a.tasksFailed} FAILED</span>
-          {tsr !== null && <span title="Success rate over retained task window">TSR {tsr}%</span>}
+          <span>{a.tasksCompleted} CLEARED</span><span>{a.tasksFailed} FAILED</span>
+          {tsr !== null && <span title="Mission Success Rate">TSR {tsr}%</span>}
           <span>BUDGET {a.dailyBudget}/DAY</span>
-          <span style={{ marginLeft: 'auto', color: DIM }}>{recent.length} RECENT</span>
+          <span style={{ marginLeft: 'auto', color: DIM }}>{recent.length} FLIGHTS LOGGED</span>
         </div>
         <div className="ambient-scrollbar" style={{ overflowY: 'auto', maxHeight: 150, flexShrink: 1 }}>
           {recent.map((t) => <TaskRow key={t.id} t={t} now={now} />)}
-          {!recent.length && <div style={{ fontSize: 8, color: DIM, fontFamily: MONO, padding: '4px 0' }}>NO TASK HISTORY — AWAITING FIRST ASSIGNMENT</div>}
+          {!recent.length && <div style={{ fontSize: 8, color: DIM, fontFamily: MONO, padding: '4px 0' }}>NO RECORDED FLIGHT PLANS — AWAITING FIRST VECTOR</div>}
         </div>
       </div>
 
-      {/* ── ZONE C: DOSSIER (collapsible) ── */}
+      {/* ── ZONE C: DOSSIER ── */}
       <button onClick={() => setDossierOpen(v => !v)} style={{
         display: 'flex', alignItems: 'center', gap: 6, background: 'none', border: 'none', cursor: 'pointer',
         fontFamily: MONO, fontSize: 8, color: DIM, letterSpacing: 0.15, padding: '8px 0 0', textTransform: 'uppercase',
       }}>
-        <span style={{ color: col }}>{dossierOpen ? '▾' : '▸'}</span> dossier — identity · tools · lineage
+        <span style={{ color: col }}>{dossierOpen ? '▾' : '▸'}</span> dossier — callsign · clearances · avionics
       </button>
       {dossierOpen && (
         <div className="ambient-scrollbar" style={{ overflowY: 'auto', fontSize: 8, fontFamily: MONO, color: 'rgba(203,213,225,0.7)', lineHeight: 1.7, paddingTop: 6 }}>
           <div style={{ color: 'rgba(203,213,225,0.85)', marginBottom: 2 }}>{a.blurb}</div>
           <div style={{ display: 'grid', gridTemplateColumns: 'auto 1fr', gap: '1px 10px' }}>
+            <span style={{ color: DIM }}>SQUAWK</span>
+            <span>{flight.squawk} (MODE-S IFF)</span>
+            <span style={{ color: DIM }}>BLAST RADIUS</span>
+            <span>{flight.defaultLane}</span>
             <span style={{ color: DIM }}>TOOLS</span>
             <span>{spawn?.tools?.length ? spawn.tools.join(', ') : 'built-in governed scopes'}</span>
             <span style={{ color: DIM }}>MODEL PIN</span>
             <span>{a.modelPin?.tier ? `${a.modelPin.tier.toUpperCase()}${a.modelPin.excludeProviders?.length ? ` (excl: ${a.modelPin.excludeProviders.join(', ')})` : ''}` : 'auto (matrix-routed)'}</span>
             <span style={{ color: DIM }}>CONCURRENCY</span>
-            <span>{a.concurrency} parallel</span>
+            <span>{a.concurrency} parallel vectors</span>
             {spawn && (
               <>
                 <span style={{ color: DIM }}>LINEAGE</span>
@@ -521,12 +609,12 @@ const OmniSyndicationPanel: React.FC<{
         dockLeft
           ? {
               position: 'absolute',
-              left: 216,
+              left: 220,
               top: '50%',
               transform: 'translateY(-50%)',
               zIndex: 7,
               width: 540,
-              maxWidth: 'calc(100vw - 240px)',
+              maxWidth: 'calc(100vw - 250px)',
               maxHeight: '78vh',
               display: 'flex',
               flexDirection: 'column',
@@ -564,7 +652,7 @@ const OmniSyndicationPanel: React.FC<{
         <span style={{ fontSize: 11, letterSpacing: '0.25em', color: col, fontFamily: MONO, fontWeight: 700 }}>
           OMNI // SYNDICATION
           <span style={{ fontSize: 7, letterSpacing: 0.1, color: '#38bdf8', marginLeft: 8, verticalAlign: 'middle' }}>
-            ENTERPRISE DECK
+            TIER 4 · MOORING BERTH 01
           </span>
         </span>
         <button onClick={onClose} style={{ background: 'none', border: 'none', color: DIM, cursor: 'pointer', fontSize: 11, fontFamily: MONO, padding: 0 }}>✕</button>
@@ -575,7 +663,6 @@ const OmniSyndicationPanel: React.FC<{
         <span style={{ color: DIM, marginLeft: 6 }}>({rep?.productId || 'sovereign-real-estate-os'})</span>
       </div>
 
-      {/* Grid of 4 platforms */}
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginTop: 12, flexShrink: 0 }}>
         <div style={{ background: 'rgba(15,23,42,0.6)', border: '1px solid rgba(251,191,36,0.25)', borderRadius: 4, padding: 8 }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 9, fontFamily: MONO }}>
@@ -614,7 +701,6 @@ const OmniSyndicationPanel: React.FC<{
         </div>
       </div>
 
-      {/* Action Bar */}
       <div style={{ display: 'flex', gap: 8, marginTop: 14, alignItems: 'center' }}>
         <button
           onClick={() => triggerPublish(true)}
@@ -662,6 +748,7 @@ const OmniSyndicationPanel: React.FC<{
   );
 };
 
+// ── Main Scene Component ──
 export const CortexAgentsScene: React.FC = () => {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -677,7 +764,7 @@ export const CortexAgentsScene: React.FC = () => {
   const voiceLevel = useRef(0);
   const voiceState = useRef<string>('idle');
   const mouse = useRef({ x: 0.5, y: 0.5, inside: false });
-  const hoverAgent = useRef<string | null>(null);
+  const hoverTarget = useRef<{ id: string; type: 'agent' | 'station' } | null>(null);
   const stationStatus = useRef<Record<string, { busy: boolean; state: 'idle' | 'busy' | 'error' | 'unknown' }>>({});
 
   useEffect(() => {
@@ -702,14 +789,11 @@ export const CortexAgentsScene: React.FC = () => {
     return unsubBus;
   }, []);
 
-  // 1s heartbeat so mission-log elapsed timers tick between SSE events.
   useEffect(() => {
     const id = setInterval(() => setNowTs(Date.now()), 1000);
     return () => clearInterval(id);
   }, []);
 
-  // Enterprise stations: preload sprites and poll each station's live
-  // status feed. Busy = the venture is actively working right now.
   useEffect(() => {
     let alive = true;
     const poll = () => {
@@ -728,7 +812,7 @@ export const CortexAgentsScene: React.FC = () => {
               state: errored ? 'error' : busy ? 'busy' : 'idle',
             };
           })
-          .catch(() => { });
+          .catch(() => {});
       }
     };
     poll();
@@ -765,80 +849,183 @@ export const CortexAgentsScene: React.FC = () => {
       mouse.current = { x: (ev.clientX - r.left) / r.width, y: (ev.clientY - r.top) / r.height, inside: true };
     };
     const onLeave = () => { mouse.current.inside = false; };
+
+    // ── SATC Spatial Coordinate Engine ──
+    const getCraftCoordinates = (
+      agents: AgentClient[],
+      w: number,
+      h: number,
+      cx: number,
+      cy: number,
+      t: number,
+    ) => {
+      const scaleR = Math.min(w * 0.38, 540);
+      const scaleRy = Math.min(h * 0.32, 320);
+
+      const counselAgents = agents.filter(a => agentTier(a) === 'counsel');
+      const enterpriseAgents = agents.filter(a => agentTier(a) === 'enterprise');
+      const standardAgents = agents.filter(a => agentTier(a) === 'standard');
+      const activeStandard = standardAgents.filter(a => a.status === 'working');
+      const holdingStandard = standardAgents.filter(a => a.status !== 'working');
+
+      const map = new Map<string, {
+        x: number; y: number; heading: number; tier: 'counsel' | 'active' | 'holding' | 'enterprise';
+        flightLevel: string; squawk: string; callsign: string; role: string; stack?: 'alpha' | 'bravo';
+      }>();
+
+      // 1. Tier 3: The Counsel Deck (Upper Zenith Arc)
+      const numCounsel = Math.max(counselAgents.length, 1);
+      counselAgents.forEach((a, i) => {
+        const flight = getFlightData(a);
+        const arcSpread = 0.54;
+        const baseA = -Math.PI / 2 + (i - (numCounsel - 1) / 2) * arcSpread;
+        const rx = scaleR * 0.98;
+        const ry = scaleRy * 0.82;
+        const bob = reducedMotion.current ? 0 : Math.sin(t * 0.8 + i * 1.5) * 4;
+        const x = cx + Math.cos(baseA) * rx;
+        const y = cy + Math.sin(baseA) * ry + bob - 12;
+        // Headings point down toward Spire
+        const heading = Math.atan2(cy - y, cx - x) - Math.PI / 2;
+        map.set(a.id, {
+          x, y, heading, tier: 'counsel',
+          flightLevel: flight.defaultLane, squawk: flight.squawk, callsign: flight.callsign, role: flight.role,
+        });
+      });
+
+      // 2. Tier 4: Enterprise Mooring Berths (Lower Nadir Arc)
+      const numEnt = Math.max(enterpriseAgents.length, 1);
+      enterpriseAgents.forEach((a, i) => {
+        const flight = getFlightData(a);
+        const arcSpread = 0.56;
+        const baseA = Math.PI / 2 + (i - (numEnt - 1) / 2) * arcSpread;
+        const rx = scaleR * 1.08;
+        const ry = scaleRy * 0.92;
+        const x = cx + Math.cos(baseA) * rx;
+        const y = cy + Math.sin(baseA) * ry + 10;
+        const heading = baseA;
+        map.set(a.id, {
+          x, y, heading, tier: 'enterprise',
+          flightLevel: 'BERTH-02', squawk: flight.squawk, callsign: flight.callsign, role: flight.role,
+        });
+      });
+
+      // 3. Tier 1: Active Flight Corridor (Inner Ring)
+      const numActive = Math.max(activeStandard.length, 1);
+      activeStandard.forEach((a, i) => {
+        const flight = getFlightData(a);
+        const baseA = (i / numActive) * Math.PI * 2 + (reducedMotion.current ? 0 : t * 0.28);
+        const rx = scaleR * 0.44;
+        const ry = scaleRy * 0.40;
+        const x = cx + Math.cos(baseA) * rx;
+        const y = cy + Math.sin(baseA) * ry;
+        const heading = baseA + Math.PI / 2;
+        map.set(a.id, {
+          x, y, heading, tier: 'active',
+          flightLevel: 'FL180 [ACTIVE]', squawk: flight.squawk, callsign: flight.callsign, role: flight.role,
+        });
+      });
+
+      // 4. Tier 2: Orbital Holding Stacks (Alpha & Bravo)
+      const numHolding = holdingStandard.length;
+      holdingStandard.forEach((a, i) => {
+        const flight = getFlightData(a);
+        const isAlpha = i % 2 === 0;
+        const stackN = Math.max(1, isAlpha ? Math.ceil(numHolding / 2) : Math.floor(numHolding / 2));
+        const stackIdx = Math.floor(i / 2);
+        const baseOffset = (stackIdx / stackN) * Math.PI * 2;
+
+        if (isAlpha) {
+          // Stack Alpha (Inner Stack FL120)
+          const angle = baseOffset + (reducedMotion.current ? 0 : t * 0.08);
+          const rx = scaleR * 0.64;
+          const ry = scaleRy * 0.54;
+          const x = cx + Math.cos(angle) * rx;
+          const y = cy + Math.sin(angle) * ry;
+          const heading = angle + Math.PI / 2;
+          map.set(a.id, {
+            x, y, heading, tier: 'holding', stack: 'alpha',
+            flightLevel: 'FL120 [CONT]', squawk: flight.squawk, callsign: flight.callsign, role: flight.role,
+          });
+        } else {
+          // Stack Bravo (Outer Stack FL240) - counter-rotating
+          const angle = baseOffset - (reducedMotion.current ? 0 : t * 0.06);
+          const rx = scaleR * 0.82;
+          const ry = scaleRy * 0.68;
+          const x = cx + Math.cos(angle) * rx;
+          const y = cy + Math.sin(angle) * ry;
+          const heading = angle - Math.PI / 2;
+          map.set(a.id, {
+            x, y, heading, tier: 'holding', stack: 'bravo',
+            flightLevel: 'FL240 [REV]', squawk: flight.squawk, callsign: flight.callsign, role: flight.role,
+          });
+        }
+      });
+
+      return map;
+    };
+
     const onClick = (ev: MouseEvent) => {
       const r = canvas.getBoundingClientRect();
       const w = r.width, h = r.height;
       const agents = (snapRef.current.agents || []).slice().sort(agentSort);
-      const cx = w / 2 + (w >= 900 ? 100 : 0), cy = h / 2 + h * 0.05;
+      const cx = w / 2 + (w >= 900 ? 100 : 0);
+      const cy = h / 2 + h * 0.04;
       const mx = ev.clientX - r.left, my = ev.clientY - r.top;
 
-      let hitStation = false;
-      const stRx = Math.min(w * 0.37, 580) * 1.48;
-      const stRy = Math.min(h * 0.32, 320) * 1.48;
-      BUSINESS_STATIONS.forEach((st, si) => {
-        const a = st.phase + time * 0.022 + si * 2.1;
-        const sx = cx + Math.cos(a) * stRx;
-        const sy = cy + Math.sin(a) * stRy;
-        if (Math.hypot(mx - sx, my - sy) < 45) {
-          hitStation = true;
+      let hit = false;
+
+      // 1. Check Enterprise Station
+      const scaleR = Math.min(w * 0.38, 540);
+      const scaleRy = Math.min(h * 0.32, 320);
+      const stRx = scaleR * 1.08;
+      const stRy = scaleRy * 0.92;
+      BUSINESS_STATIONS.forEach((st) => {
+        const sx = cx;
+        const sy = cy + stRy + 10;
+        if (Math.hypot(mx - sx, my - sy) < 48) {
+          hit = true;
           setSelectedStation((cur) => (cur === st.id ? null : st.id));
           setSelectedAgent(null);
         }
       });
 
-      if (!hitStation) {
+      // 2. Check Agents / Crafts
+      if (!hit) {
+        const coords = getCraftCoordinates(agents, w, h, cx, cy, time);
         agents.forEach((a) => {
-          const { x: ax, y: ay } = agentPos(agents, a, w, h, cx, cy, time);
-          if (Math.hypot(mx - ax, my - ay) < 34) {
+          const pt = coords.get(a.id);
+          if (pt && Math.hypot(mx - pt.x, my - pt.y) < 36) {
+            hit = true;
             setSelectedAgent((cur) => (cur === a.id ? null : a.id));
             setSelectedStation(null);
           }
         });
       }
     };
+
     canvas.addEventListener('mousemove', onMouse);
     canvas.addEventListener('mouseleave', onLeave);
     canvas.addEventListener('click', onClick);
 
     interface Mote { x: number; y: number; z: number; r: number; tw: number }
-    const motes: Mote[] = Array.from({ length: 160 }, (_, i) => ({
+    const motes: Mote[] = Array.from({ length: 140 }, (_, i) => ({
       x: prand(i, 1), y: prand(i, 2), z: prand(i, 3),
-      r: 0.4 + prand(i, 4) * 1.4, tw: prand(i, 5) * Math.PI * 2,
+      r: 0.4 + prand(i, 4) * 1.2, tw: prand(i, 5) * Math.PI * 2,
     }));
+
     interface Trail { x: number; y: number; life: number }
     const trails = new Map<string, Trail[]>();
     const pulses = new Map<string, number[]>();
-    const embers: { a: number; r: number; s: number }[] = Array.from({ length: 26 }, (_, i) => ({
-      a: prand(i, 11) * Math.PI * 2, r: 0.4 + prand(i, 12) * 0.6, s: 0.3 + prand(i, 13) * 0.9,
-    }));
-    interface Meteor { x: number; y: number; vx: number; vy: number; life: number }
-    const meteors: Meteor[] = [];
-    let meteorTimer = 4;
     let lastAgentKey = '';
     const prevStatus = new Map<string, string>();
     let raf = 0, time = 0, last = performance.now();
 
-    // Gradient caches — CanvasGradient objects are expensive to allocate;
-    // rebuild only when the quantized inputs actually change.
     let bgCache: { key: string; g: CanvasGradient } | null = null;
-    let horizonCache: { key: string; g: CanvasGradient } | null = null;
 
     const par = () => ({
-      x: reducedMotion.current || !mouse.current.inside ? 0 : (mouse.current.x - 0.5) * 18,
-      y: reducedMotion.current || !mouse.current.inside ? 0 : (mouse.current.y - 0.5) * 12,
+      x: reducedMotion.current || !mouse.current.inside ? 0 : (mouse.current.x - 0.5) * 14,
+      y: reducedMotion.current || !mouse.current.inside ? 0 : (mouse.current.y - 0.5) * 10,
     });
-
-    const agentPos = (agents: AgentClient[], agent: AgentClient, w: number, h: number, cx: number, cy: number, t: number) => {
-      const tier = agentTier(agent);
-      const group = agents.filter((x) => agentTier(x) === tier);
-      const i = Math.max(0, group.indexOf(agent));
-      const n = Math.max(group.length, 1);
-      const baseA = (i / n) * Math.PI * 2 - Math.PI / 2 + (tier === 'enterprise' ? 0.31 : 0);
-      const wob = reducedMotion.current ? 0 : Math.sin(t * 0.6 + i * 1.9 + (tier === 'enterprise' ? 2.2 : 0)) * 0.06;
-      const k = tier === 'enterprise' ? 1.24 : 1;
-      const rx = Math.min(w * 0.37, 580) * k, ry = Math.min(h * 0.32, 320) * k;
-      return { x: cx + Math.cos(baseA + wob) * rx, y: cy + Math.sin(baseA + wob) * ry, a: baseA };
-    };
 
     const draw = (now: number) => {
       const dt = Math.min((now - last) / 1000, 0.1); last = now;
@@ -848,80 +1035,51 @@ export const CortexAgentsScene: React.FC = () => {
       const p = par();
       ctx.save(); ctx.scale(dpr, dpr);
 
-      // ── 1. Deep space base ──
+      // ── 1. Cosmic Velvet Deep Space ──
       ctx.globalCompositeOperation = 'source-over';
       const bgKey = `${w}x${h}|${p.x.toFixed(1)}|${p.y.toFixed(1)}`;
       if (!bgCache || bgCache.key !== bgKey) {
-        const bg = ctx.createRadialGradient(w / 2 + p.x * 0.3, h * 0.42 + p.y * 0.3, 0, w / 2, h * 0.5, Math.max(w, h) * 0.75);
-        bg.addColorStop(0, '#080c18');
-        bg.addColorStop(0.45, '#04060d');
-        bg.addColorStop(1, '#020308');
+        const bg = ctx.createRadialGradient(w / 2 + p.x * 0.3, h * 0.45 + p.y * 0.3, 0, w / 2, h * 0.5, Math.max(w, h) * 0.8);
+        bg.addColorStop(0, '#060a16');
+        bg.addColorStop(0.5, '#03050c');
+        bg.addColorStop(1, '#010206');
         bgCache = { key: bgKey, g: bg };
       }
       ctx.fillStyle = bgCache.g;
       ctx.fillRect(0, 0, w, h);
 
-      // Shift the whole scene right when the roster rail is visible so the
-      // orbit clears it (roster ~200px at left).
-      const cx = w / 2 + (w >= 900 ? 100 : 0) + p.x, cy = h / 2 + h * 0.05 + p.y;
+      const cx = w / 2 + (w >= 900 ? 100 : 0) + p.x;
+      const cy = h / 2 + h * 0.04 + p.y;
+      const scaleR = Math.min(w * 0.38, 540);
+      const scaleRy = Math.min(h * 0.32, 320);
 
-      // ── 2. Animated perspective grid — lines rush toward viewer ──
-      const horizon = h * 0.70 + p.y * 0.4;
-      const scroll = (time * 0.35) % 1;
-      ctx.strokeStyle = 'rgba(103,232,249,0.08)';
-      ctx.lineWidth = 1;
-      const gridRows = 10;
-      for (let i = 0; i < gridRows; i++) {
-        const pz = ((i / gridRows) + scroll) % 1;
-        const y = horizon + Math.pow(pz, 2.4) * (h - horizon);
-        ctx.globalAlpha = 0.12 + pz * 0.8;
-        ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(w, y); ctx.stroke();
-      }
-      ctx.globalAlpha = 1;
-      const gridCols = 18;
-      for (let i = -gridCols; i <= gridCols; i++) {
-        const xTop = cx + (i / gridCols) * w * 0.05;
-        const xBot = cx + (i / gridCols) * w * 0.8;
-        ctx.strokeStyle = 'rgba(103,232,249,0.055)';
-        ctx.beginPath(); ctx.moveTo(xTop, horizon); ctx.lineTo(xBot, h); ctx.stroke();
-      }
-      const hzKey = `${bgKey}|${horizon.toFixed(1)}`;
-      if (!horizonCache || horizonCache.key !== hzKey) {
-        const hg = ctx.createLinearGradient(0, horizon - 40, 0, horizon + 4);
-        hg.addColorStop(0, 'rgba(103,232,249,0)');
-        hg.addColorStop(1, 'rgba(103,232,249,0.32)');
-        horizonCache = { key: hzKey, g: hg };
-      }
-      ctx.fillStyle = horizonCache.g;
-      ctx.fillRect(0, horizon - 40, w, 44);
-
-      // ── 3. Starfield + model constellation (parallax depth) ──
-      const models = snapRef.current.models || [];
-      const pp = { x: p.x * 0.4, y: p.y * 0.4 }; // far layer moves less
+      // ── 2. Micro Parallax Starfield & AI Models ──
+      const pp = { x: p.x * 0.35, y: p.y * 0.35 };
       for (const m of motes) {
         if (!reducedMotion.current) {
-          m.y += m.z * dt * 0.006;
+          m.y += m.z * dt * 0.005;
           if (m.y > 1) { m.y = 0; m.x = prand(Math.random() * 9999, 7); }
         }
         const tw = 0.5 + 0.5 * Math.sin(time * 1.4 + m.tw);
-        ctx.fillStyle = `rgba(186,230,253,${(0.05 + m.z * 0.10) * tw})`;
+        ctx.fillStyle = `rgba(186,230,253,${(0.06 + m.z * 0.12) * tw})`;
         ctx.fillRect(m.x * w + pp.x, m.y * h + pp.y, m.r, m.r);
       }
-      // model stars — halo ring with filament web between neighbors.
-      // Constrained to a safe ellipse that clears the left/right telemetry
-      // columns and top/bottom HUD strips so labels never collide.
+
+      // Model Constellation Starpoints
+      const models = snapRef.current.models || [];
       const starPos: { x: number; y: number; m: ModelClient; i: number }[] = [];
-      const starRx = Math.min(w * 0.34, 560) - 0; // keeps |dx| < w/2 - ~190 at w>=1280
-      const starRy = Math.min(h * 0.30, 290);
+      const starRx = scaleR * 1.15;
+      const starRy = scaleRy * 1.12;
       models.forEach((m, i) => {
-        const a = (i / Math.max(models.length, 1)) * Math.PI * 2 + time * 0.015;
+        const a = (i / Math.max(models.length, 1)) * Math.PI * 2 + time * 0.012;
         starPos.push({ x: cx + Math.cos(a) * starRx + pp.x, y: cy + Math.sin(a) * starRy + pp.y, m, i });
       });
-      // faint filaments between adjacent healthy stars
+
+      // Filaments between adjacent healthy stars
       ctx.lineWidth = 0.6;
       for (let i = 0; i < starPos.length - 1; i++) {
         const A = starPos[i], B = starPos[i + 1];
-        if (A.m.status === 'healthy' && B.m.status === 'healthy' && prand(i, 21) > 0.72) {
+        if (A.m.status === 'healthy' && B.m.status === 'healthy' && prand(i, 21) > 0.7) {
           ctx.strokeStyle = 'rgba(165,243,252,0.06)';
           ctx.beginPath(); ctx.moveTo(A.x, A.y); ctx.lineTo(B.x, B.y); ctx.stroke();
         }
@@ -929,212 +1087,379 @@ export const CortexAgentsScene: React.FC = () => {
       starPos.forEach(({ x, y, m, i }) => {
         const healthy = m.status === 'healthy';
         const tw = 0.6 + 0.4 * Math.sin(time * 2.2 + i * 1.3);
-        const alpha = healthy ? 0.85 * tw : m.status === 'degraded' ? 0.5 : m.status === 'down' ? 0.2 : 0.35;
+        const alpha = healthy ? 0.85 * tw : m.status === 'degraded' ? 0.5 : 0.25;
         ctx.globalCompositeOperation = 'lighter';
-        const glowR = healthy ? 8 : 4;
-        const glow = ctx.createRadialGradient(x, y, 0, x, y, glowR);
-        glow.addColorStop(0, modelStarColor(m));
-        glow.addColorStop(1, 'rgba(0,0,0,0)');
-        ctx.globalAlpha = alpha * 0.5;
-        ctx.fillStyle = glow;
-        ctx.beginPath(); ctx.arc(x, y, glowR, 0, Math.PI * 2); ctx.fill();
-        ctx.globalAlpha = alpha;
         ctx.fillStyle = modelStarColor(m);
-        ctx.beginPath(); ctx.arc(x, y, healthy ? 2 : 1.2, 0, Math.PI * 2); ctx.fill();
+        ctx.beginPath(); ctx.arc(x, y, healthy ? 1.8 : 1.2, 0, Math.PI * 2); ctx.fill();
         ctx.globalCompositeOperation = 'source-over';
-        ctx.globalAlpha = 1;
       });
-      // labels for flagship healthy models (top 6 by lane order)
-      ctx.font = `7px ${MONO}`;
+
+      // ── 3. Tactical Radar Scope & Polar Range Rings ──
+      // Azimuth Crosshair Rays (0°, 90°, 180°, 270°, 45°, 135°, 225°, 315°)
+      ctx.strokeStyle = 'rgba(103,232,249,0.05)';
+      ctx.lineWidth = 1;
+      for (let k = 0; k < 8; k++) {
+        const ka = (k * Math.PI) / 4;
+        ctx.beginPath();
+        ctx.moveTo(cx, cy);
+        ctx.lineTo(cx + Math.cos(ka) * (scaleR * 1.25), cy + Math.sin(ka) * (scaleRy * 1.25));
+        ctx.stroke();
+      }
+
+      // 4 Tactical Distance Range Rings (15NM, 30NM, 45NM, 60NM)
+      const rangeTiers = [
+        { label: '15 NM // ACTIVE CORRIDOR', k: 0.44, ky: 0.40, dash: [4, 6], col: 'rgba(56,189,248,0.22)' },
+        { label: '30 NM // STACK ALPHA (FL120)', k: 0.64, ky: 0.54, dash: [2, 6], col: 'rgba(103,232,249,0.14)' },
+        { label: '45 NM // STACK BRAVO (FL240)', k: 0.82, ky: 0.68, dash: [2, 6], col: 'rgba(103,232,249,0.12)' },
+        { label: '60 NM // COUNSEL ZENITH & NADIR', k: 1.08, ky: 0.92, dash: [1, 8], col: 'rgba(192,132,252,0.18)' },
+      ];
+
+      rangeTiers.forEach(({ label, k, ky, dash, col }) => {
+        ctx.strokeStyle = col;
+        ctx.lineWidth = 1;
+        ctx.setLineDash(dash);
+        ctx.beginPath();
+        ctx.ellipse(cx, cy, scaleR * k, scaleRy * ky, 0, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.setLineDash([]);
+
+        // Altitude & Range Marker Labels
+        ctx.font = `7px ${MONO}`;
+        ctx.textAlign = 'left';
+        ctx.fillStyle = 'rgba(148,233,255,0.32)';
+        ctx.fillText(label, cx + scaleR * k * 0.70, cy - scaleRy * ky * 0.70);
+      });
+
+      // Cardinal Bearing Degree Compass Marks on Outer Perimeter
+      const compassRadius = scaleR * 1.08;
+      const compassRadiusY = scaleRy * 0.92;
+      ctx.font = `700 8px ${MONO}`;
       ctx.textAlign = 'center';
-      starPos.filter(s => s.m.status === 'healthy'
-        && s.x > 200 && s.x < w - 200 && s.y > 80 && s.y < h - 90
-      ).slice(0, 6).forEach(({ x, y, m }) => {
-        const label = String(m.id).split('/').pop() || m.id;
-        ctx.fillStyle = 'rgba(165,243,252,0.4)';
-        ctx.fillText(label.slice(0, 26), x, y - 8);
+      ctx.textBaseline = 'middle';
+      for (let deg = 0; deg < 360; deg += 10) {
+        const rad = (deg - 90) * (Math.PI / 180);
+        const isMajor = deg % 30 === 0;
+        const isCardinal = deg % 90 === 0;
+        const tickLen = isCardinal ? 8 : isMajor ? 5 : 3;
+        const x1 = cx + Math.cos(rad) * compassRadius;
+        const y1 = cy + Math.sin(rad) * compassRadiusY;
+        const x2 = cx + Math.cos(rad) * (compassRadius + tickLen);
+        const y2 = cy + Math.sin(rad) * (compassRadiusY + tickLen);
+
+        ctx.strokeStyle = isCardinal ? 'rgba(56,189,248,0.7)' : isMajor ? 'rgba(103,232,249,0.35)' : 'rgba(103,232,249,0.15)';
+        ctx.lineWidth = isCardinal ? 1.4 : 1;
+        ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke();
+
+        if (isMajor) {
+          const tx = cx + Math.cos(rad) * (compassRadius + 14);
+          const ty = cy + Math.sin(rad) * (compassRadiusY + 14);
+          ctx.fillStyle = isCardinal ? '#38bdf8' : 'rgba(165,243,252,0.45)';
+          const text = deg === 0 ? '000° [N]' : deg === 90 ? '090° [E]' : deg === 180 ? '180° [S]' : deg === 270 ? '270° [W]' : `${String(deg).padStart(3, '0')}°`;
+          ctx.fillText(text, tx, ty);
+        }
+      }
+
+      // Holding Waypoint Fix Diamonds (Stack Alpha & Stack Bravo Apogees)
+      const fixPoints = [
+        { label: 'FIX // ALPHA [FL120]', x: cx - scaleR * 0.64, y: cy, col: '#38bdf8' },
+        { label: 'FIX // BRAVO [FL240]', x: cx + scaleR * 0.82, y: cy, col: '#818cf8' },
+      ];
+      fixPoints.forEach((fix) => {
+        ctx.strokeStyle = hexA(fix.col, 0.6);
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(fix.x, fix.y - 5);
+        ctx.lineTo(fix.x + 5, fix.y);
+        ctx.lineTo(fix.x, fix.y + 5);
+        ctx.lineTo(fix.x - 5, fix.y);
+        ctx.closePath();
+        ctx.stroke();
+        ctx.fillStyle = hexA(fix.col, 0.4);
+        ctx.beginPath(); ctx.arc(fix.x, fix.y, 1.5, 0, Math.PI * 2); ctx.fill();
+        ctx.font = `7px ${MONO}`;
+        ctx.textAlign = 'center';
+        ctx.fillStyle = hexA(fix.col, 0.6);
+        ctx.fillText(fix.label, fix.x, fix.y - 8);
       });
 
-      // ── 3b. Shooting stars ──
-      meteorTimer -= dt;
-      if (meteorTimer <= 0 && meteors.length < 3) {
-        meteorTimer = 5 + Math.random() * 9;
-        const dir = Math.random() > 0.5 ? 1 : -1;
-        meteors.push({ x: Math.random() * w, y: Math.random() * h * 0.3, vx: dir * (260 + Math.random() * 200), vy: 120 + Math.random() * 120, life: 1 });
-      }
-      for (let i = meteors.length - 1; i >= 0; i--) {
-        const mt = meteors[i];
-        mt.x += mt.vx * dt; mt.y += mt.vy * dt; mt.life -= dt * 1.1;
-        if (mt.life <= 0 || mt.x < -50 || mt.x > w + 50) { meteors.splice(i, 1); continue; }
-        const grad = ctx.createLinearGradient(mt.x, mt.y, mt.x - mt.vx * 0.18, mt.y - mt.vy * 0.18);
-        grad.addColorStop(0, `rgba(224,242,254,${0.8 * mt.life})`);
-        grad.addColorStop(1, 'rgba(224,242,254,0)');
-        ctx.strokeStyle = grad;
-        ctx.lineWidth = 1.4;
-        ctx.beginPath(); ctx.moveTo(mt.x, mt.y); ctx.lineTo(mt.x - mt.vx * 0.18, mt.y - mt.vy * 0.18); ctx.stroke();
-      }
+      // ── 4. 360° Planar Radar Sweep & Ping Intersections ──
+      const sweepSpeed = 0.62;
+      const sweepAngle = (time * sweepSpeed) % (Math.PI * 2);
+      const sweepMaxR = scaleR * 1.25;
 
-      // ── 4. Reactor core — plasma, rune rings, ember sparks, voice-reactive ──
-      const vl = voiceLevel.current;
-      const vocal = voiceState.current === 'speaking' || voiceState.current === 'listening';
-      const coreR = Math.min(w, h) * 0.075 * (1 + Math.sin(time * 1.6) * 0.05 + vl * 0.35 + (vocal ? 0.12 : 0));
-      ctx.globalCompositeOperation = 'lighter';
-      const plasma = ctx.createRadialGradient(cx, cy, 0, cx, cy, coreR * (4 + vl * 2));
-      plasma.addColorStop(0, `rgba(240,249,255,${0.7 + vl * 0.3})`);
-      plasma.addColorStop(0.18, `rgba(103,232,249,${0.38 + vl * 0.32})`);
-      plasma.addColorStop(0.5, 'rgba(56,189,248,0.13)');
-      plasma.addColorStop(1, 'rgba(56,189,248,0)');
-      ctx.fillStyle = plasma;
-      ctx.beginPath(); ctx.arc(cx, cy, coreR * (4 + vl * 2), 0, Math.PI * 2); ctx.fill();
-      ctx.globalCompositeOperation = 'source-over';
-      const body = ctx.createRadialGradient(cx - coreR * 0.3, cy - coreR * 0.3, 0, cx, cy, coreR);
-      body.addColorStop(0, '#f0f9ff');
-      body.addColorStop(0.6, '#7dd3fc');
-      body.addColorStop(1, '#0369a1');
-      ctx.fillStyle = body;
-      ctx.beginPath(); ctx.arc(cx, cy, coreR, 0, Math.PI * 2); ctx.fill();
-      // inner rotating hexagon
-      ctx.save(); ctx.translate(cx, cy); ctx.rotate(-time * 0.8);
-      ctx.strokeStyle = 'rgba(224,242,254,0.55)';
-      ctx.lineWidth = 1.2;
+      ctx.save();
+      // Phosphor trailing wake
+      const sectorArc = 0.45;
+      const swGrad = ctx.createRadialGradient(cx, cy, 0, cx, cy, sweepMaxR);
+      swGrad.addColorStop(0, 'rgba(56,189,248,0.22)');
+      swGrad.addColorStop(0.5, 'rgba(56,189,248,0.08)');
+      swGrad.addColorStop(1, 'rgba(56,189,248,0)');
+      ctx.fillStyle = swGrad;
       ctx.beginPath();
-      for (let i = 0; i <= 6; i++) {
-        const a = (i / 6) * Math.PI * 2;
-        const rr = coreR * 0.62;
-        i === 0 ? ctx.moveTo(Math.cos(a) * rr, Math.sin(a) * rr) : ctx.lineTo(Math.cos(a) * rr, Math.sin(a) * rr);
-      }
+      ctx.moveTo(cx, cy);
+      ctx.arc(cx, cy, sweepMaxR, sweepAngle - sectorArc, sweepAngle);
+      ctx.closePath();
+      ctx.fill();
+
+      // Sharp leading sweep edge
+      ctx.strokeStyle = 'rgba(224,242,254,0.85)';
+      ctx.lineWidth = 1.6;
+      ctx.beginPath();
+      ctx.moveTo(cx, cy);
+      ctx.lineTo(cx + Math.cos(sweepAngle) * sweepMaxR, cy + Math.sin(sweepAngle) * sweepMaxR);
       ctx.stroke();
       ctx.restore();
-      // rune rings
-      ctx.save(); ctx.translate(cx, cy);
-      for (const [ringR, speed, dash, alpha] of [[coreR * 1.55, 0.5, 10, 0.5], [coreR * 1.95, -0.32, 4, 0.3], [coreR * 2.4, 0.18, 2, 0.18]] as const) {
-        ctx.save(); ctx.rotate(time * speed);
-        ctx.strokeStyle = `rgba(165,243,252,${alpha})`;
+
+      // ── 5. The Centerpiece: Cortex Air Traffic Control Spire ──
+      const vl = voiceLevel.current;
+      const vocal = voiceState.current === 'speaking' || voiceState.current === 'listening';
+      const agents = (snapRef.current.agents || []).slice().sort(agentSort);
+      const workingCount = agents.filter(a => a.status === 'working').length;
+      const anyCounsel = agents.some(a => agentTier(a) === 'counsel' && a.status === 'working');
+      const anyError = agents.some(a => a.status === 'error');
+
+      // Spire Clearance Beacon Color
+      const beaconColor = anyError ? '#f87171' : anyCounsel ? '#c084fc' : workingCount > 0 ? '#fbbf24' : '#38bdf8';
+      const coreR = Math.min(w, h) * 0.055 * (1 + vl * 0.4 + (vocal ? 0.15 : 0));
+
+      // Spire Crystalline Vertical Needle
+      ctx.save();
+      ctx.translate(cx, cy);
+
+      // Crystalline Spire Structure
+      const spireH = 88;
+      const spGrad = ctx.createLinearGradient(0, -spireH, 0, 10);
+      spGrad.addColorStop(0, '#ffffff');
+      spGrad.addColorStop(0.3, hexA(beaconColor, 0.9));
+      spGrad.addColorStop(0.7, '#070f22');
+      spGrad.addColorStop(1, 'rgba(7,15,34,0)');
+      ctx.fillStyle = spGrad;
+      ctx.strokeStyle = hexA(beaconColor, 0.8);
+      ctx.lineWidth = 1.2;
+      ctx.beginPath();
+      ctx.moveTo(0, -spireH);
+      ctx.lineTo(8, -spireH * 0.4);
+      ctx.lineTo(12, 0);
+      ctx.lineTo(0, 10);
+      ctx.lineTo(-12, 0);
+      ctx.lineTo(-8, -spireH * 0.4);
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+
+      // Spire Facet Spine
+      ctx.strokeStyle = '#ffffff';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(0, -spireH);
+      ctx.lineTo(0, 10);
+      ctx.stroke();
+
+      // Glowing Antenna Pips
+      ctx.fillStyle = '#ffffff';
+      ctx.beginPath(); ctx.arc(0, -spireH, 2.5, 0, Math.PI * 2); ctx.fill();
+
+      // 3 Counter-Rotating Astrolabe Rings
+      for (const [rRad, spd, dash, alpha] of [
+        [coreR * 1.4, 0.6, 8, 0.65],
+        [coreR * 1.9, -0.38, 4, 0.45],
+        [coreR * 2.5, 0.22, 2, 0.25],
+      ] as const) {
+        ctx.save();
+        ctx.rotate(time * spd);
+        ctx.strokeStyle = hexA(beaconColor, alpha);
         ctx.lineWidth = 1;
-        ctx.setLineDash([dash, dash * 2.2]);
-        ctx.beginPath(); ctx.arc(0, 0, ringR, 0, Math.PI * 2); ctx.stroke();
+        ctx.setLineDash([dash, dash * 2]);
+        ctx.beginPath(); ctx.arc(0, 0, rRad, 0, Math.PI * 2); ctx.stroke();
         ctx.setLineDash([]);
-        for (let i = 0; i < 24; i++) {
-          const a = (i / 24) * Math.PI * 2;
-          const long = i % 6 === 0;
-          ctx.strokeStyle = `rgba(165,243,252,${alpha * (long ? 1.6 : 0.7)})`;
+        for (let tck = 0; tck < 12; tck++) {
+          const ta = (tck * Math.PI * 2) / 12;
           ctx.beginPath();
-          ctx.moveTo(Math.cos(a) * ringR, Math.sin(a) * ringR);
-          ctx.lineTo(Math.cos(a) * (ringR + (long ? 7 : 3)), Math.sin(a) * (ringR + (long ? 7 : 3)));
+          ctx.moveTo(Math.cos(ta) * rRad, Math.sin(ta) * rRad);
+          ctx.lineTo(Math.cos(ta) * (rRad + 4), Math.sin(ta) * (rRad + 4));
           ctx.stroke();
         }
         ctx.restore();
       }
-      // ember sparks orbiting the core
+
+      // Singularity Plasma Core
       ctx.globalCompositeOperation = 'lighter';
-      for (const e of embers) {
-        if (!reducedMotion.current) e.a += dt * e.s * 0.4;
-        const er = coreR * (1.7 + e.r * 0.9);
-        const ex = Math.cos(e.a + time * 0.1) * er, ey = Math.sin(e.a + time * 0.1) * er * 0.55;
-        const tw = 0.4 + 0.6 * Math.abs(Math.sin(time * 2 + e.a * 3));
-        ctx.fillStyle = `rgba(165,243,252,${0.5 * tw})`;
-        ctx.beginPath(); ctx.arc(ex, ey, 1.1, 0, Math.PI * 2); ctx.fill();
-      }
+      const plG = ctx.createRadialGradient(0, 0, 0, 0, 0, coreR * (2.8 + vl * 2));
+      plG.addColorStop(0, '#ffffff');
+      plG.addColorStop(0.2, hexA(beaconColor, 0.6 + vl * 0.4));
+      plG.addColorStop(0.7, hexA(beaconColor, 0.15));
+      plG.addColorStop(1, 'rgba(0,0,0,0)');
+      ctx.fillStyle = plG;
+      ctx.beginPath(); ctx.arc(0, 0, coreR * (2.8 + vl * 2), 0, Math.PI * 2); ctx.fill();
       ctx.globalCompositeOperation = 'source-over';
+
+      // Spire Core Hub
+      const nucG = ctx.createRadialGradient(-coreR * 0.25, -coreR * 0.25, 0, 0, 0, coreR);
+      nucG.addColorStop(0, '#ffffff');
+      nucG.addColorStop(0.5, beaconColor);
+      nucG.addColorStop(1, '#02182b');
+      ctx.fillStyle = nucG;
+      ctx.beginPath(); ctx.arc(0, 0, coreR, 0, Math.PI * 2); ctx.fill();
+
       ctx.restore();
-      // ── 5. Agents ──
-      const s = snapRef.current;
-      const agents = (s.agents || []).slice().sort(agentSort);
 
-      // orbit ellipse
-      ctx.strokeStyle = 'rgba(103,232,249,0.10)';
-      ctx.lineWidth = 1;
-      ctx.setLineDash([2, 7]);
-      ctx.beginPath(); ctx.ellipse(cx, cy, Math.min(w * 0.37, 580), Math.min(h * 0.32, 320), 0, 0, Math.PI * 2); ctx.stroke();
-      // enterprise satellite deck — outer orbital ring (gold, distinct from moon orbit)
-      const hasEnterprise = agents.some((a) => agentTier(a) === 'enterprise');
-      if (hasEnterprise) {
-        ctx.strokeStyle = 'rgba(251,191,36,0.16)';
-        ctx.beginPath(); ctx.ellipse(cx, cy, Math.min(w * 0.37, 580) * 1.24, Math.min(h * 0.32, 320) * 1.24, 0, 0, Math.PI * 2); ctx.stroke();
-        ctx.font = `7px ${MONO}`;
+      // ── 6. Compute Real Craft Positions & Datalinks ──
+      const craftCoords = getCraftCoordinates(agents, w, h, cx, cy, time);
+
+      // Tracked Craft Transponder Ping Intersection
+      craftCoords.forEach((craft) => {
+        const dx = craft.x - cx;
+        const dy = craft.y - cy;
+        let ang = Math.atan2(dy, dx);
+        if (ang < 0) ang += Math.PI * 2;
+        let diff = (sweepAngle - ang) % (Math.PI * 2);
+        if (diff < 0) diff += Math.PI * 2;
+        if (diff < 0.28) {
+          const pingFactor = 1 - diff / 0.28;
+          ctx.save();
+          ctx.globalCompositeOperation = 'lighter';
+          ctx.strokeStyle = `rgba(165,243,252,${pingFactor * 0.75})`;
+          ctx.lineWidth = 1.2;
+          ctx.beginPath();
+          ctx.arc(craft.x, craft.y, 10 + (1 - pingFactor) * 28, 0, Math.PI * 2);
+          ctx.stroke();
+
+          // Momentary tactical blip tag
+          ctx.font = `700 7px ${MONO}`;
+          ctx.fillStyle = `rgba(224,242,254,${pingFactor * 0.85})`;
+          ctx.fillText(`[${craft.callsign} // ${craft.flightLevel}]`, craft.x + 14, craft.y - 8);
+          ctx.restore();
+        }
+      });
+
+      // ── 7. Tier 3: The Counsel Datalink Lattice (Upper Zenith) ──
+      const agCraft = craftCoords.get('antigravity');
+      const devCraft = craftCoords.get('devin');
+      const stratCraft = craftCoords.get('strategist');
+
+      const drawDatalinkBeam = (x1: number, y1: number, x2: number, y2: number, col: string, offset: number) => {
+        ctx.save();
+        ctx.globalCompositeOperation = 'lighter';
+        ctx.strokeStyle = hexA(col, 0.45);
+        ctx.lineWidth = 1.4;
+        ctx.setLineDash([7, 5]);
+        ctx.lineDashOffset = -time * 24;
+        ctx.beginPath();
+        ctx.moveTo(x1, y1);
+        ctx.lineTo(x2, y2);
+        ctx.stroke();
+        ctx.setLineDash([]);
+
+        // Traveling photon packet
+        const pktT = (time * 0.9 + offset) % 1;
+        const px = x1 + (x2 - x1) * pktT;
+        const py = y1 + (y2 - y1) * pktT;
+        ctx.fillStyle = '#ffffff';
+        ctx.beginPath(); ctx.arc(px, py, 2.8, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = hexA(col, 0.85);
+        ctx.beginPath(); ctx.arc(px, py, 5.5, 0, Math.PI * 2); ctx.fill();
+        ctx.restore();
+      };
+
+      if (agCraft && devCraft) drawDatalinkBeam(agCraft.x, agCraft.y, devCraft.x, devCraft.y, '#38bdf8', 0);
+      if (agCraft) drawDatalinkBeam(agCraft.x, agCraft.y, cx, cy - 35, '#c084fc', 0.35);
+      if (devCraft) drawDatalinkBeam(devCraft.x, devCraft.y, cx, cy - 35, '#38bdf8', 0.7);
+      if (stratCraft && agCraft) drawDatalinkBeam(stratCraft.x, stratCraft.y, agCraft.x, agCraft.y, '#e879f9', 0.5);
+
+      // Holographic Counsel In-Session Status Tag (Mid-beam between AG and Devin)
+      if (agCraft && devCraft) {
+        const midX = (agCraft.x + devCraft.x) / 2;
+        const midY = (agCraft.y + devCraft.y) / 2 - 12;
+        ctx.save();
+        ctx.font = `700 8px ${MONO}`;
+        const tagText = '◈ THE COUNSEL // TOPOLOGY SYNCHRONIZED';
+        const tw = ctx.measureText(tagText).width;
+        ctx.fillStyle = 'rgba(6,10,22,0.85)';
+        ctx.strokeStyle = 'rgba(192,132,252,0.5)';
+        ctx.lineWidth = 1;
+        ctx.fillRect(midX - tw / 2 - 6, midY - 7, tw + 12, 14);
+        ctx.strokeRect(midX - tw / 2 - 6, midY - 7, tw + 12, 14);
+        ctx.fillStyle = '#c084fc';
         ctx.textAlign = 'center';
-        ctx.fillStyle = 'rgba(251,191,36,0.4)';
-        ctx.fillText('ENTERPRISE DECK', cx, cy - Math.min(h * 0.32, 320) * 1.24 - 8);
-      }
-      ctx.setLineDash([]);
-
-      const agentKey = agents.map(a => `${a.id}:${a.status}:${a.currentTaskId}`).join('|');
-      if (agentKey !== lastAgentKey) {
-        const prev = lastAgentKey;
-        lastAgentKey = agentKey;
-        if (prev) {
-          agents.forEach((a) => {
-            const old = prevStatus.get(a.id);
-            if (old && old !== a.status) {
-              const arr = pulses.get(a.id) || [];
-              arr.push(0);
-              pulses.set(a.id, arr);
-            }
-            prevStatus.set(a.id, a.status);
-          });
-        } else agents.forEach(a => prevStatus.set(a.id, a.status));
+        ctx.textBaseline = 'middle';
+        ctx.fillText(tagText, midX, midY);
+        ctx.restore();
       }
 
-      // hover detection
+      // ── 8. Hover Detection ──
+      let bestTarget: { id: string; type: 'agent' | 'station' } | null = null;
       if (mouse.current.inside) {
-        let best: string | null = null, bestD = 34;
-        agents.forEach((a) => {
-          const { x: ax, y: ay } = agentPos(agents, a, w, h, cx, cy, time);
-          const d = Math.hypot(mouse.current.x * w - ax, mouse.current.y * h - ay);
-          if (d < bestD) { bestD = d; best = a.id; }
+        const mx = mouse.current.x * w, my = mouse.current.y * h;
+        let bestDist = 36;
+
+        // Check Omni station
+        const stRx = scaleR * 1.08;
+        const stRy = scaleRy * 0.92;
+        BUSINESS_STATIONS.forEach((st) => {
+          const sx = cx;
+          const sy = cy + stRy + 10;
+          const d = Math.hypot(mx - sx, my - sy);
+          if (d < 45 && d < bestDist) {
+            bestDist = d;
+            bestTarget = { id: st.id, type: 'station' };
+          }
         });
-        hoverAgent.current = best;
-        canvas.style.cursor = best ? 'pointer' : 'crosshair';
+
+        // Check agents
+        agents.forEach((a) => {
+          const pt = craftCoords.get(a.id);
+          if (pt) {
+            const d = Math.hypot(mx - pt.x, my - pt.y);
+            if (d < bestDist) {
+              bestDist = d;
+              bestTarget = { id: a.id, type: 'agent' };
+            }
+          }
+        });
+        hoverTarget.current = bestTarget;
+        canvas.style.cursor = bestTarget ? 'pointer' : 'crosshair';
       } else {
-        hoverAgent.current = null;
+        hoverTarget.current = null;
         canvas.style.cursor = 'crosshair';
       }
 
-      // ── Inter-Agent Communication Conduits (agent.comm) ──
+      // ── 9. Inter-Agent Communications (`agent.comm`) ──
       const recentComms = events.filter((e) => e.type === 'agent.comm' && (Date.now() - e.at < 12_000));
       recentComms.forEach((comm: any) => {
-        const fromAgent = agents.find((x) => x.id === comm.from);
-        const toAgent = (comm.to === 'cortex' || comm.to === 'all')
-          ? null
-          : agents.find((x) => x.id === comm.to);
-        if (fromAgent) {
-          const fromP = agentPos(agents, fromAgent, w, h, cx, cy, time);
-          const toX = toAgent ? agentPos(agents, toAgent, w, h, cx, cy, time).x : cx;
-          const toY = toAgent ? agentPos(agents, toAgent, w, h, cx, cy, time).y : cy;
+        const fromPt = craftCoords.get(comm.from);
+        const toPt = (comm.to === 'cortex' || comm.to === 'all') ? { x: cx, y: cy } : craftCoords.get(comm.to);
 
+        if (fromPt && toPt) {
           ctx.save();
           ctx.globalCompositeOperation = 'lighter';
           const age = Math.min(1, (Date.now() - comm.at) / 12_000);
-          const alpha = (1 - age) * 0.88;
+          const alpha = (1 - age) * 0.9;
           const commCol = AGENT_COLORS[comm.from] || '#c084fc';
 
-          // Glowing laser conduit line
-          ctx.strokeStyle = hexA(commCol, alpha * 0.7);
+          ctx.strokeStyle = hexA(commCol, alpha * 0.75);
           ctx.lineWidth = 1.8;
-          ctx.setLineDash([7, 4]);
+          ctx.setLineDash([8, 4]);
           ctx.beginPath();
-          ctx.moveTo(fromP.x, fromP.y);
-          ctx.lineTo(toX, toY);
+          ctx.moveTo(fromPt.x, fromPt.y);
+          ctx.lineTo(toPt.x, toPt.y);
           ctx.stroke();
           ctx.setLineDash([]);
 
-          // Traveling photon packet
-          const packetT = (((Date.now() - comm.at) * 0.0025) % 1);
-          const ptx = fromP.x + (toX - fromP.x) * packetT;
-          const pty = fromP.y + (toY - fromP.y) * packetT;
+          const pProg = (((Date.now() - comm.at) * 0.0025) % 1);
+          const ptx = fromPt.x + (toPt.x - fromPt.x) * pProg;
+          const pty = fromPt.y + (toPt.y - fromPt.y) * pProg;
           ctx.fillStyle = '#ffffff';
           ctx.beginPath(); ctx.arc(ptx, pty, 3, 0, Math.PI * 2); ctx.fill();
           ctx.fillStyle = hexA(commCol, 0.9);
           ctx.beginPath(); ctx.arc(ptx, pty, 6, 0, Math.PI * 2); ctx.fill();
 
-          // Speech / Directive HUD tag near mid-beam
-          const midX = (fromP.x + toX) / 2;
-          const midY = (fromP.y + toY) / 2 - 14;
+          const midX = (fromPt.x + toPt.x) / 2;
+          const midY = (fromPt.y + toPt.y) / 2 - 14;
           ctx.font = '700 8px monospace';
-          const txt = `📡 ${String(comm.from).toUpperCase()} ➔ ${String(comm.to).toUpperCase()}: ${String(comm.message || '').slice(0, 38)}`;
+          const txt = `📡 ${String(comm.from).toUpperCase()} ➔ ${String(comm.to).toUpperCase()}: ${String(comm.message || '').slice(0, 36)}`;
           const tw = ctx.measureText(txt).width;
-          ctx.fillStyle = 'rgba(6,10,22,0.88)';
-          ctx.strokeStyle = hexA(commCol, alpha * 0.85);
+          ctx.fillStyle = 'rgba(6,10,22,0.9)';
+          ctx.strokeStyle = hexA(commCol, alpha * 0.9);
           ctx.lineWidth = 1;
           ctx.fillRect(midX - tw / 2 - 6, midY - 7, tw + 12, 14);
           ctx.strokeRect(midX - tw / 2 - 6, midY - 7, tw + 12, 14);
@@ -1146,433 +1471,276 @@ export const CortexAgentsScene: React.FC = () => {
         }
       });
 
-      agents.forEach((a, i) => {
-        const { x: ax, y: ay } = agentPos(agents, a, w, h, cx, cy, time);
-        const enterprise = agentTier(a) === 'enterprise';
+      // ── 10. Draw All Tracked Aircraft / Vessels ──
+      agents.forEach((a) => {
+        const pt = craftCoords.get(a.id);
+        if (!pt) return;
+
         const col = AGENT_COLORS[a.id] || (a.spawnSpec ? `hsl(${spawnHue(a.id)} 85% 68%)` : '#94a3b8');
         const working = a.status === 'working';
         const errored = a.status === 'error';
         const offline = a.status === 'offline' || a.status === 'retired';
-        const hot = hoverAgent.current === a.id || selectedAgent === a.id;
+        const isHovered = hoverTarget.current?.type === 'agent' && hoverTarget.current.id === a.id;
+        const isSelected = selectedAgent === a.id;
+        const hot = isHovered || isSelected;
 
-        // trail
+        // Trail & Wake Particle Buffer
         const tr = trails.get(a.id) || [];
-        tr.push({ x: ax, y: ay, life: 1 });
-        if (tr.length > 46) tr.shift();
+        tr.push({ x: pt.x, y: pt.y, life: 1 });
+        if (tr.length > (working ? 36 : 18)) tr.shift();
         trails.set(a.id, tr);
+
         for (let k = tr.length - 1; k >= 0; k--) {
           const tp = tr[k];
-          tp.life -= dt * 1.4;
+          tp.life -= dt * (working ? 1.6 : 2.2);
           if (tp.life <= 0) { tr.splice(k, 1); continue; }
           ctx.globalCompositeOperation = 'lighter';
-          ctx.fillStyle = hexA(col, tp.life * 0.17);
-          ctx.beginPath(); ctx.arc(tp.x, tp.y, 2.3 * tp.life + 0.4, 0, Math.PI * 2); ctx.fill();
+          ctx.fillStyle = hexA(col, tp.life * 0.22);
+          ctx.beginPath(); ctx.arc(tp.x, tp.y, (working ? 2.8 : 1.8) * tp.life + 0.4, 0, Math.PI * 2); ctx.fill();
           ctx.globalCompositeOperation = 'source-over';
         }
 
-        // shockwave pulses
-        const ps = pulses.get(a.id) || [];
-        for (let k = ps.length - 1; k >= 0; k--) {
-          ps[k] += dt * 1.8;
-          if (ps[k] >= 1) { ps.splice(k, 1); continue; }
-          ctx.strokeStyle = errored ? `rgba(248,113,113,${0.6 * (1 - ps[k])})` : hexA(col, 0.55 * (1 - ps[k]));
-          ctx.lineWidth = 1.5;
-          ctx.beginPath(); ctx.arc(ax, ay, 12 + ps[k] * 48, 0, Math.PI * 2); ctx.stroke();
-        }
+        // Hull Frame Dimension
+        const vr = (pt.tier === 'counsel' ? 18 : pt.tier === 'enterprise' ? 16 : working ? 14 : 11) + (hot ? 3 : 0);
 
-        // data conduit to core while working
-        if (working) {
-          ctx.globalCompositeOperation = 'lighter';
-          const beam = ctx.createLinearGradient(ax, ay, cx, cy);
-          beam.addColorStop(0, hexA(col, 0.18));
-          beam.addColorStop(1, hexA(col, 0.02));
-          ctx.strokeStyle = beam;
-          ctx.lineWidth = 1.5;
-          ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(cx, cy); ctx.stroke();
-          const prog = (time * 0.9 + i * 0.37) % 1;
-          const px2 = ax + (cx - ax) * prog, py2 = ay + (cy - ay) * prog;
-          ctx.fillStyle = hexA(col, 0.95);
-          ctx.beginPath(); ctx.arc(px2, py2, 2.8, 0, Math.PI * 2); ctx.fill();
-          // packet wake
-          ctx.fillStyle = hexA(col, 0.3);
-          ctx.beginPath(); ctx.arc(ax + (cx - ax) * Math.max(0, prog - 0.04), ay + (cy - ay) * Math.max(0, prog - 0.04), 1.4, 0, Math.PI * 2); ctx.fill();
-          ctx.globalCompositeOperation = 'source-over';
-        }
-
-        // vessel glow + hull — enterprise satellites get a larger frame
-        const vr = (working ? 15 : hot ? 13 : 10) + (enterprise ? 4 : 0);
+        // Vessel Ambient Glow
         ctx.globalCompositeOperation = 'lighter';
-        const vg = ctx.createRadialGradient(ax, ay, 0, ax, ay, vr * 3.6);
-        vg.addColorStop(0, hexA(col, offline ? 0.10 : hot ? 0.6 : 0.45));
-        vg.addColorStop(1, hexA(col, 0));
-        ctx.globalAlpha = offline ? 0.4 : 1;
+        const vg = ctx.createRadialGradient(pt.x, pt.y, 0, pt.x, pt.y, vr * 3.5);
+        vg.addColorStop(0, hexA(col, offline ? 0.08 : hot ? 0.65 : 0.4));
+        vg.addColorStop(1, 'rgba(0,0,0,0)');
         ctx.fillStyle = vg;
-        ctx.beginPath(); ctx.arc(ax, ay, vr * 3.6, 0, Math.PI * 2); ctx.fill();
+        ctx.beginPath(); ctx.arc(pt.x, pt.y, vr * 3.5, 0, Math.PI * 2); ctx.fill();
         ctx.globalCompositeOperation = 'source-over';
-        ctx.globalAlpha = offline ? 0.3 : 1;
+
+        // ── Forward Projected Vector Trajectory Line (Tier 1 & Active) ──
+        if (working) {
+          const vLen = 52;
+          const vx = pt.x + Math.cos(pt.heading - Math.PI / 2) * vLen;
+          const vy = pt.y + Math.sin(pt.heading - Math.PI / 2) * vLen;
+
+          ctx.save();
+          ctx.strokeStyle = hexA(col, 0.85);
+          ctx.lineWidth = 1.4;
+          ctx.setLineDash([4, 3]);
+          ctx.beginPath();
+          ctx.moveTo(pt.x, pt.y);
+          ctx.lineTo(vx, vy);
+          ctx.stroke();
+          ctx.setLineDash([]);
+
+          // Vector Direction Chevrons
+          ctx.fillStyle = '#ffffff';
+          ctx.beginPath();
+          ctx.arc(vx, vy, 2.2, 0, Math.PI * 2);
+          ctx.fill();
+
+          // Tactical Vector Label
+          ctx.font = `700 7px ${MONO}`;
+          ctx.fillStyle = col;
+          ctx.fillText(`VECTOR ➔ ${pt.callsign}`, vx + 6, vy);
+          ctx.restore();
+        }
 
         ctx.save();
-        ctx.translate(ax, ay);
-        ctx.rotate(Math.atan2(ay - cy, ax - cx) + Math.PI / 2);
-        // engine flare when working
+        ctx.translate(pt.x, pt.y);
+        ctx.rotate(pt.heading);
+
+        // Twin Engine Flares when in active flight
         if (working) {
-          const fl = 0.6 + 0.4 * Math.sin(time * 9 + i);
+          const fl = 0.6 + 0.4 * Math.sin(time * 12 + prand(a.id.length, 1));
           ctx.globalCompositeOperation = 'lighter';
-          const eg = ctx.createRadialGradient(0, vr * 1.3, 0, 0, vr * 1.3, vr * 1.6);
-          eg.addColorStop(0, hexA(col, 0.5 * fl));
-          eg.addColorStop(1, hexA(col, 0));
+          const eg = ctx.createRadialGradient(0, vr * 1.2, 0, 0, vr * 1.2, vr * 1.8);
+          eg.addColorStop(0, hexA(col, 0.8 * fl));
+          eg.addColorStop(1, 'rgba(0,0,0,0)');
           ctx.fillStyle = eg;
-          ctx.beginPath(); ctx.arc(0, vr * 1.3, vr * 1.6, 0, Math.PI * 2); ctx.fill();
+          ctx.beginPath(); ctx.arc(0, vr * 1.2, vr * 1.8, 0, Math.PI * 2); ctx.fill();
           ctx.globalCompositeOperation = 'source-over';
         }
-        // ── Cyber-Celestial Sacred Geometry Architecture ──
-        if (a.id === 'antigravity' || a.id === 'devin') {
-          // ── 1. APEX SINGULARITIES: Antigravity & Devin ──
-          // Sovereign apex vessels: dual counter-rotating tachyon rings + Forerunner diamond + quantum core
-          const ringRad = vr * 1.75;
-          ctx.save();
-          // Counter-rotating calibration ring 1
-          ctx.rotate(time * (working ? 3.0 : 1.4));
-          ctx.strokeStyle = col;
-          ctx.lineWidth = 1.4;
-          ctx.setLineDash([7, 5]);
-          ctx.beginPath(); ctx.arc(0, 0, ringRad, 0, Math.PI * 2); ctx.stroke();
-          // Counter-rotating polar ring 2 with 4 cardinal diamond ticks
-          ctx.rotate(-time * (working ? 4.2 : 2.2));
-          ctx.strokeStyle = '#e0f2fe';
-          ctx.lineWidth = 1.0;
-          ctx.setLineDash([3, 5]);
-          ctx.beginPath(); ctx.arc(0, 0, ringRad * 1.28, 0, Math.PI * 2); ctx.stroke();
-          ctx.setLineDash([]);
-          for (let k = 0; k < 4; k++) {
-            const ka = (k * Math.PI) / 2;
-            ctx.fillStyle = '#ffffff';
-            ctx.beginPath();
-            ctx.arc(Math.cos(ka) * ringRad * 1.28, Math.sin(ka) * ringRad * 1.28, 1.4, 0, Math.PI * 2);
-            ctx.fill();
-          }
-          ctx.restore();
 
-          // Singularity Hull: Forerunner Diamond Prism
-          ctx.fillStyle = '#060814';
-          ctx.strokeStyle = working ? '#f472b6' : col;
-          ctx.lineWidth = working ? 2.6 : 1.9;
+        // ── Vessel Archetypes ──
+        if (pt.tier === 'counsel') {
+          // Flagship Carrier Superstructure: Faceted Titanium Dreadnought
+          ctx.fillStyle = '#060a16';
+          ctx.strokeStyle = col;
+          ctx.lineWidth = working ? 2.5 : 1.8;
           ctx.beginPath();
           ctx.moveTo(0, -vr * 1.45);
-          ctx.lineTo(vr * 1.08, 0);
-          ctx.lineTo(0, vr * 1.45);
-          ctx.lineTo(-vr * 1.08, 0);
+          ctx.lineTo(vr * 1.1, vr * 0.4);
+          ctx.lineTo(vr * 0.6, vr * 1.2);
+          ctx.lineTo(0, vr * 0.8);
+          ctx.lineTo(-vr * 0.6, vr * 1.2);
+          ctx.lineTo(-vr * 1.1, vr * 0.4);
           ctx.closePath();
           ctx.fill(); ctx.stroke();
 
-          // Inner facet lattice
-          ctx.strokeStyle = hexA(col, 0.45);
-          ctx.lineWidth = 1;
-          ctx.beginPath();
-          ctx.moveTo(0, -vr * 1.45); ctx.lineTo(0, vr * 1.45);
-          ctx.moveTo(-vr * 1.08, 0); ctx.lineTo(vr * 1.08, 0);
-          ctx.stroke();
+          // Command Bridge Slot
+          ctx.fillStyle = '#ffffff';
+          ctx.fillRect(-vr * 0.35, -vr * 0.5, vr * 0.7, 2.5);
 
-          // Quantum Singularity Core
-          const qg = ctx.createRadialGradient(0, 0, 0, 0, 0, vr * 0.72);
-          qg.addColorStop(0, '#ffffff');
-          qg.addColorStop(0.35, col);
-          qg.addColorStop(0.8, '#38bdf8');
-          qg.addColorStop(1, 'rgba(0,0,0,0)');
-          ctx.fillStyle = qg;
-          ctx.beginPath(); ctx.arc(0, 0, vr * 0.72, 0, Math.PI * 2); ctx.fill();
-
-          // Specular glint
-          ctx.fillStyle = 'rgba(255,255,255,0.95)';
-          ctx.beginPath(); ctx.arc(0, -vr * 0.65, 1.8, 0, Math.PI * 2); ctx.fill();
-        } else if (a.id === 'distributor') {
-          // ── 2. OMNI-SYNDICATION HARMONIC ASTROLABE: Distributor ──
-          // Radiant tri-torus wave emitter + hexagonal resonance core
-          const hubR = vr * 1.35;
+          // Dual Tachyon Resonance Rings
           ctx.save();
-          ctx.rotate(time * (working ? 2.5 : 0.8));
-          ctx.strokeStyle = hexA(col, 0.6);
-          ctx.lineWidth = 1.2;
+          ctx.rotate(time * (working ? 3.0 : 1.2));
+          ctx.strokeStyle = hexA(col, 0.5);
+          ctx.lineWidth = 1;
           ctx.setLineDash([4, 6]);
-          ctx.beginPath(); ctx.arc(0, 0, hubR, 0, Math.PI * 2); ctx.stroke();
-          ctx.setLineDash([]);
-          // 4 cardinal orbital diamond nodes
-          for (let k = 0; k < 4; k++) {
-            const ka = (k * Math.PI) / 2;
-            const dx = Math.cos(ka) * hubR, dy = Math.sin(ka) * hubR;
-            ctx.fillStyle = '#ffffff';
-            ctx.beginPath();
-            ctx.moveTo(dx, dy - 2); ctx.lineTo(dx + 2, dy); ctx.lineTo(dx, dy + 2); ctx.lineTo(dx - 2, dy);
-            ctx.closePath(); ctx.fill();
-          }
+          ctx.beginPath(); ctx.arc(0, 0, vr * 1.6, 0, Math.PI * 2); ctx.stroke();
           ctx.restore();
-
-          // Hexagonal Resonance Core
+        } else if (pt.tier === 'active') {
+          // Interceptor/Corridor Vessel: Aerodynamic Delta Arrow
           ctx.fillStyle = '#060a16';
           ctx.strokeStyle = col;
-          ctx.lineWidth = working ? 2.2 : 1.6;
+          ctx.lineWidth = 2.0;
+          ctx.beginPath();
+          ctx.moveTo(0, -vr * 1.4);
+          ctx.lineTo(vr * 0.9, vr * 0.9);
+          ctx.lineTo(0, vr * 0.4);
+          ctx.lineTo(-vr * 0.9, vr * 0.9);
+          ctx.closePath();
+          ctx.fill(); ctx.stroke();
+
+          // Cockpit Canard Glass
+          ctx.fillStyle = '#ffffff';
+          ctx.beginPath(); ctx.arc(0, -vr * 0.4, 2, 0, Math.PI * 2); ctx.fill();
+        } else if (pt.tier === 'enterprise') {
+          // Sovereign Syndication Mooring Satellite
+          ctx.fillStyle = '#060a16';
+          ctx.strokeStyle = col;
+          ctx.lineWidth = 1.8;
           ctx.beginPath();
           for (let h = 0; h < 6; h++) {
             const ha = (h * Math.PI) / 3;
-            const hx = Math.cos(ha) * vr * 0.95;
-            const hy = Math.sin(ha) * vr * 0.95;
+            const hx = Math.cos(ha) * vr * 0.9;
+            const hy = Math.sin(ha) * vr * 0.9;
             if (h === 0) ctx.moveTo(hx, hy);
             else ctx.lineTo(hx, hy);
           }
-          ctx.closePath();
-          ctx.fill(); ctx.stroke();
-
-          // Radiating Carrier Waveforms when working
-          if (working) {
-            for (let w = 1; w <= 3; w++) {
-              const wavePhase = (time * 3 + w * 0.8) % 3;
-              const waveR = vr * (1.1 + wavePhase * 0.8);
-              ctx.strokeStyle = hexA(col, Math.max(0, 0.65 - wavePhase * 0.22));
-              ctx.lineWidth = 1.1;
-              ctx.beginPath(); ctx.arc(0, 0, waveR, 0, Math.PI * 2); ctx.stroke();
-            }
-          }
-
-          // Central Nucleus
-          const dg = ctx.createRadialGradient(0, 0, 0, 0, 0, vr * 0.55);
-          dg.addColorStop(0, '#ffffff');
-          dg.addColorStop(0.4, col);
-          dg.addColorStop(1, 'rgba(0,0,0,0)');
-          ctx.fillStyle = dg;
-          ctx.beginPath(); ctx.arc(0, 0, vr * 0.55, 0, Math.PI * 2); ctx.fill();
-        } else if (a.id === 'sentinel' || a.id === 'warden') {
-          // ── 3. OMNIDIRECTIONAL SENSOR ASTROLABE: Sentinel & Warden ──
-          // Continuous planar sweep radar beam + concentric cross-hair reticle
-          ctx.save();
-          // Radar sweep line
-          const sweepAngle = time * (working ? 6.0 : 2.4);
-          ctx.strokeStyle = hexA(col, 0.8);
-          ctx.lineWidth = 1.4;
-          ctx.beginPath();
-          ctx.moveTo(0, 0);
-          ctx.lineTo(Math.cos(sweepAngle) * vr * 1.5, Math.sin(sweepAngle) * vr * 1.5);
-          ctx.stroke();
-          // Radar scan sector gradient
-          const sg = ctx.createRadialGradient(0, 0, 0, 0, 0, vr * 1.5);
-          sg.addColorStop(0, hexA(col, 0.35));
-          sg.addColorStop(1, 'rgba(0,0,0,0)');
-          ctx.fillStyle = sg;
-          ctx.beginPath();
-          ctx.moveTo(0, 0);
-          ctx.arc(0, 0, vr * 1.5, sweepAngle - 0.7, sweepAngle);
-          ctx.closePath();
-          ctx.fill();
-          ctx.restore();
-
-          // Calibrated Outer Ring
-          ctx.strokeStyle = hexA(col, 0.5);
-          ctx.lineWidth = 1;
-          ctx.beginPath(); ctx.arc(0, 0, vr * 1.4, 0, Math.PI * 2); ctx.stroke();
-
-          // Faceted Sensor Octagon
-          ctx.fillStyle = '#060a16';
-          ctx.strokeStyle = col;
-          ctx.lineWidth = working ? 2.2 : 1.6;
-          ctx.beginPath();
-          for (let o = 0; o < 8; o++) {
-            const oa = (o * Math.PI) / 4;
-            const ox = Math.cos(oa) * vr * 0.85;
-            const oy = Math.sin(oa) * vr * 0.85;
-            if (o === 0) ctx.moveTo(ox, oy);
-            else ctx.lineTo(ox, oy);
-          }
-          ctx.closePath();
-          ctx.fill(); ctx.stroke();
-
-          // Sensor Core Tachyon Pip
-          ctx.fillStyle = working ? '#ffffff' : col;
-          ctx.beginPath(); ctx.arc(0, 0, vr * 0.35, 0, Math.PI * 2); ctx.fill();
-        } else if (a.id === 'builder' || a.id === 'runner') {
-          // ── 4. HYPER-TESSERACT MATRIX: Builder & Runner ──
-          // Isometric 4D hypercube lattice rotating on diagonal axes
-          ctx.save();
-          ctx.rotate(time * (working ? 2.6 : 0.7));
-          // Outer isometric cube
-          ctx.fillStyle = '#060a16';
-          ctx.strokeStyle = col;
-          ctx.lineWidth = working ? 2.0 : 1.4;
-          const cw = vr * 0.88;
-          ctx.beginPath();
-          ctx.strokeRect(-cw, -cw, cw * 2, cw * 2);
-          // Inner rotated hypercube
-          ctx.rotate(Math.PI / 4);
-          ctx.strokeStyle = hexA(col, 0.75);
-          ctx.strokeRect(-cw * 0.65, -cw * 0.65, cw * 1.3, cw * 1.3);
-          ctx.restore();
-
-          // Central Kinetic Spark
-          ctx.fillStyle = '#ffffff';
-          ctx.beginPath(); ctx.arc(0, 0, vr * 0.32, 0, Math.PI * 2); ctx.fill();
+          ctx.closePath(); ctx.fill(); ctx.stroke();
         } else {
-          // ── 5. SACRED VECTOR ASTROLABE: Specialists & Spawned Fleet ──
-          // Concentric celestial ring with faceted octahedron prism
-          if (enterprise) {
-            ctx.save();
-            ctx.rotate(time * (working ? 2.2 : 0.6));
-            ctx.strokeStyle = hexA(col, 0.55);
-            ctx.lineWidth = 1;
-            ctx.setLineDash([4, 6]);
-            ctx.beginPath(); ctx.arc(0, 0, vr * 1.5, 0, Math.PI * 2); ctx.stroke();
-            ctx.setLineDash([]);
-            // 4 orbital micro-focus diamonds
-            for (let k = 0; k < 4; k++) {
-              const ka = (k * Math.PI) / 2;
-              ctx.fillStyle = '#ffffff';
-              ctx.beginPath();
-              ctx.arc(Math.cos(ka) * vr * 1.5, Math.sin(ka) * vr * 1.5, 1.2, 0, Math.PI * 2);
-              ctx.fill();
-            }
-            ctx.restore();
-          }
-
-          // Faceted Diamond Hull
+          // Holding Stack Scout: Octahedral Faceted Sensor Hull
           ctx.fillStyle = '#060a16';
           ctx.strokeStyle = col;
-          ctx.lineWidth = working ? 2.2 : hot ? 1.8 : 1.3;
-          ctx.beginPath();
-          ctx.moveTo(0, -vr * 1.22);
-          ctx.lineTo(vr * 0.78, 0);
-          ctx.lineTo(0, vr * 1.22);
-          ctx.lineTo(-vr * 0.78, 0);
-          ctx.closePath();
-          ctx.fill(); ctx.stroke();
-
-          // Internal Resonance Lattice
-          ctx.save();
-          ctx.rotate(time * (working ? 2.0 : 0.5));
-          ctx.strokeStyle = hexA(col, working ? 0.9 : 0.45);
-          ctx.lineWidth = 1;
-          ctx.strokeRect(-vr * 0.32, -vr * 0.32, vr * 0.64, vr * 0.64);
-          ctx.restore();
-
-          // Specular glint
-          ctx.fillStyle = 'rgba(255,255,255,0.9)';
-          ctx.beginPath(); ctx.arc(-vr * 0.2, -vr * 0.32, 1.6, 0, Math.PI * 2); ctx.fill();
-        }
-        ctx.restore();
-        ctx.globalAlpha = 1;
-
-        if (working) {
-          ctx.fillStyle = col;
-          ctx.beginPath(); ctx.arc(ax, ay, 3, 0, Math.PI * 2); ctx.fill();
-        }
-        if (errored) {
-          const pr = 15 + Math.sin(time * 7) * 5;
-          ctx.strokeStyle = 'rgba(248,113,113,0.75)';
           ctx.lineWidth = 1.4;
-          ctx.beginPath(); ctx.arc(ax, ay, pr, 0, Math.PI * 2); ctx.stroke();
-          ctx.beginPath(); ctx.arc(ax, ay, pr * 0.6, 0, Math.PI * 2); ctx.stroke();
-        }
-        if (hot) {
-          ctx.strokeStyle = hexA(col, 0.65);
-          ctx.setLineDash([3, 5]);
-          ctx.beginPath(); ctx.arc(ax, ay, vr * 2.15, 0, Math.PI * 2); ctx.stroke();
-          ctx.setLineDash([]);
-          // floating name tag on hover
-          ctx.font = `700 9px ${MONO}`;
-          ctx.textAlign = 'center';
-          ctx.fillStyle = hexA(col, 0.9);
-          ctx.fillText(a.name, ax, ay - vr * 1.5 - 8);
+          ctx.beginPath();
+          ctx.moveTo(0, -vr * 1.2);
+          ctx.lineTo(vr * 0.8, 0);
+          ctx.lineTo(0, vr * 1.2);
+          ctx.lineTo(-vr * 0.8, 0);
+          ctx.closePath(); ctx.fill(); ctx.stroke();
+
+          // Anti-Collision Navigation Strobes (Port: Red, Starboard: Green)
+          const strobeFlash = Math.sin(time * 6) > 0.6;
+          // Port Wingtip (Left = Red)
+          ctx.fillStyle = strobeFlash ? '#ef4444' : 'rgba(239,68,68,0.3)';
+          ctx.beginPath(); ctx.arc(-vr * 0.8, 0, 1.6, 0, Math.PI * 2); ctx.fill();
+          // Starboard Wingtip (Right = Green)
+          ctx.fillStyle = strobeFlash ? '#22c55e' : 'rgba(34,197,94,0.3)';
+          ctx.beginPath(); ctx.arc(vr * 0.8, 0, 1.6, 0, Math.PI * 2); ctx.fill();
         }
 
+        ctx.restore();
+
+        // ── Aircraft Flight Strip Data Labels ──
         ctx.textAlign = 'center';
-        ctx.fillStyle = offline ? 'rgba(100,116,139,0.75)' : INK;
-        ctx.font = `700 10px ${MONO}`;
-        ctx.fillText(a.name, ax, ay + vr * 1.15 + 16);
+        ctx.font = `700 9px ${MONO}`;
+        ctx.fillStyle = INK;
+        ctx.fillText(pt.callsign, pt.x, pt.y + vr + 12);
+
+        ctx.font = `7px ${MONO}`;
         ctx.fillStyle = errored ? '#f87171' : working ? col : DIM;
-        ctx.font = `8px ${MONO}`;
-        ctx.fillText(`${enterprise ? 'SAT·' : ''}${a.status.toUpperCase()}`, ax, ay + vr * 1.15 + 27);
+        const statusText = working ? 'CLEARED // VEC' : pt.tier === 'counsel' ? 'COUNSEL' : pt.tier === 'enterprise' ? 'MOORED' : `HOLD // ${pt.stack?.toUpperCase() || 'STACK'}`;
+        ctx.fillText(statusText, pt.x, pt.y + vr + 21);
+
+        // Tactical Hover Callout Box
+        if (hot) {
+          const boxW = 160, boxH = 50;
+          const bx = Math.min(Math.max(pt.x + 22, 10), w - boxW - 10);
+          const by = Math.min(Math.max(pt.y - 25, 10), h - boxH - 10);
+
+          ctx.save();
+          ctx.fillStyle = 'rgba(6,10,22,0.92)';
+          ctx.strokeStyle = hexA(col, 0.8);
+          ctx.lineWidth = 1;
+          ctx.fillRect(bx, by, boxW, boxH);
+          ctx.strokeRect(bx, by, boxW, boxH);
+
+          // Connector callout line
+          ctx.strokeStyle = hexA(col, 0.5);
+          ctx.beginPath();
+          ctx.moveTo(pt.x, pt.y);
+          ctx.lineTo(bx, by + 12);
+          ctx.stroke();
+
+          ctx.textAlign = 'left';
+          ctx.font = `700 8px ${MONO}`;
+          ctx.fillStyle = col;
+          ctx.fillText(`${pt.callsign} // ${a.name}`, bx + 8, by + 12);
+          ctx.font = `7px ${MONO}`;
+          ctx.fillStyle = 'rgba(203,213,225,0.85)';
+          ctx.fillText(`ALT: ${pt.flightLevel} | SQWK: ${pt.squawk}`, bx + 8, by + 23);
+          ctx.fillText(`ROLE: ${pt.role.slice(0, 24)}`, bx + 8, by + 33);
+          ctx.fillStyle = working ? '#34d399' : DIM;
+          ctx.fillText(`STATUS: ${a.status.toUpperCase()}`, bx + 8, by + 43);
+          ctx.restore();
+        }
       });
 
-      // ── 5b. Enterprise stations — businesses on the outer orbit ──
-      {
-        const stRx = Math.min(w * 0.37, 580) * 1.24 * 1.10;
-        const stRy = Math.min(h * 0.32, 320) * 1.24 * 1.10;
-        ctx.strokeStyle = 'rgba(251,191,36,0.10)';
-        ctx.setLineDash([1, 9]);
-        ctx.beginPath(); ctx.ellipse(cx, cy, stRx, stRy, 0, 0, Math.PI * 2); ctx.stroke();
+      // ── 11. Tier 4: Enterprise Mooring Berth 01 (Omni Syndication) ──
+      const stRx = scaleR * 1.08;
+      const stRy = scaleRy * 0.92;
+      const omniSt = BUSINESS_STATIONS[0];
+      const omniX = cx;
+      const omniY = cy + stRy + 10;
+      const stt = stationStatus.current[omniSt.id] || { busy: false, state: 'unknown' as const };
+      const omniHot = hoverTarget.current?.type === 'station' && hoverTarget.current.id === omniSt.id;
+      const omniSelected = selectedStation === omniSt.id;
+
+      drawStationGlyph(ctx, omniX, omniY, 1.1, time, stt.busy, '#fbbf24');
+
+      // Mooring Deck Label & Telemetry
+      ctx.textAlign = 'center';
+      ctx.font = `700 9px ${MONO}`;
+      ctx.fillStyle = '#fbbf24';
+      ctx.fillText(omniSt.name, omniX, omniY + 36);
+      ctx.font = `7px ${MONO}`;
+      ctx.fillStyle = stt.state === 'error' ? '#f87171' : stt.busy ? '#fbbf24' : DIM;
+      ctx.fillText(`BERTH 01 · ${stt.state.toUpperCase()} · SQWK ${omniSt.squawk}`, omniX, omniY + 46);
+
+      if (omniHot || omniSelected) {
+        ctx.strokeStyle = 'rgba(251,191,36,0.6)';
+        ctx.lineWidth = 1;
+        ctx.setLineDash([3, 4]);
+        ctx.beginPath();
+        ctx.arc(omniX, omniY, 44, 0, Math.PI * 2);
+        ctx.stroke();
         ctx.setLineDash([]);
-        ctx.font = `7px ${MONO}`;
-        ctx.textAlign = 'center';
-        ctx.fillStyle = 'rgba(251,191,36,0.35)';
-        ctx.fillText('ENTERPRISES', cx, cy - stRy - 8);
-
-        BUSINESS_STATIONS.forEach((st, si) => {
-          const stt = stationStatus.current[st.id] || { busy: false, state: 'unknown' as const };
-          const a = st.phase + time * (stt.busy ? 0.05 : 0.022) + si * 2.1;
-          const sx = cx + Math.cos(a) * stRx;
-          const sy = cy + Math.sin(a) * stRy;
-          const iw = st.size.w, ih = st.size.h;
-          const col = stt.state === 'error' ? '#f87171' : '#fbbf24';
-          const pulse = stt.busy
-            ? 0.55 + 0.3 * Math.sin(time * 5)
-            : 0.26 + 0.08 * Math.sin(time * 1.2 + si);
-
-          // ambient glow
-          const g = ctx.createRadialGradient(sx, sy, 0, sx, sy, iw * 0.95);
-          g.addColorStop(0, hexA(col, pulse * 0.45));
-          g.addColorStop(1, hexA(col, 0));
-          ctx.fillStyle = g;
-          ctx.fillRect(sx - iw, sy - ih, iw * 2, ih * 2);
-
-          // busy: rotating dashed halo + orbiting sparks = work in progress
-          if (stt.busy && !reducedMotion.current) {
-            ctx.strokeStyle = hexA(col, 0.55);
-            ctx.setLineDash([4, 6]);
-            ctx.lineDashOffset = -time * 34;
-            ctx.beginPath(); ctx.ellipse(sx, sy, iw * 0.72, ih * 0.72, 0, 0, Math.PI * 2); ctx.stroke();
-            ctx.setLineDash([]);
-            ctx.lineDashOffset = 0;
-            for (let k = 0; k < 4; k++) {
-              const sa = time * 2.4 + k * (Math.PI / 2) + si * 1.7;
-              ctx.fillStyle = hexA(col, 0.85);
-              ctx.beginPath();
-              ctx.arc(sx + Math.cos(sa) * iw * 0.72, sy + Math.sin(sa) * ih * 0.72, 1.6, 0, Math.PI * 2);
-              ctx.fill();
-            }
-          }
-
-          drawStationGlyph(ctx, sx, sy, 1, time + si * 2.4, stt.busy, col);
-
-          // name + live status — Foundry face only
-          ctx.font = `700 8px ${MONO}`;
-          ctx.fillStyle = stt.busy ? col : 'rgba(251,191,36,0.75)';
-          ctx.fillText(st.name, sx, sy + ih / 2 + 12);
-          ctx.font = `7px ${MONO}`;
-          ctx.fillStyle = stt.state === 'error' ? '#f87171' : stt.busy ? col : DIM;
-          ctx.fillText(stt.state === 'unknown' ? 'LINKING' : stt.state.toUpperCase(), sx, sy + ih / 2 + 21);
-        });
       }
 
-      // ── 6. Reticle + coordinate readout ──
+      // ── 12. Tactical Targeting Reticle & Coordinate Readout ──
       if (mouse.current.inside && !reducedMotion.current) {
         const mx = mouse.current.x * w, my = mouse.current.y * h;
-        ctx.strokeStyle = 'rgba(165,243,252,0.35)';
+        ctx.strokeStyle = 'rgba(165,243,252,0.45)';
         ctx.lineWidth = 1;
-        const R = 14;
+        const R = 15;
         [[-1, 0], [1, 0], [0, -1], [0, 1]].forEach(([dx, dy]) => {
           ctx.beginPath();
           ctx.moveTo(mx + dx * R * 0.5, my + dy * R * 0.5);
           ctx.lineTo(mx + dx * R, my + dy * R);
           ctx.stroke();
         });
-        ctx.beginPath(); ctx.arc(mx, my, 1.6, 0, Math.PI * 2); ctx.stroke();
+        ctx.beginPath(); ctx.arc(mx, my, 2, 0, Math.PI * 2); ctx.stroke();
+
         const bearing = ((Math.atan2(my - cy, mx - cx) * 180 / Math.PI) + 360) % 360;
-        const dist = Math.round(Math.hypot(mx - cx, my - cy));
+        const distNM = (Math.hypot(mx - cx, my - cy) / scaleR * 60).toFixed(1);
         ctx.font = `7px ${MONO}`;
         ctx.textAlign = 'left';
-        ctx.fillStyle = 'rgba(165,243,252,0.5)';
-        ctx.fillText(`BRG ${bearing.toFixed(0).padStart(3, '0')}°  RNG ${dist}`, mx + 18, my - 10);
+        ctx.fillStyle = 'rgba(165,243,252,0.65)';
+        ctx.fillText(`BRG ${bearing.toFixed(0).padStart(3, '0')}°  RNG ${distNM} NM`, mx + 16, my - 10);
       }
 
       ctx.restore();
       raf = requestAnimationFrame(draw);
     };
+
     raf = requestAnimationFrame(draw);
     const onVis = () => { if (document.hidden) cancelAnimationFrame(raf); else raf = requestAnimationFrame(draw); };
     document.addEventListener('visibilitychange', onVis);
@@ -1585,98 +1753,97 @@ export const CortexAgentsScene: React.FC = () => {
     };
   }, [selectedAgent, selectedStation]);
 
-  // ── DOM overlay data ──
-  const tasksByAgent = new Map<string, AgentTaskClient[]>();
-  for (const t of snap.tasks || []) {
-    if (t.status === 'running' || t.status === 'queued') {
-      const arr = tasksByAgent.get(t.agentId) || [];
-      arr.push(t); tasksByAgent.set(t.agentId, arr);
-    }
-  }
+  // ── Overlay Derived Data ──
   const agents = snap.agents || [];
   const workingCount = agents.filter(a => a.status === 'working').length;
+  const holdingCount = agents.filter(a => a.status !== 'working').length;
   const healthyModels = (snap.models || []).filter(m => m.status === 'healthy').length;
   const tickerEvents = events.slice(-6).reverse();
   const agentName = new Map(agents.map(a => [a.id, a.name]));
   const missionTasks = (snap.tasks || []).slice(0, 14);
+
   const TASK_STATUS_COLOR: Record<string, string> = {
     running: '#67e8f9', queued: '#fbbf24', completed: '#34d399',
     failed: '#f87171', cancelled: '#64748b',
   };
 
   return (
-    <div ref={containerRef} style={{ position: 'absolute', inset: 0, background: '#020308', overflow: 'hidden' }}>
+    <div ref={containerRef} style={{ position: 'absolute', inset: 0, background: '#010206', overflow: 'hidden' }}>
       <canvas ref={canvasRef} style={{ position: 'absolute', inset: 0 }} />
 
+      {/* Screen Corner Reticles */}
       {(['top-left', 'top-right', 'bottom-left', 'bottom-right'] as const).map(pos => (
         <div key={pos} style={{
-          position: 'absolute', width: 26, height: 26, zIndex: 6, pointerEvents: 'none',
+          position: 'absolute', width: 28, height: 28, zIndex: 6, pointerEvents: 'none',
           [pos.includes('top') ? 'top' : 'bottom']: 14,
           [pos.includes('left') ? 'left' : 'right']: 14,
-          borderTop: pos.includes('top') ? '1px solid rgba(103,232,249,0.35)' : undefined,
-          borderBottom: pos.includes('bottom') ? '1px solid rgba(103,232,249,0.35)' : undefined,
-          borderLeft: pos.includes('left') ? '1px solid rgba(103,232,249,0.35)' : undefined,
-          borderRight: pos.includes('right') ? '1px solid rgba(103,232,249,0.35)' : undefined,
+          borderTop: pos.includes('top') ? '1px solid rgba(103,232,249,0.45)' : undefined,
+          borderBottom: pos.includes('bottom') ? '1px solid rgba(103,232,249,0.45)' : undefined,
+          borderLeft: pos.includes('left') ? '1px solid rgba(103,232,249,0.45)' : undefined,
+          borderRight: pos.includes('right') ? '1px solid rgba(103,232,249,0.45)' : undefined,
         }} />
       ))}
 
-      <div style={{ position: 'absolute', top: 18, left: '50%', transform: 'translateX(-50%)', zIndex: 5, textAlign: 'center' }}>
+      {/* ── Top Center: Space Air Traffic Control Command Header ── */}
+      <div style={{ position: 'absolute', top: 16, left: '50%', transform: 'translateX(-50%)', zIndex: 5, textAlign: 'center' }}>
         <div style={{ fontSize: 13, letterSpacing: '0.55em', fontWeight: 700, color: 'rgba(224,242,254,0.95)', fontFamily: MONO, textShadow: '0 0 18px rgba(103,232,249,0.5)' }}>
-          NEXUS FOUNDRY
+          NEXUS FOUNDRY // AIR TRAFFIC CONTROL
         </div>
-        <div style={{ fontSize: 8, letterSpacing: '0.3em', color: 'rgba(148,233,255,0.45)', fontFamily: MONO, marginTop: 4 }}>
-          {workingCount} AGENTS ACTIVE · {healthyModels}/{(snap.models || []).length} MODELS VERIFIED · {(snap.tasks || []).filter(t => t.status === 'running').length} TASKS IN FLIGHT
+        <div style={{ fontSize: 8, letterSpacing: '0.25em', color: 'rgba(148,233,255,0.55)', fontFamily: MONO, marginTop: 4 }}>
+          {workingCount} IN FLIGHT · {holdingCount} IN HOLDING STACKS · COUNSEL LATTICE: SYNCHRONIZED
         </div>
         <button
           onClick={() => setTowerOpen(o => !o)}
           style={{
-            marginTop: 8, background: towerOpen ? 'rgba(251,191,36,0.12)' : 'rgba(103,232,249,0.06)',
-            border: `1px solid ${towerOpen ? 'rgba(251,191,36,0.5)' : 'rgba(103,232,249,0.3)'}`,
-            color: towerOpen ? '#fbbf24' : 'rgba(165,243,252,0.8)',
-            fontFamily: MONO, fontSize: 8, letterSpacing: '0.25em', padding: '3px 12px',
-            borderRadius: 2, cursor: 'pointer',
+            marginTop: 8, background: towerOpen ? 'rgba(251,191,36,0.15)' : 'rgba(103,232,249,0.08)',
+            border: `1px solid ${towerOpen ? 'rgba(251,191,36,0.55)' : 'rgba(103,232,249,0.35)'}`,
+            color: towerOpen ? '#fbbf24' : 'rgba(165,243,252,0.85)',
+            fontFamily: MONO, fontSize: 8, letterSpacing: '0.25em', padding: '4px 14px',
+            borderRadius: 2, cursor: 'pointer', transition: 'all 0.2s',
           }}
-        >{towerOpen ? '◈ TOWER OPEN' : '◇ TOWER'}</button>
+        >{towerOpen ? '◈ MISSION CONTROL TOWER OPEN' : '◇ MISSION CONTROL TOWER'}</button>
       </div>
 
-      {/* Right rail: merged foundry telemetry — sentinel rotation, model
-          lanes, probation pool, event bus. Roster owns the left side. */}
+      {/* ── Right Rail: Air Traffic Radar Telemetry ── */}
       <div style={{ position: 'absolute', right: 22, top: '50%', transform: 'translateY(-50%)', zIndex: 5, fontFamily: MONO, fontSize: 8, letterSpacing: '0.18em', color: 'rgba(148,233,255,0.4)', lineHeight: 2, textAlign: 'right' }}>
-        <div style={{ color: 'rgba(165,243,252,0.55)', letterSpacing: '0.28em', marginBottom: 4 }}>FOUNDRY TELEMETRY</div>
-        <div>SENTINEL ROTATION: LIVE</div>
-        <div>PROBATION POOL: {(snap.models || []).filter(m => m.status === 'unknown').length}</div>
-        <div>LANES: {Object.entries(snap.matrix || {}).map(([k, v]) => `${k.toUpperCase()} ${Array.isArray(v) ? v.length : 0}`).join(' · ')}</div>
-        <div>UPTIME: {snap.runtime ? fmtElapsed(Date.now() - snap.runtime.startedAt) : '—'}</div>
-        <div style={{ marginTop: 8, borderTop: '1px solid rgba(103,232,249,0.12)', paddingTop: 8 }}>
+        <div style={{ color: 'rgba(165,243,252,0.65)', letterSpacing: '0.28em', marginBottom: 4 }}>SPACE AIR TRAFFIC CONTROL</div>
+        <div>RADAR SWEEP: 0.62 HZ // PRIMARY</div>
+        <div>AIRSPACE: CLASS-ALPHA GOVERNED</div>
+        <div>FLIGHT RULES: IFR STRICT</div>
+        <div>IFF TRANSPONDERS: MODE-S ACTIVE</div>
+        <div>HOLDING STACKS: ALPHA / BRAVO</div>
+        <div>COUNSEL LATTICE: SYNCHRONIZED</div>
+        <div>MODELS VERIFIED: {healthyModels}/{(snap.models || []).length}</div>
+        <div style={{ marginTop: 8, borderTop: '1px solid rgba(103,232,249,0.14)', paddingTop: 8 }}>
           EVENT BUS: {snap.runtime?.eventCount ?? 0}
         </div>
-        <div>AGENTS: {agents.length} REGISTERED</div>
-        <div>SPAWNS: {(snap.proposals || []).length} PENDING · {agents.filter(a => a.spawnSpec).length} LIVE</div>
-        <div>STATE: {snap.offline ? 'OFFLINE' : 'LIVE'}</div>
+        <div>UPTIME: {snap.runtime ? fmtElapsed(Date.now() - snap.runtime.startedAt) : '—'}</div>
+        <div>STATE: {snap.offline ? 'OFFLINE' : 'RADAR LIVE'}</div>
       </div>
 
-      {/* ── Left rail: agent roster — vessel glyph + name, click opens dossier ── */}
+      {/* ── Left Rail: Aviation Flight Progress Strips (Roster) ── */}
       {!narrow && (
         <div style={{
           position: 'absolute', left: 16, top: '50%', transform: 'translateY(-50%)', zIndex: 5,
-          width: 188, fontFamily: MONO,
-          background: 'rgba(4,8,18,0.55)', border: '1px solid rgba(103,232,249,0.12)',
-          borderRadius: 4, backdropFilter: 'blur(6px)', overflow: 'hidden',
+          width: 200, fontFamily: MONO,
+          background: 'rgba(4,8,18,0.65)', border: '1px solid rgba(103,232,249,0.14)',
+          borderRadius: 4, backdropFilter: 'blur(8px)', overflow: 'hidden',
         }}>
           <div style={{
             padding: '7px 10px', borderBottom: '1px solid rgba(103,232,249,0.14)',
             color: 'rgba(165,243,252,0.75)', fontWeight: 700, letterSpacing: '0.28em', fontSize: 8,
             display: 'flex', justifyContent: 'space-between', alignItems: 'center',
           }}>
-            <span>ROSTER</span>
-            <span style={{ color: 'rgba(148,233,255,0.35)', letterSpacing: '0.15em' }}>{agents.length}</span>
+            <span>FLIGHT STRIPS</span>
+            <span style={{ color: 'rgba(148,233,255,0.35)', letterSpacing: '0.15em' }}>{agents.length} CRAFT</span>
           </div>
           <div className="ambient-scrollbar" style={{ maxHeight: '62vh', overflowY: 'auto', scrollbarWidth: 'thin' }}>
             {agents.slice().sort(agentSort).map(a => {
               const col = AGENT_COLORS[a.id] || (a.spawnSpec ? `hsl(${spawnHue(a.id)} 85% 68%)` : '#94a3b8');
-              const enterprise = agentTier(a) === 'enterprise';
+              const tier = agentTier(a);
               const offline = a.status === 'offline' || a.status === 'retired';
               const active = selectedAgent === a.id;
+              const flight = getFlightData(a);
               const statusCol = a.status === 'working' ? col : a.status === 'error' ? '#f87171' : offline ? 'rgba(100,116,139,0.8)' : 'rgba(148,163,184,0.5)';
               return (
                 <div key={a.id}
@@ -1685,23 +1852,23 @@ export const CortexAgentsScene: React.FC = () => {
                     display: 'flex', alignItems: 'center', gap: 8,
                     padding: '6px 10px', cursor: 'pointer',
                     borderBottom: '1px solid rgba(148,233,255,0.05)',
-                    background: active ? hexA(col, 0.10) : 'transparent',
+                    background: active ? hexA(col, 0.12) : 'transparent',
                     opacity: offline ? 0.55 : 1,
                   }}
                   onMouseEnter={e => { if (!active) (e.currentTarget as HTMLElement).style.background = 'rgba(103,232,249,0.05)'; }}
-                  onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = active ? hexA(col, 0.10) : 'transparent'; }}
+                  onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = active ? hexA(col, 0.12) : 'transparent'; }}
                 >
-                  <AgentGlyph enterprise={enterprise} color={col} />
+                  <AgentGlyph tier={tier} color={col} />
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{
-                      fontSize: 9, letterSpacing: '0.14em', fontWeight: 700,
+                      fontSize: 9, letterSpacing: '0.12em', fontWeight: 700,
                       color: active ? col : 'rgba(224,242,254,0.9)',
                       whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
                     }}>
-                      {a.name}
+                      {flight.callsign} <span style={{ color: DIM, fontWeight: 400 }}>· {a.name}</span>
                     </div>
-                    <div style={{ fontSize: 7, letterSpacing: '0.18em', color: statusCol, marginTop: 1 }}>
-                      {enterprise ? 'SAT·' : ''}{a.status.toUpperCase()}
+                    <div style={{ fontSize: 7, letterSpacing: '0.15em', color: statusCol, marginTop: 1 }}>
+                      SQWK {flight.squawk} · {a.status.toUpperCase()}
                     </div>
                   </div>
                   <span style={{
@@ -1713,26 +1880,26 @@ export const CortexAgentsScene: React.FC = () => {
             })}
             {agents.length === 0 && (
               <div style={{ padding: '12px 10px', color: 'rgba(148,233,255,0.3)', letterSpacing: '0.15em', fontSize: 8 }}>
-                NO AGENTS REGISTERED
+                NO CRAFT IN AIRSPACE
               </div>
             )}
           </div>
         </div>
       )}
 
-      {/* ── Mission Log: always-on feed of real agent tasks ── */}
+      {/* ── Bottom Right: Mission Log ── */}
       <div style={{
-        position: 'absolute', right: 22, bottom: 40, zIndex: 5, width: 300,
+        position: 'absolute', right: 22, bottom: 40, zIndex: 5, width: 310,
         fontFamily: MONO, fontSize: 8, letterSpacing: '0.1em',
-        background: 'rgba(4,8,18,0.72)', border: '1px solid rgba(103,232,249,0.16)',
-        borderRadius: 4, backdropFilter: 'blur(6px)', overflow: 'hidden',
+        background: 'rgba(4,8,18,0.75)', border: '1px solid rgba(103,232,249,0.16)',
+        borderRadius: 4, backdropFilter: 'blur(8px)', overflow: 'hidden',
       }}>
         <div style={{
           padding: '7px 10px', borderBottom: '1px solid rgba(103,232,249,0.14)',
           color: 'rgba(165,243,252,0.75)', fontWeight: 700, letterSpacing: '0.28em', fontSize: 8,
           display: 'flex', justifyContent: 'space-between', alignItems: 'center',
         }}>
-          <span>MISSION LOG</span>
+          <span>FLIGHT LOG</span>
           <span style={{ color: 'rgba(148,233,255,0.35)', letterSpacing: '0.15em' }}>
             {missionTasks.filter(t => t.status === 'running' || t.status === 'queued').length} ACTIVE
           </span>
@@ -1740,7 +1907,7 @@ export const CortexAgentsScene: React.FC = () => {
         <div className="ambient-scrollbar" style={{ maxHeight: 190, overflowY: 'auto', scrollbarWidth: 'thin' }}>
           {missionTasks.length === 0 && (
             <div style={{ padding: '12px 10px', color: 'rgba(148,233,255,0.3)', letterSpacing: '0.15em' }}>
-              NO TASKS THIS SESSION — SUBMIT WORK VIA VOICE OR API
+              NO FLIGHTS THIS SESSION — DISPATCH WORK VIA VOICE OR API
             </div>
           )}
           {missionTasks.map(t => {
@@ -1759,7 +1926,6 @@ export const CortexAgentsScene: React.FC = () => {
                   width: 6, height: 6, borderRadius: '50%', background: col, flexShrink: 0,
                   alignSelf: 'center',
                   boxShadow: t.status === 'running' ? `0 0 6px ${col}` : 'none',
-                  animation: t.status === 'running' ? 'none' : undefined,
                 }} />
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ color: 'rgba(224,242,254,0.85)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
@@ -1769,7 +1935,7 @@ export const CortexAgentsScene: React.FC = () => {
                     <span style={{ color: agentCol }}>{agentName.get(t.agentId) || t.agentId}</span>
                     <span>·</span>
                     <span style={{ color: col }}>{t.status.toUpperCase()}</span>
-                    {t.model && <><span>·</span><span style={{ color: 'rgba(196,181,253,0.55)' }}>{String(t.model).split(':').pop()?.slice(0, 22)}</span></>}
+                    {t.model && <><span>·</span><span style={{ color: 'rgba(196,181,253,0.55)' }}>{String(t.model).split(':').pop()?.slice(0, 20)}</span></>}
                   </div>
                 </div>
                 <span style={{ color: 'rgba(148,233,255,0.45)', flexShrink: 0 }}>{elapsed}</span>
@@ -1781,11 +1947,11 @@ export const CortexAgentsScene: React.FC = () => {
 
       {snap.offline && (
         <div style={{ position: 'absolute', bottom: 76, left: '50%', transform: 'translateX(-50%)', zIndex: 7, fontFamily: MONO, fontSize: 10, letterSpacing: '0.3em', color: '#fb923c', background: 'rgba(30,15,5,0.8)', border: '1px solid rgba(251,146,60,0.4)', padding: '8px 20px', borderRadius: 3 }}>
-          ◌ AGENT RUNTIME OFFLINE — IS THE DEV SERVER RUNNING?
+          ◌ AIRSPACE TRANSPONDERS OFFLINE — IS DEV SERVER RUNNING?
         </div>
       )}
 
-      {/* live event ticker */}
+      {/* Live Event Ticker */}
       {tickerEvents.length > 0 && (
         <div style={{ position: 'absolute', bottom: 14, left: '50%', transform: 'translateX(-50%)', zIndex: 6, fontFamily: MONO, fontSize: 8, letterSpacing: '0.12em', color: 'rgba(165,243,252,0.55)', textAlign: 'center', lineHeight: 1.9, pointerEvents: 'none' }}>
           {tickerEvents.map((e, i) => (
@@ -1793,52 +1959,6 @@ export const CortexAgentsScene: React.FC = () => {
           ))}
         </div>
       )}
-
-      {agents.map((a, i) => {
-        const col = AGENT_COLORS[a.id] || (a.spawnSpec ? `hsl(${spawnHue(a.id)} 85% 68%)` : '#94a3b8');
-        const tasks = tasksByAgent.get(a.id) || [];
-        if (!tasks.length) return null;
-        const baseA = (i / Math.max(agents.length, 1)) * Math.PI * 2 - Math.PI / 2;
-        const left = (narrow ? 50 : 57) + Math.cos(baseA) * (narrow ? 36 : 33);
-        const top = 50 + Math.sin(baseA) * 28;
-        return (
-          <div key={a.id} onClick={() => setSelectedAgent(selectedAgent === a.id ? null : a.id)}
-            style={{
-              position: 'absolute', left: `${left}%`, top: `${top}%`, transform: 'translate(-50%,-100%)',
-              zIndex: 6, width: 250, cursor: 'pointer',
-              background: 'linear-gradient(160deg, rgba(8,14,24,0.88), rgba(5,8,15,0.82))',
-              border: `1px solid ${hexA(col, 0.4)}`, borderRadius: 3,
-              backdropFilter: 'blur(12px)', padding: '9px 11px',
-              boxShadow: `0 0 32px ${hexA(col, 0.18)}, inset 0 0 18px ${hexA(col, 0.04)}`,
-            }}>
-            <div style={{ position: 'absolute', top: -1, left: -1, width: 8, height: 8, borderTop: `1px solid ${col}`, borderLeft: `1px solid ${col}` }} />
-            <div style={{ position: 'absolute', bottom: -1, right: -1, width: 8, height: 8, borderBottom: `1px solid ${col}`, borderRight: `1px solid ${col}` }} />
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 5 }}>
-              <span style={{ fontSize: 9, letterSpacing: '0.24em', color: col, fontFamily: MONO, fontWeight: 700 }}>{a.name}</span>
-              <span style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 8, color: DIM, fontFamily: MONO }}>
-                <span style={{ width: 5, height: 5, borderRadius: '50%', background: a.status === 'working' ? col : a.status === 'error' ? '#f87171' : 'rgba(148,163,184,0.4)', boxShadow: a.status === 'working' ? `0 0 6px ${col}` : 'none' }} />
-                {a.status.toUpperCase()}
-              </span>
-            </div>
-            {tasks.slice(0, 2).map(t => (
-              <div key={t.id} style={{ marginBottom: 6 }}>
-                <div style={{ fontSize: 9, color: 'rgba(226,232,240,0.9)', fontFamily: MONO, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{t.title}</div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 4 }}>
-                  <div style={{ flex: 1, height: 3, background: 'rgba(148,163,184,0.14)', borderRadius: 2, overflow: 'hidden', position: 'relative' }}>
-                    <div style={{ width: `${Math.round((t.progress ?? 0) * 100)}%`, height: '100%', background: `linear-gradient(90deg, ${hexA(col, 0.6)}, ${col})`, boxShadow: `0 0 8px ${hexA(col, 0.6)}`, transition: 'width 0.4s' }} />
-                  </div>
-                  <span style={{ fontSize: 8, color: 'rgba(148,233,255,0.6)', fontFamily: MONO, whiteSpace: 'nowrap' }}>
-                    {t.status === 'queued' ? 'QUEUED' : `${Math.round((t.progress ?? 0) * 100)}%`}
-                    {t.model && <span style={{ color: hexA(col, 0.9) }}> · {t.model.split('/').pop()?.split(':').pop()?.slice(0, 16)}</span>}
-                  </span>
-                </div>
-                {t.startedAt && <div style={{ fontSize: 7, color: 'rgba(148,163,184,0.4)', fontFamily: MONO, marginTop: 2, textAlign: 'right' }}>{fmtElapsed(Date.now() - t.startedAt)} ELAPSED</div>}
-              </div>
-            ))}
-            {tasks.length > 2 && <div style={{ fontSize: 8, color: 'rgba(148,233,255,0.45)', fontFamily: MONO }}>+{tasks.length - 2} MORE IN QUEUE</div>}
-          </div>
-        );
-      })}
 
       {selectedAgent && (() => {
         const a = agents.find(x => x.id === selectedAgent);
@@ -1852,7 +1972,8 @@ export const CortexAgentsScene: React.FC = () => {
 
       {towerOpen && <CortexTowerPanel onClose={() => setTowerOpen(false)} />}
 
-      <div style={{ position: 'absolute', inset: 0, zIndex: 8, pointerEvents: 'none', background: 'repeating-linear-gradient(0deg, rgba(255,255,255,0.012) 0px, rgba(255,255,255,0.012) 1px, transparent 1px, transparent 3px)' }} />
+      {/* Subtle Retro-Futuristic CRT Radar Scanline */}
+      <div style={{ position: 'absolute', inset: 0, zIndex: 8, pointerEvents: 'none', background: 'repeating-linear-gradient(0deg, rgba(255,255,255,0.01) 0px, rgba(255,255,255,0.01) 1px, transparent 1px, transparent 3px)' }} />
     </div>
   );
 };
