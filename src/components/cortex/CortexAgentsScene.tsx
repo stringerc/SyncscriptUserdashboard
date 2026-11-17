@@ -19,6 +19,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { agentsClient, type AgentsSnapshotClient, type AgentClient, type AgentTaskClient, type ModelClient } from '../../lib/cortex-agents-client';
 import { cortexSignalBus } from './CortexVisualizer';
+import { CortexTowerPanel } from './CortexTowerPanel';
 
 const AGENT_COLORS: Record<string, string> = {
   antigravity: '#c084fc',
@@ -669,6 +670,7 @@ export const CortexAgentsScene: React.FC = () => {
   const [events, setEvents] = useState(agentsClient.events);
   const [selectedAgent, setSelectedAgent] = useState<string | null>(null);
   const [selectedStation, setSelectedStation] = useState<string | null>(null);
+  const [towerOpen, setTowerOpen] = useState(false);
   const [nowTs, setNowTs] = useState(() => Date.now());
   const [narrow, setNarrow] = useState(() => typeof window !== 'undefined' && window.innerWidth < 900);
   const reducedMotion = useRef(false);
@@ -1625,6 +1627,16 @@ export const CortexAgentsScene: React.FC = () => {
         <div style={{ fontSize: 8, letterSpacing: '0.3em', color: 'rgba(148,233,255,0.45)', fontFamily: MONO, marginTop: 4 }}>
           {workingCount} AGENTS ACTIVE · {healthyModels}/{(snap.models || []).length} MODELS VERIFIED · {(snap.tasks || []).filter(t => t.status === 'running').length} TASKS IN FLIGHT
         </div>
+        <button
+          onClick={() => setTowerOpen(o => !o)}
+          style={{
+            marginTop: 8, background: towerOpen ? 'rgba(251,191,36,0.12)' : 'rgba(103,232,249,0.06)',
+            border: `1px solid ${towerOpen ? 'rgba(251,191,36,0.5)' : 'rgba(103,232,249,0.3)'}`,
+            color: towerOpen ? '#fbbf24' : 'rgba(165,243,252,0.8)',
+            fontFamily: MONO, fontSize: 8, letterSpacing: '0.25em', padding: '3px 12px',
+            borderRadius: 2, cursor: 'pointer',
+          }}
+        >{towerOpen ? '◈ TOWER OPEN' : '◇ TOWER'}</button>
       </div>
 
       {/* Right rail: merged foundry telemetry — sentinel rotation, model
@@ -1837,6 +1849,8 @@ export const CortexAgentsScene: React.FC = () => {
       {selectedStation && (
         <OmniSyndicationPanel onClose={() => setSelectedStation(null)} dockLeft={!narrow} />
       )}
+
+      {towerOpen && <CortexTowerPanel onClose={() => setTowerOpen(false)} />}
 
       <div style={{ position: 'absolute', inset: 0, zIndex: 8, pointerEvents: 'none', background: 'repeating-linear-gradient(0deg, rgba(255,255,255,0.012) 0px, rgba(255,255,255,0.012) 1px, transparent 1px, transparent 3px)' }} />
     </div>

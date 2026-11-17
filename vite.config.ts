@@ -25,6 +25,11 @@ import { listStrategyProposals, decideStrategyProposal, reconcileStrategyProposa
 import { recordIncidentFailure, resolveIncidentsOnSuccess, listIncidents, escalateStaleIncidents } from './src/lib/cortex-agents/incidents';
 import { registerAgentWorkers, makeEphemeralWorker, expandTaskSpec } from './src/lib/cortex-agents/workers';
 import { enqueueDistributionItem, DISTRIBUTION_ITEM_TYPES } from './src/lib/cortex-agents/distribution';
+import {
+  COUNSEL_CONSOLES, conveneCounsel, filePosition, openRebuttal, closeRebuttal,
+  recordSynthesis, decideCounsel, cancelCounsel, pollBoard,
+  getCounselSession, listCounselSessions,
+} from './src/lib/cortex-counsel';
 import type { RouteTier } from './src/lib/cortex-agents/types';
 import { normalizeForSpeech } from './src/lib/tts-speech-normalize';
 import {
@@ -10288,7 +10293,209 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
         }
       });
 
-      // GET/POST /api/cortex/agents/handoff — The Relay Baton (Antigravity <-> Devin Failover)
+      // ── Counsel deliberation layer (/api/cortex/counsel/*) ──
+      // Go/No-Go poll primitive — advisory only; clearance flows through
+      // the existing strategy-proposals gate. See CORTEX_COUNSEL_SPEC.md.
+      const counselJson = (res: any, code: number, body: any) => {
+        res.writeHead(code, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(body));
+      };
+      const counselPost = (req: any, res: any, fn: (body: any) => { code?: number; body: any }) => {
+        let raw = '';
+        req.on('data', (c: Buffer) => { raw += c.toString(); if (raw.length > 20000) req.destroy(); });
+        req.on('end', () => {
+          try {
+            const body = JSON.parse(raw || '{}');
+            const out = fn(body);
+            counselJson(res, out.code || 200, out.body);
+          } catch (e: any) {
+            counselJson(res, 500, { ok: false, error: e?.message || 'counsel error' });
+          }
+        });
+      };
+
+      server.middlewares.use('/api/cortex/counsel/sessions', (req: any, res: any, next: any) => {
+        if (req.method === 'OPTIONS') {
+          res.writeHead(204, { 'Access-Control-Allow-Origin': req.headers.origin || '*', 'Access-Control-Allow-Methods': 'GET, POST, OPTIONS', 'Access-Control-Allow-Headers': 'Content-Type' });
+          return res.end();
+        }
+        if (!isAllowedOrigin(req.headers.origin, req.headers.host)) return next();
+        agentCors(req, res);
+        if (req.method === 'GET') {
+          try {
+            // Ingest file-dropped positions: .cortex-runtime/counsel/positions/<session>-<member>.json
+            try {
+              const posDir = path.join(process.env.CORTEX_AGENTS_STATE_DIR || path.join(process.cwd(), '.cortex-runtime'), 'counsel', 'positions');
+              if (fsSync.existsSync(posDir)) {
+                for (const f of fsSync.readdirSync(posDir).filter((x: string) => x.endsWith('.json'))) {
+                  const m = f.match(/^(csl-[a-z0-9]+)-([a-z0-9-]+)\.json$/);
+                  if (!m) continue;
+                  try {
+                    const pos = JSON.parse(fsSync.readFileSync(path.join(posDir, f), 'utf8'));
+                    pos.member = pos.member || m[2];
+                    const r = filePosition(m[1], pos);
+                    if (r.ok) fsSync.unlinkSync(path.join(posDir, f)); // consumed
+                  } catch {}
+                }
+              }
+            } catch {}
+            const url = new URL(req.url || '/', 'http://localhost');
+            const status = url.searchParams.get('status') || undefined;
+            const sessions = listCounselSessions({ status: status as any }).map((s) => ({
+              ...s,
+              poll: s.status === 'poll' || s.status === 'cleared' ? pollBoard(s) : undefined,
+            }));
+            return counselJson(res, 200, { ok: true, sessions, consoles: COUNSEL_CONSOLES });
+          } catch (e: any) {
+            return counselJson(res, 500, { ok: false, error: e?.message || 'sessions read failed' });
+          }
+        }
+        if (req.method === 'POST') {
+          return counselPost(req, res, (body) => {
+            const r = conveneCounsel({
+              question: body.question,
+              context: body.context,
+              lane: body.lane,
+              members: Array.isArray(body.members) ? body.members : undefined,
+            });
+            return r.session
+              ? { body: { ok: true, session: r.session } }
+              : { code: 400, body: { ok: false, error: r.error } };
+          });
+        }
+        return next();
+      });
+
+      server.middlewares.use('/api/cortex/counsel/session', (req: any, res: any, next: any) => {
+        if (req.method !== 'GET') return next();
+        agentCors(req, res);
+        try {
+          const url = new URL(req.url || '/', 'http://localhost');
+          const s = getCounselSession(url.searchParams.get('id') || '');
+          if (!s) return counselJson(res, 404, { ok: false, error: 'session not found' });
+          return counselJson(res, 200, { ok: true, session: s, poll: pollBoard(s) });
+        } catch (e: any) {
+          return counselJson(res, 500, { ok: false, error: e?.message || 'session read failed' });
+        }
+      });
+
+      // Position filing + lifecycle transitions. POST body: {action, sessionId, ...}
+      server.middlewares.use('/api/cortex/counsel/action', (req: any, res: any, next: any) => {
+        if (req.method !== 'POST') return next();
+        if (!isAllowedOrigin(req.headers.origin, req.headers.host)) return next();
+        agentCors(req, res);
+        return counselPost(req, res, (body) => {
+          const action = String(body.action || '');
+          const sid = String(body.sessionId || '');
+          switch (action) {
+            case 'position': {
+              const r = filePosition(sid, body.position || body);
+              return r.ok
+                ? { body: { ok: true, session: r.session } }
+                : { code: 400, body: { ok: false, error: r.error } };
+            }
+            case 'rebuttal_open': {
+              const r = openRebuttal(sid);
+              return r.ok ? { body: { ok: true, session: r.session } } : { code: 400, body: { ok: false, error: r.error } };
+            }
+            case 'rebuttal_close': {
+              const r = closeRebuttal(sid);
+              return r.ok ? { body: { ok: true, session: r.session } } : { code: 400, body: { ok: false, error: r.error } };
+            }
+            case 'synthesis': {
+              const r = recordSynthesis(sid, {
+                by: String(body.by || 'strategist'),
+                stanceTable: Array.isArray(body.stanceTable) ? body.stanceTable : [],
+                agreements: Array.isArray(body.agreements) ? body.agreements : [],
+                conflicts: Array.isArray(body.conflicts) ? body.conflicts : [],
+                unresolvedObjections: Array.isArray(body.unresolvedObjections) ? body.unresolvedObjections : [],
+                recommendation: body.recommendation,
+                text: String(body.text || ''),
+              });
+              return r.ok ? { body: { ok: true, session: r.session } } : { code: 400, body: { ok: false, error: r.error } };
+            }
+            case 'decide': {
+              const r = decideCounsel(sid, body.decision === 'go' ? 'go' : 'no-go', String(body.by || 'user'), body.note, body.proposalId);
+              return r.ok ? { body: { ok: true, session: r.session } } : { code: 400, body: { ok: false, error: r.error } };
+            }
+            case 'cancel': {
+              const r = cancelCounsel(sid, String(body.by || 'user'));
+              return r.ok ? { body: { ok: true, session: r.session } } : { code: 400, body: { ok: false, error: r.error } };
+            }
+            default:
+              return { code: 400, body: { ok: false, error: `unknown action '${action}'` } };
+          }
+        });
+      });
+
+      // ── Tower board: composed Mission Control view for the Foundry deck ──
+      server.middlewares.use('/api/cortex/tower', async (req: any, res: any, next: any) => {
+        if (req.method !== 'GET') return next();
+        agentCors(req, res);
+        try {
+          const ws = await getWorldState();
+          const header = formatWorldStateHeader(ws);
+          const snap = agentRuntime.snapshot();
+          const agents = snap.agents || [];
+          const sessions = listCounselSessions({});
+          const polls = sessions
+            .filter((s) => s.status === 'poll')
+            .map((s) => ({ id: s.id, question: s.question, lane: s.lane, ageMinutes: Math.round((Date.now() - s.createdAt) / 60000), poll: pollBoard(s), synthesis: s.synthesis }));
+          const activeSessions = sessions.filter((s) => ['positions', 'rebuttal', 'synthesis'].includes(s.status));
+
+          // Console rows: counsel roster joined with live agent state.
+          const consoles = COUNSEL_CONSOLES.map((c) => {
+            const agent = agents.find((a: any) => a.id === c.id);
+            const memberSessions = sessions.filter((s) => s.members.includes(c.id));
+            return {
+              id: c.id,
+              callSign: c.callSign,
+              role: c.role,
+              adapter: c.adapter,
+              lamp: agent ? agent.status : (c.id === 'user' ? 'manual' : 'idle'),
+              agentStatus: agent?.status,
+              tasksCompleted: agent?.tasksCompleted,
+              tasksFailed: agent?.tasksFailed,
+              counselSessions: memberSessions.length,
+            };
+          });
+
+          const proposals = listStrategyProposals('pending').map((p: any) => ({
+            id: p.id, title: p.title, agentId: p.agentId, createdAt: p.createdAt,
+            waitMinutes: Math.round((Date.now() - p.createdAt) / 60000),
+          }));
+
+          const openIncidents = listIncidents('open');
+
+          // Missions: distribution queue health as the pipeline proxy.
+          let missions: any[] = [];
+          try {
+            const q = JSON.parse(fsSync.readFileSync(path.join(process.cwd(), 'storefront', 'distribution-queue.json'), 'utf8'));
+            const counts: Record<string, number> = {};
+            for (const i of q.items || []) counts[i.status] = (counts[i.status] || 0) + 1;
+            missions = Object.entries(counts).map(([status, count]) => ({ name: 'distribution-queue', status, count }));
+          } catch {}
+
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({
+            ok: true,
+            checkedAt: new Date().toISOString(),
+            worldState: { header, topology: ws.topology, fleet: ws.fleet },
+            flightDirector: { status: 'nominal', header },
+            consoles,
+            polls,
+            activeSessions: activeSessions.map((s) => ({ id: s.id, question: s.question, status: s.status, lane: s.lane, members: s.members, positionsFiled: s.positions.length, ageMinutes: Math.round((Date.now() - s.createdAt) / 60000) })),
+            clearanceQueue: proposals,
+            missions,
+            incidents: { open: openIncidents.length },
+          }));
+        } catch (e: any) {
+          res.writeHead(500);
+          res.end(JSON.stringify({ ok: false, error: e?.message || 'tower read failed' }));
+        }
+      });
+
+      // GET /api/cortex/agents/handoff — The Relay Baton (Antigravity <-> Devin Failover)
       server.middlewares.use('/api/cortex/agents/handoff', async (req: any, res: any, next: any) => {
         const origin = req.headers.origin;
         const isAllowed = isAllowedOrigin(origin, req.headers.host);
