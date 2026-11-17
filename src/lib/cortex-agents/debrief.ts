@@ -169,6 +169,18 @@ async function gatherDebriefData(now: number): Promise<{ data: DebriefData; raw:
   const shutdown = pickShutdown(dayKey, sState.recent || []);
   fs.writeFileSync(path.join(DEBRIEFS_DIR, 'shutdown-state.json'), JSON.stringify({ recent: [shutdown, ...(sState.recent || [])].slice(0, 14) }));
 
+  // ── Yesterday's answers (Discord reply capture → answers.jsonl) ──
+  const answers: string[] = [];
+  try {
+    const lines = fs.readFileSync(path.join(DEBRIEFS_DIR, 'answers.jsonl'), 'utf8').split('\n').filter(Boolean).slice(-40);
+    for (const l of lines) {
+      try {
+        const a = JSON.parse(l);
+        if (now - (a.at ?? 0) < DAY_MS && a.text) answers.push(String(a.text).slice(0, 140));
+      } catch {}
+    }
+  } catch {}
+
   // ── Degraded sources: last radar sweep coverage ──
   const radarLedger = readJson<{ coverage?: { source: string; ok: boolean; note?: string }[] }>(path.join(RUNTIME_DIR, 'life-events.json'), {});
   for (const c of radarLedger.coverage || []) {
@@ -180,7 +192,7 @@ async function gatherDebriefData(now: number): Promise<{ data: DebriefData; raw:
     dayKey, longDate,
     verified, attempted: completed.length, failedCount: failed.length, failedTitles,
     gaps, tomorrowEvents, priorities, openLoops,
-    oneThing, shutdown, degradedSources,
+    oneThing, shutdown, degradedSources, answers: answers.slice(0, 4),
     generatedAt: now,
   };
   return {

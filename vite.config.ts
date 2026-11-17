@@ -10823,6 +10823,36 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
               await post({ content: formatDigest({ events: ev, pendingProposals: props, forecasts: fc, snapshot: snap, now }) }, 'briefs');
               markDigestSent(discordDir, now);
             }
+            // Debrief reply capture — non-bot messages in the briefs channel
+            // within the last 20h become answers.jsonl entries that the next
+            // DEBRIEF surfaces as "You said:" lines (spec §4.1). Rolling
+            // window (not latest-debrief cutoff) so next-morning replies count.
+            try {
+              const debriefsDir = path.join(discordDir, 'debriefs');
+              const cutoff = now - 20 * 3600_000;
+              if (discordChannels.briefs) {
+                const msgs = await discordApi('GET', `/channels/${discordChannels.briefs}/messages?limit=15`, { token });
+                const arr: any[] = Array.isArray(msgs) ? msgs : [];
+                const stateFile = path.join(debriefsDir, 'capture-state.json');
+                const seen = new Set<string>((JSON.parse(fsSync.readFileSync(stateFile, 'utf8'))?.seen || []) as string[]);
+                const fresh: any[] = [];
+                for (const m of arr) {
+                  const id = String(m?.id || '');
+                  if (!id || seen.has(id) || m?.author?.bot) continue;
+                  const ts = Number(BigInt(id) >> 22n) + 1420070400000;
+                  if (ts <= cutoff) continue;
+                  const text = String(m?.content || '').trim();
+                  if (!text) continue;
+                  fresh.push({ id, at: ts, author: String(m?.author?.username || 'operator'), text: text.slice(0, 500) });
+                }
+                if (fresh.length) {
+                  fsSync.mkdirSync(debriefsDir, { recursive: true });
+                  fsSync.appendFileSync(path.join(debriefsDir, 'answers.jsonl'), fresh.map((a) => JSON.stringify(a)).join('\n') + '\n');
+                  const all = [...seen, ...fresh.map((a) => a.id)].slice(-200);
+                  fsSync.writeFileSync(stateFile, JSON.stringify({ seen: all }));
+                }
+              }
+            } catch {}
           } catch (e) {
             console.warn('[cortex-discord] poll error:', String(e).slice(0, 160));
           }

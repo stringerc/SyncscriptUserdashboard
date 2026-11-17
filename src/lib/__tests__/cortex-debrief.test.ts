@@ -55,6 +55,13 @@ describe('composeDebrief', () => {
     expect(tom.lines.filter((l) => l.includes('9:00 AM')).length).toBeLessThanOrEqual(5);
   });
 
+  it('surfaces captured Discord answers as "You said:" lines', () => {
+    const d = composeDebrief(baseData({ answers: ['call Justin tomorrow', 'skip the gym'] }));
+    const ledger = d.sections.find((s) => s.key === 'ledger')!;
+    expect(ledger.lines.some((l) => l.includes('You said: "call Justin tomorrow"'))).toBe(true);
+    expect(ledger.lines.filter((l) => l.startsWith('You said:')).length).toBeLessThanOrEqual(2);
+  });
+
   it('includes degraded source coverage honestly', () => {
     const d = composeDebrief(baseData());
     expect(d.phoneText).toContain('Coverage gaps');

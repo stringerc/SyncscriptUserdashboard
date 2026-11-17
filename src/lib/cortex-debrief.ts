@@ -82,6 +82,7 @@ export interface DebriefData {
   oneThing: string;
   shutdown: string;
   degradedSources: string[];
+  answers?: string[];
   generatedAt: number;
 }
 
@@ -101,6 +102,7 @@ export function composeDebrief(d: DebriefData): ComposedDebrief {
   ledger.push(`Day score: ${d.verified.length} verified / ${d.attempted} attempted`);
   for (const v of d.verified.slice(0, 3)) ledger.push(`✓ ${v}`);
   if (d.failedCount > 0) ledger.push(`${d.failedCount} failed${d.failedTitles.length ? `: ${d.failedTitles.slice(0, 2).join('; ')}` : ''}`);
+  for (const a of (d.answers || []).slice(0, 2)) ledger.push(`You said: "${a}"`);
   sections.push({ key: 'ledger', title: 'THE LEDGER', lines: ledger });
 
   // §2 GAP — AAR questions, max 3.
