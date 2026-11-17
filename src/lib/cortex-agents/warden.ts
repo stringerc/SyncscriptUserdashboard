@@ -12,10 +12,11 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { execSync } from 'node:child_process';
 import type { WorkerHandler } from './runtime';
 import type { AgentEvent } from './types';
 import { rulesBlock } from './rules';
-import { listIncidents } from './incidents';
+import { listIncidents, recordIncidentFailure } from './incidents';
 import { runCounselPosition } from './counsel-position';
 
 const PORT = process.env.PORT ? parseInt(process.env.PORT) : 5173;
@@ -70,6 +71,63 @@ async function getJson(url: string, fetchImpl: FetchLike, timeoutMs = 6000) {
   return res.json();
 }
 
+/** Repo-hygiene classification: paths that are regenerable runtime churn
+ *  vs real uncommitted work. Default is 'real' — unknown paths err toward
+ *  attention, not silence. Keep in sync with .gitignore churn rules. */
+export function classifyRepoPath(p: string): 'real' | 'churn' {
+  const clean = p.trim().replace(/^"|"$/g, '');
+  if (!clean) return 'churn';
+  return /^(\.cortex\/|\.cortex-runtime\/|node_modules\/|dist\/|__pycache__\/|.*\.pyc$|tsconfig\.tsbuildinfo$|models\.matrix$|public\/screenshots\/latest-|storefront\/browser\/latest\.|storefront\/distribution-(queue\.json|dashboard\.html)$|MEMORY\.md$|dream-log\.md$|morning-briefing\.md$|example\.txt$)/.test(clean)
+    ? 'churn' : 'real';
+}
+
+export interface RepoHygieneReport {
+  realCount: number;
+  churnCount: number;
+  /** Age in hours of the oldest REAL dirty path; null when none. */
+  oldestRealAgeH: number | null;
+  /** Up to 5 sample real paths for the report detail. */
+  sampleFiles: string[];
+}
+
+/** Stale-work threshold: dirty for less than this is someone mid-task. */
+export const REPO_STALE_HOURS = 4;
+
+/** Real git probe — porcelain status + mtime aging. Injectable for tests. */
+export function nodeRepoProbe(repoRoot = process.cwd()): () => RepoHygieneReport {
+  return () => {
+    let out = '';
+    try {
+      out = execSync('git status --porcelain', { cwd: repoRoot, encoding: 'utf-8', timeout: 8000 });
+    } catch {
+      return { realCount: 0, churnCount: 0, oldestRealAgeH: null, sampleFiles: [] };
+    }
+    const realFiles: { p: string; ageH: number }[] = [];
+    let churnCount = 0;
+    for (const line of out.split('\n')) {
+      if (line.length < 4) continue;
+      let p = line.slice(3).trim();
+      const arrow = p.indexOf(' -> ');
+      if (arrow >= 0) p = p.slice(arrow + 4); // renames: report the new path
+      p = p.replace(/^"|"$/g, '');
+      if (classifyRepoPath(p) === 'churn') { churnCount++; continue; }
+      let ageH = 999; // deleted/unstat-able paths count as maximally stale
+      try {
+        const st = fs.statSync(path.join(repoRoot, p));
+        ageH = (Date.now() - st.mtimeMs) / 3600_000;
+      } catch { /* deleted file — stays 999 */ }
+      realFiles.push({ p, ageH });
+    }
+    realFiles.sort((a, b) => b.ageH - a.ageH);
+    return {
+      realCount: realFiles.length,
+      churnCount,
+      oldestRealAgeH: realFiles.length ? realFiles[0].ageH : null,
+      sampleFiles: realFiles.slice(0, 5).map((f) => f.p),
+    };
+  };
+}
+
 export interface PatrolDeps {
   base?: string;
   fetchImpl?: FetchLike;
@@ -89,6 +147,8 @@ export interface PatrolDeps {
     incidents(): { open: number; stale: number };
     productReadiness(): { total: number; ready: number; missing: string[] };
   };
+  /** Repo hygiene — uncommitted-work aging. Injectable for tests. */
+  repoProbe?: () => RepoHygieneReport;
 }
 
 /** Run the full patrol suite. Pure orchestration — every probe is real. */
@@ -268,6 +328,22 @@ export async function runPatrolChecks(deps: PatrolDeps = {}): Promise<PatrolRepo
     return `${r.ready}/${r.total} products have deliverables`;
   }));
 
+  // ── Repo hygiene: real uncommitted work aging past the stale threshold.
+  //  Churn (runtime state, generated artifacts, agent memory docs) is
+  //  classified out — only source/config/doc changes count. Warning-level:
+  //  stale work is risk, not outage. Escalation to the Inbox happens in
+  //  wardenWorker via the incident ledger — Warden never commits.
+  checks.push(await timed('repo.hygiene', false, 10000, async () => {
+    if (!deps.repoProbe) return 'skipped (no repo probe wired)';
+    const r = deps.repoProbe();
+    if (!r.realCount) return r.churnCount ? `${r.churnCount} churn paths ignored` : 'working tree clean';
+    const age = r.oldestRealAgeH ?? 0;
+    const detail = `${r.realCount} real uncommitted (oldest ${age >= 999 ? 'stale-deleted' : age.toFixed(1) + 'h'}): ${r.sampleFiles.join(', ')}`;
+    if (age >= REPO_STALE_HOURS || age >= 999)
+      throw new Error(`${detail} — aging uncommitted work`);
+    return detail;
+  }));
+
   const anomalies = checks.filter((c) => !c.ok && c.critical).map((c) => `${c.name}: ${c.detail || 'failed'}`);
   const warnings = checks.filter((c) => !c.ok && !c.critical).map((c) => `${c.name}: ${c.detail || 'failed'}`);
   return {
@@ -361,6 +437,7 @@ const wardenWorker: WorkerHandler = async (ctx) => {
     },
     fsImpl: nodeFsProbes(),
     qcProbe: nodeQcProbes(),
+    repoProbe: nodeRepoProbe(),
   });
   ctx.progress(0.8);
 
@@ -426,6 +503,21 @@ const wardenWorker: WorkerHandler = async (ctx) => {
         }).catch(() => {});
       } catch {}
     }
+  }
+
+  // Stale uncommitted work → incident ticket; the 60s sweeper turns it
+  // into an Inbox proposal. Warden detects and escalates — never commits.
+  const repoCheck = report.checks.find((c) => c.name === 'repo.hygiene');
+  if (repoCheck && !repoCheck.ok) {
+    recordIncidentFailure({
+      taskId: ctx.task.id,
+      agentId: 'warden',
+      agentName: 'WARDEN',
+      kind: 'repo_hygiene',
+      title: 'Aging uncommitted work in syncscript tree',
+      failureClass: 'hygiene_stale',
+      error: repoCheck.detail,
+    });
   }
 
   ctx.progress(1);
