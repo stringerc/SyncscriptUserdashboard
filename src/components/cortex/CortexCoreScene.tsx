@@ -175,88 +175,111 @@ const nebulaFragment = /* glsl */ `
     float centerGlow = pow(max(dot(d, vec3(0.0, 0.0, -1.0)), 0.0), 3.0);
     vec3 baseSpace = colSpace + uRim * centerGlow * (0.03 + uEnergy * 0.05);
 
-    // ── Distant Supernova Remnant (Exploded Star) ──
-    // Anchored far in deep space to the upper-left of the Cortex Core
-    // Looking forward into scene is -Z, screen-left is -X, screen-up is +Y
-    vec3 dirSupernova = normalize(vec3(-0.68, 0.35, -0.65));
-    float dist = length(d - dirSupernova);
+    // ── Distant Bipolar "Butterfly" Cosmic Nebula (Inspired by User Ref #3 & #5) ──
+    // Lowered 3x from top-left ceiling down to eye-level to the left of the Cortex Core
+    // Looking forward into the scene is -Z, screen-left is -X, screen-up is +Y
+    vec3 dirNebula = normalize(vec3(-0.74, 0.11, -0.66));
 
-    // 5x further away: compact celestial radius (~5.5 degree angular diameter)
-    const float R = 0.095;
+    // Construct local tangent space coordinate frame on the celestial sphere
+    vec3 upVec = vec3(0.0, 1.0, 0.0);
+    vec3 rightVec = normalize(cross(upVec, dirNebula));
+    vec3 localUp = cross(dirNebula, rightVec);
 
-    // GPU Fast Early Exit: outside the exploded star, render pure dark velvet space
+    vec3 diff = d - dirNebula;
+    float lx = dot(diff, rightVec);
+    float ly = dot(diff, localUp);
+
+    // Diagonal tilt (~32 degrees) across the sky like Image #3's cosmic wings
+    const float cosA = 0.848;
+    const float sinA = 0.530;
+    float u = lx * cosA - ly * sinA;  // Major axis along the billowing wings
+    float v = lx * sinA + ly * cosA;  // Minor axis across the central waist
+
+    // Compact celestial scale (same distance user loved, with an elegant diagonal aspect ratio)
+    const float rx = 0.155;
+    const float ry = 0.092;
+    float rDist = sqrt((u * u) / (rx * rx) + (v * v) / (ry * ry));
+
+    // GPU Fast Early Exit: outside the distant celestial nebula, render pure dark velvet space
     // Zero fake stars, zero stardust speckles, zero fragments — real 3D stars handled by Starfield!
-    if (dist > R) {
+    if (rDist > 1.0) {
       gl_FragColor = vec4(baseSpace, 1.0);
       return;
     }
 
-    // Normalized radial distance: 0.0 at central pulsar core, 1.0 at outer blast perimeter
-    float u = dist / R;
-    float outerFade = smoothstep(1.0, 0.82, u);
+    // Outer boundary smooth feathered falloff into the pristine void
+    float outerFade = smoothstep(1.0, 0.74, rDist);
 
-    // Local high-frequency coordinates for intricate ejecta filaments and shockwaves
-    vec3 p = (d - dirSupernova) * 62.0;
+    // Local high-frequency coordinates for volumetric billows and gas dynamics
+    vec3 p = vec3(u * 48.0, v * 58.0, dot(diff, dirNebula) * 48.0);
+    float t = uTime * 0.012;
+    vec3 drift = vec3(t * 0.5, -t * 0.35, t * 0.25);
 
-    // Slow celestial drift
-    float t = uTime * 0.015;
-    vec3 drift = vec3(t * 0.4, -t * 0.3, t * 0.2);
+    // Multi-tier domain warping for fluid gas filaments
+    vec3 q = vec3(fbm2(p + drift), fbm2(p + vec3(3.2, 1.4, 6.1)), fbm2(p + vec3(7.1, 4.3, 2.5)));
+    vec3 r = vec3(fbm2(p + 2.4 * q + vec3(1.7, 8.2, 3.4)), fbm2(p + 2.4 * q + vec3(5.3, 2.7, 8.1)), fbm2(p + 2.4 * q));
+    float gas = fbm(p + 2.6 * r);
 
-    // ── 1. Central Stellar Remnant (White-Hot Pulsar / Neutron Star) ──
-    // Intense, pinpoint white-blue stellar core left behind by the supernova explosion
-    float pulsarCore = exp(-u * 45.0);
-    float pulsarHalo = exp(-u * 14.0) * 0.55;
-    vec3 colPulsar = vec3(1.0, 0.98, 0.95) * pulsarCore * 2.8 + vec3(0.45, 0.85, 1.0) * pulsarHalo;
+    // Cauliflower cumulus billow lobes (convex rounded cloud heads)
+    float billow = 1.0 - abs(2.0 * vnoise(p * 2.0 + q * 1.5) - 1.0);
 
-    // ── 2. 60% Blue Synchrotron Cavity & Ionized Gas [O III] ──
-    // Expanding hollow bubble shell filled with relativistic magnetized plasma
-    float cavity = smoothstep(0.08, 0.65, u) * (1.0 - smoothstep(0.80, 0.98, u));
-    float blueNoise = fbm(p + drift);
-    float blueGas = cavity * (0.60 + 0.40 * blueNoise);
+    // Bipolar hourglass wing flaring (pinched at waist, expanding outwards into billowing lobes)
+    float wingProfile = smoothstep(0.038 + 0.52 * abs(u), 0.0, abs(v));
+    float wingGas = (gas * 0.52 + billow * 0.48) * wingProfile;
 
-    vec3 colCobaltDeep    = vec3(0.012, 0.05, 0.18); // Deep interstellar cavity
-    vec3 colCeruleanOcean = vec3(0.04, 0.42, 0.76);  // Mid-density synchrotron gas
-    vec3 colElectricCyan  = vec3(0.12, 0.80, 0.98);  // Radiant ionized oxygen shock front
-    vec3 colIceTurquoise  = vec3(0.55, 0.92, 1.0);   // Luminous inner rim
+    // Interstellar absorption dust rifts carving deep crevices across the waist and wings
+    float dustRift = smoothstep(0.34, 0.68, r.y * 0.6 + q.x * 0.4);
+    float nebulaBody = smoothstep(0.18, 0.76, wingGas) * (1.0 - dustRift * 0.46);
 
-    vec3 blueCol = mix(colCobaltDeep, colCeruleanOcean, smoothstep(0.10, 0.48, blueGas));
-    blueCol = mix(blueCol, colElectricCyan, smoothstep(0.48, 0.78, blueGas));
-    blueCol = mix(blueCol, colIceTurquoise, smoothstep(0.78, 0.96, blueGas));
-    blueCol += uRim * (0.05 + uLevel * 0.18) * blueGas;
+    // ── 1. 60% Blue Billowing Wings & Outer Envelope (Electric Cyan / Deep Cerulean) ──
+    vec3 colCobaltDeep    = vec3(0.012, 0.048, 0.16); // Deep shadowed cosmic ravines
+    vec3 colCeruleanOcean = vec3(0.038, 0.38, 0.70);  // Mid-density volumetric cloud body
+    vec3 colElectricCyan  = vec3(0.08, 0.76, 0.95);   // Luminous ionized cyan folds
+    vec3 colIceTurquoise  = vec3(0.44, 0.88, 0.98);   // Brilliant illuminated outer crests
 
-    // ── 3. 40% Orange Shattered Ejecta Filaments & Shock Boundary ──
-    // Rayleigh-Taylor blast filaments (synthesized sulfur/argon/oxygen) tracing the outer shell
-    float shockRing = smoothstep(0.52, 0.76, u) * (1.0 - smoothstep(0.86, 0.99, u));
-    float filWarp = fbm2(p * 1.8 + drift * 1.5);
-    float filNoise = abs(2.0 * vnoise(p * 2.6 + 1.8 * filWarp + vec3(2.3, 5.1, 1.7)) - 1.0);
-    float filaments = smoothstep(0.42, 0.82, 1.0 - filNoise) * shockRing;
+    vec3 blueCol = mix(colCobaltDeep, colCeruleanOcean, smoothstep(0.10, 0.45, nebulaBody));
+    blueCol = mix(blueCol, colElectricCyan, smoothstep(0.45, 0.75, nebulaBody));
+    blueCol = mix(blueCol, colIceTurquoise, smoothstep(0.75, 0.95, nebulaBody));
+    blueCol += uRim * (0.04 + uLevel * 0.16) * nebulaBody;
 
-    vec3 colMoltenAmber = vec3(0.92, 0.28, 0.03); // Deep magma ejecta
+    // ── 2. 40% Fiery Orange Searing Spine & Molten Combustion Core ──
+    // Molten fire erupts along the central diagonal spine and is cradled within the blue wings
+    float spineDist = abs(v) / (0.035 + 0.38 * abs(u));
+    float spineFire = smoothstep(0.85, 0.0, spineDist);
+    float fireVeins = smoothstep(0.28, 0.72, r.x * 0.5 + q.y * 0.5 + spineFire * 0.45) * smoothstep(0.14, 0.70, nebulaBody);
+
+    vec3 colMoltenAmber = vec3(0.92, 0.28, 0.03); // Deep magma amber
     vec3 colFireOrange  = vec3(1.0, 0.54, 0.06);  // Blazing thermal flame
-    vec3 colSolarGold   = vec3(1.0, 0.86, 0.18);  // Radiant incandescent gold
-    vec3 colWhiteHot    = vec3(1.0, 0.98, 0.92);  // Searing shock boundary
+    vec3 colSolarGold   = vec3(1.0, 0.85, 0.18);  // Radiant incandescent gold
+    vec3 colWhiteHot    = vec3(1.0, 0.98, 0.92);  // Searing thermonuclear white
 
-    vec3 orangeCol = mix(colMoltenAmber, colFireOrange, smoothstep(0.08, 0.42, filaments));
-    orangeCol = mix(orangeCol, colSolarGold, smoothstep(0.42, 0.78, filaments));
-    orangeCol = mix(orangeCol, colWhiteHot, smoothstep(0.78, 0.96, filaments));
+    vec3 fireCol = mix(colMoltenAmber, colFireOrange, smoothstep(0.08, 0.44, fireVeins));
+    fireCol = mix(fireCol, colSolarGold, smoothstep(0.44, 0.78, fireVeins));
+    fireCol = mix(fireCol, colWhiteHot, smoothstep(0.78, 0.96, fireVeins));
 
-    // ── 4. Balanced Composite: 60% Blue Synchrotron Body & 40% Orange Filaments ──
-    float orangeMix = smoothstep(0.18, 0.65, filaments) * 0.88;
-    vec3 remnantCol = mix(blueCol * blueGas, orangeCol * filaments * 1.7, orangeMix);
+    // ── 3. Central Stellar Nursery Core (Incandescent Newborn Star Cluster) ──
+    float coreRadius = length(vec2(u * 1.3, v * 2.0));
+    float coreGlow = exp(-coreRadius * 46.0);
+    float coreCorona = exp(-coreRadius * 16.0) * 0.65;
+    vec3 centralCore = colWhiteHot * coreGlow * 3.0 + colSolarGold * coreCorona;
 
-    // Warm filament scatter illuminating adjacent blue shock rims
-    remnantCol += vec3(1.0, 0.60, 0.15) * filaments * blueGas * 0.35;
+    // ── 4. Balanced Composite: Exactly 60% Blue Wings & 40% Orange Fire ──
+    float fireMix = smoothstep(0.16, 0.66, fireVeins) * 0.88;
+    vec3 nebulaCol = mix(blueCol, fireCol, fireMix);
 
-    // Supernova peak brightness & bloom triggers
-    remnantCol += colSolarGold * pow(filaments, 2.6) * 1.6;
-    remnantCol += colPulsar;
+    // Warm subsurface scatter: orange fire warmly illuminates the cyan cloud edges
+    nebulaCol += vec3(1.0, 0.62, 0.16) * fireVeins * nebulaBody * 0.38;
+
+    // Solar flare peak hot spots (triggers Three.js Bloom!)
+    nebulaCol += colSolarGold * pow(fireVeins, 2.5) * 1.6;
+    nebulaCol += centralCore;
 
     // Seamless outer boundary fade into pure void
-    remnantCol *= outerFade;
+    nebulaCol *= outerFade;
 
     // Final composition
-    float intensity = (0.85 + uEnergy * 0.25 + uLevel * 0.15);
-    vec3 finalCol = baseSpace + remnantCol * intensity;
+    float intensity = nebulaBody * (0.82 + uEnergy * 0.25 + uLevel * 0.15) + coreGlow * 1.5;
+    vec3 finalCol = baseSpace + nebulaCol * intensity;
 
     gl_FragColor = vec4(finalCol, 1.0);
   }

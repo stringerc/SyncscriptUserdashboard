@@ -864,22 +864,23 @@ export const CortexAgentsScene: React.FC = () => {
       // Shift the whole scene right when the roster rail is visible so the
       // orbit clears it (roster ~200px at left).
       const cx = w / 2 + (w >= 900 ? 100 : 0) + p.x, cy = h / 2 + h * 0.05 + p.y;
-      // Distant Supernova Remnant (Exploded Star): 60% Blue, 40% Orange, 5x further in upper-left distance
+      // Distant Bipolar "Butterfly" Cosmic Nebula (60% Blue, 40% Orange, lowered 3x to left of core)
       const nebKey = `${bgKey}|${Math.round(time * 4)}`;
       if (!nebCache || nebCache.key !== nebKey) {
         nebCache = {
           key: nebKey,
           grads: [
-            // 60% Blue Synchrotron Gas Cavity & Ionized Shell (compact, 5x further away)
-            { col: '#0284c7', alpha: 0.26, r: 0.065, ox: -0.35, oy: -0.22 },  // Deep cerulean cavity
-            { col: '#06b6d4', alpha: 0.28, r: 0.048, ox: -0.35, oy: -0.22 },  // Ionized cyan shock front
-            { col: '#38bdf8', alpha: 0.20, r: 0.032, ox: -0.35, oy: -0.22 },  // Luminous inner rim
-            // 40% Orange Ejecta Filaments & Shock Boundary
-            { col: '#ea580c', alpha: 0.32, r: 0.038, ox: -0.34, oy: -0.21 },  // Magma shock filament
-            { col: '#f97316', alpha: 0.26, r: 0.024, ox: -0.34, oy: -0.21 },  // Flame ejecta ridge
-            { col: '#facc15', alpha: 0.24, r: 0.015, ox: -0.35, oy: -0.22 },  // Incandescent gold rim
-            // Central White-Hot Pulsar Remnant Core
-            { col: '#ffffff', alpha: 0.75, r: 0.006, ox: -0.35, oy: -0.22 },  // Pinpoint pulsar core
+            // 60% Blue Billowing Wings & Outer Envelope (electric cyan & ocean cerulean)
+            { col: '#0284c7', alpha: 0.26, r: 0.11, ox: -0.38, oy: -0.09 },  // Upper-left wing lobe
+            { col: '#06b6d4', alpha: 0.28, r: 0.08, ox: -0.35, oy: -0.07 },  // Core wing body
+            { col: '#0284c7', alpha: 0.24, r: 0.09, ox: -0.32, oy: -0.05 },  // Lower-right wing lobe
+            { col: '#38bdf8', alpha: 0.22, r: 0.06, ox: -0.35, oy: -0.07 },  // Ice-turquoise inner rim
+            // 40% Orange Searing Spine & Combustion Veins (cradled in the blue wings)
+            { col: '#ea580c', alpha: 0.32, r: 0.055, ox: -0.35, oy: -0.07 }, // Molten amber combustion spine
+            { col: '#f97316', alpha: 0.28, r: 0.038, ox: -0.35, oy: -0.07 }, // Blazing flame ridge
+            { col: '#facc15', alpha: 0.25, r: 0.022, ox: -0.35, oy: -0.07 }, // Radiant solar gold
+            // Central White-Hot Stellar Nursery Core
+            { col: '#ffffff', alpha: 0.80, r: 0.009, ox: -0.35, oy: -0.07 }, // Incandescent star cluster
           ].map((spec, i) => {
             const na = time * 0.04 + i * 1.6;
             const nx = cx + spec.ox * w + Math.cos(na) * w * 0.02;
