@@ -185,6 +185,26 @@ export const AGENT_SPECS: AgentSpec[] = [
     modelPin: { tier: 'deep' },
     tier: 'enterprise',
   },
+  {
+    id: 'claudecode',
+    name: 'CLAUDE_CODE',
+    role: 'Terminal Architect',
+    blurb: 'Deep-tier autonomous CLI engineer connected via Claude Code bridge — executes AST refactoring, multi-file code synthesis, and architectural migrations.',
+    concurrency: 1,
+    dailyBudget: 24,
+    modelPin: { tier: 'deep' },
+    tier: 'enterprise',
+  },
+  {
+    id: 'openclaw',
+    name: 'OPENCLAW',
+    role: 'WebMCP Browser Copilot',
+    blurb: 'Autonomous web copilot operating through WebMCP and the local OpenClaw gateway (:18789 / :9222) — executes browser navigation, form interaction, authenticated UI workflows, and web tasks without token waste.',
+    concurrency: 1,
+    dailyBudget: 32,
+    modelPin: { tier: 'fast' },
+    tier: 'enterprise',
+  },
 ];
 
 const GLOBAL_CONCURRENCY = 4;

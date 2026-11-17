@@ -17,6 +17,14 @@ Two conventions that matter when reading any claim here:
 - **Status labels are literal.** A section marked **PLAN ONLY** or **MOCK DATA — NOT FUNCTIONAL** describes something that does **not** work. Sections without that label describe shipped, verified behavior with the evidence attached.
 - **A path marked `(removed)` or `(planned)`** is deliberate history or intent, not rot. `npm run verify:memory` skips those lines and fails on every other broken path.
 
+### 2026-11-17 — Sovereign GovTech Autonomous Capture Fabric (SG-ACF) & CDAO Tradewinds Sole-Source Package
+- **Autonomous Federal Opportunity Capture**: Architected and shipped the end-to-end GovTech capture pipeline for high-probability defense solicitations (`src/lib/govtech/sam-types.ts`, `src/lib/govtech/p-win-evaluator.ts`, `src/lib/govtech/compliance-matrix.ts`, `src/lib/govtech/proposal-foundry.ts`, `storefront/tools/sam-gov-scanner.mjs`):
+  - **Bayesian P_win Evaluator**: Calibrated multi-factor scoring algorithm across Past Performance, Technical Fit, Cost/Price Competitiveness, Small Business Set-Aside advantage, and Key Personnel Readiness.
+  - **Automated FAR/DFARS Compliance Matrix**: AST-parsed Section L & M requirements generator mapping Section C statement of work clauses to bid volumes.
+  - **4-Volume Proposal Foundry**: Deterministic generation of Executive Summary, Technical Volume (C5ISR/Cyber/AI Architecture), Management & Staffing Plan, and Cost/Basis of Estimate (BOE) volumes.
+  - **CDAO Tradewinds Sole-Source Acceleration Package**: Complete submission dossier (`docs/govtech/TRADEWINDS_SUBMISSION_DOSSIER.md`), Federal Capability Statement (`docs/govtech/FEDERAL_CAPABILITY_STATEMENT.md`), and timed 5-minute video pitch script (`docs/govtech/TRADEWINDS_5MIN_VIDEO_PITCH_SCRIPT.md`) targeting CDAO Tradewinds Solutions Marketplace awardable status to unlock sole-source direct task orders ($500k–$10M+).
+  - **Storefront & Fleet Integration**: Automated opportunity scanner CLI enqueued 3 live opportunities totaling $645,000 into `storefront/distribution-queue.json` (`W911QX-26-Q-0042`, `TRADEWINDS-CSO-2026-01`, `FA8811-26-Q-0310`), processed autonomously via `DISTRIBUTOR` worker.
+
 ### 2026-11-13 — Voice Fidelity Invariant, Interactive Trajectory Surface, & Calibrated Cortana Pipeline
 - **Elite Audit Hardening & Full Surface Remediation (Devin Audit Verification & Resolution)**: Conducted an exhaustive, line-by-line verification of Devin's audit report across `/cortex/visualizer`, `vite.config.ts`, and core services. Implemented all 16 remediation items across security, functional bugs, fabricated metrics, performance, and gate tests:
   - **Security Hardening**:
@@ -2570,3 +2578,7 @@ Court date: August 18th (past). User confirmed they do not have court on Monday,
 - Created CORTEX_CLOSED_LOOP_RESEARCH_PROMPT.md: elite spec request for self-improving agent ecosystems, seeded with the dossier A/B case study and 5 known loop leaks.
 - Fed A/B findings back into ecosystem: 6 honest outcome notes + learnings summary written to ~/.cortex/vault/03 - Learnings/ so distillLearnings can cluster scout|research.
 - Discovered: scoutWorker never calls relevantRules(); distill needs >=3 clustered non-green outcomes — single experiments bypass the loop.
+
+
+### 2026-11-17 — Cortex Conscious Entry
+Govee API key: Dab9261f-d5cf-4607-81fb-d4ff6f63974e — configured for physical Govee RGBIC lights (TV backlight & LED strip) control via cortex_lights tool.
