@@ -26,22 +26,33 @@ export async function detectCaptchaOrChallenge(htmlContent) {
   return indicators.some((ind) => lower.includes(ind));
 }
 
-export async function pauseAndPrompt(reason, context = {}) {
+export async function pauseAndPrompt(reason, page = null, maxWaitMs = 60_000) {
   const ts = new Date().toISOString();
   console.warn(`\n[CDP-SUPERVISOR PAUSE] ${ts} — ${reason}`);
-  console.warn('Operator intervention required in browser tab. Waiting for manual clearance…');
+  console.warn('Operator intervention required in browser tab. Waiting for clearance…');
   
-  // In automated headless runs, if no terminal is interactive, wait with bounded watchdog
   if (process.env.CI || process.env.NON_INTERACTIVE) {
     console.warn('[CDP-SUPERVISOR] Non-interactive environment detected. Skipping wait.');
-    return;
+    return false;
   }
-  
-  // Wait up to 30s or until resolved
-  return new Promise((resolve) => {
-    const timer = setTimeout(() => {
-      console.log('[CDP-SUPERVISOR] Resume timeout elapsed. Proceeding…');
-      resolve();
-    }, 1500); // Quick testable interval
-  });
+
+  if (!page) {
+    return new Promise((resolve) => setTimeout(resolve, 2000));
+  }
+
+  // Poll for navigation away from login/challenge/verify
+  const start = Date.now();
+  while (Date.now() - start < maxWaitMs) {
+    try {
+      const url = page.url();
+      const lower = url.toLowerCase();
+      if (!lower.includes('/login') && !lower.includes('signin') && !lower.includes('challenge') && !lower.includes('verify')) {
+        console.log(`[CDP-SUPERVISOR] Clearance verified! Proceeding on ${url}…`);
+        return true;
+      }
+    } catch { }
+    await new Promise((r) => setTimeout(r, 2000));
+  }
+  console.warn(`[CDP-SUPERVISOR] Timed out after ${maxWaitMs / 1000}s waiting for manual clearance.`);
+  return false;
 }
