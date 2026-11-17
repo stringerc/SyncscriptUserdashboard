@@ -17,6 +17,14 @@ import { promisify } from 'node:util';
 
 const execFileAsync = promisify(execFile);
 
+const RUNTIME_DIR = process.env.CORTEX_AGENTS_STATE_DIR || path.join(process.cwd(), '.cortex-runtime');
+
+/** Strip control chars/newlines and cap length — window titles are user-controlled text. */
+function sanitizeTelemetry(text: string, max = 120): string {
+  // eslint-disable-next-line no-control-regex
+  return text.replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, max);
+}
+
 export interface TopologyState {
   instance: 'mac' | 'oracle';
   localTime: string;
@@ -117,15 +125,16 @@ export async function probeFrontmostApp(): Promise<UserContextState> {
   try {
     const { stdout } = await execFileAsync('osascript', ['-e', script], { timeout: 350 });
     const [app = 'macOS', window = ''] = stdout.trim().split('|||');
+    const cleanWindow = sanitizeTelemetry(window);
 
     // Parse potential active file from editor window titles (e.g. "CortexCoreScene.tsx — syncscript")
     let file: string | undefined;
-    const fileMatch = window.match(/(?:^|[●\s])([a-zA-Z0-9_\-./]+\.[a-zA-Z0-9]{1,8})\b/);
+    const fileMatch = cleanWindow.match(/(?:^|[●\s])([a-zA-Z0-9_\-./]+\.[a-zA-Z0-9]{1,8})\b/);
     if (fileMatch) {
-      file = fileMatch[1];
+      file = sanitizeTelemetry(fileMatch[1], 80);
     }
 
-    return { activeApp: app.trim(), frontmostWindow: window.trim(), activeFile: file };
+    return { activeApp: sanitizeTelemetry(app, 60) || 'macOS', frontmostWindow: cleanWindow, activeFile: file };
   } catch {
     return { activeApp: 'macOS', frontmostWindow: '' };
   }
@@ -173,6 +182,31 @@ export function getTopology(): TopologyState {
   };
 }
 
+// ── Oracle liveness probe (60s cache — ssh is too heavy for the 2s SWR path) ──
+let oracleProbeCache: { alive: boolean; ts: number } | null = null;
+const ORACLE_PROBE_TTL_MS = 60_000;
+
+/** Probe Oracle runtime over ssh (BatchMode, bounded). On Oracle itself, trivially true. */
+export async function probeOracleAlive(instance: 'mac' | 'oracle'): Promise<boolean> {
+  if (instance === 'oracle') return true;
+  const now = Date.now();
+  if (oracleProbeCache && now - oracleProbeCache.ts < ORACLE_PROBE_TTL_MS) {
+    return oracleProbeCache.alive;
+  }
+  try {
+    await execFileAsync(
+      'ssh',
+      ['-o', 'ConnectTimeout=4', '-o', 'BatchMode=yes', 'oracle', 'true'],
+      { timeout: 6000 },
+    );
+    oracleProbeCache = { alive: true, ts: now };
+    return true;
+  } catch {
+    oracleProbeCache = { alive: false, ts: now };
+    return false;
+  }
+}
+
 /** Gather somatic vitals (memory, CPU load, uptime). */
 export function getSomaticVitals(): HostSomaticState {
   const total = os.totalmem();
@@ -197,10 +231,11 @@ async function refreshWorldState(): Promise<WorldState> {
   const branch = getFastGitBranch();
 
   // Run async probes in parallel with timeouts
-  const [user, git, batteryPct] = await Promise.all([
+  const [user, git, batteryPct, oracleAlive] = await Promise.all([
     probeFrontmostApp(),
     getGitStatus(),
     probeBatteryPct(),
+    probeOracleAlive(topology.instance),
   ]);
 
   if (batteryPct !== undefined) {
@@ -209,9 +244,8 @@ async function refreshWorldState(): Promise<WorldState> {
 
   // Probe fleet status from local state files
   let activeAgentCount = 0;
-  let oracleAlive = topology.instance === 'oracle';
   try {
-    const agentsPath = path.join(process.cwd(), '.cortex-runtime', 'agents-state.json');
+    const agentsPath = path.join(RUNTIME_DIR, 'agents-state.json');
     if (fs.existsSync(agentsPath)) {
       const data = JSON.parse(fs.readFileSync(agentsPath, 'utf8'));
       if (Array.isArray(data?.agents)) {
@@ -301,6 +335,10 @@ export function formatWorldStateHeader(state: WorldState): string {
 
   const hostNode = topology.instance === 'oracle' ? 'Oracle (UTC)' : 'Mac (Local)';
   const battInfo = host.batteryPct !== undefined ? ` | Batt: ${host.batteryPct}%` : '';
+  // Fleet health only surfaced on Mac — on Oracle the host label already says where we are.
+  const fleetInfo = topology.instance === 'mac'
+    ? ` | Oracle: ${state.fleet.oracleAlive ? 'up' : 'DOWN'}`
+    : '';
 
-  return `[WORLD-STATE: ${topology.localTime} | App: ${appInfo} | Git: ${gitInfo} | Host: ${hostNode} | Load: ${host.loadAvg1m} | Mem: ${host.memUsedPct}%${battInfo}]`;
+  return `[WORLD-STATE: ${topology.localTime} | App: ${appInfo} | Git: ${gitInfo} | Host: ${hostNode} | Load: ${host.loadAvg1m} | Mem: ${host.memUsedPct}%${battInfo}${fleetInfo}]`;
 }

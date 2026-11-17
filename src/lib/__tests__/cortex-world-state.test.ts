@@ -41,6 +41,12 @@ describe('Cortex Living World State Blackboard', () => {
       cachedAt: Date.now(),
     };
 
+    const downHeader = formatWorldStateHeader({
+      ...mockState,
+      fleet: { activeAgentCount: 0, oracleAlive: false },
+    });
+    expect(downHeader).toContain('Oracle: DOWN');
+
     const header = formatWorldStateHeader(mockState);
     expect(header).toContain('[WORLD-STATE: 07:25 AM EDT');
     expect(header).toContain('App: Cursor (CortexCoreScene.tsx)');
@@ -49,6 +55,7 @@ describe('Cortex Living World State Blackboard', () => {
     expect(header).toContain('Load: 1.4');
     expect(header).toContain('Mem: 42%');
     expect(header).toContain('Batt: 91%');
+    expect(header).toContain('Oracle: up');
 
     // Token & length check: ensure it stays tight
     const wordCount = header.split(/\s+/).length;
