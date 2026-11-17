@@ -224,6 +224,48 @@ export function fileDevinSessionProposal(opts: {
   return true;
 }
 
+/**
+ * File a Life Radar calendar-add proposal (approve-each per spec §2.4).
+ * Approval dispatches kind 'calendar_create' to RUNNER with the event
+ * details in taskInput — the worker writes Apple/Google Calendar.
+ * Dedupe: one proposal per life-event id, ever.
+ */
+export function fileCalendarProposal(opts: {
+  lifeEventId: string;
+  title: string;
+  whenLabel: string;
+  event: {
+    title: string; startISO: string; endISO?: string;
+    allDay?: boolean; notes?: string; calendars?: string[];
+  };
+  evidence: string[];
+}): boolean {
+  const all = readAll();
+  const proposalId = `cal-${opts.lifeEventId}`.slice(0, 80);
+  if (all.some((p) => p.id === proposalId)) return false;
+  if (all.filter((p) => p.status === 'pending').length >= MAX_PENDING) return false;
+  all.push({
+    id: proposalId,
+    planNote: 'life-radar',
+    planTaskId: 'radar',
+    actionIndex: 0,
+    title: `Add to calendar: ${opts.title.slice(0, 90)}`,
+    actionClass: 'process',
+    agentId: 'runner',
+    kind: 'calendar_create',
+    instruction: `Create calendar event "${opts.event.title}" at ${opts.whenLabel}. Source: ${opts.evidence[0] || 'life radar'}.`,
+    evidence: opts.evidence.slice(0, 4),
+    status: 'pending',
+    createdAt: Date.now(),
+    taskInput: {
+      calendarEvent: opts.event,
+      lifeEventId: opts.lifeEventId,
+    },
+  });
+  writeAll(all);
+  return true;
+}
+
 export function listStrategyProposals(status?: string): StrategyProposal[] {
   const all = readAll();
   const filtered = status ? all.filter((p) => p.status === status) : all;

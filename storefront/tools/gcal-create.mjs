@@ -28,7 +28,7 @@ const params = new URLSearchParams({
 if (allday) params.set('details', (desc || '') + '\n\n(all-day)');
 
 const url = `https://calendar.google.com/calendar/render?${params.toString()}`;
-const browser = await chromium.connectOverCDP('http://localhost:9222');
+const browser = await chromium.connectOverCDP(process.env.CDP_URL || 'http://localhost:9223');
 const ctx = browser.contexts()[0];
 const page = await ctx.newPage();
 await page.goto(url, { waitUntil: 'domcontentloaded' });

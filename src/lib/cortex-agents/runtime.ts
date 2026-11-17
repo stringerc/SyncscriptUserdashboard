@@ -158,6 +158,15 @@ export const AGENT_SPECS: AgentSpec[] = [
     modelPin: { tier: 'fast' },
   },
   {
+    id: 'brief',
+    name: 'BRIEF',
+    role: "Chief's Brief Writer",
+    blurb: 'Composes the daily morning brief — decisions first, verified accomplishments, personal equal billing — and pushes Discord + print artifacts. Assembles from real runtime state only; never invents a win.',
+    concurrency: 1,
+    dailyBudget: 8,
+    modelPin: { tier: 'reason' },
+  },
+  {
     id: 'devin',
     name: 'DEVIN',
     role: 'Principal Architect',
@@ -367,7 +376,7 @@ export class AgentRuntime {
   // deterministic: it re-derives evidence from real task history and
   // rejects fabricated or duplicative requests before they reach a human.
 
-  private static BUILT_INS: ReadonlySet<string> = new Set(['sentinel', 'scout', 'librarian', 'builder', 'reviewer', 'runner', 'distributor', 'forecaster', 'prep', 'warden', 'strategist']);
+  private static BUILT_INS: ReadonlySet<string> = new Set(['sentinel', 'scout', 'librarian', 'builder', 'reviewer', 'runner', 'distributor', 'forecaster', 'prep', 'warden', 'strategist', 'brief']);
   private static MAX_SPAWNED = 4;
   private static MAX_PENDING_PROPOSALS = 10;
   private static SPAWN_PROPOSAL_TTL_MS = 72 * 3600_000;
@@ -619,8 +628,24 @@ export class AgentRuntime {
       }
     }
     this.emit({ type: 'task.transition', task: { ...task }, at: Date.now() });
-    if (status === 'completed' && agent && this.onTaskCompleted) {
-      try { this.onTaskCompleted(task, agent); } catch { /* hook must never break runtime */ }
+    if (status === 'completed') {
+      // ── Pillar 3: Proactive Voice Resonance ──
+      // Emit ambient completion notice so Cortex's proactive voice client announces completed background work
+      try {
+        const ambientFile = path.join(process.cwd(), '.cache', 'cortex-ambient.jsonl');
+        const dir = path.dirname(ambientFile);
+        if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+        const notice = {
+          id: `notice-task-${Date.now()}-${Math.random().toString(36).slice(2, 5)}`,
+          kind: 'ambient',
+          text: `${agent ? agent.name : 'Agent'} completed: ${task.title.slice(0, 72)}.`,
+          ts: Date.now(),
+        };
+        fs.appendFileSync(ambientFile, JSON.stringify(notice) + '\n');
+      } catch {}
+      if (agent && this.onTaskCompleted) {
+        try { this.onTaskCompleted(task, agent); } catch { /* hook must never break runtime */ }
+      }
     }
     if (['completed', 'failed', 'vetoed', 'cancelled'].includes(status) && this.onTaskFinished) {
       try { this.onTaskFinished(task, agent); } catch { /* hook must never break runtime */ }

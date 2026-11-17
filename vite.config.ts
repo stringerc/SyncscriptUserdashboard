@@ -1248,7 +1248,10 @@ function apiProxyPlugin(): Plugin {
       // launch; this poller tracks status transitions and records
       // terminal evidence. LAUNCHED ≠ FINISHED — events say which.
       const devinEnv = loadEnv((server.config as any)?.mode || 'development', process.cwd(), '');
-      for (const k of ['DEVIN_API_KEY', 'DEVIN_API_KEY_COG', 'DEVIN_ORG_ID', 'CORTEX_DEVIN_MAX_SESSIONS_PER_DAY', 'CORTEX_DEVIN_POLL_MS', 'CORTEX_DEVIN_SESSION_TTL_MS']) {
+      for (const k of ['DEVIN_API_KEY', 'DEVIN_API_KEY_COG', 'DEVIN_ORG_ID', 'CORTEX_DEVIN_MAX_SESSIONS_PER_DAY', 'CORTEX_DEVIN_POLL_MS', 'CORTEX_DEVIN_SESSION_TTL_MS',
+        // Discord env for agent workers (BRIEF pushes, proposals) — .env lives
+        // in loadEnv(), not process.env; same gap the devin keys had.
+        'DISCORD_BOT_TOKEN', 'DISCORD_CHANNEL_ID', 'DISCORD_CHANNEL_BRIEFS', 'DISCORD_CHANNEL_INBOX', 'DISCORD_CHANNEL_ALERTS']) {
         if (devinEnv[k] && !process.env[k]) process.env[k] = devinEnv[k];
       }
       const devinPollMs = Math.max(30_000, Number(process.env.CORTEX_DEVIN_POLL_MS || 60_000));

@@ -19,11 +19,14 @@ import { registerWardenWorker } from './warden';
 import { registerDistributorWorker } from './distribution';
 import { runForecastCycle, type RoutedForecast, type ProbeDeps } from './forecaster';
 import { makePrepWorker } from './prep';
+import { makeBriefWorker } from './brief';
+import { makeRadarSweepWorker } from './radar';
 import { makeStrategistWorker } from './strategist';
 import { getCortexProactiveInitiative } from '../cortex-proactive-initiative';
 import { cortexObsidianMemory } from '../cortex-obsidian-memory';
 import { relevantRules, rulesBlock, RULES_DIR, vaultFolder, listMd } from './rules';
 import { LEARNINGS_DIR } from './outcomes';
+import { readSessionHandoff, writeSessionHandoff, markHandoffClaimed } from './handoff';
 
 const PORT = process.env.PORT ? parseInt(process.env.PORT) : 5173;
 const BASE = `http://127.0.0.1:${PORT}`;
@@ -398,7 +401,7 @@ async function distillLearnings(ctx: AgentContext): Promise<unknown> {
     .map((r) => ({
       rule: String(r.rule).trim(),
       rationale: String(r.rationale || '').slice(0, 300),
-      evidence: (Array.isArray(r.evidence) ? r.evidence : []).map(String).filter((f) => evidenceFiles.has(f)),
+      evidence: (Array.isArray(r.evidence) ? r.evidence : []).map(String).filter((f: string) => evidenceFiles.has(f)),
     }))
     .filter((r) => r.evidence.length > 0)
     .slice(0, DISTILL_MAX_RULES);
@@ -648,11 +651,23 @@ async function agentIdeasWorker(ctx: AgentContext) {
   return { ideas: ideas.length, results };
 }
 
+const radarSweep = makeRadarSweepWorker({
+  toolExecute: (name, args, timeoutMs, telemetry) => toolExecute(name, args, timeoutMs, telemetry),
+  fetchInbox: async () => {
+    try {
+      const res = await fetch(`${BASE}/api/cortex/gmail/live-inbox`, { signal: AbortSignal.timeout(8000) });
+      if (!res.ok) return null;
+      return res.json();
+    } catch { return null; }
+  },
+});
+
 const scoutWorker: WorkerHandler = async (ctx) => {
   const kind = ctx.task.kind || 'research';
   if (kind === 'repo_scan') return repoScanWorker(ctx);
   if (kind === 'agent_ideas') return agentIdeasWorker(ctx);
   if (kind === 'social_scan') return socialScanWorker(ctx);
+  if (kind === 'radar_sweep') return radarSweep(ctx);
   const query = str(ctx.task.input.query);
   const depth = Math.min(3, Math.max(1, Number(ctx.task.input.depth) || 1));
   if (!query) throw new Error('scout research requires input.query');
@@ -1004,8 +1019,8 @@ const reviewerWorker: WorkerHandler = async (ctx) => {
       toolExecute('run_command', { command: 'git diff HEAD', timeout: 20 }, 30_000, ctx.telemetry),
       toolExecute('run_command', { command: 'git status --porcelain', timeout: 10 }, 15_000, ctx.telemetry),
     ]);
-    const diffText = String(diff?.stdout || diff?.result?.stdout || '');
-    const statText = String(stat?.stdout || stat?.result?.stdout || '');
+    const diffText = String((diff as any)?.stdout || (diff as any)?.result?.stdout || '');
+    const statText = String((stat as any)?.stdout || (stat as any)?.result?.stdout || '');
     material = `GIT STATUS:\n${statText.slice(0, 2000)}\n\nDIFF:\n${diffText.slice(0, 30000)}`;
     sources.push('git diff HEAD');
   }
@@ -1038,6 +1053,43 @@ const reviewerWorker: WorkerHandler = async (ctx) => {
 
 const runnerWorker: WorkerHandler = async (ctx) => {
   const kind = ctx.task.kind;
+
+  // calendar_create — approved Life Radar events write to Apple/Google
+  // Calendar via scripts/calendar-create.mjs. Approval already happened
+  // upstream (strategy proposal gate); this is the execution half.
+  if (kind === 'calendar_create') {
+    const ev = (ctx.task.input.calendarEvent || {}) as any;
+    if (!ev.title || !ev.startISO) throw new Error('calendar_create requires input.calendarEvent.{title,startISO}');
+    ctx.progress(0.2);
+    const script = path.join(process.cwd(), 'scripts', 'calendar-create.mjs');
+    const parts = [
+      `node ${JSON.stringify(script)}`,
+      `--title ${JSON.stringify(String(ev.title).slice(0, 200))}`,
+      `--start ${JSON.stringify(String(ev.startISO))}`,
+    ];
+    if (ev.endISO) parts.push(`--end ${JSON.stringify(String(ev.endISO))}`);
+    if (ev.allDay) parts.push('--allday');
+    if (ev.notes) parts.push(`--notes ${JSON.stringify(String(ev.notes).slice(0, 500))}`);
+    const calendars = Array.isArray(ev.calendars) && ev.calendars.length ? ev.calendars.join(',') : 'apple,google';
+    parts.push(`--calendars ${JSON.stringify(calendars)}`);
+    const out = await toolExecute('run_command', {
+      command: parts.join(' '),
+      timeout: 90,
+    }, 100_000, ctx.telemetry);
+    ctx.progress(0.8);
+    const stdout = String((out as any)?.stdout || '');
+    let parsed: any = null;
+    try { parsed = JSON.parse(stdout.slice(stdout.indexOf('CALENDAR_CREATE:') + 17).trim()); } catch {}
+    const ok = parsed ? Object.values(parsed).every((r: any) => r?.ok) : out?.ok === true;
+    ctx.progress(1);
+    return {
+      calendarEvent: { title: ev.title, startISO: ev.startISO, calendars },
+      ok,
+      results: parsed,
+      tail: stdout.slice(-600),
+    };
+  }
+
   const command = str(ctx.task.input.command || ctx.task.input.cmd);
   const effective = kind === 'test' ? (command || 'npm test') : command;
   if (!effective) throw new Error(`runner ${kind} requires input.command`);
@@ -1055,9 +1107,9 @@ const runnerWorker: WorkerHandler = async (ctx) => {
   const out = await toolExecute('run_command', { command: effective, ...(cwd ? { cwd } : {}), timeout: timeoutMs / 1000 }, timeoutMs + 5_000, ctx.telemetry);
   ctx.progress(0.6);
 
-  const stdout = String(out?.stdout || out?.result?.stdout || '');
-  const stderr = String(out?.stderr || out?.result?.stderr || '');
-  const exitCode = Number(out?.exitCode ?? out?.result?.exitCode ?? (out?.ok === false ? 1 : 0));
+  const stdout = String((out as any)?.stdout || (out as any)?.result?.stdout || '');
+  const stderr = String((out as any)?.stderr || (out as any)?.result?.stderr || '');
+  const exitCode = Number((out as any)?.exitCode ?? (out as any)?.result?.exitCode ?? (out?.ok === false ? 1 : 0));
   const ok = out?.ok !== false && exitCode === 0;
   const combined = [stdout, stderr].filter(Boolean).join('\n');
 
@@ -1487,13 +1539,21 @@ const devinWorker: WorkerHandler = async (ctx) => {
   if (!instruction) throw new Error('devin requires input.instruction');
 
   ctx.progress(0.05);
+  // Check for session handoff baton from Antigravity (Dual-Engine Failover)
+  const pendingHandoff = readSessionHandoff();
+  let handoffContext = '';
+  if (pendingHandoff && (ctx.task.kind === 'pickup' || ctx.task.input?.pickup || ctx.task.input?.handoff)) {
+    handoffContext = `\n\n[ANTIGRAVITY SESSION HANDOFF BATON (INGESTED)]\nMission: ${pendingHandoff.mission}\nPhase: ${pendingHandoff.currentPhase}\nFiles Modified: ${pendingHandoff.filesModified.join(', ')}\nPassing Tests: ${pendingHandoff.verifiedTests.join(', ')}\nImmediate Next Step: ${pendingHandoff.immediateNextStep}\nBlockers: ${pendingHandoff.knownBlockers || 'none'}\n`;
+    markHandoffClaimed('devin');
+  }
+
   const distilledRules = relevantRules(instruction);
-  const spec = await expandTaskSpec(ctx.llm, instruction + retryNote(ctx.task.input), 'deep');
+  const spec = await expandTaskSpec(ctx.llm, instruction + handoffContext + retryNote(ctx.task.input), 'deep');
   ctx.progress(0.15);
 
   const planMessages = [
     { role: 'system', content: DEVIN_SYSTEM + (distilledRules ? `\n\nDISTILLED RULES (constraints learned from accepted outcomes — follow unless they conflict with governance):\n${distilledRules}` : '') },
-    { role: 'user', content: instruction + specBlock(spec) + retryNote(ctx.task.input) },
+    { role: 'user', content: instruction + handoffContext + specBlock(spec) + retryNote(ctx.task.input) },
   ];
   const parseSteps = (text: string): any[] => {
     try {
@@ -1643,6 +1703,58 @@ const antigravityWorker: WorkerHandler = async (ctx) => {
       channel,
       message: msg,
       status: 'transmitted',
+    };
+  }
+
+  // 1b. Handoff to Devin (The Relay Baton Protocol)
+  if (ctx.task.kind === 'handoff' || ctx.task.input.handoff) {
+    const mission = str(ctx.task.input.mission || instruction);
+    const handoff = writeSessionHandoff({
+      fromAgent: 'antigravity',
+      toAgent: 'devin',
+      mission,
+      currentPhase: str(ctx.task.input.phase || 'Execution failover / token handoff'),
+      filesModified: Array.isArray(ctx.task.input.filesModified) ? (ctx.task.input.filesModified as any[]).map(String) : [],
+      verifiedTests: Array.isArray(ctx.task.input.verifiedTests) ? (ctx.task.input.verifiedTests as any[]).map(String) : ['npm run verify:cortex'],
+      immediateNextStep: str(ctx.task.input.immediateNextStep || ctx.task.input.nextStep || 'Execute next unit according to DEVIN_PLAYBOOK.md'),
+      knownBlockers: str(ctx.task.input.blockers || ''),
+      verifyCommand: str(ctx.task.input.verifyCommand || 'npm run verify:cortex'),
+      contextSummary: str(ctx.task.input.contextSummary || instruction),
+    });
+
+    ctx.emit({
+      type: 'agent.comm',
+      from: 'antigravity',
+      to: 'devin',
+      channel: 'directive',
+      message: `Relay baton passed: ${mission.slice(0, 48)}. Handoff ready in .cortex-runtime/session-handoff.json`,
+      at: Date.now(),
+    });
+
+    if (ctx.task.input.autoPickup !== false) {
+      try {
+        fetch(`${BASE}/api/cortex/agents/task`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            agentId: 'devin',
+            kind: 'pickup',
+            title: `Devin Pickup: ${mission.slice(0, 50)}`,
+            input: {
+              pickup: true,
+              handoff: true,
+              instruction: `Pick up mission from Antigravity handoff baton: ${mission}. Immediate step: ${handoff.immediateNextStep}. Read DEVIN_PLAYBOOK.md.`,
+            },
+          }),
+        }).catch(() => {});
+      } catch {}
+    }
+
+    ctx.progress(1);
+    return {
+      handoff,
+      status: 'handoff_baton_created',
+      note: 'Session handoff written to .cortex-runtime/session-handoff.json. Devin queued for pickup.',
     };
   }
 
@@ -1809,4 +1921,5 @@ export function registerAgentWorkers(runtime: AgentRuntime) {
   }));
   registerWardenWorker(runtime);
   runtime.registerWorker('strategist', makeStrategistWorker(runtime));
+  runtime.registerWorker('brief', makeBriefWorker());
 }
