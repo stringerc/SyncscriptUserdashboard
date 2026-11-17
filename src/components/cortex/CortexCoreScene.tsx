@@ -68,11 +68,11 @@ const NOISE_GLSL = /* glsl */ `
 const c = (hex: string) => new THREE.Color(hex);
 
 const STATE_COLORS: Record<CortexVoiceState, { core: string; rim: string; deep: string; energy: number; cCore: THREE.Color; cRim: THREE.Color; cDeep: THREE.Color }> = {
-  idle:      { core: '#124a5e', rim: '#38d9f5', deep: '#020a12', energy: 0.45, cCore: c('#124a5e'), cRim: c('#38d9f5'), cDeep: c('#020a12') },
-  listening: { core: '#063d2e', rim: '#34d399', deep: '#020d08', energy: 0.5,  cCore: c('#063d2e'), cRim: c('#34d399'), cDeep: c('#020d08') },
-  thinking:  { core: '#2e1065', rim: '#a78bfa', deep: '#0a0618', energy: 0.75, cCore: c('#2e1065'), cRim: c('#a78bfa'), cDeep: c('#0a0618') },
-  speaking:  { core: '#3a2c05', rim: '#fcd34d', deep: '#120c02', energy: 1.0,  cCore: c('#3a2c05'), cRim: c('#fcd34d'), cDeep: c('#120c02') },
-  working:   { core: '#4a044e', rim: '#e879f9', deep: '#12041a', energy: 0.68, cCore: c('#4a044e'), cRim: c('#e879f9'), cDeep: c('#12041a') },
+  idle: { core: '#124a5e', rim: '#38d9f5', deep: '#020a12', energy: 0.45, cCore: c('#124a5e'), cRim: c('#38d9f5'), cDeep: c('#020a12') },
+  listening: { core: '#063d2e', rim: '#34d399', deep: '#020d08', energy: 0.5, cCore: c('#063d2e'), cRim: c('#34d399'), cDeep: c('#020d08') },
+  thinking: { core: '#2e1065', rim: '#a78bfa', deep: '#0a0618', energy: 0.75, cCore: c('#2e1065'), cRim: c('#a78bfa'), cDeep: c('#0a0618') },
+  speaking: { core: '#3a2c05', rim: '#fcd34d', deep: '#120c02', energy: 1.0, cCore: c('#3a2c05'), cRim: c('#fcd34d'), cDeep: c('#120c02') },
+  working: { core: '#4a044e', rim: '#e879f9', deep: '#12041a', energy: 0.68, cCore: c('#4a044e'), cRim: c('#e879f9'), cDeep: c('#12041a') },
 };
 
 interface LiveSignal {
@@ -485,9 +485,9 @@ interface RingSpec {
 }
 
 const RINGS: RingSpec[] = [
-  { radius: 1.62, tube: 0.008, tiltX: 78, tiltZ: 0,   speed: 2.2, beads: 3, spin: 0.16, phase: 0 },
-  { radius: 2.05, tube: 0.006, tiltX: 64, tiltZ: 38,  speed: -1.6, beads: 5, spin: -0.11, phase: 2.1 },
-  { radius: 2.5,  tube: 0.005, tiltX: 88, tiltZ: -52, speed: 1.1,  beads: 2, spin: 0.07, phase: 4.2 },
+  { radius: 1.62, tube: 0.008, tiltX: 78, tiltZ: 0, speed: 2.2, beads: 3, spin: 0.16, phase: 0 },
+  { radius: 2.05, tube: 0.006, tiltX: 64, tiltZ: 38, speed: -1.6, beads: 5, spin: -0.11, phase: 2.1 },
+  { radius: 2.5, tube: 0.005, tiltX: 88, tiltZ: -52, speed: 1.1, beads: 2, spin: 0.07, phase: 4.2 },
 ];
 
 function OrbitRing({ spec, live, index }: { spec: RingSpec; live: React.MutableRefObject<LiveSignal>; index: number }) {
@@ -823,8 +823,8 @@ function Satellites({ live }: { live: React.MutableRefObject<LiveSignal> }) {
         tag.position.set(px, py - 0.3, pz);
         (tag.material as THREE.SpriteMaterial).opacity = !agent ? 0
           : agent.status === 'working' ? 0.85
-          : agent.status === 'retired' ? 0.18
-          : agent.status === 'offline' ? 0.3 : 0.5;
+            : agent.status === 'retired' ? 0.18
+              : agent.status === 'offline' ? 0.3 : 0.5;
       }
 
       // ── Crystalline Neural Astrolabe: 3D cyber-celestial vessel ──
@@ -871,8 +871,8 @@ function Satellites({ live }: { live: React.MutableRefObject<LiveSignal> }) {
             const corePulse = wrk
               ? 1 + (apex ? 0.24 : 0.18) * Math.sin(t * 8.5 + i * 2)
               : err
-              ? 0.9 + 0.25 * Math.sin(t * 14 + i)
-              : 1 + 0.08 * Math.sin(t * 2.2 + i);
+                ? 0.9 + 0.25 * Math.sin(t * 14 + i)
+                : 1 + 0.08 * Math.sin(t * 2.2 + i);
             core.scale.setScalar(corePulse);
           }
           if (coreMat) {
@@ -881,12 +881,12 @@ function Satellites({ live }: { live: React.MutableRefObject<LiveSignal> }) {
             coreMat.emissiveIntensity = dim
               ? 0.2
               : apex
-              ? (wrk ? 2.4 + 0.5 * Math.sin(t * 7) : 1.4)
-              : wrk
-              ? 1.8 + 0.4 * Math.sin(t * 6)
-              : err
-              ? 1.5 * (0.5 + 0.5 * Math.sin(t * 12))
-              : 0.9;
+                ? (wrk ? 2.4 + 0.5 * Math.sin(t * 7) : 1.4)
+                : wrk
+                  ? 1.8 + 0.4 * Math.sin(t * 6)
+                  : err
+                    ? 1.5 * (0.5 + 0.5 * Math.sin(t * 12))
+                    : 0.9;
           }
 
           // Crystalline dodecahedron cage: counter-rotating iridescent refraction

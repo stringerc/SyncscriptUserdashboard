@@ -313,7 +313,7 @@ export default function CortexVisualizerPage() {
       title: 'Distribution Deck',
       web: { url: '/storefront/distribution-dashboard.html', slug: 'distribution-deck' },
       pinned: true,
-      customSize: { w: 560, h: 480 },
+      customSize: { w: 720, h: 580 },
     });
     openSurfacePanel({
       kind: 'web',

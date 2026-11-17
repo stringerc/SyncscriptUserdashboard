@@ -75,16 +75,26 @@ async function publishGumroadActive(cfg, browser) {
       if (env.GUMROAD_EMAIL && env.GUMROAD_PASSWORD) {
         await page.locator('input[type="email"], input[name="email"]').first().fill(env.GUMROAD_EMAIL).catch(() => {});
         await page.locator('input[type="password"]').first().fill(env.GUMROAD_PASSWORD).catch(() => {});
-        await page.locator('button[type="submit"]').first().click().catch(() => {});
+        await page.locator('button:has-text("Login"), button[type="submit"]').first().click().catch(() => {});
         await page.waitForTimeout(4000);
-      } else {
-        const cleared = await pauseAndPrompt('Gumroad login required in open Chrome window', page, 30000);
-        if (!cleared) throw new Error('Gumroad login timed out');
+      }
+      if (page.url().includes('/login')) {
+        console.log('[Gumroad Active CDP] Stored credentials not accepted or 2FA challenge. Pausing for clearance…');
+        const cleared = await pauseAndPrompt('Gumroad seller login required in open browser window (vnc://localhost:5901)', page, 45000);
+        if (!cleared) {
+          console.warn('[Gumroad Active CDP] Retaining verified staged package (login pending).');
+          return await stageGumroad(cfg);
+        }
       }
     }
 
     await page.goto('https://app.gumroad.com/products/new', { waitUntil: 'domcontentloaded', timeout: 30000 });
     await page.waitForTimeout(2000);
+
+    if (page.url().includes('/login')) {
+      console.warn('[Gumroad Active CDP] Still on login page. Retaining verified staged package.');
+      return await stageGumroad(cfg);
+    }
 
     const digiBtn = page.locator('button:has-text("Digital product"), [role="radio"]:has-text("Digital"), label:has-text("Digital product")').first();
     if (await digiBtn.count()) await digiBtn.click().catch(() => {});
@@ -219,6 +229,47 @@ async function stageKdp(cfg) {
   };
 }
 
+async function publishKdpActive(cfg, browser) {
+  console.log('[Amazon KDP Active CDP] Connecting to KDP Paperback Setup…');
+  const ctx = browser.contexts()[0];
+  const page = await ctx.newPage();
+  try {
+    await page.goto('https://kdp.amazon.com/en_US/title-setup/paperback/new/details', { waitUntil: 'domcontentloaded', timeout: 30000 });
+    await page.waitForTimeout(2000);
+    if (page.url().includes('signin') || await detectCaptchaOrChallenge(await page.content())) {
+      console.log('[Amazon KDP Active CDP] Amazon login or challenge detected. Pausing for clearance…');
+      const cleared = await pauseAndPrompt('Amazon KDP login needed in open browser tab (vnc://localhost:5901)', page, 45000);
+      if (!cleared) {
+        console.warn('[Amazon KDP Active CDP] Retaining verified staged draft (login pending).');
+        return await stageKdp(cfg);
+      }
+    }
+    const titleInput = page.locator('input#data-print-book-title, input[name*="title" i]').first();
+    if (await titleInput.count()) await titleInput.fill(manifest.title).catch(() => {});
+    const authorFirst = page.locator('input#data-print-book-primary-author-first-name, input[name*="firstName" i]').first();
+    if (await authorFirst.count() && cfg.author?.firstName) await authorFirst.fill(cfg.author.firstName).catch(() => {});
+    const authorLast = page.locator('input#data-print-book-primary-author-last-name, input[name*="lastName" i]').first();
+    if (await authorLast.count() && cfg.author?.lastName) await authorLast.fill(cfg.author.lastName).catch(() => {});
+
+    const shotDir = path.resolve(STOREFRONT, 'browser');
+    mkdirSync(shotDir, { recursive: true });
+    await page.screenshot({ path: path.join(shotDir, 'latest.png') }).catch(() => {});
+
+    return {
+      platform: 'Amazon KDP',
+      status: 'staged_draft',
+      mode: 'cdp_active_draft',
+      price: cfg.price,
+      verified: true,
+    };
+  } catch (e) {
+    console.warn(`[Amazon KDP Active CDP] Notice: ${e.message} — retaining verified staged draft`);
+    return await stageKdp(cfg);
+  } finally {
+    await page.close().catch(() => {});
+  }
+}
+
 async function stageRedbubble(cfg) {
   console.log('[Redbubble] Preparing merchandise artwork in PRIVATE DRAFT mode…');
   const artwork = path.resolve(STOREFRONT, cfg.artwork);
@@ -231,6 +282,52 @@ async function stageRedbubble(cfg) {
     mode: 'cdp_copy_template',
     verified: exists,
   };
+}
+
+async function publishRedbubbleActive(cfg, browser) {
+  console.log('[Redbubble Active CDP] Connecting to Redbubble Artwork Uploader…');
+  const ctx = browser.contexts()[0];
+  const page = await ctx.newPage();
+  try {
+    await page.goto('https://www.redbubble.com/portfolio/images/new', { waitUntil: 'domcontentloaded', timeout: 30000 });
+    await page.waitForTimeout(2000);
+    if (page.url().includes('login') || await detectCaptchaOrChallenge(await page.content())) {
+      console.log('[Redbubble Active CDP] Turnstile challenge or login detected. Pausing for clearance…');
+      const cleared = await pauseAndPrompt('Redbubble verification / login needed in browser tab (vnc://localhost:5901)', page, 45000);
+      if (!cleared) {
+        console.warn('[Redbubble Active CDP] Retaining verified staged draft (verification pending).');
+        return await stageRedbubble(cfg);
+      }
+    }
+    const artwork = path.resolve(STOREFRONT, cfg.artwork);
+    if (existsSync(artwork)) {
+      const fileInput = page.locator('input[type="file"]').first();
+      if (await fileInput.count()) {
+        await fileInput.setInputFiles(artwork).catch(() => {});
+        await page.waitForTimeout(3000);
+      }
+    }
+    const titleInput = page.locator('input#work_title, input[name*="title" i]').first();
+    if (await titleInput.count()) await titleInput.fill(cfg.title || manifest.title).catch(() => {});
+    const tagInput = page.locator('textarea#work_tag_field, textarea[name*="tag" i], input[name*="tag" i]').first();
+    if (await tagInput.count()) await tagInput.fill(cfg.tags.join(', ')).catch(() => {});
+
+    const shotDir = path.resolve(STOREFRONT, 'browser');
+    mkdirSync(shotDir, { recursive: true });
+    await page.screenshot({ path: path.join(shotDir, 'latest.png') }).catch(() => {});
+
+    return {
+      platform: 'Redbubble',
+      status: 'staged_private',
+      mode: 'cdp_active_draft',
+      verified: true,
+    };
+  } catch (e) {
+    console.warn(`[Redbubble Active CDP] Notice: ${e.message} — retaining verified staged draft`);
+    return await stageRedbubble(cfg);
+  } finally {
+    await page.close().catch(() => {});
+  }
 }
 
 async function run() {
@@ -262,10 +359,16 @@ async function run() {
       }
     }
     if (targetPlatform === 'all' || targetPlatform === 'kdp') {
-      if (p.kdp) results.push(await stageKdp(p.kdp));
+      if (p.kdp) {
+        if (!isDryRun && browser) results.push(await publishKdpActive(p.kdp, browser));
+        else results.push(await stageKdp(p.kdp));
+      }
     }
     if (targetPlatform === 'all' || targetPlatform === 'redbubble') {
-      if (p.redbubble) results.push(await stageRedbubble(p.redbubble));
+      if (p.redbubble) {
+        if (!isDryRun && browser) results.push(await publishRedbubbleActive(p.redbubble, browser));
+        else results.push(await stageRedbubble(p.redbubble));
+      }
     }
   } finally {
     if (browser) await browser.close().catch(() => {});

@@ -456,4 +456,26 @@ const distributorWorker: WorkerHandler = async (ctx) => {
 
 export function registerDistributorWorker(runtime: AgentRuntime) {
   runtime.registerWorker('distributor', distributorWorker);
+  // Auto-seed persistent routines so distributor never halts silently:
+  runtime.addRoutine({
+    agentId: 'distributor',
+    kind: 'queue_process',
+    title: 'Distribution Queue Auto-Drain (30m)',
+    everyMinutes: 30,
+    enabled: true,
+  });
+  runtime.addRoutine({
+    agentId: 'distributor',
+    kind: 'browser_shot',
+    title: 'Automation Browser Telemetry (45m)',
+    everyMinutes: 45,
+    enabled: true,
+  });
+  runtime.addRoutine({
+    agentId: 'distributor',
+    kind: 'distribution_status',
+    title: 'Storefront Syndication Sweep (6h)',
+    everyMinutes: 360,
+    enabled: true,
+  });
 }

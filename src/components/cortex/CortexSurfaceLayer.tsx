@@ -555,7 +555,7 @@ function WebPanelBody({ panel }: { panel: SurfacePanel }) {
               key={iframeKey}
               src={webUrl}
               title={panel.title || 'Web Sandbox'}
-              sandbox="allow-scripts allow-forms allow-modals"
+              sandbox="allow-scripts allow-forms allow-modals allow-same-origin"
               style={{ width: `${virtualW}px`, height: `${virtualH}px`, border: 'none', background: '#000' }}
             />
           </div>
@@ -564,7 +564,7 @@ function WebPanelBody({ panel }: { panel: SurfacePanel }) {
             key={iframeKey}
             src={webUrl}
             title={panel.title || 'Web Sandbox'}
-            sandbox="allow-scripts allow-forms allow-modals"
+            sandbox="allow-scripts allow-forms allow-modals allow-same-origin"
             style={{ width: '100%', height: '100%', minHeight: 180, border: 'none', background: '#000' }}
           />
         )}

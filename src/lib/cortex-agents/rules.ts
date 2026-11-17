@@ -13,6 +13,7 @@ import path from 'node:path';
 import { cortexObsidianMemory } from '../cortex-obsidian-memory';
 
 export const RULES_DIR = '04 - Rules';
+export const LOCAL_RULES_DIR = path.join(process.env.CORTEX_AGENTS_STATE_DIR || path.join(process.cwd(), '.cortex-runtime'), 'rules');
 
 export function vaultFolder(folder: string): string | null {
   try {
@@ -42,23 +43,46 @@ function tokenScore(text: string, tokens: Set<string>): number {
   return n;
 }
 
+/** Add a synthesized rule to local runtime rules (Pillar 2: Recursive Learning). */
+export function addDistilledRule(id: string, text: string, evidence: string[] = []): boolean {
+  try {
+    fs.mkdirSync(LOCAL_RULES_DIR, { recursive: true });
+    const safeId = id.replace(/[^a-zA-Z0-9_-]/g, '_');
+    const filePath = path.join(LOCAL_RULES_DIR, `${safeId}.md`);
+    const content = `# DISTILLED RULE: ${text}\n\nSynthesized at: ${new Date().toISOString()}\nEvidence: ${evidence.join(', ') || 'runtime-incident'}\n`;
+    fs.writeFileSync(filePath, content, 'utf-8');
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /** Rules relevant to a task instruction, formatted for a system prompt. */
-export function relevantRules(instruction: string, limit = 3): string {
-  const dir = vaultFolder(RULES_DIR);
-  const files = listMd(dir).slice(-40);
-  if (!files.length) return '';
+export function relevantRules(instruction: string, limit = 4): string {
+  const dirs = [vaultFolder(RULES_DIR), LOCAL_RULES_DIR].filter(Boolean) as string[];
+  const allScored: { file: string; text: string; score: number }[] = [];
   const tokens = new Set(instruction.toLowerCase().split(/[^a-z0-9]+/).filter((t) => t.length > 3));
-  const scored = files
-    .map((f) => {
+
+  for (const dir of dirs) {
+    const files = listMd(dir).slice(-40);
+    for (const f of files) {
       try {
-        const content = fs.readFileSync(path.join(dir!, f), 'utf-8');
-        return { file: f, text: ruleText(content), score: tokenScore(content, tokens) };
-      } catch { return { file: f, text: '', score: 0 }; }
-    })
-    .filter((r) => r.text && r.score > 0)
+        const content = fs.readFileSync(path.join(dir, f), 'utf-8');
+        const rText = ruleText(content);
+        const score = tokenScore(content, tokens);
+        if (rText && score > 0) {
+          allScored.push({ file: f, text: rText, score });
+        }
+      } catch {}
+    }
+  }
+
+  if (!allScored.length) return '';
+  return allScored
     .sort((a, b) => b.score - a.score)
-    .slice(0, limit);
-  return scored.map((r) => `- ${r.text}`).join('\n');
+    .slice(0, limit)
+    .map((r) => `- ${r.text}`)
+    .join('\n');
 }
 
 /** Append the DISTILLED RULES block to a system prompt when rules match. */

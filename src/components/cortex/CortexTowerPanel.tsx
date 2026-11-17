@@ -9,6 +9,7 @@
  */
 
 import React, { useEffect, useState } from 'react';
+import { openSurfacePanel } from '../../lib/cortex-surfaces';
 
 const MONO = "'IBM Plex Mono', monospace";
 const INK = '#e0f2fe';
@@ -281,9 +282,25 @@ export const CortexTowerPanel: React.FC<{ onClose: () => void }> = ({ onClose })
               <div style={{ fontSize: 8, color: '#38bdf8', fontWeight: 700 }}>LAWBOT COMPLIANCE</div>
               <div style={{ fontSize: 7, color: DIM, marginTop: 2 }}>Audit & legal verification pipeline</div>
             </div>
-            <div style={{ border: '1px solid rgba(52,211,153,0.18)', borderRadius: 3, padding: '6px 9px', background: 'rgba(52,211,153,0.03)' }}>
-              <div style={{ fontSize: 8, color: '#34d399', fontWeight: 700 }}>OMNI STORE SYNDICATION</div>
-              <div style={{ fontSize: 7, color: DIM, marginTop: 2 }}>Chrome · Edge · Firefox · WebStores</div>
+            <div
+              onClick={() => openSurfacePanel({
+                kind: 'web',
+                title: 'Distribution Deck',
+                web: { url: '/storefront/distribution-dashboard.html', slug: 'distribution-deck' },
+                pinned: true,
+                customSize: { w: 720, h: 580 },
+              })}
+              style={{
+                border: '1px solid rgba(52,211,153,0.35)', borderRadius: 3, padding: '6px 9px',
+                background: 'rgba(52,211,153,0.06)', cursor: 'pointer',
+              }}
+              title="Click to launch Omni-Store Mission Control Deck"
+            >
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <span style={{ fontSize: 8, color: '#34d399', fontWeight: 700 }}>OMNI STORE SYNDICATION</span>
+                <span style={{ fontSize: 7, color: '#34d399', padding: '1px 5px', borderRadius: 2, background: 'rgba(52,211,153,0.15)', border: '1px solid rgba(52,211,153,0.3)' }}>OPEN DECK ↗</span>
+              </div>
+              <div style={{ fontSize: 7, color: DIM, marginTop: 2 }}>Gumroad · Etsy · Amazon KDP · Redbubble</div>
             </div>
           </div>
           {(data?.missions || []).length > 0 && (
