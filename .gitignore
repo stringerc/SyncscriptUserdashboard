@@ -289,3 +289,13 @@ storefront/.cdp-url
 
 # Embedded reference repos (not submodules)
 archive/reference-*/
+
+# Generated runtime artifacts (regenerated each run — keep the dirty-indicator honest)
+tsconfig.tsbuildinfo
+__pycache__/
+*.pyc
+models.matrix
+public/screenshots/latest-*.png
+storefront/browser/latest.*
+storefront/distribution-queue.json
+storefront/distribution-dashboard.html
