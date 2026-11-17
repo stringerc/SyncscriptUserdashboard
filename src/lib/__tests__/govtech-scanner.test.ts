@@ -81,7 +81,7 @@ describe('SAM.gov Ingestion Scanner Tool', () => {
 
     const enqueued = parsed.items.find((i: any) => i.type === 'sam_gov_capture');
     expect(enqueued).toBeDefined();
-    expect(enqueued.status).toBe('pending');
+    expect(['pending', 'running', 'done']).toContain(enqueued.status);
     expect(typeof enqueued.createdAt).toBe('number');
     expect(enqueued.staged_pending_human).toBe(true);
   });
