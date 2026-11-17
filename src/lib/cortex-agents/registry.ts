@@ -44,6 +44,10 @@ export const SEED_MATRIX: Record<RouteTier, ModelCandidate[]> = {
     { provider: 'deepseek', model: 'deepseek-chat' },
     { provider: 'nvidia-nim', model: 'mistralai/mistral-large-4-1t-a52b' },
     { provider: 'nvidia-nim', model: 'deepseek-ai/deepseek-v4.1-flash' },
+    // Redundancy: same working NVIDIA provider, different model family —
+    // the lane previously had only ~3 live candidates and a single
+    // provider cooldown could zero it out (heal_anomaly storm, Oct 2025).
+    { provider: 'nvidia-nim', model: 'nvidia/nemotron-3-nano-omni-30b-a3b-reasoning' },
   ],
 };
 

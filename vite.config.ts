@@ -11695,9 +11695,30 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
           const tier: RouteTier = ['fast', 'reason', 'deep'].includes(parsed.tier) ? parsed.tier : 'reason';
           const pin = agentRuntime.pinFor(parsed.agentId as any) || null;
           const override = typeof parsed.model === 'string' && parsed.model.includes(':') ? parsed.model : null;
-          const candidates = override
+          // Lane fallback: a pinned/saturated tier degrades to the next lane
+          // down (deep→reason→fast) instead of 503ing. Provider failover
+          // inside the endpoint still applies; this only decides which lane's
+          // candidate list to draw from. The response records the actual tier
+          // used so callers can see the degradation honestly.
+          const TIER_FALLBACK: Record<RouteTier, RouteTier[]> = {
+            deep: ['reason', 'fast'],
+            reason: ['fast'],
+            fast: [],
+          };
+          let effectiveTier = tier;
+          let candidates = override
             ? [{ provider: override.split(':')[0], model: override.split(':').slice(1).join(':') }]
             : agentRuntime.matrix.ordered(tier, pin);
+          if (!override && !candidates.length) {
+            for (const fb of TIER_FALLBACK[tier]) {
+              const fbCandidates = agentRuntime.matrix.ordered(fb, pin);
+              if (fbCandidates.length) {
+                candidates = fbCandidates;
+                effectiveTier = fb;
+                break;
+              }
+            }
+          }
           if (!candidates.length) {
             agentCors(req, res); res.writeHead(503);
             return res.end(JSON.stringify({ ok: false, error: `no usable ${tier}-lane models — all candidates down or cooling` }));
@@ -11765,7 +11786,7 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
               const tokensIn = Number(u.prompt_tokens ?? u.input_tokens ?? 0) || undefined;
               const tokensOut = Number(u.completion_tokens ?? u.output_tokens ?? 0) || undefined;
               agentCors(req, res);
-              return res.end(JSON.stringify({ ok: true, content, model: cand.model, provider: cand.provider, tier, usage: tokensIn || tokensOut ? { tokensIn, tokensOut } : undefined }));
+              return res.end(JSON.stringify({ ok: true, content, model: cand.model, provider: cand.provider, tier: effectiveTier, requestedTier: effectiveTier === tier ? undefined : tier, usage: tokensIn || tokensOut ? { tokensIn, tokensOut } : undefined }));
             } catch (e: any) {
               lastErr = `${cand.provider}: ${e?.message || e}`;
               agentRuntime.matrix.recordProbe(cand.provider, cand.model, false);
