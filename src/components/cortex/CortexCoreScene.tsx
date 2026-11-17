@@ -162,6 +162,11 @@ const nebulaFragment = /* glsl */ `
   varying vec3 vDir;
   ${NOISE_GLSL}
 
+  // Fast 2-octave FBM for coordinate warp fields (saves ~50% GPU ALU cycles)
+  float fbm2(vec3 p) {
+    return 0.65 * vnoise(p) + 0.35 * vnoise(p * 2.05 + vec3(11.3, 7.1, 5.7));
+  }
+
   // Multi-tier domain warping for deep-space interstellar gas dynamics
   float nebulaNoise(vec3 p, out vec3 q, out vec3 r) {
     float t = uTime * 0.012;
@@ -169,21 +174,21 @@ const nebulaFragment = /* glsl */ `
     vec3 v2 = vec3(-t * 0.6, t * 0.9, t * 0.3);
     vec3 v3 = vec3(t * 0.3, -t * 0.7, t * 0.6);
 
-    // Primary domain warp field
+    // Fast 2-octave domain warp fields
     q = vec3(
-      fbm(p + v1),
-      fbm(p + vec3(5.2, 1.3, 2.8) + v2),
-      fbm(p + vec3(2.1, 7.4, 4.2) + v3)
+      fbm2(p + v1),
+      fbm2(p + vec3(5.2, 1.3, 2.8) + v2),
+      fbm2(p + vec3(2.1, 7.4, 4.2) + v3)
     );
 
     // Secondary turbulent warp field
     r = vec3(
-      fbm(p + 2.8 * q + vec3(1.7, 9.2, 3.4) + v1 * 1.3),
-      fbm(p + 2.8 * q + vec3(8.3, 2.8, 6.1) - v2 * 0.8),
-      fbm(p + 2.8 * q + vec3(3.9, 4.5, 1.2) + v3 * 1.1)
+      fbm2(p + 2.8 * q + vec3(1.7, 9.2, 3.4) + v1 * 1.3),
+      fbm2(p + 2.8 * q + vec3(8.3, 2.8, 6.1) - v2 * 0.8),
+      fbm2(p + 2.8 * q + vec3(3.9, 4.5, 1.2) + v3 * 1.1)
     );
 
-    // Final warped gas density
+    // Final high-definition gas density uses full 4-octave FBM
     return fbm(p + 3.2 * r);
   }
 
@@ -517,7 +522,7 @@ function Core({ live }: { live: React.MutableRefObject<LiveSignal> }) {
 
   return (
     <mesh ref={meshRef}>
-      <sphereGeometry args={[1, 110, 110]} />
+      <sphereGeometry args={[1, 64, 64]} />
       <shaderMaterial vertexShader={coreVertex} fragmentShader={coreFragment} uniforms={uniforms} />
     </mesh>
   );
@@ -1242,19 +1247,16 @@ function Satellites({ live }: { live: React.MutableRefObject<LiveSignal> }) {
               <meshPhysicalMaterial
                 ref={(el) => { satCageMatRefs.current[i] = el; }}
                 color="#f0f9ff"
-                transmission={0.92}
-                thickness={0.48}
-                roughness={0.04}
-                metalness={0.08}
+                roughness={0.06}
+                metalness={0.12}
                 ior={1.62}
                 iridescence={0.85}
                 iridescenceIOR={1.33}
                 clearcoat={1.0}
                 clearcoatRoughness={0.04}
-                attenuationColor="#7dd3fc"
-                attenuationDistance={0.18}
                 transparent
-                opacity={0.88}
+                opacity={0.82}
+                depthWrite={false}
               />
             </mesh>
 
@@ -2027,18 +2029,16 @@ function PostFX({ live }: { live: React.MutableRefObject<LiveSignal> }) {
     <EffectComposer multisampling={0}>
       <Bloom
         mipmapBlur
-        intensity={0.85 + lvl * 0.6}
-        luminanceThreshold={0.3}
-        luminanceSmoothing={0.3}
-        radius={0.78}
+        intensity={0.80 + lvl * 0.55}
+        luminanceThreshold={0.42}
+        luminanceSmoothing={0.25}
+        radius={0.70}
       />
       <ChromaticAberration
-        offset={[0.00045 + lvl * 0.0011, 0.00045 + lvl * 0.0011]}
+        offset={[0.00035 + lvl * 0.0008, 0.00035 + lvl * 0.0008]}
         radialModulation
         modulationOffset={0.35}
       />
-      <Noise premultiply opacity={0.045} />
-      <Vignette eskil={false} offset={0.18} darkness={0.82} />
     </EffectComposer>
   );
 }
@@ -2160,7 +2160,7 @@ const InvalidateBridge: React.FC = () => {
 export const CortexCoreScene: React.FC = () => {
   const [reduced, setReduced] = React.useState(() =>
     typeof window !== 'undefined' && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
-  const [dpr, setDpr] = React.useState<number | [number, number]>(() => (reduced ? 1 : [1, 1.75]));
+  const [dpr, setDpr] = React.useState<number | [number, number]>(() => (reduced ? 1 : [1, 1.25]));
   const [contextLost, setContextLost] = React.useState(false);
   const [restoreCount, setRestoreCount] = React.useState(0);
 
@@ -2208,11 +2208,11 @@ export const CortexCoreScene: React.FC = () => {
             threshold={0.85}
             onDecline={() => {
               // Adaptive GPU budget governor: throttle DPR down to 1.0 on low-power / integrated GPUs
-              setDpr([1, 1.15]);
+              setDpr(1);
             }}
             onIncline={() => {
-              // Performance recovered: restore full crisp resolution
-              setDpr([1, 1.75]);
+              // Performance recovered: restore crisp 1.25 DPR ceiling
+              setDpr([1, 1.25]);
             }}
           />
         )}

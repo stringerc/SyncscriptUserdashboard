@@ -592,6 +592,7 @@ export default function CortexVisualizerPage() {
     let lastTs = 0;
     const poll = async () => {
       try {
+        if (typeof document !== 'undefined' && document.hidden) return;
         const res = await fetch('/api/cortex/bus/state', { cache: 'no-store' });
         if (!res.ok) return;
         const data = await res.json();
@@ -609,9 +610,10 @@ export default function CortexVisualizerPage() {
       } catch {}
     };
     poll();
-    const interval = setInterval(poll, 800);
+    const interval = setInterval(poll, 2000);
 
     const pollAmbientAndVigilance = async () => {
+      if (typeof document !== 'undefined' && document.hidden) return;
       try {
         const [ambRes, vigRes] = await Promise.all([
           fetch('/api/cortex/ambient/context', { cache: 'no-store' }),
@@ -628,7 +630,7 @@ export default function CortexVisualizerPage() {
       } catch {}
     };
     pollAmbientAndVigilance();
-    const ambientInterval = setInterval(pollAmbientAndVigilance, 4000);
+    const ambientInterval = setInterval(pollAmbientAndVigilance, 6000);
 
     return () => {
       if (goveeSyncTimer) clearTimeout(goveeSyncTimer);
