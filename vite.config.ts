@@ -12,7 +12,7 @@ import { readFileSync, existsSync } from 'fs';
 import * as fsSync from 'fs';
 import fs from 'fs/promises';
 import os from 'os';
-import { execSync, execFile } from 'child_process';
+import { execSync, execFile, spawn } from 'child_process';
 import { timingSafeEqual } from 'crypto';
 import { cortexObsidianMemory } from './src/lib/cortex-obsidian-memory';
 import { recordForecastOutcome, loadCalibration } from './src/lib/cortex-agents/forecaster';
@@ -22,7 +22,7 @@ import { getAgentRuntime } from './src/lib/cortex-agents/runtime';
 import { recordAgentOutcome } from './src/lib/cortex-agents/outcomes';
 import { archiveTask, readArchive } from './src/lib/cortex-agents/archive';
 import { listStrategyProposals, decideStrategyProposal, reconcileStrategyProposals, fileBudgetProposal } from './src/lib/cortex-agents/strategy-proposals';
-import { recordIncidentFailure, resolveIncidentsOnSuccess, listIncidents, escalateStaleIncidents } from './src/lib/cortex-agents/incidents';
+import { recordIncidentFailure, resolveIncidentsOnSuccess, listIncidents, escalateStaleIncidents, sweepIncidentTtl } from './src/lib/cortex-agents/incidents';
 import { registerAgentWorkers, makeEphemeralWorker, expandTaskSpec } from './src/lib/cortex-agents/workers';
 import { enqueueDistributionItem, DISTRIBUTION_ITEM_TYPES } from './src/lib/cortex-agents/distribution';
 import {
@@ -1228,6 +1228,8 @@ function apiProxyPlugin(): Plugin {
               .map((t: any) => `${t.agentId}|${t.kind}`),
           );
           escalateStaleIncidents((agentId, kind) => active.has(`${agentId}|${kind}`));
+          const expired = sweepIncidentTtl();
+          if (expired > 0) console.log(`[incidents] TTL auto-expired ${expired} dormant ticket(s)`);
         } catch { /* sweep must never kill the server */ }
       }, 60_000);
       incidentSweep.unref?.();
@@ -10013,6 +10015,92 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
           const result = enqueueDistributionItem(String(type), payload as Record<string, unknown>, notBefore ? Number(notBefore) : undefined);
           res.writeHead(result.ok ? 200 : 400, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ ok: result.ok, item: result.item, reason: result.reason, types: DISTRIBUTION_ITEM_TYPES }));
+        } catch (e: any) {
+          res.writeHead(500, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ ok: false, error: String(e?.message || e) }));
+        }
+      });
+
+      // POST /api/cortex/distribution/portal-action — interact with the live automation browser
+      // and trigger store operations directly from the Cortex surface panel.
+      server.middlewares.use('/api/cortex/distribution/portal-action', async (req: any, res: any, next: any) => {
+        if (req.method === 'OPTIONS') {
+          res.writeHead(204, { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Methods': 'GET, POST, OPTIONS', 'Access-Control-Allow-Headers': 'Content-Type' });
+          return res.end();
+        }
+        agentCors(req, res);
+        if (req.method !== 'POST') return next();
+        try {
+          let body = '';
+          for await (const chunk of req) body += chunk;
+          const { action, target, platform } = JSON.parse(body || '{}');
+
+          if (action === 'browser_shot') {
+            const sf = path.join(process.cwd(), 'storefront');
+            const targetStr = typeof target === 'string' ? target : '';
+            try {
+              execSync(`node "${path.join(sf, 'tools', 'browser-shot.mjs')}" ${targetStr ? `'${targetStr}'` : ''}`, { timeout: 30000, encoding: 'utf8' });
+              res.writeHead(200, { 'Content-Type': 'application/json' });
+              return res.end(JSON.stringify({ ok: true, message: 'Screenshot refreshed' }));
+            } catch (err: any) {
+              res.writeHead(500, { 'Content-Type': 'application/json' });
+              return res.end(JSON.stringify({ ok: false, error: err.message }));
+            }
+          }
+
+          if (action === 'switch_tab') {
+            const urlTarget = String(target || '');
+            const sf = path.join(process.cwd(), 'storefront');
+            const script = `import("playwright-core").then(async ({ chromium }) => {
+              const browser = await chromium.connectOverCDP("http://localhost:9222");
+              const ctx = browser.contexts()[0];
+              const pages = ctx.pages();
+              let page = pages.find(p => p.url().includes("${urlTarget}"));
+              if (!page && "${urlTarget}".startsWith("http")) {
+                page = await ctx.newPage();
+                await page.goto("${urlTarget}", { waitUntil: "domcontentloaded", timeout: 30000 });
+              }
+              if (page) {
+                await page.bringToFront().catch(() => {});
+                const fs = await import("fs");
+                const buf = await page.screenshot({ type: "png" });
+                fs.writeFileSync("${path.join(sf, 'browser', 'latest.png')}", buf);
+                fs.writeFileSync("${path.join(sf, 'browser', 'latest.txt')}", Date.now() + " " + page.url());
+              }
+              await browser.close();
+            });`;
+            try {
+              execSync(`node -e '${script.replace(/'/g, `'\\''`)}'`, { timeout: 35000, encoding: 'utf8' });
+              res.writeHead(200, { 'Content-Type': 'application/json' });
+              return res.end(JSON.stringify({ ok: true, switchedTo: urlTarget }));
+            } catch (err: any) {
+              res.writeHead(500, { 'Content-Type': 'application/json' });
+              return res.end(JSON.stringify({ ok: false, error: err.message }));
+            }
+          }
+
+          if (action === 'publish') {
+            const plat = platform || 'all';
+            const sf = path.join(process.cwd(), 'storefront');
+            const pubScript = path.join(sf, 'tools', 'omni-publisher.mjs');
+            const child = spawn('node', [pubScript, `--platform=${plat}`], {
+              cwd: process.cwd(),
+              detached: true,
+              stdio: 'ignore',
+            });
+            child.unref();
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            return res.end(JSON.stringify({ ok: true, message: `Omni-publisher triggered for platform: ${plat}` }));
+          }
+
+          if (action === 'drain_queue') {
+            const task = agentRuntime.submitTask('distributor', 'queue_process', 'Manual Distribution Queue Drain', {});
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            return res.end(JSON.stringify({ ok: true, taskId: task.task?.id, status: task.task?.status }));
+          }
+
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ ok: false, error: `unknown action '${action}'` }));
         } catch (e: any) {
           res.writeHead(500, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ ok: false, error: String(e?.message || e) }));

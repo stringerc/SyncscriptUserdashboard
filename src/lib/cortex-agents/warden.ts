@@ -21,6 +21,10 @@ import { runCounselPosition } from './counsel-position';
 const PORT = process.env.PORT ? parseInt(process.env.PORT) : 5173;
 const BASE = `http://127.0.0.1:${PORT}`;
 
+/** Heal-dispatch circuit breaker — see Pillar 1 block in wardenWorker. */
+const HEAL_DISPATCH_COOLDOWN_MS = 30 * 60_000;
+let lastHealDispatchAt = 0;
+
 export interface PatrolCheck {
   name: string;
   ok: boolean;
@@ -390,25 +394,38 @@ const wardenWorker: WorkerHandler = async (ctx) => {
 
   // ── Pillar 1: Autonomous Immune System ──
   // When an anomaly is detected, auto-dispatch a self-healing mission to Antigravity (or Devin failover)
+  // Circuit breaker: a dead provider lane once turned every patrol into a
+  // fresh heal_anomaly submission (198-count incident storm in ~22h).
+  // Cooldown + in-flight check bound the burn; real failures still land
+  // in the incident ledger.
   if (!report.healthy && report.anomalies.length > 0) {
-    const anomalySummary = report.anomalies[0].slice(0, 72);
+    const now = Date.now();
+    let inFlight = false;
     try {
-      fetch(`${BASE}/api/cortex/agents/task`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          agentId: 'antigravity',
-          kind: 'heal_anomaly',
-          title: `Autonomous Anomaly Repair: ${anomalySummary}`,
-          input: {
-            anomalies: report.anomalies,
-            warnings: report.warnings,
-            instruction: `Analyze and resolve the system anomaly flagged by Warden: ${report.anomalies.join('; ')}. Verify with npm run verify:cortex before completing.`,
-            autoHeal: true,
-          },
-        }),
-      }).catch(() => {});
-    } catch {}
+      const st: any = await fetch(`${BASE}/api/cortex/agents/state`, { signal: AbortSignal.timeout(3000) }).then((r) => r.json());
+      inFlight = (st?.tasks || []).some((t: any) => t.kind === 'heal_anomaly' && (t.status === 'queued' || t.status === 'running'));
+    } catch { /* state read failure → allow dispatch; cooldown still bounds it */ }
+    if (!inFlight && now - lastHealDispatchAt >= HEAL_DISPATCH_COOLDOWN_MS) {
+      lastHealDispatchAt = now;
+      const anomalySummary = report.anomalies[0].slice(0, 72);
+      try {
+        fetch(`${BASE}/api/cortex/agents/task`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            agentId: 'antigravity',
+            kind: 'heal_anomaly',
+            title: `Autonomous Anomaly Repair: ${anomalySummary}`,
+            input: {
+              anomalies: report.anomalies,
+              warnings: report.warnings,
+              instruction: `Analyze and resolve the system anomaly flagged by Warden: ${report.anomalies.join('; ')}. Verify with npm run verify:cortex before completing.`,
+              autoHeal: true,
+            },
+          }),
+        }).catch(() => {});
+      } catch {}
+    }
   }
 
   ctx.progress(1);

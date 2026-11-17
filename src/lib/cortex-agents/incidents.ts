@@ -166,3 +166,37 @@ export function escalateStaleIncidents(
     return filed;
   } catch { return 0; }
 }
+
+/** An incident with no new failure for this long is considered dormant.
+ *  Default 24h — long enough that transient provider brownouts (which
+ *  recur within minutes when real) don't get swept, short enough that a
+ *  healed lane doesn't leave a permanently-open ticket. */
+export const INCIDENT_TTL_HOURS = Number(process.env.CORTEX_INCIDENT_TTL_HOURS || 24);
+
+/**
+ * TTL sweep — resolves open incidents whose lastSeenAt is older than the
+ * TTL. This is NOT execution-verified healing: the resolutionNote says so
+ * honestly, and any recurrence reopens the ticket via recordIncidentFailure.
+ * It exists because incidents keyed on retry-storm signatures (e.g. a dead
+ * provider lane) never get a same-key success to verify against — without
+ * a TTL they stay open forever and drown the board.
+ * Returns how many incidents were auto-expired.
+ */
+export function sweepIncidentTtl(opts: { ttlHours?: number; now?: number } = {}): number {
+  try {
+    const ttlMs = (opts.ttlHours ?? INCIDENT_TTL_HOURS) * 3600_000;
+    const now = opts.now ?? Date.now();
+    const all = readAll();
+    let changed = 0;
+    for (const inc of all) {
+      if (inc.status !== 'open') continue;
+      if (now - inc.lastSeenAt < ttlMs) continue;
+      inc.status = 'resolved';
+      inc.resolvedAt = now;
+      inc.resolutionNote = `auto-expired: no recurrence for ${Math.round(ttlMs / 3600_000)}h — unverified heal, reopens on failure`;
+      changed++;
+    }
+    if (changed) writeAll(all);
+    return changed;
+  } catch { return 0; }
+}
