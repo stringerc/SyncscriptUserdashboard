@@ -1,10 +1,10 @@
-// Minimal CDP driver over the user's real Chrome (port 9222).
+// Minimal CDP driver over the user's real Chrome (port 9225).
 // Usage: node cdp.mjs '<js expression>' [url-to-navigate-first]
 //        node cdp.mjs --list
 import { chromium } from 'playwright-core';
 
 const args = process.argv.slice(2);
-const browser = await chromium.connectOverCDP('http://localhost:9222');
+const browser = await chromium.connectOverCDP('http://localhost:9225');
 const ctx = browser.contexts()[0];
 const pages = ctx.pages();
 

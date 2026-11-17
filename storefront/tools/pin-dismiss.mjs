@@ -1,5 +1,5 @@
 import { chromium } from 'playwright-core';
-const browser = await chromium.connectOverCDP('http://localhost:9222');
+const browser = await chromium.connectOverCDP('http://localhost:9225');
 const page = browser.contexts()[0].pages().find(p => p.url().includes('pinterest.com'));
 for (let i=0;i<6;i++){
   const layer = page.locator('.layer_J').last();

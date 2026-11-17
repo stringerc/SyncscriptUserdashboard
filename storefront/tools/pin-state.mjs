@@ -1,5 +1,5 @@
 import { chromium } from 'playwright-core';
-const browser = await chromium.connectOverCDP('http://localhost:9222');
+const browser = await chromium.connectOverCDP('http://localhost:9225');
 const page = browser.contexts()[0].pages().find(p => p.url().includes('pinterest.com'));
 const dialogs = await page.evaluate(() => [...document.querySelectorAll('[role=dialog],.layer_J,[class*=modal],[class*=Modal]')].map(d => ({
   cls: (d.className||'').slice(0,80), text: (d.innerText||'').slice(0,400)

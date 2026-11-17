@@ -1,7 +1,7 @@
 /**
  * CDP Supervisor — Resilience, Human-in-the-Loop Pauses & Challenge Detection
  */
-export async function checkCdpEndpoint(port = 9222) {
+export async function checkCdpEndpoint(port = 9225) {
   try {
     const res = await fetch(`http://127.0.0.1:${port}/json/version`, { signal: AbortSignal.timeout(1000) });
     return res.ok;

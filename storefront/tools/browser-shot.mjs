@@ -12,7 +12,7 @@ const OUTDIR = path.join(ROOT, 'browser');
 fs.mkdirSync(OUTDIR, { recursive: true });
 const out = outArg || path.join(OUTDIR, 'latest.png');
 
-const browser = await chromium.connectOverCDP('http://localhost:9222');
+const browser = await chromium.connectOverCDP('http://localhost:9225');
 const pages = browser.contexts()[0].pages();
 let page = pages.find(p => p.url().includes(match))
   || pages.find(p => p.url().includes('pinterest.com'))

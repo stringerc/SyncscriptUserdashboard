@@ -16,7 +16,7 @@
 
 - **Deliverable Isolation:** Each platform receives only its platform-native deliverable (never raw code to Etsy or t-shirts to Gumroad).
 - **Staging / Draft Gate:** Automated uploads default to "Draft" / "Preview" mode with Cortex visualizer verification before going live.
-- **Resilient CDP:** All browser automations connect to the local Chrome instance (`127.0.0.1:9222`) and must invoke `pauseAndPrompt()` on CAPTCHA/2FA challenges rather than crashing.
+- **Resilient CDP:** All browser automations connect to the local Chrome instance (`127.0.0.1:9225`) and must invoke `pauseAndPrompt()` on CAPTCHA/2FA challenges rather than crashing.
 - **KDP Geometry Invariant:** Cover wrap geometry must mathematically match `[17.0" + (pages * 0.002252") + 0.25" bleed]` to guarantee zero Amazon trim errors.
 - **Zero Typecheck Regressions:** All newly introduced code must pass strict TypeScript checks without errors.
 
@@ -283,7 +283,7 @@ git commit -m "feat(storefront): implement master omni-bundle packaging CLI"
 - Create: `storefront/tools/cdp-supervisor.mjs`
 
 **Interfaces:**
-- Consumes: `storefront/omni-manifest.json`, `127.0.0.1:9222` (Chrome CDP)
+- Consumes: `storefront/omni-manifest.json`, `127.0.0.1:9225` (Chrome CDP)
 - Produces: `publishToGumroad(config, stagingMode): Promise<PublishResult>`
 - Produces: `publishToEtsy(config, stagingMode): Promise<PublishResult>`
 - Produces: `publishToKdp(config, stagingMode): Promise<PublishResult>`

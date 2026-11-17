@@ -150,7 +150,7 @@ async function runRedditScan(ctx: AgentContext, payload: Record<string, unknown>
   const stdout = String(out?.stdout || '');
   ctx.progress(1);
   const threads = stdout.split('\n').filter((l) => /^\d+c \|/.test(l)).length;
-  if (!threads) throw new Error(`reddit_scan returned no threads (chrome on :9222 reachable? logged into reddit?)`);
+  if (!threads) throw new Error(`reddit_scan returned no threads (chrome on :9225 reachable? logged into reddit?)`);
   return { subs, threads, output: stdout.slice(0, 4000) };
 }
 
@@ -219,10 +219,10 @@ async function runBrowserShot(ctx: AgentContext, payload: Record<string, unknown
   // Preflight: the shot needs the automation Chrome's CDP endpoint. Fail
   // with a diagnosable reason instead of a blank stderr-empty error.
   try {
-    const ping = await fetch('http://localhost:9222/json/version', { signal: AbortSignal.timeout(3000) });
+    const ping = await fetch('http://localhost:9225/json/version', { signal: AbortSignal.timeout(3000) });
     if (!ping.ok) throw new Error(`CDP HTTP ${ping.status}`);
   } catch (e: any) {
-    throw new Error(`automation Chrome offline — CDP :9222 unreachable (${String(e?.message || e).slice(0, 120)}). Chrome runs on Oracle (cortex-chrome.service); check the com.cortex.cdp-tunnel launchd job on this Mac`);
+    throw new Error(`automation Chrome offline — CDP :9225 unreachable (${String(e?.message || e).slice(0, 120)}). Chrome runs on Oracle (cortex-chrome.service); check the com.cortex.cdp-tunnel launchd job on this Mac`);
   }
   const out = await sh(`node tools/browser-shot.mjs ${match ? `'${match}'` : ''}`, ctx.telemetry, 60_000);
   const stdout = String(out?.stdout || '');

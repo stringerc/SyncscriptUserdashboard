@@ -2,7 +2,7 @@
 import { chromium } from 'playwright-core';
 
 const [img, title, desc, link] = process.argv.slice(2);
-const browser = await chromium.connectOverCDP('http://localhost:9222');
+const browser = await chromium.connectOverCDP('http://localhost:9225');
 const ctx = browser.contexts()[0];
 const page = ctx.pages().find(p => p.url().includes('pinterest.com')) || ctx.pages()[0];
 

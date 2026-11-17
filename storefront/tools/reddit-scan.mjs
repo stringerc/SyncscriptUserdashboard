@@ -4,7 +4,7 @@ import path from 'path';
 function cdpUrl() {
   if (process.env.CORTEX_CDP_URL) return process.env.CORTEX_CDP_URL;
   try { const f = path.resolve('.cdp-url'); if (existsSync(f)) return readFileSync(f,'utf8').trim(); } catch {}
-  return 'http://localhost:9222';
+  return 'http://localhost:9225';
 }
 const subs = process.argv.slice(2);
 const browser = await chromium.connectOverCDP(cdpUrl());

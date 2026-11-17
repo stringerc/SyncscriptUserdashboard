@@ -10178,7 +10178,7 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
             const urlTarget = String(target || '');
             const sf = path.join(process.cwd(), 'storefront');
             const script = `import("playwright-core").then(async ({ chromium }) => {
-              const browser = await chromium.connectOverCDP("http://localhost:9222");
+              const browser = await chromium.connectOverCDP("http://localhost:9225");
               const ctx = browser.contexts()[0];
               const pages = ctx.pages();
               let page = pages.find(p => p.url().includes("${urlTarget}"));
@@ -10242,7 +10242,7 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
             const { x, y, text, key, deltaY, email, password, target } = JSON.parse(body || '{}');
             try {
               const { chromium } = await import('playwright-core');
-              const browser = await chromium.connectOverCDP('http://localhost:9222');
+              const browser = await chromium.connectOverCDP('http://localhost:9225');
               const ctx = browser.contexts()[0];
               const pages = ctx.pages();
 

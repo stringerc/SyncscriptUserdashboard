@@ -207,7 +207,7 @@ The existing `gumroad-browser-publisher.mjs` will be upgraded into `storefront/t
 ```
 
 ### Anti-Bot & Session Resilience Strategy
-1. **Persistent Browser Context:** Uses the existing local Chrome instance (`http://127.0.0.1:9222`) where user logins (Etsy, Amazon, Redbubble) are logged in once with active 2FA cookies. No headless bot flags or cloud IPs.
+1. **Persistent Browser Context:** Uses the existing local Chrome instance (`http://127.0.0.1:9225`) where user logins (Etsy, Amazon, Redbubble) are logged in once with active 2FA cookies. No headless bot flags or cloud IPs.
 2. **Humanized Keystroke & Mouse Jitter:** Emulates realistic human typing cadence (80–140ms per key) and natural Bezier mouse trajectories across file-upload dropzones.
 3. **Daily Cadence Restraint:** Matches platform rate limits:
    - Gumroad: 2–3 products/day

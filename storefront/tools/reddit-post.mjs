@@ -30,7 +30,7 @@ function cdpUrl() {
     const f = path.resolve('.cdp-url');
     if (existsSync(f)) return readFileSync(f, 'utf8').trim();
   } catch { }
-  return 'http://localhost:9222';
+  return 'http://localhost:9225';
 }
 
 const shotDir = path.resolve('browser');

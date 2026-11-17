@@ -90,7 +90,7 @@ export async function captureScreenNative(outputPath: string, windowId?: number)
  * Connects to Chrome DevTools Protocol to capture browser viewport and evaluate live DOM.
  */
 export async function captureCdpCanvasGaze(
-  cdpPort = 9222,
+  cdpPort = 9225,
   outputPath = '/Users/Apple/syncscript/public/screenshots/latest-canvas.png'
 ): Promise<{
   success: boolean;
@@ -292,7 +292,7 @@ export async function performVisualGaze(
 
   if (isBrowserTarget) {
     // Stratum 1: In-Browser CDP Gaze
-    const cdpGaze = await captureCdpCanvasGaze(9222, screenshotPath);
+    const cdpGaze = await captureCdpCanvasGaze(9225, screenshotPath);
     if (cdpGaze.success) {
       errorOverlayDetected = cdpGaze.errorOverlay;
       buttonsCount = cdpGaze.buttons.length;

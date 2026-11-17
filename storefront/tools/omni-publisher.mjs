@@ -338,12 +338,12 @@ async function run() {
 
   let browser = null;
   if (!isDryRun && !chromeRunning) {
-    const cdpReachable = await checkCdpEndpoint(9222);
-    console.log(`[CDP Supervisor] Chrome DevTools Protocol (127.0.0.1:9222): ${cdpReachable ? 'CONNECTED' : 'DISCONNECTED'}`);
+    const cdpReachable = await checkCdpEndpoint(9225);
+    console.log(`[CDP Supervisor] Chrome DevTools Protocol (127.0.0.1:9225): ${cdpReachable ? 'CONNECTED' : 'DISCONNECTED'}`);
     if (cdpReachable) {
       try {
-        browser = await chromium.connectOverCDP('http://localhost:9222');
-        console.log('[CDP Supervisor] Active CDP session established with browser on port 9222.');
+        browser = await chromium.connectOverCDP('http://localhost:9225');
+        console.log('[CDP Supervisor] Active CDP session established with browser on port 9225.');
       } catch (e) {
         console.warn('[CDP Supervisor] Failed to attach over CDP:', e.message);
       }
