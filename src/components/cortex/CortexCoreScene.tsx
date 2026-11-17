@@ -200,16 +200,16 @@ const nebulaFragment = /* glsl */ `
     float centerGlow = pow(max(dot(d, vec3(0.0, 0.0, -1.0)), 0.0), 3.0);
     vec3 baseSpace = colSpace + uRim * centerGlow * (0.03 + uEnergy * 0.05);
 
-    // Pushed far back and a little to the left of the Cortex Visualizer Core
+    // Pushed further back and a little to the left of the Cortex Core — like a picture on a distant wall
     // Looking forward into the scene is -Z, screen-left is -X, screen-up is +Y
-    vec3 dirNebula = normalize(vec3(-0.45, 0.18, -0.88));
+    vec3 dirNebula = normalize(vec3(-0.48, 0.22, -0.86));
     float align = dot(d, dirNebula);
 
-    // Smooth, organic spatial falloff: peaks a little to the left, wraps gracefully behind the core
-    float spatialMask = smoothstep(0.46, 0.90, align);
-    spatialMask = pow(spatialMask, 1.25);
+    // Contained celestial framing: focused like a distant deep-space portrait on the back wall
+    float spatialMask = smoothstep(0.70, 0.94, align);
+    spatialMask = pow(spatialMask, 1.35);
 
-    // GPU Fast Early Exit: outside the nebula zone, render pure starry deep space instantly
+    // GPU Fast Early Exit: outside the distant picture zone, render pure starry deep space instantly
     if (spatialMask < 0.001) {
       vec3 starCoord = d * 60.0;
       float starN = vnoise(starCoord);
@@ -218,54 +218,54 @@ const nebulaFragment = /* glsl */ `
       return;
     }
 
-    // High-resolution coordinates centered a little to the left of the Core
-    vec3 p = (d - dirNebula) * 3.4;
-    p.y *= 1.28;
+    // High-resolution coordinates scaled for a distant, detailed deep-space celestial object
+    vec3 p = (d - dirNebula) * 5.6;
+    p.y *= 1.32;
 
     vec3 q, r;
     float gas = nebulaNoise(p, q, r);
     float fineDust = fbm2(p * 5.2 + vec3(uTime * 0.01));
 
     // Carve dark absorption rifts (interstellar dust lanes / Bok globules)
-    float dustRift = smoothstep(0.34, 0.68, r.y * 0.6 + q.x * 0.4);
-    float gasCloud = smoothstep(0.24, 0.76, gas) * (1.0 - dustRift * 0.52);
+    float dustRift = smoothstep(0.32, 0.66, r.y * 0.6 + q.x * 0.4);
+    float gasCloud = smoothstep(0.22, 0.74, gas) * (1.0 - dustRift * 0.52);
 
-    // ── 60% Blue / 30% Orange Cosmic Spectrum ──
+    // ── 60% Blue / 40% Orange Cosmic Spectrum ──
     // 1. 60% Blue Molecular Cloud Palette
     vec3 colCobaltDeep    = vec3(0.015, 0.05, 0.14); // Deep shadowed cosmic ravines
     vec3 colCeruleanOcean = vec3(0.035, 0.38, 0.68); // Mid-density volumetric body
     vec3 colElectricCyan  = vec3(0.06, 0.72, 0.94);  // Radiant electric cyan folds
     vec3 colIceTurquoise  = vec3(0.35, 0.88, 0.98);  // Brilliant illuminated crests
 
-    vec3 blueCol = mix(colCobaltDeep, colCeruleanOcean, smoothstep(0.18, 0.50, gasCloud));
-    blueCol = mix(blueCol, colElectricCyan, smoothstep(0.50, 0.76, gasCloud));
-    blueCol = mix(blueCol, colIceTurquoise, smoothstep(0.76, 0.95, gasCloud));
+    vec3 blueCol = mix(colCobaltDeep, colCeruleanOcean, smoothstep(0.16, 0.48, gasCloud));
+    blueCol = mix(blueCol, colElectricCyan, smoothstep(0.48, 0.74, gasCloud));
+    blueCol = mix(blueCol, colIceTurquoise, smoothstep(0.74, 0.95, gasCloud));
 
     // Reactive voice rim tinting
     blueCol += uRim * (0.04 + uLevel * 0.16) * gasCloud;
 
-    // 2. 30% Orange / Molten Amber / Solar Gold Combustion Cores
-    // Driven by turbulent warp field ridges (r.y and q.x) inside high gas density
-    float fireVeins = smoothstep(0.40, 0.78, r.y * 0.65 + q.x * 0.45) * smoothstep(0.24, 0.72, gasCloud);
+    // 2. 40% Orange / Molten Amber / Solar Gold Combustion Cores
+    // Expanded combustion threshold so orange covers ~40% of the active cloud
+    float fireVeins = smoothstep(0.30, 0.72, r.y * 0.65 + q.x * 0.45) * smoothstep(0.20, 0.70, gasCloud);
     vec3 colMoltenAmber = vec3(0.92, 0.30, 0.04); // Deep magma amber
     vec3 colFireOrange  = vec3(1.0, 0.52, 0.08);  // Blazing combustion flame
     vec3 colSolarGold   = vec3(1.0, 0.84, 0.20);  // Radiant solar gold
     vec3 colWhiteHot    = vec3(1.0, 0.98, 0.92);  // Searing thermonuclear core
 
-    vec3 fireCol = mix(colMoltenAmber, colFireOrange, smoothstep(0.12, 0.48, fireVeins));
-    fireCol = mix(fireCol, colSolarGold, smoothstep(0.48, 0.80, fireVeins));
-    fireCol = mix(fireCol, colWhiteHot, smoothstep(0.80, 0.96, fireVeins));
+    vec3 fireCol = mix(colMoltenAmber, colFireOrange, smoothstep(0.10, 0.45, fireVeins));
+    fireCol = mix(fireCol, colSolarGold, smoothstep(0.45, 0.78, fireVeins));
+    fireCol = mix(fireCol, colWhiteHot, smoothstep(0.78, 0.96, fireVeins));
 
-    // 3. Balanced Composite: 60% Blue Dominance with 30% Fiery Orange Veins
-    float fireMix = smoothstep(0.22, 0.72, fireVeins) * 0.85;
+    // 3. Balanced Composite: 60% Blue Dominance with 40% Fiery Orange Veins
+    float fireMix = smoothstep(0.18, 0.68, fireVeins) * 0.95;
     vec3 nebulaCol = mix(blueCol, fireCol, fireMix);
 
     // Subsurface glow: internal fiery veins warmly illuminate adjacent blue clouds
-    nebulaCol += vec3(1.0, 0.65, 0.18) * fireVeins * gasCloud * 0.38;
+    nebulaCol += vec3(1.0, 0.65, 0.18) * fireVeins * gasCloud * 0.42;
 
     // Solar flare boost on incandescent cores (triggers Three.js Bloom!)
-    nebulaCol += colSolarGold * pow(fireVeins, 2.4) * 1.6;
-    nebulaCol += colWhiteHot * pow(fireVeins, 3.8) * 1.3;
+    nebulaCol += colSolarGold * pow(fireVeins, 2.3) * 1.7;
+    nebulaCol += colWhiteHot * pow(fireVeins, 3.6) * 1.4;
 
     // 4. Embedded Galactic Stardust Shimmer in High-Density Pockets
     float stardust = pow(max(fineDust - 0.45, 0.0) / 0.55, 4.0) * gasCloud * spatialMask * 2.8;
@@ -273,7 +273,7 @@ const nebulaFragment = /* glsl */ `
     nebulaCol += starTint * stardust;
 
     // Vivid astronomical emission intensity
-    float intensity = gasCloud * spatialMask * (0.65 + uEnergy * 0.24 + uLevel * 0.16);
+    float intensity = gasCloud * spatialMask * (0.68 + uEnergy * 0.24 + uLevel * 0.16);
 
     // Deep space core ambient
     vec3 finalCol = baseSpace + nebulaCol * intensity;

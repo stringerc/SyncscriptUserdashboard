@@ -864,19 +864,20 @@ export const CortexAgentsScene: React.FC = () => {
       // Shift the whole scene right when the roster rail is visible so the
       // orbit clears it (roster ~200px at left).
       const cx = w / 2 + (w >= 900 ? 100 : 0) + p.x, cy = h / 2 + h * 0.05 + p.y;
-      // Original domain-warped cosmic nebula: 60% Blue, 30% Orange, pushed a little to the left
+      // Original domain-warped cosmic nebula: 60% Blue, 40% Orange, pushed far back and left like a distant picture
       const nebKey = `${bgKey}|${Math.round(time * 5)}`;
       if (!nebCache || nebCache.key !== nebKey) {
         nebCache = {
           key: nebKey,
           grads: [
-            // 60% Blue Volumetric Cloud Envelope (anchored a little to the left of the core)
-            { col: '#0284c7', alpha: 0.25, r: 0.38, ox: -0.28, oy: -0.12 },  // Deep oceanic cerulean base
-            { col: '#06b6d4', alpha: 0.28, r: 0.28, ox: -0.26, oy: -0.15 },  // Electric cyan billowing cloud body
-            { col: '#38bdf8', alpha: 0.20, r: 0.20, ox: -0.22, oy: -0.18 },  // Ice-turquoise crest
-            // 30% Orange Fiery Combustion Cores (veins running inside the blue envelope)
-            { col: '#ea580c', alpha: 0.30, r: 0.16, ox: -0.25, oy: -0.14 },  // Molten amber flame
-            { col: '#facc15', alpha: 0.22, r: 0.10, ox: -0.24, oy: -0.15 },  // Solar gold incandescent core
+            // 60% Blue Volumetric Cloud Envelope (further back, a little to the left of the core)
+            { col: '#0284c7', alpha: 0.24, r: 0.30, ox: -0.28, oy: -0.14 },  // Deep oceanic cerulean base
+            { col: '#06b6d4', alpha: 0.26, r: 0.22, ox: -0.26, oy: -0.16 },  // Electric cyan billowing cloud body
+            { col: '#38bdf8', alpha: 0.18, r: 0.16, ox: -0.23, oy: -0.18 },  // Ice-turquoise crest
+            // 40% Orange Fiery Combustion Cores (richer amber & solar gold veins)
+            { col: '#ea580c', alpha: 0.32, r: 0.16, ox: -0.25, oy: -0.15 },  // Molten amber flame
+            { col: '#f97316', alpha: 0.26, r: 0.12, ox: -0.24, oy: -0.16 },  // Blazing flame orange
+            { col: '#facc15', alpha: 0.24, r: 0.08, ox: -0.23, oy: -0.17 },  // Solar gold incandescent core
           ].map((spec, i) => {
             const na = time * 0.04 + i * 1.6;
             const nx = cx + spec.ox * w + Math.cos(na) * w * 0.02;
