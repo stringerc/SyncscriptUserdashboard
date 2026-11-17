@@ -154,18 +154,11 @@ const nebulaVertex = /* glsl */ `
 `;
 
 const nebulaFragment = /* glsl */ `
-  uniform float uTime;
   uniform float uEnergy;
   uniform float uLevel;
   uniform vec3 uDeep;
   uniform vec3 uRim;
   varying vec3 vDir;
-  ${NOISE_GLSL}
-
-  // Fast 2-octave FBM for coordinate warp fields
-  float fbm2(vec3 p) {
-    return 0.65 * vnoise(p) + 0.35 * vnoise(p * 2.05 + vec3(11.3, 7.1, 5.7));
-  }
 
   void main() {
     vec3 d = normalize(vDir);
@@ -175,118 +168,7 @@ const nebulaFragment = /* glsl */ `
     float centerGlow = pow(max(dot(d, vec3(0.0, 0.0, -1.0)), 0.0), 3.0);
     vec3 baseSpace = colSpace + uRim * centerGlow * (0.03 + uEnergy * 0.05);
 
-    // ── Distant Majestic Spiral Galaxy (Inspired by User Ref #6 & #9) ──
-    // Lowered 3x to eye level to the left of the Cortex Core
-    // Looking forward into the scene is -Z, screen-left is -X, screen-up is +Y
-    vec3 dirGalaxy = normalize(vec3(-0.74, 0.11, -0.66));
-
-    // Construct local tangent space coordinate frame on the celestial sphere
-    vec3 upVec = vec3(0.0, 1.0, 0.0);
-    vec3 rightVec = normalize(cross(upVec, dirGalaxy));
-    vec3 localUp = cross(dirGalaxy, rightVec);
-
-    vec3 diff = d - dirGalaxy;
-    float lx = dot(diff, rightVec);
-    float ly = dot(diff, localUp);
-
-    // Position angle rotation in the sky plane (phi ~ 28 degrees)
-    const float cosPhi = 0.883;
-    const float sinPhi = 0.469;
-    float gx = lx * cosPhi - ly * sinPhi;
-    float gy = lx * sinPhi + ly * cosPhi;
-
-    // Oblique 3D galactic inclination (~58 degrees tilt into deep space)
-    const float tiltAspect = 0.50; // Foreshortened minor axis
-    float px = gx;
-    float py = gy / tiltAspect;
-
-    // Polar coordinates in the un-squashed galactic disk plane
-    float r = length(vec2(px, py));
-    float angle = atan(py, px);
-
-    // Compact celestial scale (same distance user loved)
-    const float R_gal = 0.145;
-    float s = r / R_gal; // Normalized radius: 0.0 at central supermassive nucleus, 1.0 at outer rim
-
-    // GPU Fast Early Exit: outside the distant galaxy, render pure dark velvet space
-    // Zero fake stars, zero stardust speckles, zero fragments — real 3D stars handled by Starfield!
-    if (s > 1.05) {
-      gl_FragColor = vec4(baseSpace, 1.0);
-      return;
-    }
-
-    // Outer boundary smooth feathered falloff into the pristine void
-    float outerFade = smoothstep(1.05, 0.78, s);
-
-    // Slow majestic galactic rotation
-    float t = uTime * 0.008;
-    float rotAngle = angle - t;
-
-    // ── 1. Logarithmic Spiral Arms (2-Armed Grand Design Spiral) ──
-    // Winding formula: arms curve logarithmically outwards
-    const float windFactor = 4.4;
-    float armAngle = rotAngle - windFactor * sqrt(s);
-    float armWave = cos(2.0 * armAngle); // Two primary spiral arms (symmetric)
-    float armDensity = smoothstep(-0.15, 0.88, armWave);
-
-    // High-definition stellar cluster turbulence along the spiral arms
-    vec3 pTurb = vec3(px * 55.0, py * 55.0, dot(diff, dirGalaxy) * 50.0);
-    float armFBM = fbm(pTurb + vec3(t * 0.4, 0.0, -t * 0.3));
-    float armGas = armDensity * (0.62 + 0.38 * armFBM);
-
-    // Radial arm envelope: emerges outside core (s > 0.18) and sweeps to disk edge (s ~ 0.95)
-    float armEnvelope = smoothstep(0.16, 0.42, s) * smoothstep(1.0, 0.65, s);
-    float spiralArms = armGas * armEnvelope;
-
-    // Dark interstellar dust lanes (trailing along the inner edges of the spiral arms like Ref #9)
-    float dustAngle = armAngle - 0.28;
-    float dustWave = cos(2.0 * dustAngle);
-    float dustLane = smoothstep(0.40, 0.88, dustWave) * armEnvelope * fbm2(pTurb * 1.6);
-
-    // ── 2. 60% Blue Radiant Spiral Arms & Ionized Starburst Regions ──
-    vec3 colCobaltDeep    = vec3(0.015, 0.05, 0.18); // Deep interstellar ravines
-    vec3 colCeruleanOcean = vec3(0.04, 0.40, 0.74);  // Dense spiral arm stars
-    vec3 colElectricCyan  = vec3(0.10, 0.78, 0.96);  // Radiant OB star clusters
-    vec3 colIceTurquoise  = vec3(0.55, 0.92, 1.0);   // Luminous ionized shock crests
-
-    vec3 blueArmCol = mix(colCobaltDeep, colCeruleanOcean, smoothstep(0.06, 0.40, spiralArms));
-    blueArmCol = mix(blueArmCol, colElectricCyan, smoothstep(0.40, 0.74, spiralArms));
-    blueArmCol = mix(blueArmCol, colIceTurquoise, smoothstep(0.74, 0.95, spiralArms));
-    blueArmCol += uRim * (0.04 + uLevel * 0.16) * spiralArms;
-
-    // ── 3. 40% Golden-Orange Central Galactic Bulge & Core ──
-    // Dense spherical stellar population, central bar, and supermassive nucleus
-    float bulge = exp(-s * 6.8);
-    float corePeak = exp(-s * 32.0);
-    float barStructure = smoothstep(0.35, 0.0, length(vec2(px * 1.5, py * 0.68))) * 0.55;
-    float orangeCore = bulge + barStructure;
-
-    vec3 colMoltenAmber = vec3(0.92, 0.28, 0.03); // Deep magma dust envelope
-    vec3 colSolarGold   = vec3(1.0, 0.82, 0.18);  // Dense older stellar population
-    vec3 colWhiteHot    = vec3(1.0, 0.98, 0.92);  // Searing galactic nucleus
-
-    vec3 coreCol = mix(colMoltenAmber, colSolarGold, smoothstep(0.10, 0.55, orangeCore));
-    coreCol = mix(coreCol, colWhiteHot, corePeak * 2.2);
-
-    // ── 4. Balanced Composite: Exactly 60% Blue Spiral Arms & 40% Orange Core ──
-    float coreWeight = smoothstep(0.52, 0.14, s);
-    vec3 galaxyCol = mix(blueArmCol * spiralArms * (1.0 - dustLane * 0.55), coreCol * orangeCore, coreWeight);
-
-    // Warm core scatter: golden bulge warmly backlights inner spiral arm boundaries
-    galaxyCol += vec3(1.0, 0.65, 0.18) * orangeCore * spiralArms * 0.35;
-
-    // Supermassive nucleus bloom & hot core
-    galaxyCol += colWhiteHot * corePeak * 3.4;
-    galaxyCol += colSolarGold * pow(orangeCore, 2.8) * 1.6;
-
-    // Seamless outer boundary fade into pure void
-    galaxyCol *= outerFade;
-
-    // Final composition
-    float intensity = (spiralArms * 0.88 + orangeCore * 1.45) * (0.82 + uEnergy * 0.25 + uLevel * 0.15) + corePeak * 1.5;
-    vec3 finalCol = baseSpace + galaxyCol * intensity;
-
-    gl_FragColor = vec4(finalCol, 1.0);
+    gl_FragColor = vec4(baseSpace, 1.0);
   }
 `;
 

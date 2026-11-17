@@ -819,7 +819,6 @@ export const CortexAgentsScene: React.FC = () => {
     // Gradient caches — CanvasGradient objects are expensive to allocate;
     // rebuild only when the quantized inputs actually change.
     let bgCache: { key: string; g: CanvasGradient } | null = null;
-    let nebCache: { key: string; grads: CanvasGradient[] } | null = null;
     let horizonCache: { key: string; g: CanvasGradient } | null = null;
 
     const par = () => ({
@@ -860,43 +859,9 @@ export const CortexAgentsScene: React.FC = () => {
       ctx.fillStyle = bgCache.g;
       ctx.fillRect(0, 0, w, h);
 
-      ctx.globalCompositeOperation = 'lighter';
       // Shift the whole scene right when the roster rail is visible so the
       // orbit clears it (roster ~200px at left).
       const cx = w / 2 + (w >= 900 ? 100 : 0) + p.x, cy = h / 2 + h * 0.05 + p.y;
-      // Distant Majestic Spiral Galaxy (60% Blue Spiral Arms, 40% Golden-Orange Core, eye level to left of core)
-      const nebKey = `${bgKey}|${Math.round(time * 4)}`;
-      if (!nebCache || nebCache.key !== nebKey) {
-        nebCache = {
-          key: nebKey,
-          grads: [
-            // 60% Blue Radiant Spiral Arms & Ionized Disc
-            { col: '#0284c7', alpha: 0.28, r: 0.12, ox: -0.35, oy: -0.07 },  // Outer spiral arm disk
-            { col: '#06b6d4', alpha: 0.30, r: 0.085, ox: -0.35, oy: -0.07 }, // Mid-disk starburst arm sweeps
-            { col: '#38bdf8', alpha: 0.22, r: 0.055, ox: -0.35, oy: -0.07 }, // Luminous inner arm crests
-            // 40% Golden-Orange Central Galactic Bulge & Accretion Halo
-            { col: '#ea580c', alpha: 0.34, r: 0.045, ox: -0.35, oy: -0.07 }, // Magma dust envelope of bulge
-            { col: '#f97316', alpha: 0.30, r: 0.030, ox: -0.35, oy: -0.07 }, // Dense older stellar bulge
-            { col: '#facc15', alpha: 0.26, r: 0.018, ox: -0.35, oy: -0.07 }, // Radiant incandescent gold
-            // Supermassive Galactic Nucleus Core
-            { col: '#ffffff', alpha: 0.85, r: 0.008, ox: -0.35, oy: -0.07 }, // White-hot galactic nucleus
-          ].map((spec, i) => {
-            const na = time * 0.04 + i * 1.6;
-            const nx = cx + spec.ox * w + Math.cos(na) * w * 0.02;
-            const ny = cy + spec.oy * h + Math.sin(na * 0.8) * h * 0.02;
-            const ng = ctx.createRadialGradient(nx, ny, 0, nx, ny, Math.min(w, h) * spec.r);
-            ng.addColorStop(0, hexA(spec.col, spec.alpha));
-            ng.addColorStop(0.55, hexA(spec.col, spec.alpha * 0.35));
-            ng.addColorStop(1, hexA(spec.col, 0));
-            return ng;
-          }),
-        };
-      }
-      for (const ng of nebCache.grads) {
-        ctx.fillStyle = ng;
-        ctx.fillRect(0, 0, w, h);
-      }
-      ctx.globalCompositeOperation = 'source-over';
 
       // ── 2. Animated perspective grid — lines rush toward viewer ──
       const horizon = h * 0.70 + p.y * 0.4;
