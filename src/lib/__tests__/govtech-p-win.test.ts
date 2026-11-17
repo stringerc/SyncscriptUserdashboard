@@ -100,4 +100,16 @@ describe('Bayesian P(Win) Decision Engine', () => {
     expect(metrics.scheduleFeasibility).toBeLessThan(50.0);
     expect(metrics.riskPenalty).toBeGreaterThanOrEqual(10.0);
   });
+
+  it('includes disqualification reasons when clearance or hardware is detected from corpus alone', () => {
+    const corpusOnlyClearance: FederalSolicitation = {
+      ...baseSolicitation,
+      requiresSecurityClearance: undefined, // undefined on object
+      sowSummary: 'The Contractor shall provide TS/SCI cleared analysts for Top Secret access on site.',
+    };
+
+    const viability = isBidViable(corpusOnlyClearance);
+    expect(viability.viable).toBe(false);
+    expect(viability.reasons.some((r) => r.includes('TS/SCI') || r.includes('security clearance'))).toBe(true);
+  });
 });

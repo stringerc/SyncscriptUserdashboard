@@ -59,4 +59,30 @@ describe('SAM.gov Ingestion Scanner Tool', () => {
     expect(disqualified.length).toBeGreaterThan(0);
     expect(disqualified.some((d) => d.pWin.riskPenalty >= 50 || d.pWin.pWinScore < 80)).toBe(true);
   });
+
+  it('enqueues qualified opportunities into distribution-queue.json adhering to QueueFile schema with status pending and createdAt', async () => {
+    const result = await scanOpportunities({
+      useMock: true,
+      minPWin: 80.0,
+      satOnly: true,
+      enqueue: true,
+    });
+
+    expect(result.qualifiedCount).toBeGreaterThan(0);
+
+    // Verify queue file format
+    const fs = await import('node:fs');
+    const path = await import('node:path');
+    const queuePath = path.resolve(process.cwd(), 'storefront/distribution-queue.json');
+    expect(fs.existsSync(queuePath)).toBe(true);
+    const parsed = JSON.parse(fs.readFileSync(queuePath, 'utf8'));
+    expect(parsed).toHaveProperty('items');
+    expect(Array.isArray(parsed.items)).toBe(true);
+
+    const enqueued = parsed.items.find((i: any) => i.type === 'sam_gov_capture');
+    expect(enqueued).toBeDefined();
+    expect(enqueued.status).toBe('pending');
+    expect(typeof enqueued.createdAt).toBe('number');
+    expect(enqueued.staged_pending_human).toBe(true);
+  });
 });

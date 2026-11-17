@@ -408,6 +408,9 @@ export async function runSamGovCapture(ctx: AgentContext, payload: Record<string
   let solicitation: FederalSolicitation | undefined = payload.solicitation as FederalSolicitation | undefined;
   if (!solicitation && noticeId) {
     solicitation = MOCK_FEDERAL_OPPORTUNITIES.find((o) => o.noticeId === noticeId) as FederalSolicitation | undefined;
+    if (!solicitation) {
+      throw new Error(`Solicitation ${noticeId} not found in federal catalog`);
+    }
   }
   if (!solicitation) {
     const scan = await scanOpportunities({ useMock: true, satOnly: true });

@@ -8,7 +8,7 @@
  * - Vehicle: SAT (FAR Part 13 <= $250k) & CDAO Tradewinds CSO
  */
 
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync, renameSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -186,23 +186,28 @@ export async function scanOpportunities(options = {}) {
  * Enqueues viable opportunities into the distribution queue for the distributor worker
  */
 function enqueueOpportunities(qualifiedOpportunities) {
-  let queue = [];
+  let queueData = { items: [] };
   if (existsSync(QUEUE_PATH)) {
     try {
-      queue = JSON.parse(readFileSync(QUEUE_PATH, 'utf8'));
+      const parsed = JSON.parse(readFileSync(QUEUE_PATH, 'utf8'));
+      if (parsed && Array.isArray(parsed.items)) {
+        queueData = parsed;
+      }
     } catch {}
   }
 
   let added = 0;
   for (const q of qualifiedOpportunities) {
-    const exists = queue.some(
+    const exists = queueData.items.some(
       (item) => item.type === 'sam_gov_capture' && item.payload?.noticeId === q.solicitation.noticeId
     );
     if (!exists) {
-      queue.push({
+      queueData.items.push({
         id: `govtech-${q.solicitation.noticeId.toLowerCase().replace(/[^a-z0-9]/g, '-')}`,
         type: 'sam_gov_capture',
+        status: 'pending',
         priority: 1, // High priority
+        createdAt: Date.now(),
         staged_pending_human: true,
         payload: {
           noticeId: q.solicitation.noticeId,
@@ -210,14 +215,19 @@ function enqueueOpportunities(qualifiedOpportunities) {
           pWinScore: q.pWin.pWinScore,
           metrics: q.pWin,
         },
-        enqueuedAt: new Date().toISOString(),
       });
       added++;
     }
   }
 
   if (added > 0) {
-    writeFileSync(QUEUE_PATH, JSON.stringify(queue, null, 2), 'utf8');
+    const tmp = QUEUE_PATH + '.tmp';
+    writeFileSync(tmp, JSON.stringify(queueData, null, 2), 'utf8');
+    try {
+      renameSync(tmp, QUEUE_PATH);
+    } catch {
+      writeFileSync(QUEUE_PATH, JSON.stringify(queueData, null, 2), 'utf8');
+    }
   }
 }
 

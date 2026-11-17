@@ -201,27 +201,53 @@ export function auditAndHealProposal(pkg: ProposalPackage): {
       pkg.volumes.volumeIV_Price.laborCategories.some((c) => c.hourlyRate < 125 || c.hourlyRate > 195)
     ) {
       issues.push('Price volume exceeds SAT threshold or has non-standard labor rates');
-      pkg.volumes.volumeIV_Price.laborCategories = pkg.volumes.volumeIV_Price.laborCategories.map((c) => ({
-        ...c,
-        hourlyRate: Math.max(125, Math.min(195, c.hourlyRate)),
-        total: Math.max(125, Math.min(195, c.hourlyRate)) * c.hours,
-      }));
-      pkg.volumes.volumeIV_Price.totalCost = pkg.volumes.volumeIV_Price.laborCategories.reduce(
-        (acc, c) => acc + c.total,
-        0
-      );
+      // 1. Clamp hourly rates within SBA small business bounds
+      pkg.volumes.volumeIV_Price.laborCategories = pkg.volumes.volumeIV_Price.laborCategories.map((c) => {
+        const rate = Math.max(125, Math.min(195, c.hourlyRate));
+        return {
+          ...c,
+          hourlyRate: rate,
+          total: rate * c.hours,
+        };
+      });
+      let currentTotal = pkg.volumes.volumeIV_Price.laborCategories.reduce((acc, c) => acc + c.total, 0);
+
+      // 2. If total cost still exceeds SAT ceiling ($250k), scale hours down proportionally
+      if (currentTotal > TARGET_CREDENTIALS.satThreshold) {
+        const scale = (TARGET_CREDENTIALS.satThreshold - 2000) / currentTotal;
+        pkg.volumes.volumeIV_Price.laborCategories = pkg.volumes.volumeIV_Price.laborCategories.map((c) => {
+          const scaledHours = Math.max(1, Math.floor(c.hours * scale));
+          return {
+            ...c,
+            hours: scaledHours,
+            total: c.hourlyRate * scaledHours,
+          };
+        });
+        currentTotal = pkg.volumes.volumeIV_Price.laborCategories.reduce((acc, c) => acc + c.total, 0);
+        deficienciesResolved.push('Repaired Volume IV: Scaled hours to conform to SAT $250k ceiling');
+      }
+
+      pkg.volumes.volumeIV_Price.totalCost = currentTotal;
       deficienciesResolved.push('Repaired Volume IV: Recalibrated rates to SBA $125-$195/hr range');
     }
 
     // Check 4: Enforce Human Approval Gate
     pkg.staged_pending_human = true;
 
-    if (issues.length === 0 || attempts === MAX_ATTEMPTS) {
+    if (issues.length === 0) {
       pkg.certified = true;
       pkg.redTeamAudit = {
         attempts,
         deficienciesResolved,
         passed: true,
+      };
+      break;
+    } else if (attempts === MAX_ATTEMPTS) {
+      pkg.certified = false;
+      pkg.redTeamAudit = {
+        attempts,
+        deficienciesResolved,
+        passed: false,
       };
       break;
     }

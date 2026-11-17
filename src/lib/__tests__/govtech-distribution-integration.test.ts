@@ -55,4 +55,13 @@ describe('Nexus Foundry Distributor Worker - SAM.gov GovTech Capture', () => {
     expect(result.authorized).toBe(true);
     expect(result.dispatchStatus).toBe('DISPATCHED_TO_PORTAL');
   });
+
+  it('throws error when explicit noticeId is not found instead of silently substituting', async () => {
+    await expect(
+      runSamGovCapture(dummyCtx, {
+        noticeId: 'NON-EXISTENT-SOLICITATION-99999',
+        useMock: true,
+      })
+    ).rejects.toThrow(/not found/i);
+  });
 });

@@ -31,8 +31,9 @@ export interface ComplianceMatrix {
  */
 export function extractComplianceItems(sowText: string): ComplianceItem[] {
   // Normalize and split into sentence chunks without breaking dotted clauses (e.g. FAR 52.212-4)
+  // Splits on newlines OR sentence-ending punctuation followed by whitespace and a capitalized token/number
   const rawSentences = sowText
-    .split(/\r?\n|(?<!\d)[.!?]+(?!\d)\s*/)
+    .split(/(?:\r?\n)+|(?<=[.!?])\s+(?=[A-Z0-9])/)
     .map((s) => s.trim())
     .filter((s) => s.length > 5);
 
@@ -51,8 +52,9 @@ export function extractComplianceItems(sowText: string): ComplianceItem[] {
     const farClause = farMatch ? farMatch[0].toUpperCase() : undefined;
 
     // Ground in real codebase capabilities
-    let solution = 'High-reliability TypeScript/Node.js enterprise microservices architecture conforming to federal standards.';
-    let evidence = 'Grounded in production codebase structure with strict typing, schema validation, and zero unverified dependencies.';
+    let solution = '';
+    let evidence = '';
+    let status: 'FULL' | 'PARTIAL' | 'NON_COMPLIANT' = 'FULL';
 
     if (/(agent|autonomous|orchestrat|fleet|worker)/i.test(sentence)) {
       solution =
@@ -74,6 +76,16 @@ export function extractComplianceItems(sowText: string): ComplianceItem[] {
         'Native Sovereign Browser Bridge leveraging macOS Apple Events and HTML5 DataTransfer for zero-port-conflict web automation.';
       evidence =
         'Grounded in storefront/tools/cortex-browser-bridge.mjs with verified desktop Chrome automation.';
+    } else if (/(software|programming|code|microservices|api|system|runtime|typescript|node)/i.test(sentence)) {
+      solution =
+        'High-reliability TypeScript/Node.js enterprise microservices architecture conforming to federal standards.';
+      evidence =
+        'Grounded in production codebase structure with strict typing, schema validation, and zero unverified dependencies.';
+    } else {
+      // Unsupported physical or non-software requirement
+      solution = 'Out-of-scope for sovereign AI software core; requires designated specialty teaming subcontractor.';
+      evidence = 'Unmapped: Non-core physical or non-software requirement.';
+      status = 'PARTIAL';
     }
 
     items.push({
@@ -83,7 +95,7 @@ export function extractComplianceItems(sowText: string): ComplianceItem[] {
       farClause,
       solution,
       evidence,
-      status: 'FULL',
+      status,
     });
   }
 

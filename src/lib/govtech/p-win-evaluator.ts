@@ -165,13 +165,20 @@ export function isBidViable(
     reasons.push('Favorable competition density under SBSA / SAT / Tradewinds vehicle');
   }
 
-  if (solicitation.requiresSecurityClearance || metrics.riskPenalty >= 50) {
-    if (solicitation.requiresSecurityClearance) {
-      reasons.push('Disqualified: Requires active TS/SCI security clearance exceeding commercial small business credentials');
-    }
-    if (solicitation.requiresHardwareManufacturing) {
-      reasons.push('Disqualified: Requires physical hardware manufacturing out of scope for pure software capture');
-    }
+  const corpus = `${solicitation.title} ${solicitation.sowSummary} ${solicitation.fullText || ''}`.toLowerCase();
+  const requiresClearance =
+    solicitation.requiresSecurityClearance ||
+    /(ts\/sci|top secret|facility clearance|active security clearance)/i.test(corpus);
+  const requiresHardware =
+    solicitation.requiresHardwareManufacturing ||
+    solicitation.naicsCode.startsWith('33') ||
+    /(hardware manufacturing|cnc milling|printed circuit board fabrication|chassis manufacturing)/i.test(corpus);
+
+  if (requiresClearance) {
+    reasons.push('Disqualified: Requires active TS/SCI security clearance exceeding commercial small business credentials');
+  }
+  if (requiresHardware) {
+    reasons.push('Disqualified: Requires physical hardware manufacturing out of scope for pure software capture');
   }
 
   if (metrics.scheduleFeasibility < 50) {
