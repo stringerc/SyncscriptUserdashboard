@@ -354,7 +354,7 @@ const TaskRow: React.FC<{ t: AgentTaskClient; now: number }> = ({ t, now }) => {
   );
 };
 
-const AgentDossierPanel: React.FC<{ agent: AgentClient; snap: AgentsSnapshotClient; now: number; onClose: () => void; dockLeft?: boolean }> = ({ agent: a, snap, now, onClose, dockLeft }) => {
+const AgentDossierPanel: React.FC<{ agent: AgentClient; snap: AgentsSnapshotClient; now: number; onClose: () => void; dockLeft?: boolean; pinned?: boolean; onTogglePin?: () => void }> = ({ agent: a, snap, now, onClose, dockLeft, pinned, onTogglePin }) => {
   const [dossierOpen, setDossierOpen] = useState(false);
   const [deepOpen, setDeepOpen] = useState(false);
   const [deep, setDeep] = useState<{ archive: any[]; incidents: any[]; proposals: any[]; counsel: any[]; routines: any[] } | null>(null);
@@ -421,13 +421,13 @@ const AgentDossierPanel: React.FC<{ agent: AgentClient; snap: AgentsSnapshotClie
     <div style={dockLeft ? {
       // Docked to the roster rail: extends rightward from it, vertically centered.
       position: 'absolute', left: 290, top: '50%', transform: 'translateY(-50%)', zIndex: 7,
-      width: 520, maxWidth: 'calc(100vw - 240px)', maxHeight: '74vh', display: 'flex', flexDirection: 'column',
+      width: pinned ? 600 : 520, maxWidth: 'calc(100vw - 240px)', maxHeight: pinned ? '84vh' : '74vh', display: 'flex', flexDirection: 'column',
       background: 'linear-gradient(165deg, rgba(8,14,24,0.94), rgba(5,8,15,0.9))',
       border: `1px solid ${hexA(col, 0.35)}`, borderLeft: `3px solid ${col}`, borderRadius: 3, padding: '12px 16px',
       backdropFilter: 'blur(14px)', boxShadow: `0 0 40px ${hexA(col, 0.15)}`, overflow: 'hidden',
     } : {
       position: 'absolute', bottom: 18, left: '50%', transform: 'translateX(-50%)', zIndex: 7,
-      width: 560, maxWidth: '92vw', maxHeight: '62vh', display: 'flex', flexDirection: 'column',
+      width: pinned ? 640 : 560, maxWidth: '94vw', maxHeight: pinned ? '76vh' : '62vh', display: 'flex', flexDirection: 'column',
       background: 'linear-gradient(165deg, rgba(8,14,24,0.94), rgba(5,8,15,0.9))',
       border: `1px solid ${hexA(col, 0.35)}`, borderRadius: 3, padding: '12px 16px',
       backdropFilter: 'blur(14px)', boxShadow: `0 0 40px ${hexA(col, 0.15)}`, overflow: 'hidden',
@@ -446,6 +446,12 @@ const AgentDossierPanel: React.FC<{ agent: AgentClient; snap: AgentsSnapshotClie
         </span>
         <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           <span style={{ fontSize: 8, color: DIM, fontFamily: MONO }}>{a.role}</span>
+          {onTogglePin && (
+            <button onClick={onTogglePin} title={pinned ? 'Unpin — dossier closes on deselect' : 'Pin — keep dossier on the board'} style={{
+              background: pinned ? 'rgba(251,191,36,0.15)' : 'none', border: `1px solid ${pinned ? 'rgba(251,191,36,0.6)' : 'rgba(148,163,184,0.3)'}`,
+              color: pinned ? '#fbbf24' : DIM, cursor: 'pointer', fontSize: 8, fontFamily: MONO, fontWeight: 700, padding: '2px 7px', borderRadius: 2, letterSpacing: '0.12em',
+            }}>{pinned ? 'PINNED' : 'PIN'}</button>
+          )}
           <button onClick={onClose} style={{ background: 'none', border: 'none', color: DIM, cursor: 'pointer', fontSize: 11, fontFamily: MONO, padding: 0 }}>✕</button>
         </span>
       </div>
@@ -825,6 +831,7 @@ export const CortexAgentsScene: React.FC = () => {
   const [snap, setSnap] = useState<AgentsSnapshotClient>(snapRef.current);
   const [events, setEvents] = useState(agentsClient.events);
   const [selectedAgent, setSelectedAgent] = useState<string | null>(null);
+  const [pinnedAgentId, setPinnedAgentId] = useState<string | null>(null);
   const [selectedStation, setSelectedStation] = useState<string | null>(null);
   const [towerOpen, setTowerOpen] = useState(false);
   const [nowTs, setNowTs] = useState(() => Date.now());
@@ -1852,7 +1859,7 @@ export const CortexAgentsScene: React.FC = () => {
       {/* ── Left rail: Mission Control Roster — Apollo Flight Hierarchy ── */}
       {!narrow && (
         <div style={{
-          position: 'absolute', left: 64, top: '50%', transform: 'translateY(-50%)', zIndex: 5,
+          position: 'absolute', left: 76, top: '50%', transform: 'translateY(-50%)', zIndex: 5,
           width: 218, fontFamily: MONO,
           background: 'rgba(4,8,18,0.85)', border: '1px solid rgba(103,232,249,0.18)',
           borderRadius: 4, backdropFilter: 'blur(8px)', overflow: 'hidden',
@@ -2126,10 +2133,21 @@ export const CortexAgentsScene: React.FC = () => {
         );
       })}
 
-      {selectedAgent && (() => {
-        const a = agents.find(x => x.id === selectedAgent);
+      {(() => {
+        // Selection wins; a pinned dossier survives deselect/background click.
+        const shownId = selectedAgent || pinnedAgentId;
+        if (!shownId) return null;
+        const a = agents.find(x => x.id === shownId);
         if (!a) return null;
-        return <AgentDossierPanel agent={a} snap={snap} now={nowTs} onClose={() => setSelectedAgent(null)} dockLeft={!narrow} />;
+        return (
+          <AgentDossierPanel
+            agent={a} snap={snap} now={nowTs}
+            pinned={pinnedAgentId === a.id}
+            onTogglePin={() => setPinnedAgentId(p => (p === a.id ? null : a.id))}
+            onClose={() => { setSelectedAgent(null); setPinnedAgentId(null); }}
+            dockLeft={!narrow}
+          />
+        );
       })()}
 
       {selectedStation && (
