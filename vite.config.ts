@@ -41,6 +41,7 @@ const AGENT_LABELS_SAFE: Record<string, string> = {
   forecaster: 'FORECASTER', prep: 'PREP',
 };
 import { getCortexProactiveInitiative } from './src/lib/cortex-proactive-initiative';
+import { getWorldState, formatWorldStateHeader } from './src/lib/cortex-world-state';
 
 /** Short SHA for deploy verification (Vercel sets VERCEL_GIT_COMMIT_SHA at build time). */
 function resolveSyncscriptBuildSha(): string {
@@ -2009,6 +2010,26 @@ function apiProxyPlugin(): Plugin {
           lastAmbientContextPoll = now;
           res.end(JSON.stringify(cachedAmbientContext));
         });
+      });
+
+      // ── Unified Living World State Blackboard (/api/cortex/world-state) ──
+      server.middlewares.use('/api/cortex/world-state', async (req: any, res: any) => {
+        res.setHeader('Content-Type', 'application/json');
+        if (!setCortexCors(req, res)) {
+          res.statusCode = 403;
+          return res.end(JSON.stringify({ error: 'Cross-origin access forbidden' }));
+        }
+        if (req.method === 'OPTIONS') { res.writeHead(204); return res.end(); }
+        if (req.method !== 'GET') { res.statusCode = 405; return res.end(JSON.stringify({ error: 'GET only' })); }
+
+        try {
+          const state = await getWorldState();
+          const header = formatWorldStateHeader(state);
+          res.end(JSON.stringify({ ok: true, header, state }));
+        } catch (err: any) {
+          res.statusCode = 500;
+          res.end(JSON.stringify({ ok: false, error: err?.message || 'World state probe failed' }));
+        }
       });
 
       // ── Autonomous Vigilance & Speculative Pre-Computation (/api/cortex/vigilance/status) ──

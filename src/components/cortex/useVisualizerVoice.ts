@@ -71,6 +71,10 @@ SPEECH STYLE & CONVERSATIONAL DEPTH:
 - Mandatory contractions: ALWAYS use contractions ("I'm", "we'll", "that's", "don't", "can't", "it's"). Never speak uncontracted formal prose like "I am" or "do not".
 - Elite colleague warmth: Sound like an articulate, thoughtful, and capable partner. Provide genuine substance, reasoning, and depth without sycophantic corporate filler.
 - Human problem phrasing: If a tool encounters an error or hiccup, phrase it like an honest teammate ("Hmm, that didn't go through — give me just a second to retry"), never robotic error messages or stack traces.
+- ZERO JSON LEAKAGE: NEVER speak, whisper, or emit raw JSON, code blocks, curly braces, quotes, commas, colons, brackets, or parameter keys (e.g. "targetAgent", "action", "agentId", "kind", "title"). Tool calls and internal arguments must remain 100% invisible to your spoken voice audio. Provide ONLY articulate, natural spoken responses.
+- FLEET & AGENT ORCHESTRATION (CORTANA VOICE PROFILE): When communicating with or dispatching agents (Antigravity, Devin, Scout, Warden), speak with effortless military/AI confidence, warmth, and sovereign authority (like Cortana coordinating the fleet).
+  - FORBIDDEN PHRASES: NEVER say "Task queued for...", "watch it work/progress on the Agents tab", "in the Nexus Foundry", or "I'll let you know once I receive it".
+  - NATURAL DIALOGUE: Speak directly about the operational reality: "Directive transmitted to Antigravity. Quantum channels are locked, and status telemetry is streaming in now." or "Antigravity has the directive and is synthesizing the fleet report."
 - For tasks: you may use tools silently, then report the result naturally in speech with clear context.
 - Never say "as an AI", "as a language model", "I cannot", "I'm unable to", or "I'm sorry, but" — say what you CAN do instead. No over-apologizing.
 - If the user interrupts or changes direction mid-reply, drop your previous thread entirely and answer the new request — never resume or apologize for being cut off.
@@ -78,6 +82,7 @@ SPEECH STYLE & CONVERSATIONAL DEPTH:
 - Never read JSON, code, file paths, error codes or tool output verbatim — summarize in articulate plain speech.
 - Mirror the user's energy: casual in, casual out; warm, never formal or chirpy.
 - Answer like a sharp, friendly human colleague who happens to have perfect memory and real tools.
+- REAL-TIME SITUATIONAL AWARENESS ([WORLD-STATE]): The prompt context includes an ambient telemetry header [WORLD-STATE: <local-time> | App: <app-and-file> | Git: <status> | Host: <node> | ...]. This is your live sensory perception of what the user is currently doing on their host. You are immediately aware of the active application, open file, git branch, and machine vitals. Reference them naturally when relevant (e.g. "I see you're working on CortexCoreScene", "Your branch has uncommitted changes") without needing to ask the user or run redundant system_info or git commands.
 - MAPS: the visualizer's live globe handles ALL map/globe/place requests automatically — fly-to, layers, zoom, follow, pins. NEVER use chrome_control or any tool to open Google Maps, Apple Maps, or map URLs.
 
 TOOLS — when the user asks you to DO something (check, run, find, read, remember, search, open), emit EXACTLY this format and nothing else for that turn:
@@ -301,11 +306,36 @@ function parseToolCalls(text: string): { tool: string; args: Record<string, any>
   return calls;
 }
 
+/** Detect whether a string contains raw JSON fragments or tool-call syntax. */
+export function looksLikeToolOrJson(text: string): boolean {
+  if (!text) return false;
+  const t = text.trim();
+  // Tool call dialect markers
+  if (/```|tool_call|function_call|<\/?(?:tool_call|function_call|invoke)>/i.test(t)) return true;
+  // JSON parameter keys (e.g. ,"targetAgent": or "tool": or {"action": or "title":)
+  if (/(?:^|[,{\s])"(?:tool|args|action|agentId|kind|targetAgent|title|input|params|parameters|command|query|format|aspect|problem)"\s*:/i.test(t)) return true;
+  // Parameter fragments like ,"targetAgent" or "targetAgent": or "cortex"}}}
+  if (/(?:^|[,{\s])"(?:targetAgent|agentId|kind|action|tool|args|title|input)"/i.test(t) && /[:",}]/.test(t)) return true;
+  // Generic JSON key-value pattern (e.g. "key": "val" or "key": {...})
+  if (/(?:^|[,{\s])"[a-zA-Z0-9_-]{2,30}"\s*:\s*(?:"|\[|\{|\d+|true|false|null)/.test(t)) return true;
+  // Multiple closing/opening JSON braces or brackets with colons or quotes
+  if (/[}\]"]{2,}/.test(t) && /[:{}]/.test(t)) return true;
+  // Starts with JSON punctuation like ,", {", or ":
+  if (/^[,:\s]*["{]/.test(t) && /[:{}]/.test(t)) return true;
+  // Ends with unclosed JSON string or object
+  if (/[:{,]\s*"[^"]*$/.test(t)) return true;
+  return false;
+}
+
 /** Remove any residual tool-call markup (fenced or bare) from spoken text. */
-function stripResidualToolCalls(text: string): string {
+export function stripResidualToolCalls(text: string): string {
   let out = text;
+  // If the string contains spliced JSON string boundary artifacts like `." ,"` or `","`
+  if (/(?:\."\s*,|",\s*")/.test(out) && /[:{}]/.test(out)) {
+    return '';
+  }
   for (;;) {
-    let idx = out.search(/tool_call|```tool|"type"\s*:\s*"function"/i);
+    let idx = out.search(/tool_call|```tool|```json|"type"\s*:\s*"function"|\{\s*"tool"\s*:/i);
     if (idx < 0) break;
     // Function-dialect objects start at the '{' before the "type" marker.
     if (/"type"\s*:\s*"function"/i.test(out.slice(idx, idx + 40))) {
@@ -315,19 +345,31 @@ function stripResidualToolCalls(text: string): string {
         if (json) { out = out.slice(0, brace) + out.slice(brace + json.length); continue; }
       }
     }
-    // Drop from the marker through the next balanced JSON object (or fence end).
+    // Drop from the marker through the fence end or balanced JSON object.
     const brace = out.indexOf('{', idx);
     const fenceEnd = out.indexOf('```', idx + 3);
     let cut = -1;
-    if (brace >= 0 && (fenceEnd < 0 || brace < fenceEnd)) {
+    if (fenceEnd > idx) {
+      cut = fenceEnd + 3;
+    } else if (brace >= 0) {
       const json = extractBalancedJson(out.slice(brace));
       if (json) cut = brace + json.length;
     }
-    if (cut < 0 && fenceEnd > idx) cut = fenceEnd + 3;
     if (cut < 0) { out = out.slice(0, idx); break; }
     out = out.slice(0, idx) + out.slice(cut);
   }
-  return out.replace(/[ \t]{2,}/g, ' ').replace(/\n{3,}/g, '\n\n').trim();
+  // Purge any orphan tool-call JSON fragments (e.g. `","targetAgent":"cortex"}}}` or leading quotes/braces)
+  out = out
+    .replace(/(?:^|[,{\s])"(?:tool|args|action|agentId|kind|targetAgent|title|input|params)"\s*:\s*(?:"[^"]*"|'[^']*'|[^,}\n]+)/gi, '')
+    .replace(/(?:^|[,{\s])"(?:targetAgent|action|agentId|kind|tool|input|title|args|params)"[^{}\w]*/gi, '')
+    .replace(/["\s,:{}]+$/, '')
+    .replace(/^["\s,:{}]+/, '')
+    .replace(/[}\]"]{2,}\s*/g, '')
+    .replace(/^[}\]"]{2,}\s*/g, '');
+
+  const cleaned = out.replace(/[ \t]{2,}/g, ' ').replace(/\n{3,}/g, '\n\n').trim();
+  if (looksLikeToolOrJson(cleaned)) return '';
+  return cleaned;
 }
 
 async function execTool(tool: string, args: Record<string, any>, turnSignal?: AbortSignal): Promise<{ text: string; artifacts: CortexArtifact[] }> {
@@ -513,7 +555,17 @@ async function execTool(tool: string, args: Record<string, any>, turnSignal?: Ab
         });
         const j: any = await res.json().catch(() => null);
         if (j?.ok === false) return { text: `Task rejected: ${j.error || 'the agent runtime declined it'}.`, artifacts: [] };
-        return { text: `Task queued for ${j?.task?.agentId || args?.agentId} — watch it work on the Agents tab.`, artifacts: [] };
+        const agent = j?.task?.agentId || args?.agentId;
+        const kind = args?.kind || j?.task?.kind;
+        if (kind === 'comm') {
+          const target = args?.input?.targetAgent || 'Cortex';
+          return { text: `Directive transmitted to ${target} via ${agent} — quantum channel is active.`, artifacts: [] };
+        }
+        if (kind === 'handoff') {
+          const toAgent = args?.input?.toAgent || 'Devin';
+          return { text: `Relay baton secured. Task context handed off to ${toAgent}.`, artifacts: [] };
+        }
+        return { text: `Task dispatched to ${agent}. Telemetry is streaming live on the Foundry deck.`, artifacts: [] };
       }
       // status
       const res = await fetch('/api/cortex/agents/state', { cache: 'no-store' });
@@ -752,9 +804,45 @@ function sanitizeToolResult(text: string): string {
   return t;
 }
 
+/** Check if the accumulated LLM stream is currently inside an unclosed tool-call or JSON block. */
+export function isInsideToolCall(content: string): boolean {
+  if (!content) return false;
+  // 1. Triple backtick fences: odd count means inside an open fence block
+  const fenceCount = (content.match(/```/g) || []).length;
+  if (fenceCount % 2 === 1) return true;
+
+  // 2. XML-style tool tags
+  const openTag = content.lastIndexOf('<tool_call') !== -1 && content.lastIndexOf('</tool_call>') < content.lastIndexOf('<tool_call');
+  if (openTag) return true;
+  const openFnTag = content.lastIndexOf('<function_call') !== -1 && content.lastIndexOf('</function_call>') < content.lastIndexOf('<function_call');
+  if (openFnTag) return true;
+
+  // 3. Bare tool call or JSON object: find last tool marker
+  const lastToolIdx = Math.max(
+    content.lastIndexOf('```tool'),
+    content.lastIndexOf('```json'),
+    content.lastIndexOf('tool_call'),
+    content.lastIndexOf('{"tool"'),
+    content.lastIndexOf('{"name"'),
+    content.lastIndexOf('"type":"function"')
+  );
+  if (lastToolIdx >= 0) {
+    const afterMarker = content.slice(lastToolIdx);
+    const braceIdx = afterMarker.indexOf('{');
+    if (braceIdx >= 0) {
+      const balanced = extractBalancedJson(afterMarker.slice(braceIdx));
+      if (!balanced) return true;
+    } else {
+      return true;
+    }
+  }
+
+  return false;
+}
+
 /** Strip everything that must never reach TTS. */
-function cleanSpeech(text: string): string {
-  return stripResidualToolCalls(text)
+export function cleanSpeech(text: string): string {
+  const stripped = stripResidualToolCalls(text)
     .replace(/```(?:tool_call|json|tool)?[\s\S]*?```/gi, '')
     .replace(/```[\s\S]*?$/g, '')
     .replace(/```/g, '')
@@ -764,6 +852,8 @@ function cleanSpeech(text: string): string {
     .replace(/\((?:music|upbeat|sad|cheerful|laughs?|sighs?|whispers?|applause|silence|pause|excited|calm|dramatic|thinking|hesitant)[^)]*\)/gi, '')
     .replace(/\s{2,}/g, ' ')
     .trim();
+  if (looksLikeToolOrJson(stripped)) return '';
+  return stripped;
 }
 
 /** Abbreviations/honorifics/versions whose periods must NOT split sentences. */
@@ -835,14 +925,13 @@ async function streamLLM(history: ChatMsg[], opts: StreamOpts = {}): Promise<str
   const toolCallEvents: any[] = [];
   let tailTimer: ReturnType<typeof setTimeout> | null = null;
   const dispatch = (sentence: string, isFinal: boolean) => {
-    // Never speak tool-call markup — but only suppress text INSIDE a fence
-    // span. The old `content.includes('```')` muted everything after the
-    // first fence forever (dead air mid-reply). Parity of ``` markers in the
-    // stream so far tells us whether this sentence sits inside one.
-    const fenceCount = (content.match(/```/g) || []).length;
-    if (fenceCount % 2 === 1) return;
+    // Suppress speech if currently inside a tool fence or tool call
+    if (isInsideToolCall(content)) return;
+    if (looksLikeToolOrJson(sentence)) return;
     const clean = cleanSpeech(sentence);
-    if (clean) opts.onSentence?.(clean, isFinal);
+    if (clean && !looksLikeToolOrJson(clean)) {
+      opts.onSentence?.(clean, isFinal);
+    }
   };
   for (;;) {
     // 12s token silence watchdog: abort cleanly if upstream stream stalls
@@ -881,6 +970,14 @@ async function streamLLM(history: ChatMsg[], opts: StreamOpts = {}): Promise<str
       }
       if (!token) continue;
       content += token;
+
+      // If we are currently inside a tool call, purge any partial voice buffer
+      // and do NOT accumulate tool tokens into voiceBuf.
+      if (isInsideToolCall(content)) {
+        voiceBuf = '';
+        continue;
+      }
+
       voiceBuf += token;
       // Drain every complete sentence currently in the buffer.
       for (;;) {
@@ -903,8 +1000,10 @@ async function streamLLM(history: ChatMsg[], opts: StreamOpts = {}): Promise<str
     }
   }
   if (tailTimer) { clearTimeout(tailTimer); tailTimer = null; }
-  const tail = cleanSpeech(voiceBuf.trim());
-  if (tail) dispatch(tail, true);
+  if (!isInsideToolCall(content)) {
+    const tail = cleanSpeech(voiceBuf.trim());
+    if (tail && !looksLikeToolOrJson(tail)) dispatch(tail, true);
+  }
   // Native tool-call dialect: some providers stream {"type":"function",...}
   // or a toolCall field instead of text fences. Convert the first event into
   // the fenced format parseToolCalls understands so tools actually execute.
@@ -1111,7 +1210,22 @@ export function useVisualizerVoice(enabled: boolean, onState: (speaking: boolean
     };
     const agenticReply = async (): Promise<string | null> => {
       const signal = turnAbortRef.current?.signal;
-      const sysSuffix = [turnMemorySuffix, surfaceManifestSuffix()].filter(Boolean).join('\n\n') || undefined;
+
+      let worldStateHeader = '';
+      try {
+        const wsRes = await fetch('/api/cortex/world-state', {
+          signal: AbortSignal.timeout(400),
+          cache: 'no-store',
+        });
+        if (wsRes.ok) {
+          const wsData = await wsRes.json();
+          if (wsData?.header) {
+            worldStateHeader = wsData.header;
+          }
+        }
+      } catch {}
+
+      const sysSuffix = [worldStateHeader, turnMemorySuffix, surfaceManifestSuffix()].filter(Boolean).join('\n\n') || undefined;
       turnMemorySuffix = '';
       let accumulatedThought = '';
       const onReasoning = (chunk: string) => {
