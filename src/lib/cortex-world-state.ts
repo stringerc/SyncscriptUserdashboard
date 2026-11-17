@@ -50,6 +50,10 @@ export interface CodebaseState {
   branch: string;
   isClean: boolean;
   dirtyCount: number;
+  /** False when `git status` failed/timed out — header must not claim clean. */
+  statusKnown?: boolean;
+  /** Epoch ms of last detected source-tree change (fs.watch), if watcher active. */
+  lastRepoChangeAt?: number;
 }
 
 export interface FleetState {
@@ -90,16 +94,18 @@ export function getFastGitBranch(cwd: string = process.cwd()): string {
 }
 
 /** Check dirty status quickly via fast git status porcelain. */
-export async function getGitStatus(cwd: string = process.cwd()): Promise<{ isClean: boolean; dirtyCount: number }> {
+export async function getGitStatus(cwd: string = process.cwd()): Promise<{ isClean: boolean; dirtyCount: number; ok: boolean }> {
   try {
-    const { stdout } = await execFileAsync('git', ['status', '--porcelain'], { cwd, timeout: 350 });
+    const { stdout } = await execFileAsync('git', ['status', '--porcelain'], { cwd, timeout: 1500 });
     const lines = stdout.trim().split('\n').filter(Boolean);
     return {
       isClean: lines.length === 0,
       dirtyCount: lines.length,
+      ok: true,
     };
   } catch {
-    return { isClean: true, dirtyCount: 0 };
+    // Unknown ≠ clean. Report failure honestly so the header can say "?".
+    return { isClean: false, dirtyCount: 0, ok: false };
   }
 }
 
@@ -223,9 +229,46 @@ export function getSomaticVitals(): HostSomaticState {
   };
 }
 
+// ── Repo-change watcher (FSEvents-backed fs.watch, macOS/Windows recursive) ──
+// Watches src/ recursively plus key root manifests. .cortex-runtime and other
+// runtime writes live outside src/, so they don't keep this timestamp hot.
+let repoWatcherStarted = false;
+let lastRepoChangeAt: number | undefined;
+let repoChangePending = false;
+
+function ensureRepoWatcher(): void {
+  if (repoWatcherStarted || process.env.CORTEX_WORLD_STATE_WATCH === '0') return;
+  repoWatcherStarted = true;
+  const root = process.cwd();
+  const targets = [path.join(root, 'src'), path.join(root, 'scripts')];
+  const onEvent = () => {
+    repoChangePending = true;
+  };
+  for (const t of targets) {
+    try {
+      fs.watch(t, { recursive: true }, onEvent);
+    } catch {
+      // recursive unsupported (linux) or dir missing — fall back to shallow watch
+      try { fs.watch(t, onEvent); } catch {}
+    }
+  }
+  // Root manifests that affect the build but live outside watched dirs.
+  for (const f of ['vite.config.ts', 'package.json', 'tsconfig.json']) {
+    try { fs.watch(path.join(root, f), onEvent); } catch {}
+  }
+  const flusher = setInterval(() => {
+    if (repoChangePending) {
+      repoChangePending = false;
+      lastRepoChangeAt = Date.now();
+    }
+  }, 2000);
+  flusher.unref?.();
+}
+
 // ── Refresh & Aggregation ───────────────────────────────────────────────────
 
 async function refreshWorldState(): Promise<WorldState> {
+  ensureRepoWatcher();
   const topology = getTopology();
   const host = getSomaticVitals();
   const branch = getFastGitBranch();
@@ -262,6 +305,8 @@ async function refreshWorldState(): Promise<WorldState> {
       branch,
       isClean: git.isClean,
       dirtyCount: git.dirtyCount,
+      statusKnown: git.ok,
+      lastRepoChangeAt,
     },
     fleet: {
       activeAgentCount,
@@ -309,7 +354,7 @@ export async function getWorldState(): Promise<WorldState> {
       topology: getTopology(),
       user: { activeApp: 'macOS', frontmostWindow: '' },
       host: getSomaticVitals(),
-      codebase: { branch: getFastGitBranch(), isClean: true, dirtyCount: 0 },
+      codebase: { branch: getFastGitBranch(), isClean: false, dirtyCount: 0, statusKnown: false },
       fleet: { activeAgentCount: 0, oracleAlive: false },
       cachedAt: Date.now(),
     };
@@ -329,7 +374,9 @@ export function formatWorldStateHeader(state: WorldState): string {
     ? user.activeApp
     : 'Desktop';
 
-  const gitInfo = codebase.isClean
+  const gitInfo = state.codebase.statusKnown === false
+    ? `? (${codebase.branch})`
+    : codebase.isClean
     ? `clean (${codebase.branch})`
     : `${codebase.dirtyCount} dirty (${codebase.branch})`;
 
@@ -340,5 +387,12 @@ export function formatWorldStateHeader(state: WorldState): string {
     ? ` | Oracle: ${state.fleet.oracleAlive ? 'up' : 'DOWN'}`
     : '';
 
-  return `[WORLD-STATE: ${topology.localTime} | App: ${appInfo} | Git: ${gitInfo} | Host: ${hostNode} | Load: ${host.loadAvg1m} | Mem: ${host.memUsedPct}%${battInfo}${fleetInfo}]`;
+  // "Alive" signal: surface a just-happened edit so Cortex can reference
+  // recency without a tool call. Only when the watcher saw a change <2min ago.
+  const editAgeS = state.codebase.lastRepoChangeAt
+    ? Math.max(0, Math.round((Date.now() - state.codebase.lastRepoChangeAt) / 1000))
+    : undefined;
+  const editInfo = editAgeS !== undefined && editAgeS < 120 ? ` | edit: ${editAgeS}s ago` : '';
+
+  return `[WORLD-STATE: ${topology.localTime} | App: ${appInfo} | Git: ${gitInfo} | Host: ${hostNode} | Load: ${host.loadAvg1m} | Mem: ${host.memUsedPct}%${battInfo}${fleetInfo}${editInfo}]`;
 }

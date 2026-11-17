@@ -1497,6 +1497,30 @@ function apiProxyPlugin(): Plugin {
         saveHealth();
       };
 
+      // ── World-state transition watcher: announce meaningful fleet/repo
+      // changes detected by the living world-state blackboard. Runs on the
+      // ambient tick; transitions are edge-triggered with cooldown dedupe.
+      let lastWsSnapshot: { oracleAlive?: boolean; branch?: string } | null = null;
+      const ambientWorldStateCheck = async () => {
+        try {
+          const ws = await getWorldState();
+          const prev = lastWsSnapshot;
+          lastWsSnapshot = {
+            oracleAlive: ws.fleet.oracleAlive,
+            branch: ws.codebase.branch,
+          };
+          if (!prev) return; // first observation establishes baseline silently
+          if (prev.oracleAlive === true && ws.fleet.oracleAlive === false) {
+            ambientPush('system', 'Oracle runtime is unreachable — cloud agents and the Oracle Cortex instance may be stalled.');
+          } else if (prev.oracleAlive === false && ws.fleet.oracleAlive === true) {
+            ambientPush('ambient', 'Oracle runtime is back online.');
+          }
+          if (prev.branch && ws.codebase.branch && prev.branch !== 'unknown' && ws.codebase.branch !== 'unknown' && prev.branch !== ws.codebase.branch) {
+            ambientPush('ambient', `Repo switched branches — now on ${ws.codebase.branch}.`);
+          }
+        } catch {}
+      };
+
       const ambientDiskTrend = (pct: number) => {
         if (pct < 0) return;
         healthState.diskSamples.push({ ts: Date.now(), pct });
@@ -1655,6 +1679,7 @@ function apiProxyPlugin(): Plugin {
             ambientPush('system', `Edge gate recorded ${healthState.authFails} unauthorized attempts today — possible probing of the public URL.`);
           }
           await ambientServiceCheck();
+          await ambientWorldStateCheck();
           await ambientLLMObserve();
           await ambientDaily();
         } catch {}
