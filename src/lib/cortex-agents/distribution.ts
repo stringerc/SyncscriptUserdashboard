@@ -363,6 +363,18 @@ export async function runOmniPublish(ctx: AgentContext, payload: Record<string, 
   };
 }
 
+export async function runKdpPublish(ctx: AgentContext, payload: Record<string, unknown>) {
+  return runOmniPublish(ctx, { ...payload, platform: 'kdp' });
+}
+
+export async function runRedbubblePublish(ctx: AgentContext, payload: Record<string, unknown>) {
+  return runOmniPublish(ctx, { ...payload, platform: 'redbubble' });
+}
+
+export async function runGumroadPublish(ctx: AgentContext, payload: Record<string, unknown>) {
+  return runOmniPublish(ctx, { ...payload, platform: 'gumroad' });
+}
+
 export const ITEM_HANDLERS: Record<string, (ctx: AgentContext, p: Record<string, unknown>) => Promise<unknown>> = {
   reddit_scan: runRedditScan,
   reddit_comment: runRedditComment,
@@ -372,6 +384,9 @@ export const ITEM_HANDLERS: Record<string, (ctx: AgentContext, p: Record<string,
   dreamina_generate: runDreaminaGenerate,
   dreamina_collect: runDreaminaCollect,
   omni_publish: runOmniPublish,
+  kdp_publish: runKdpPublish,
+  redbubble_publish: runRedbubblePublish,
+  gumroad_publish: runGumroadPublish,
 };
 
 export const DISTRIBUTION_ITEM_TYPES = Object.keys(ITEM_HANDLERS);
