@@ -864,24 +864,19 @@ export const CortexAgentsScene: React.FC = () => {
       // Shift the whole scene right when the roster rail is visible so the
       // orbit clears it (roster ~200px at left).
       const cx = w / 2 + (w >= 900 ? 100 : 0) + p.x, cy = h / 2 + h * 0.05 + p.y;
-      // JWST Carina "Cosmic Cliffs": Orange fire clouds engulfed by billowing blue clouds
+      // Original domain-warped cosmic nebula: 60% Blue, 30% Orange, pushed a little to the left
       const nebKey = `${bgKey}|${Math.round(time * 5)}`;
       if (!nebCache || nebCache.key !== nebKey) {
         nebCache = {
           key: nebKey,
           grads: [
-            // Left Massif: Enveloping deep cerulean and electric cyan clouds
-            { col: '#0284c7', alpha: 0.24, r: 0.34, ox: -0.46, oy: -0.20 },  // Deep cerulean base
-            { col: '#06b6d4', alpha: 0.28, r: 0.28, ox: -0.43, oy: -0.24 },  // Electric cyan billowing body
-            // Engulfed incandescent molten amber & solar gold furnace
-            { col: '#ea580c', alpha: 0.30, r: 0.18, ox: -0.40, oy: -0.30 },  // Molten amber flame
-            { col: '#facc15', alpha: 0.24, r: 0.12, ox: -0.38, oy: -0.32 },  // Solar gold core
-            // Enclosing ice-turquoise billow fold wrapping in front of the fire
-            { col: '#38bdf8', alpha: 0.20, r: 0.22, ox: -0.35, oy: -0.26 },  // Ice-turquoise engulfing wrap
-            // Right Massif: Flanking blue clouds engulfing amber ridge
-            { col: '#0284c7', alpha: 0.20, r: 0.30, ox: 0.44, oy: -0.18 },   // Right cerulean base
-            { col: '#f97316', alpha: 0.24, r: 0.16, ox: 0.42, oy: -0.28 },   // Right engulfed amber
-            { col: '#06b6d4', alpha: 0.22, r: 0.24, ox: 0.38, oy: -0.23 },   // Right cyan billowing shell
+            // 60% Blue Volumetric Cloud Envelope (anchored a little to the left of the core)
+            { col: '#0284c7', alpha: 0.25, r: 0.38, ox: -0.28, oy: -0.12 },  // Deep oceanic cerulean base
+            { col: '#06b6d4', alpha: 0.28, r: 0.28, ox: -0.26, oy: -0.15 },  // Electric cyan billowing cloud body
+            { col: '#38bdf8', alpha: 0.20, r: 0.20, ox: -0.22, oy: -0.18 },  // Ice-turquoise crest
+            // 30% Orange Fiery Combustion Cores (veins running inside the blue envelope)
+            { col: '#ea580c', alpha: 0.30, r: 0.16, ox: -0.25, oy: -0.14 },  // Molten amber flame
+            { col: '#facc15', alpha: 0.22, r: 0.10, ox: -0.24, oy: -0.15 },  // Solar gold incandescent core
           ].map((spec, i) => {
             const na = time * 0.04 + i * 1.6;
             const nx = cx + spec.ox * w + Math.cos(na) * w * 0.02;
