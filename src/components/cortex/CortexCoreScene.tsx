@@ -167,12 +167,17 @@ const nebulaFragment = /* glsl */ `
     return 0.65 * vnoise(p) + 0.35 * vnoise(p * 2.05 + vec3(11.3, 7.1, 5.7));
   }
 
+  // True cumulus billow lobe: creates rounded, bulbous cauliflower cloud domes with sculpted crevices
+  float billowLobe(vec3 p) {
+    return 1.0 - abs(2.0 * vnoise(p) - 1.0);
+  }
+
   // Original multi-tier domain warping for deep-space interstellar gas dynamics
   float nebulaNoise(vec3 p, out vec3 q, out vec3 r) {
-    float t = uTime * 0.012;
-    vec3 v1 = vec3(t * 0.8, t * 0.5, -t * 0.4);
-    vec3 v2 = vec3(-t * 0.6, t * 0.9, t * 0.3);
-    vec3 v3 = vec3(t * 0.3, -t * 0.7, t * 0.6);
+    float t = uTime * 0.010;
+    vec3 v1 = vec3(t * 0.7, t * 0.4, -t * 0.3);
+    vec3 v2 = vec3(-t * 0.5, t * 0.8, t * 0.2);
+    vec3 v3 = vec3(t * 0.3, -t * 0.6, t * 0.5);
 
     // Primary domain warp field
     q = vec3(
@@ -183,13 +188,13 @@ const nebulaFragment = /* glsl */ `
 
     // Secondary turbulent warp field
     r = vec3(
-      fbm2(p + 2.8 * q + vec3(1.7, 9.2, 3.4) + v1 * 1.3),
-      fbm2(p + 2.8 * q + vec3(8.3, 2.8, 6.1) - v2 * 0.8),
-      fbm2(p + 2.8 * q + vec3(3.9, 4.5, 1.2) + v3 * 1.1)
+      fbm2(p + 2.8 * q + vec3(1.7, 9.2, 3.4) + v1 * 1.2),
+      fbm2(p + 2.8 * q + vec3(8.3, 2.8, 6.1) - v2 * 0.7),
+      fbm2(p + 2.8 * q + vec3(3.9, 4.5, 1.2) + v3 * 0.9)
     );
 
     // Final high-definition gas density uses full 4-octave FBM
-    return fbm(p + 3.2 * r);
+    return fbm(p + 3.0 * r);
   }
 
   void main() {
@@ -200,14 +205,14 @@ const nebulaFragment = /* glsl */ `
     float centerGlow = pow(max(dot(d, vec3(0.0, 0.0, -1.0)), 0.0), 3.0);
     vec3 baseSpace = colSpace + uRim * centerGlow * (0.03 + uEnergy * 0.05);
 
-    // Pushed even further back in the distance — a compact, dense deep-space cloud cluster
-    // Looking forward into the scene is -Z, screen-left is -X, screen-up is +Y
-    vec3 dirNebula = normalize(vec3(-0.52, 0.24, -0.82));
+    // Pushed even further back in the distance — compact, dense deep-space cloud cluster
+    // Looking forward into scene is -Z, screen-left is -X, screen-up is +Y
+    vec3 dirNebula = normalize(vec3(-0.58, 0.26, -0.77));
     float align = dot(d, dirNebula);
 
-    // Tighter celestial cone: pushed deep into the cosmic background like distant molecular clouds
-    float spatialMask = smoothstep(0.81, 0.965, align);
-    spatialMask = pow(spatialMask, 1.45);
+    // Tighter celestial cone: pushed deep into cosmic distance like a distant portrait on the far wall
+    float spatialMask = smoothstep(0.85, 0.978, align);
+    spatialMask = pow(spatialMask, 1.6);
 
     // GPU Fast Early Exit: outside the distant cloud cluster, render pure starry space instantly
     if (spatialMask < 0.001) {
@@ -218,66 +223,68 @@ const nebulaFragment = /* glsl */ `
       return;
     }
 
-    // High-resolution coordinates scaled for a distant, dense, clumped cloud formation
-    vec3 p = (d - dirNebula) * 8.6;
-    p.y *= 1.25;
+    // High-frequency coordinates scaled for a distant, dense, clumped cloud formation
+    vec3 p = (d - dirNebula) * 11.2;
+    p.y *= 1.35;
 
     vec3 q, r;
     float gas = nebulaNoise(p, q, r);
     float fineDust = fbm2(p * 5.2 + vec3(uTime * 0.01));
 
-    // ── Clumped Cloud Formulation ──
+    // ── Clumped Cloud Formulation (JWST Carina Cauliflower Billows) ──
     // Multi-scale cumulus billow lobes: produces rounded, puffy cloud heads huddled together
-    float billow1 = abs(vnoise(p * 1.8 + q * 1.4));
-    float billow2 = abs(vnoise(p * 3.8 + r * 1.2 + vec3(3.1, 1.8, 5.4)));
-    float clumpLobe = billow1 * 0.62 + billow2 * 0.38;
+    float b1 = billowLobe(p * 1.6 + q * 1.4);
+    float b2 = billowLobe(p * 3.4 + r * 1.3 + vec3(3.1, 1.8, 5.4));
+    float b3 = billowLobe(p * 7.2 + q * 1.8 + vec3(7.4, 2.9, 4.1));
+    float cumulusClumps = b1 * 0.52 + b2 * 0.32 + b3 * 0.16;
 
-    // Density modulation: gathers gas into thick, puffy, swollen cloud clumps
-    float clumpedGas = gas * 0.60 + (1.0 - clumpLobe) * 0.55;
+    // Density modulation: gathers gas into thick, puffy, swollen cauliflower cloud clumps
+    float clumpedGas = gas * 0.48 + cumulusClumps * 0.60;
 
     // Interstellar absorption rifts carving deep crevices between the cloud puffs
-    float dustRift = smoothstep(0.32, 0.66, r.y * 0.6 + q.x * 0.4);
-    float gasCloud = smoothstep(0.24, 0.76, clumpedGas) * (1.0 - dustRift * 0.48);
-    gasCloud = pow(gasCloud, 1.15);
+    float dustRift = smoothstep(0.34, 0.68, r.y * 0.6 + q.x * 0.4);
+    float gasCloud = smoothstep(0.26, 0.76, clumpedGas) * (1.0 - dustRift * 0.46);
+    gasCloud = pow(gasCloud, 1.2);
 
-    // ── 60% Blue / 40% Orange Cosmic Spectrum ──
+    // ── 60% Blue / 40% Orange Cosmic Spectrum (Carina Cosmic Cliffs Palette) ──
     // 1. 60% Blue Puffy Molecular Cloud Clumps
-    vec3 colCobaltDeep    = vec3(0.015, 0.05, 0.14); // Deep shadowed cosmic ravines
-    vec3 colCeruleanOcean = vec3(0.035, 0.38, 0.68); // Mid-density volumetric body
-    vec3 colElectricCyan  = vec3(0.06, 0.72, 0.94);  // Radiant electric cyan folds
-    vec3 colIceTurquoise  = vec3(0.35, 0.88, 0.98);  // Brilliant illuminated crests
+    vec3 colCobaltDeep    = vec3(0.012, 0.045, 0.13); // Deep shadowed cosmic ravines
+    vec3 colCeruleanOcean = vec3(0.035, 0.36, 0.65);  // Mid-density volumetric body
+    vec3 colElectricCyan  = vec3(0.07, 0.72, 0.92);   // Radiant electric cyan folds
+    vec3 colIceTurquoise  = vec3(0.38, 0.88, 0.98);   // Brilliant illuminated crests
 
-    vec3 blueCol = mix(colCobaltDeep, colCeruleanOcean, smoothstep(0.14, 0.46, gasCloud));
-    blueCol = mix(blueCol, colElectricCyan, smoothstep(0.46, 0.74, gasCloud));
-    blueCol = mix(blueCol, colIceTurquoise, smoothstep(0.74, 0.95, gasCloud));
+    vec3 blueCol = mix(colCobaltDeep, colCeruleanOcean, smoothstep(0.12, 0.44, gasCloud));
+    blueCol = mix(blueCol, colElectricCyan, smoothstep(0.44, 0.72, gasCloud));
+    blueCol = mix(blueCol, colIceTurquoise, smoothstep(0.72, 0.94, gasCloud));
 
     // Reactive voice rim tinting
     blueCol += uRim * (0.04 + uLevel * 0.16) * gasCloud;
 
-    // 2. 40% Orange Fiery Combustion Cores Nestled Inside Cloud Clumps
-    // Fire clumps tightly inside the dense interior bellies of the cloud lobes
-    float fireClump = abs(vnoise(p * 2.6 + r * 1.6 + vec3(1.7, -uTime * 0.02, 2.4)));
-    float fireVeins = smoothstep(0.28, 0.72, r.y * 0.6 + q.x * 0.4 + (1.0 - fireClump) * 0.35) * smoothstep(0.20, 0.70, gasCloud);
+    // 2. 40% Orange Fiery Combustion Cores Engulfed Along Ridge & Crevices
+    // Fiery combustion concentrates along the upper cloud ridge and in deep clefts
+    float fireBillow = billowLobe(p * 2.8 + r * 1.5 + vec3(1.7, -uTime * 0.02, 2.4));
+    float ridgeCombustion = smoothstep(-0.25, 0.55, p.y * 0.6 + (q.x * 0.4 + r.y * 0.4));
+    float fireVeins = smoothstep(0.30, 0.74, fireBillow * 0.62 + r.y * 0.38 + ridgeCombustion * 0.28) * smoothstep(0.22, 0.72, gasCloud);
 
-    vec3 colMoltenAmber = vec3(0.92, 0.30, 0.04); // Deep magma amber
-    vec3 colFireOrange  = vec3(1.0, 0.52, 0.08);  // Blazing combustion flame
-    vec3 colSolarGold   = vec3(1.0, 0.84, 0.20);  // Radiant solar gold
+    vec3 colMoltenAmber = vec3(0.92, 0.28, 0.03); // Deep magma amber
+    vec3 colFireOrange  = vec3(1.0, 0.52, 0.06);  // Blazing combustion flame
+    vec3 colSolarGold   = vec3(1.0, 0.84, 0.18);  // Radiant solar gold
     vec3 colWhiteHot    = vec3(1.0, 0.98, 0.92);  // Searing thermonuclear core
 
-    vec3 fireCol = mix(colMoltenAmber, colFireOrange, smoothstep(0.08, 0.44, fireVeins));
-    fireCol = mix(fireCol, colSolarGold, smoothstep(0.44, 0.78, fireVeins));
-    fireCol = mix(fireCol, colWhiteHot, smoothstep(0.78, 0.96, fireVeins));
+    vec3 fireCol = mix(colMoltenAmber, colFireOrange, smoothstep(0.06, 0.42, fireVeins));
+    fireCol = mix(fireCol, colSolarGold, smoothstep(0.42, 0.76, fireVeins));
+    fireCol = mix(fireCol, colWhiteHot, smoothstep(0.76, 0.96, fireVeins));
 
-    // 3. Balanced Composite: 60% Blue Cloud Clumps with 40% Glowing Orange Cores
-    float fireMix = smoothstep(0.16, 0.68, fireVeins) * 0.95;
+    // 3. Balanced Composite: Exactly 60% Blue Cloud Body & 40% Engulfed Orange Fire
+    float fireMix = smoothstep(0.15, 0.65, fireVeins) * 0.92;
     vec3 nebulaCol = mix(blueCol, fireCol, fireMix);
 
-    // Subsurface internal warmth: orange fire pockets warmly illuminate the blue cloud heads
-    nebulaCol += vec3(1.0, 0.65, 0.18) * fireVeins * gasCloud * 0.42;
+    // Subsurface Warmth: Orange fire pockets warmly illuminate the blue cloud heads
+    nebulaCol += vec3(1.0, 0.62, 0.16) * fireVeins * gasCloud * 0.40;
 
     // Solar flare boost on peak hot spots (triggers Three.js Bloom!)
-    nebulaCol += colSolarGold * pow(fireVeins, 2.4) * 1.7;
-    nebulaCol += colWhiteHot * pow(fireVeins, 3.8) * 1.4;
+    nebulaCol += colSolarGold * pow(fireVeins, 2.5) * 1.8;
+    nebulaCol += colWhiteHot * pow(fireVeins, 4.0) * 1.5;
 
     // 4. Embedded Galactic Stardust Shimmer in High-Density Pockets
     float stardust = pow(max(fineDust - 0.45, 0.0) / 0.55, 4.0) * gasCloud * spatialMask * 2.8;
