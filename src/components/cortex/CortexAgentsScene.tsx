@@ -356,7 +356,39 @@ const TaskRow: React.FC<{ t: AgentTaskClient; now: number }> = ({ t, now }) => {
 
 const AgentDossierPanel: React.FC<{ agent: AgentClient; snap: AgentsSnapshotClient; now: number; onClose: () => void; dockLeft?: boolean }> = ({ agent: a, snap, now, onClose, dockLeft }) => {
   const [dossierOpen, setDossierOpen] = useState(false);
+  const [deepOpen, setDeepOpen] = useState(false);
+  const [deep, setDeep] = useState<{ archive: any[]; incidents: any[]; proposals: any[]; counsel: any[] } | null>(null);
   const col = AGENT_COLORS[a.id] || `hsl(${spawnHue(a.id)}, 70%, 65%)`;
+
+  // Deep record — durable memory beyond the 200-task window, counsel
+  // positions, filed proposals, attributed incidents. Lazy on first expand.
+  useEffect(() => {
+    if (!deepOpen || deep) return;
+    let dead = false;
+    Promise.allSettled([
+      fetch(`/api/cortex/agents/archive?agentId=${encodeURIComponent(a.id)}&limit=25`, { cache: 'no-store' }).then((r) => r.json()),
+      fetch('/api/cortex/agents/incidents?status=open', { cache: 'no-store' }).then((r) => r.json()),
+      fetch('/api/cortex/agents/proposals', { cache: 'no-store' }).then((r) => r.json()),
+      fetch('/api/cortex/counsel/sessions', { cache: 'no-store' }).then((r) => r.json()),
+    ]).then(([arc, inc, prop, cs]) => {
+      if (dead) return;
+      const sessions: any[] = (cs as any)?.value?.sessions || [];
+      const counselRows: any[] = [];
+      for (const s of sessions) {
+        for (const p of s.positions || []) {
+          if (p.member === a.id) counselRows.push({ session: s.id, question: s.question, stance: p.stance, confidence: p.confidence, round: p.round });
+        }
+      }
+      setDeep({
+        archive: (arc as any)?.value?.records || [],
+        incidents: ((inc as any)?.value?.incidents || []).filter((i: any) => i.agentId === a.id),
+        proposals: ((prop as any)?.value?.proposals || []).filter((p: any) => p.agentId === a.id),
+        counsel: counselRows,
+      });
+    });
+    return () => { dead = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [deepOpen]);
   const current = a.currentTaskId ? snap.tasks.find((t) => t.id === a.currentTaskId) : null;
   const agentTasks = snap.tasks.filter((t) => t.agentId === a.id);
   const decided = agentTasks.filter((t) => t.status === 'completed' || t.status === 'failed' || t.status === 'vetoed');
@@ -385,11 +417,14 @@ const AgentDossierPanel: React.FC<{ agent: AgentClient; snap: AgentsSnapshotClie
     }}>
       <style>{'@keyframes cortexPulse { 0%,100% { opacity: 1; } 50% { opacity: 0.35; } }'}</style>
       {/* ── ZONE A: NOW ── */}
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', flexShrink: 0 }}>
-        <span style={{ fontSize: 11, letterSpacing: '0.3em', color: col, fontFamily: MONO, fontWeight: 700 }}>
-          {a.name}
-          <span style={{ fontSize: 7, letterSpacing: 0.1, color: agentOrbitTier(a) === 'enterprise' ? '#fbbf24' : agentOrbitTier(a) === 'console' ? '#38bdf8' : DIM, marginLeft: 8, verticalAlign: 'middle' }}>
-            {agentOrbitTier(a) === 'enterprise' ? 'ENTERPRISE' : agentOrbitTier(a) === 'console' ? 'FLIGHT CONSOLE' : 'SUPPORT CRAFT'}
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexShrink: 0 }}>
+        <span style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <AgentGlyph enterprise={agentOrbitTier(a) === 'enterprise'} color={col} />
+          <span style={{ fontSize: 11, letterSpacing: '0.3em', color: col, fontFamily: MONO, fontWeight: 700 }}>
+            {a.name}
+            <span style={{ fontSize: 7, letterSpacing: 0.1, color: agentOrbitTier(a) === 'enterprise' ? '#fbbf24' : agentOrbitTier(a) === 'console' ? '#38bdf8' : DIM, marginLeft: 8, verticalAlign: 'middle' }}>
+              {agentOrbitTier(a) === 'enterprise' ? 'ENTERPRISE' : agentOrbitTier(a) === 'console' ? 'FLIGHT CONSOLE' : 'SUPPORT CRAFT'}
+            </span>
           </span>
         </span>
         <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -482,6 +517,56 @@ const AgentDossierPanel: React.FC<{ agent: AgentClient; snap: AgentsSnapshotClie
               </>
             )}
           </div>
+        </div>
+      )}
+
+      {/* ── ZONE D: DEEP RECORD — durable memory, counsel votes, proposals, incidents ── */}
+      <button onClick={() => setDeepOpen(v => !v)} style={{
+        display: 'flex', alignItems: 'center', gap: 6, background: 'none', border: 'none', cursor: 'pointer',
+        fontFamily: MONO, fontSize: 8, color: DIM, letterSpacing: 0.15, padding: '8px 0 0', textTransform: 'uppercase',
+      }}>
+        <span style={{ color: col }}>{deepOpen ? '▾' : '▸'}</span> deep record — memory · counsel · proposals · incidents
+      </button>
+      {deepOpen && (
+        <div className="ambient-scrollbar" style={{ overflowY: 'auto', maxHeight: 170, flexShrink: 1, fontSize: 8, fontFamily: MONO, color: 'rgba(203,213,225,0.7)', lineHeight: 1.7, paddingTop: 6 }}>
+          {!deep && <div style={{ color: DIM }}>RETRIEVING RECORD…</div>}
+          {deep && (
+            <>
+              <div style={{ color: 'rgba(203,213,225,0.85)', marginBottom: 2 }}>COUNSEL RECORD</div>
+              {deep.counsel.length ? deep.counsel.map((c, i) => (
+                <div key={i} style={{ paddingLeft: 6 }}>
+                  <span style={{ color: c.stance === 'go' ? '#34d399' : c.stance === 'no-go' ? '#f87171' : '#fbbf24' }}>{String(c.stance).toUpperCase()}</span>
+                  <span style={{ color: DIM }}> {Math.round((c.confidence || 0) * 100)}% · r{c.round} · {c.session}</span>
+                  <div style={{ color: DIM, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{String(c.question || '').slice(0, 80)}</div>
+                </div>
+              )) : <div style={{ color: DIM, paddingLeft: 6 }}>NO POSITIONS FILED</div>}
+
+              <div style={{ color: 'rgba(203,213,225,0.85)', margin: '6px 0 2px' }}>PROPOSALS FILED</div>
+              {deep.proposals.length ? deep.proposals.slice(0, 6).map((p) => (
+                <div key={p.id} style={{ paddingLeft: 6 }}>
+                  <span style={{ color: p.status === 'executed' || p.status === 'approved' ? '#34d399' : p.status === 'failed' || p.status === 'dismissed' ? '#f87171' : '#fbbf24' }}>{p.status.toUpperCase()}</span>
+                  <span style={{ color: DIM }}> · {String(p.title || p.kind || '').slice(0, 70)}</span>
+                </div>
+              )) : <div style={{ color: DIM, paddingLeft: 6 }}>NONE ON RECORD</div>}
+
+              <div style={{ color: 'rgba(203,213,225,0.85)', margin: '6px 0 2px' }}>OPEN INCIDENTS</div>
+              {deep.incidents.length ? deep.incidents.map((i) => (
+                <div key={i.id || i.key} style={{ paddingLeft: 6 }}>
+                  <span style={{ color: '#f87171' }}>{i.count || 1}×</span>
+                  <span style={{ color: DIM }}> {i.ageHours != null ? `${Math.round(i.ageHours)}h` : ''} · {String(i.title || i.kind || '').slice(0, 70)}</span>
+                </div>
+              )) : <div style={{ color: '#34d399', paddingLeft: 6 }}>CLEAN — NO OPEN INCIDENTS</div>}
+
+              <div style={{ color: 'rgba(203,213,225,0.85)', margin: '6px 0 2px' }}>DURABLE MEMORY (ARCHIVE)</div>
+              {deep.archive.length ? deep.archive.slice(0, 10).map((r, i) => (
+                <div key={r.id || i} style={{ paddingLeft: 6 }}>
+                  <span style={{ color: r.status === 'completed' ? '#34d399' : r.status === 'failed' ? '#f87171' : DIM }}>{String(r.status || '?').toUpperCase()}</span>
+                  <span style={{ color: DIM }}> · {String(r.title || r.kind || r.id || '').slice(0, 70)}</span>
+                  {r.outcome ? <span style={{ color: DIM }}> [{String(r.outcome).slice(0, 30)}]</span> : null}
+                </div>
+              )) : <div style={{ color: DIM, paddingLeft: 6 }}>NO ARCHIVED RECORDS</div>}
+            </>
+          )}
         </div>
       )}
     </div>
