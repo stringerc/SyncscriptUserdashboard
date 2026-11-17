@@ -361,6 +361,8 @@ const AgentDossierPanel: React.FC<{ agent: AgentClient; snap: AgentsSnapshotClie
   const [memQuery, setMemQuery] = useState('');
   const [memHits, setMemHits] = useState<any[] | null>(null);
   const [memLoading, setMemLoading] = useState(false);
+  const [pos, setPos] = useState<{ x: number; y: number } | null>(null);
+  const dragRef = useRef<{ dx: number; dy: number } | null>(null);
   const col = AGENT_COLORS[a.id] || `hsl(${spawnHue(a.id)}, 70%, 65%)`;
 
   // Deep record — durable memory beyond the 200-task window, counsel
@@ -406,6 +408,32 @@ const AgentDossierPanel: React.FC<{ agent: AgentClient; snap: AgentsSnapshotClie
     } catch { setMemHits([]); }
     setMemLoading(false);
   };
+  // Free-drag: grab the header (not buttons), panel detaches from its dock.
+  const onHeaderPointerDown = (e: React.PointerEvent) => {
+    if ((e.target as HTMLElement).closest('button')) return;
+    const el = (e.currentTarget as HTMLElement).parentElement;
+    if (!el) return;
+    const r = el.getBoundingClientRect();
+    const pr = el.offsetParent?.getBoundingClientRect() || { left: 0, top: 0 };
+    dragRef.current = { dx: e.clientX - r.left, dy: e.clientY - r.top };
+    setPos({ x: r.left - pr.left, y: r.top - pr.top });
+    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+    const move = (ev: PointerEvent) => {
+      if (!dragRef.current) return;
+      const p = el.offsetParent?.getBoundingClientRect() || { left: 0, top: 0 };
+      setPos({
+        x: Math.min(Math.max(0, ev.clientX - p.left - dragRef.current.dx), window.innerWidth - 80),
+        y: Math.min(Math.max(0, ev.clientY - p.top - dragRef.current.dy), window.innerHeight - 60),
+      });
+    };
+    const up = () => {
+      dragRef.current = null;
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', up);
+    };
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', up);
+  };
   const current = a.currentTaskId ? snap.tasks.find((t) => t.id === a.currentTaskId) : null;
   const agentTasks = snap.tasks.filter((t) => t.agentId === a.id);
   const decided = agentTasks.filter((t) => t.status === 'completed' || t.status === 'failed' || t.status === 'vetoed');
@@ -417,8 +445,17 @@ const AgentDossierPanel: React.FC<{ agent: AgentClient; snap: AgentsSnapshotClie
   const ttlLeft = spawn?.ttlHours && a.spawnedAt ? a.spawnedAt + spawn.ttlHours * 3_600_000 - now : null;
   const statusCol = STATUS_COLOR[a.status] || DIM;
 
+  const freeStyle: React.CSSProperties = pos ? {
+    position: 'absolute', left: pos.x, top: pos.y, transform: 'none', zIndex: 9,
+    width: pinned ? 600 : 520, maxWidth: 'calc(100vw - 40px)', maxHeight: '86vh',
+    display: 'flex', flexDirection: 'column',
+    background: 'linear-gradient(165deg, rgba(8,14,24,0.96), rgba(5,8,15,0.92))',
+    border: `1px solid ${hexA(col, 0.4)}`, borderLeft: `3px solid ${col}`, borderRadius: 3, padding: '12px 16px',
+    backdropFilter: 'blur(14px)', boxShadow: `0 8px 48px rgba(0,0,0,0.7), 0 0 40px ${hexA(col, 0.15)}`, overflow: 'hidden',
+    cursor: 'default',
+  } : {};
   return (
-    <div style={dockLeft ? {
+    <div style={pos ? freeStyle : dockLeft ? {
       // Docked to the roster rail: extends rightward from it, vertically centered.
       position: 'absolute', left: 290, top: '50%', transform: 'translateY(-50%)', zIndex: 7,
       width: pinned ? 600 : 520, maxWidth: 'calc(100vw - 240px)', maxHeight: pinned ? '84vh' : '74vh', display: 'flex', flexDirection: 'column',
@@ -434,7 +471,7 @@ const AgentDossierPanel: React.FC<{ agent: AgentClient; snap: AgentsSnapshotClie
     }}>
       <style>{'@keyframes cortexPulse { 0%,100% { opacity: 1; } 50% { opacity: 0.35; } }'}</style>
       {/* ── ZONE A: NOW ── */}
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexShrink: 0 }}>
+      <div onPointerDown={onHeaderPointerDown} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexShrink: 0, cursor: pos ? 'grab' : 'default' }} title={pos ? 'Drag to move · release anywhere' : 'Drag header to undock'}>
         <span style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
           <AgentGlyph enterprise={agentOrbitTier(a) === 'enterprise'} color={col} />
           <span style={{ fontSize: 11, letterSpacing: '0.3em', color: col, fontFamily: MONO, fontWeight: 700 }}>
