@@ -99,6 +99,8 @@ export interface CounselSession {
     proposalId?: string;
     at: number;
   };
+  /** Strategy proposal this session deliberates, if convened from one. */
+  sourceProposalId?: string;
   createdAt: number;
   positionDeadline: number;
   updatedAt: number;
@@ -178,6 +180,7 @@ export function conveneCounsel(opts: {
   context?: string;
   lane?: CounselLane;
   members?: string[];
+  sourceProposalId?: string;
 }): { session?: CounselSession; error?: string } {
   const question = String(opts.question || '').trim();
   if (!question) return { error: 'question required' };
@@ -207,6 +210,7 @@ export function conveneCounsel(opts: {
     createdAt: now,
     positionDeadline: now + POSITION_TIMEOUT_MS,
     updatedAt: now,
+    sourceProposalId: opts.sourceProposalId?.slice(0, 80),
   };
 
   writeSession(session);

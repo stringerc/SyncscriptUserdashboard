@@ -28,6 +28,11 @@ import { RULES_DIR, vaultFolder, listMd } from './rules';
 import { LEARNINGS_DIR } from './outcomes';
 import { fileStrategyProposals } from './strategy-proposals';
 import { cortexObsidianMemory } from '../cortex-obsidian-memory';
+import {
+  conveneCounsel, getCounselSession, openRebuttal, closeRebuttal,
+  recordSynthesis, pollBoard, COUNSEL_CONSOLES,
+} from '../cortex-counsel';
+import { getWorldState, formatWorldStateHeader } from '../cortex-world-state';
 
 const STATE_DIR = process.env.CORTEX_AGENTS_STATE_DIR || path.join(process.cwd(), '.cortex-runtime');
 const STRATEGY_DIR = '05 - Strategy';
@@ -324,6 +329,132 @@ async function proposeAgentWorker(ctx: AgentContext, runtime: AgentRuntime) {
   return res.ok ? { proposal: res.proposal } : { error: res.reason };
 }
 
+// ── Counsel workers (Go/No-Go deliberation layer) ─────────────────
+
+/** Convene a counsel session on a decision. Auto-builds the brief context
+ *  from live world-state (+ linked proposal when sourceProposalId given).
+ *  Positions are filed by members via the counsel API or drop-folder. */
+async function counselConveneWorker(ctx: AgentContext) {
+  const question = typeof ctx.task.input.question === 'string' ? ctx.task.input.question : '';
+  if (!question) return { error: 'input.question required' };
+
+  // Auto-brief: live telemetry + optional linked proposal evidence.
+  let context = typeof ctx.task.input.context === 'string' ? ctx.task.input.context : '';
+  try {
+    const ws = await getWorldState();
+    context = `[WORLD-STATE at convening]\n${formatWorldStateHeader(ws)}\n\n${context}`.slice(0, 4000);
+  } catch {}
+
+  const sourceProposalId = typeof ctx.task.input.proposalId === 'string' ? ctx.task.input.proposalId : undefined;
+  if (sourceProposalId) {
+    try {
+      const { listStrategyProposals } = await import('./strategy-proposals');
+      const p = listStrategyProposals().find((x: any) => x.id === sourceProposalId);
+      if (p) {
+        context += `\n\nLINKED PROPOSAL ${p.id}: ${p.title}\nclass: ${p.actionClass} → agent: ${p.agentId}\nevidence: ${(p.evidence || []).join('; ')}`;
+      }
+    } catch {}
+  }
+
+  const members = Array.isArray(ctx.task.input.members)
+    ? ctx.task.input.members.filter((m: unknown) => COUNSEL_CONSOLES.some((c) => c.id === m))
+    : undefined;
+
+  const r = conveneCounsel({
+    question,
+    context,
+    lane: ['contained', 'reversible', 'hard'].includes(ctx.task.input.lane as string)
+      ? (ctx.task.input.lane as 'contained' | 'reversible' | 'hard')
+      : 'reversible',
+    members: members as string[] | undefined,
+    sourceProposalId,
+  });
+  if (!r.session) return { error: r.error };
+
+  return {
+    session: r.session,
+    next: 'members file positions via POST /api/cortex/counsel/action {action:"position"} or drop-folder .cortex-runtime/counsel/positions/<session>-<member>.json; then run counsel_synthesize',
+    consoles: COUNSEL_CONSOLES.filter((c) => r.session!.members.includes(c.id)).map((c) => ({ id: c.id, callSign: c.callSign, adapter: c.adapter })),
+  };
+}
+
+/** Synthesize a counsel session's poll into a verdict-ready synthesis.
+ *  Auto-advances lifecycle: positions→rebuttal→synthesis as needed. */
+async function counselSynthesizeWorker(ctx: AgentContext) {
+  const sessionId = typeof ctx.task.input.sessionId === 'string' ? ctx.task.input.sessionId : '';
+  let s = getCounselSession(sessionId);
+  if (!s) return { error: `session ${sessionId} not found` };
+
+  // Advance lifecycle deterministically before synthesizing.
+  if (s.status === 'positions') {
+    const r = openRebuttal(sessionId);
+    if (!r.ok) return { error: `cannot open rebuttal: ${r.error}` };
+    s = r.session!;
+  }
+  if (s.status === 'rebuttal') {
+    const r = closeRebuttal(sessionId);
+    if (!r.ok) return { error: `cannot close rebuttal: ${r.error}` };
+    s = r.session!;
+  }
+  if (s.status !== 'synthesis') {
+    return { error: `session is ${s.status} — nothing to synthesize` };
+  }
+
+  const board = pollBoard(s);
+  const latest = new Map<string, any>();
+  for (const p of s.positions) {
+    const prev = latest.get(p.member);
+    if (!prev || p.round >= prev.round) latest.set(p.member, p);
+  }
+  const positionDigest = s.members.map((m) => {
+    const p = latest.get(m);
+    return p
+      ? { member: m, round: p.round, stance: p.stance, confidence: p.confidence, evidence: p.keyEvidence, risks: p.risks, conditions: p.requiredConditions, reasoning: p.reasoning }
+      : { member: m, stance: 'no-response' };
+  });
+
+  const prompt = [
+    `You are STRATEGIST — Flight Director of a Go/No-Go counsel poll.`,
+    `Decision under deliberation: "${s.question}"`,
+    s.context ? `Brief context:\n${s.context.slice(0, 1500)}` : '',
+    `Lane: ${s.lane}. Poll board: ${JSON.stringify(board.counts)}`,
+    `Member positions (latest round each):\n${JSON.stringify(positionDigest, null, 1)}`,
+    `Synthesize the poll. Output JSON ONLY: {"stanceTable":[{"member","stance","confidence"}],"agreements":[...],"conflicts":[...],"unresolvedObjections":[...],"recommendation":"go|no-go|conditional","text":"<3-5 sentence poll summary for the human>"}`,
+    `Rules: recommendation 'go' only if no member filed 'no-go' without a rebutted revision; 'conditional' if conditions must be met; 'no-go' if objections stand. Cite member stances, not your own opinion.`,
+  ].filter(Boolean).join('\n');
+
+  const text = await ctx.llm({
+    tier: 'reason',
+    maxTokens: 1200,
+    messages: [
+      { role: 'system', content: 'You synthesize counsel polls into verdict-ready briefings. JSON only.' },
+      { role: 'user', content: prompt },
+    ],
+  });
+
+  const m = text.match(/\{[\s\S]*\}/);
+  if (!m) return { error: 'LLM returned no JSON synthesis', raw: text.slice(0, 300) };
+  let syn: any;
+  try { syn = JSON.parse(m[0]); } catch { return { error: 'LLM synthesis JSON unparseable', raw: text.slice(0, 300) }; }
+
+  const r = recordSynthesis(sessionId, {
+    by: 'strategist',
+    stanceTable: Array.isArray(syn.stanceTable) ? syn.stanceTable : [],
+    agreements: Array.isArray(syn.agreements) ? syn.agreements.map(String) : [],
+    conflicts: Array.isArray(syn.conflicts) ? syn.conflicts.map(String) : [],
+    unresolvedObjections: Array.isArray(syn.unresolvedObjections) ? syn.unresolvedObjections.map(String) : [],
+    recommendation: ['go', 'no-go', 'conditional'].includes(syn.recommendation) ? syn.recommendation : 'conditional',
+    text: String(syn.text || '').slice(0, 2000),
+  });
+  if (!r.ok) return { error: r.error };
+
+  return {
+    session: r.session,
+    poll: pollBoard(r.session!),
+    next: 'session is in poll — human GO/NO-GO via /api/cortex/counsel/action {action:"decide"} or the Foundry tower board',
+  };
+}
+
 // ── Registration ──────────────────────────────────────────────────
 
 export function makeStrategistWorker(runtime: AgentRuntime): WorkerHandler {
@@ -335,8 +466,10 @@ export function makeStrategistWorker(runtime: AgentRuntime): WorkerHandler {
       case 'regress': return regressWorker(ctx);
       case 'propose_skill': return proposeSkillWorker(ctx);
       case 'propose_agent': return proposeAgentWorker(ctx, runtime);
+      case 'counsel_convene': return counselConveneWorker(ctx);
+      case 'counsel_synthesize': return counselSynthesizeWorker(ctx);
       default:
-        return { error: `unknown strategist kind '${ctx.task.kind}'`, kinds: ['cluster', 'plan', 'manifest', 'regress', 'propose_skill', 'propose_agent'] };
+        return { error: `unknown strategist kind '${ctx.task.kind}'`, kinds: ['cluster', 'plan', 'manifest', 'regress', 'propose_skill', 'propose_agent', 'counsel_convene', 'counsel_synthesize'] };
     }
   };
 }

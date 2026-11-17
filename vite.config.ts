@@ -10357,6 +10357,7 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
               context: body.context,
               lane: body.lane,
               members: Array.isArray(body.members) ? body.members : undefined,
+              sourceProposalId: typeof body.proposalId === 'string' ? body.proposalId : undefined,
             });
             return r.session
               ? { body: { ok: true, session: r.session } }

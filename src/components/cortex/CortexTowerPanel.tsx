@@ -33,6 +33,8 @@ const LAMP_COLOR: Record<string, string> = {
   error: '#f87171', manual: '#fbbf24',
 };
 
+const stanceColor = (s: string) => s === 'go' ? '#34d399' : s === 'no-go' ? '#f87171' : s === 'conditional' ? '#fbbf24' : 'rgba(148,163,184,0.5)';
+
 async function post(url: string, body: any) {
   const res = await fetch(url, {
     method: 'POST',
@@ -90,8 +92,6 @@ export const CortexTowerPanel: React.FC<{ onClose: () => void }> = ({ onClose })
       {children}
     </div>
   );
-
-  const stanceColor = (s: string) => s === 'go' ? '#34d399' : s === 'no-go' ? '#f87171' : s === 'conditional' ? '#fbbf24' : 'rgba(148,163,184,0.5)';
 
   return (
     <div style={{
@@ -184,17 +184,23 @@ export const CortexTowerPanel: React.FC<{ onClose: () => void }> = ({ onClose })
           ))}
         </Section>
 
-        {/* Active counsel sessions */}
-        {(data?.activeSessions || []).length > 0 && (
-          <Section title="COUNSEL IN SESSION">
-            {(data?.activeSessions || []).map(s => (
-              <div key={s.id} style={{ fontSize: 8, color: DIM, padding: '3px 0', display: 'flex', justifyContent: 'space-between' }}>
-                <span style={{ color: 'rgba(203,213,225,0.85)' }}>{s.question}</span>
-                <span>{s.id} · {s.status.toUpperCase()} · {s.positionsFiled}/{s.members.length} POSITIONS · {s.ageMinutes}m</span>
-              </div>
-            ))}
-          </Section>
-        )}
+        {/* Active counsel sessions — expandable with full lifecycle controls */}
+        <Section title="COUNSEL IN SESSION" right={<span style={{ fontSize: 7, color: DIM }}>{(data?.activeSessions || []).length} OPEN</span>}>
+          {(data?.activeSessions || []).length === 0 && <div style={{ fontSize: 8, color: DIM }}>No sessions in session. Convene one below.</div>}
+          {(data?.activeSessions || []).map(s => (
+            <SessionCard key={s.id} session={s} onAction={async (action, extra) => {
+              await post('/api/cortex/counsel/action', { action, sessionId: s.id, ...extra });
+              refresh();
+            }} onSynthesize={async () => {
+              await post('/api/cortex/agents/task', {
+                agentId: 'strategist', kind: 'counsel_synthesize',
+                title: `Synthesize counsel ${s.id}`,
+                input: { sessionId: s.id },
+              });
+              refresh();
+            }} />
+          ))}
+        </Section>
 
         {/* Clearance queue (proposals) */}
         <Section title="CLEARANCE QUEUE — PROPOSALS" right={<span style={{ fontSize: 7, color: DIM }}>{(data?.clearanceQueue || []).length} PENDING</span>}>
@@ -232,6 +238,22 @@ export const CortexTowerPanel: React.FC<{ onClose: () => void }> = ({ onClose })
             <button onClick={convene} disabled={busy || !question.trim()} style={btnStyle('#38bdf8', busy || !question.trim())}>
               {busy ? 'CONVENING…' : 'CONVENE'}
             </button>
+            <button
+              disabled={busy || !question.trim()}
+              onClick={async () => {
+                setBusy(true);
+                try {
+                  await post('/api/cortex/agents/task', {
+                    agentId: 'strategist', kind: 'counsel_convene',
+                    title: `Convene counsel: ${question.trim().slice(0, 80)}`,
+                    input: { question: question.trim(), lane },
+                  });
+                  setQuestion(''); refresh();
+                } finally { setBusy(false); }
+              }}
+              style={btnStyle('#a78bfa', busy || !question.trim())}
+              title="STRATEGIST convenes with auto world-state brief"
+            >VIA STRATEGIST</button>
           </div>
           <div style={{ fontSize: 7, color: DIM, marginTop: 5 }}>
             Positions file via POST /api/cortex/counsel/action or the positions drop-folder. Counsel advises — it never decides.
@@ -250,6 +272,138 @@ export const CortexTowerPanel: React.FC<{ onClose: () => void }> = ({ onClose })
       </div>
     </div>
   );
+};
+
+// ── Session card: expandable lifecycle controls ─────────────────────────────
+
+interface SessionSummary {
+  id: string; question: string; status: string; lane: string;
+  members: string[]; positionsFiled: number; ageMinutes: number;
+}
+interface FullSession {
+  id: string; question: string; status: string; lane: string; members: string[];
+  positions: { member: string; stance: string; confidence: number; round: number; keyEvidence: string[]; reasoning: string }[];
+}
+
+const SessionCard: React.FC<{
+  session: SessionSummary;
+  onAction: (action: string, extra?: any) => Promise<void>;
+  onSynthesize: () => Promise<void>;
+}> = ({ session, onAction, onSynthesize }) => {
+  const [open, setOpen] = useState(false);
+  const [full, setFull] = useState<FullSession | null>(null);
+  const [member, setMember] = useState(session.members[0] || '');
+  const [stance, setStance] = useState<'go' | 'no-go' | 'conditional'>('go');
+  const [confidence, setConfidence] = useState('0.7');
+  const [evidence, setEvidence] = useState('');
+  const [reasoning, setReasoning] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  const load = async () => {
+    try {
+      const r = await fetch(`/api/cortex/counsel/session?id=${session.id}`, { cache: 'no-store' });
+      const j = await r.json();
+      if (j.ok) setFull(j.session);
+    } catch {}
+  };
+
+  const toggle = () => {
+    const next = !open;
+    setOpen(next);
+    if (next && !full) load();
+  };
+
+  const run = async (fn: () => Promise<void>) => {
+    setBusy(true);
+    try { await fn(); await load(); } finally { setBusy(false); }
+  };
+
+  const filePos = () => run(async () => {
+    await onAction('position', {
+      position: {
+        member, stance, confidence: parseFloat(confidence) || 0.5,
+        keyEvidence: evidence.split('\n').map((s) => s.trim()).filter(Boolean),
+        reasoning,
+      },
+    });
+    setEvidence(''); setReasoning('');
+  });
+
+  const statusColor = session.status === 'poll' ? '#fbbf24' : session.status === 'positions' ? '#38bdf8' : '#34d399';
+  const canFile = ['positions', 'rebuttal'].includes(session.status);
+
+  return (
+    <div style={{ border: '1px solid rgba(103,232,249,0.15)', borderRadius: 3, marginBottom: 5, background: 'rgba(103,232,249,0.02)' }}>
+      <div onClick={toggle} style={{ padding: '7px 10px', cursor: 'pointer', display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 8 }}>
+        <span style={{ fontSize: 9, color: 'rgba(226,232,240,0.9)' }}>{session.question}</span>
+        <span style={{ fontSize: 7, color: statusColor, whiteSpace: 'nowrap' }}>
+          {session.id} · {session.status.toUpperCase()} · {session.positionsFiled}/{session.members.length} POS · {session.ageMinutes}m {open ? '▾' : '▸'}
+        </span>
+      </div>
+
+      {open && (
+        <div style={{ borderTop: '1px solid rgba(103,232,249,0.12)', padding: '8px 10px' }}>
+          {/* Positions filed */}
+          {(full?.positions || []).length > 0 && (
+            <div style={{ marginBottom: 8 }}>
+              {(full!.positions).map((p, i) => (
+                <div key={i} style={{ fontSize: 8, color: DIM, padding: '2px 0', display: 'flex', gap: 8 }}>
+                  <span style={{ color: stanceColor(p.stance), minWidth: 62 }}>{p.member.toUpperCase()} R{p.round}</span>
+                  <span style={{ color: 'rgba(203,213,225,0.85)' }}>{p.stance.toUpperCase()} {Math.round(p.confidence * 100)}%</span>
+                  <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', opacity: 0.8 }}>{p.reasoning}</span>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Lifecycle controls */}
+          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 8 }}>
+            {session.status === 'positions' && (
+              <button disabled={busy} onClick={() => run(() => onAction('rebuttal_open'))} style={btnStyle('#38bdf8', busy)}>OPEN REBUTTAL</button>
+            )}
+            {session.status === 'rebuttal' && (
+              <button disabled={busy} onClick={() => run(() => onAction('rebuttal_close'))} style={btnStyle('#38bdf8', busy)}>CLOSE REBUTTAL → SYNTHESIS</button>
+            )}
+            {session.status === 'synthesis' && (
+              <button disabled={busy} onClick={() => run(onSynthesize)} style={btnStyle('#a78bfa', busy)}>▶ REQUEST SYNTHESIS (STRATEGIST)</button>
+            )}
+            {['positions', 'rebuttal', 'synthesis'].includes(session.status) && (
+              <button disabled={busy} onClick={() => run(() => onAction('cancel'))} style={btnStyle('#f87171', busy)}>CANCEL</button>
+            )}
+          </div>
+
+          {/* File position form */}
+          {canFile && (
+            <div style={{ borderTop: '1px dashed rgba(103,232,249,0.15)', paddingTop: 8 }}>
+              <div style={{ fontSize: 7, letterSpacing: '0.2em', color: 'rgba(165,243,252,0.6)', marginBottom: 5 }}>FILE POSITION</div>
+              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 5 }}>
+                <select value={member} onChange={e => setMember(e.target.value)} style={inputStyle}>
+                  {session.members.map(m => <option key={m} value={m}>{m.toUpperCase()}</option>)}
+                </select>
+                <select value={stance} onChange={e => setStance(e.target.value as any)} style={inputStyle}>
+                  <option value="go">GO</option>
+                  <option value="no-go">NO-GO</option>
+                  <option value="conditional">CONDITIONAL</option>
+                </select>
+                <input value={confidence} onChange={e => setConfidence(e.target.value)} placeholder="conf" style={{ ...inputStyle, width: 52 }} />
+              </div>
+              <textarea value={evidence} onChange={e => setEvidence(e.target.value)} placeholder="key evidence (one per line — required)" rows={2}
+                style={{ ...inputStyle, width: '100%', resize: 'vertical', marginBottom: 5 }} />
+              <input value={reasoning} onChange={e => setReasoning(e.target.value)} placeholder="reasoning (≤400 chars)" style={{ ...inputStyle, width: '100%', marginBottom: 5 }} />
+              <button disabled={busy || !evidence.trim() || !reasoning.trim()} onClick={filePos} style={btnStyle('#34d399', busy || !evidence.trim() || !reasoning.trim())}>
+                FILE POSITION
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+};
+
+const inputStyle: React.CSSProperties = {
+  background: 'rgba(103,232,249,0.05)', border: '1px solid rgba(103,232,249,0.2)',
+  borderRadius: 2, color: INK, fontFamily: MONO, fontSize: 8, padding: '4px 6px', outline: 'none',
 };
 
 function btnStyle(color: string, disabled = false) {
