@@ -119,7 +119,7 @@ function tripProvider(name: string, status?: number) {
   // a shorter rest recovers burst capacity without hammering a daily cap.
   const ms = status === 429 ? 90_000
     : status === 401 || status === 403 ? 10 * 60_000
-    : 20_000;
+      : 20_000;
   providerCooldown.set(name, Date.now() + ms);
 }
 
@@ -912,7 +912,7 @@ function apiProxyPlugin(): Plugin {
       if (connectionAuditRing.length > 200) {
         connectionAuditRing.shift();
       }
-    } catch {}
+    } catch { }
   };
 
   interface AIProviderCandidate {
@@ -1008,7 +1008,7 @@ function apiProxyPlugin(): Plugin {
             fsSync.mkdirSync(path.dirname(HEALTH_FILE), { recursive: true });
             healthState.diskSamples = healthState.diskSamples.filter((s) => Date.now() - s.ts < 48 * 3600 * 1000).slice(-200);
             fsSync.writeFileSync(HEALTH_FILE, JSON.stringify(healthState));
-          } catch {}
+          } catch { }
         }, 5000) as any;
         healthSaveTimer.unref?.();
       };
@@ -1369,8 +1369,8 @@ function apiProxyPlugin(): Plugin {
               ...(opts?.call ? { call: '1' } : {}),
             }),
             signal: AbortSignal.timeout(8000),
-          }).catch(() => {});
-        } catch {}
+          }).catch(() => { });
+        } catch { }
       };
 
       const ambientPush = (kind: string, text: string, opts?: { ping?: boolean; call?: boolean }) => {
@@ -1409,9 +1409,9 @@ function apiProxyPlugin(): Plugin {
         try {
           const s = fsSync.statfsSync(process.cwd());
           diskPct = Math.round((1 - Number(s.bavail) / Number(s.blocks)) * 100);
-        } catch {}
+        } catch { }
         let cortexState: string | null = null;
-        try { cortexState = fsSync.readFileSync(path.join(process.cwd(), '.cache', 'cortex-state.json'), 'utf8').slice(0, 1500); } catch {}
+        try { cortexState = fsSync.readFileSync(path.join(process.cwd(), '.cache', 'cortex-state.json'), 'utf8').slice(0, 1500); } catch { }
         return {
           host: os.hostname(),
           uptimeHours: Math.round(os.uptime() / 360) / 10,
@@ -1457,7 +1457,7 @@ function apiProxyPlugin(): Plugin {
                 ambientPush('system', `API quota running low on ${provider.name} — ${n} requests remaining in the current window.`);
               }
             }
-          } catch {}
+          } catch { }
           const data: any = await res.json();
           const msg = data?.choices?.[0]?.message || {};
           // Reasoning models may place the draft JSON in reasoning_content —
@@ -1471,7 +1471,7 @@ function apiProxyPlugin(): Plugin {
           // suppress ambient-kind LLM notices if one landed in the last 30m.
           // (system/daily pushes are unconditional and unaffected.)
           if (say && !ambientRecentKind('ambient', 30 * 60 * 1000)) ambientPush('ambient', say);
-        } catch {}
+        } catch { }
       };
 
       // ── Health watchdog: probe dependent services, announce transitions ──
@@ -1526,7 +1526,7 @@ function apiProxyPlugin(): Plugin {
           if (prev.branch && ws.codebase.branch && prev.branch !== 'unknown' && ws.codebase.branch !== 'unknown' && prev.branch !== ws.codebase.branch) {
             ambientPush('ambient', `Repo switched branches — now on ${ws.codebase.branch}.`);
           }
-        } catch {}
+        } catch { }
       };
 
       // ── Counsel sweep: Discord poll notifications, auto-flag hard-class
@@ -1669,7 +1669,7 @@ function apiProxyPlugin(): Plugin {
       const dailyState: Record<string, string> = (() => {
         try { return JSON.parse(fsSync.readFileSync(DAILY_FILE, 'utf8')); } catch { return {}; }
       })();
-      const saveDaily = () => { try { fsSync.writeFileSync(DAILY_FILE, JSON.stringify(dailyState)); } catch {} };
+      const saveDaily = () => { try { fsSync.writeFileSync(DAILY_FILE, JSON.stringify(dailyState)); } catch { } };
 
       const llmComplete = async (system: string, user: string, maxTokens = 1200): Promise<string | null> => {
         const provider = aiProviders.find((p) => (p.protocol || 'openai') === 'openai');
@@ -1740,7 +1740,7 @@ function apiProxyPlugin(): Plugin {
             800,
           );
           if (out) ambientPush('ambient', out.trim(), { ping: true });
-        } catch {}
+        } catch { }
       };
 
       const runSelfTest = () => {
@@ -1762,7 +1762,7 @@ function apiProxyPlugin(): Plugin {
               cwd: process.cwd(), timeout: 10 * 60 * 1000, env: { ...process.env },
             }, onDone('verify:cortex'));
           }
-        } catch {}
+        } catch { }
       };
 
       const ambientDaily = async () => {
@@ -1802,7 +1802,7 @@ function apiProxyPlugin(): Plugin {
           await counselSweep();
           await ambientLLMObserve();
           await ambientDaily();
-        } catch {}
+        } catch { }
       };
 
       // ── Call bridge queue: Cortex asks the always-on Mac client to place a
@@ -1919,9 +1919,9 @@ function apiProxyPlugin(): Plugin {
       });
 
       if (process.env.CORTEX_AMBIENT !== '0') {
-        const first = setTimeout(() => { ambientTick().catch(() => {}); }, 90_000) as any;
+        const first = setTimeout(() => { ambientTick().catch(() => { }); }, 90_000) as any;
         first.unref?.();
-        const ambientTimer = setInterval(() => { ambientTick().catch(() => {}); }, AMBIENT_TICK_MS) as any;
+        const ambientTimer = setInterval(() => { ambientTick().catch(() => { }); }, AMBIENT_TICK_MS) as any;
         ambientTimer.unref?.();
         console.info('[ambient] proactive notice queue enabled — 10m cadence, GET /api/cortex/ambient/pending');
       }
@@ -1969,9 +1969,9 @@ function apiProxyPlugin(): Plugin {
       };
 
       if (process.env.CORTEX_KEEP_WARM !== '0') {
-        const firstWarm = setTimeout(() => { runNeuralKeepWarm().catch(() => {}); }, 15_000) as any;
+        const firstWarm = setTimeout(() => { runNeuralKeepWarm().catch(() => { }); }, 15_000) as any;
         firstWarm.unref?.();
-        const keepWarmTimer = setInterval(() => { runNeuralKeepWarm().catch(() => {}); }, KEEP_WARM_CADENCE_MS) as any;
+        const keepWarmTimer = setInterval(() => { runNeuralKeepWarm().catch(() => { }); }, KEEP_WARM_CADENCE_MS) as any;
         keepWarmTimer.unref?.();
         console.info('[keep-warm] neural RAM keep-warm daemon active (10m interval) — Kokoro / VoiceStudio / Ollama / FCC');
       }
@@ -2111,7 +2111,7 @@ function apiProxyPlugin(): Plugin {
           let parsed = { app: 'Finder', title: '' };
           try {
             parsed = JSON.parse((stdout || '').trim());
-          } catch {}
+          } catch { }
 
           const app = parsed.app || 'Finder';
           const title = parsed.title || '';
@@ -2219,7 +2219,7 @@ function apiProxyPlugin(): Plugin {
               lastDreamAgeHours = Math.max(0, (Date.now() - stat.mtimeMs) / (1000 * 60 * 60));
             }
           }
-        } catch {}
+        } catch { }
 
         const vigilance = getAutonomousVigilance();
         const breakdown = vigilance.computeFreeEnergy({
@@ -2234,17 +2234,17 @@ function apiProxyPlugin(): Plugin {
 
         const speculativeResolution = uncommittedFiles > 0
           ? {
-              action: 'git_status',
-              title: `${uncommittedFiles} uncommitted file${uncommittedFiles === 1 ? '' : 's'} in working tree`,
-              readyToCommit: false,
-              summary: `${uncommittedFiles} modified/untracked files detected in working tree.`,
-            }
+            action: 'git_status',
+            title: `${uncommittedFiles} uncommitted file${uncommittedFiles === 1 ? '' : 's'} in working tree`,
+            readyToCommit: false,
+            summary: `${uncommittedFiles} modified/untracked files detected in working tree.`,
+          }
           : {
-              action: 'nominal',
-              title: 'Repository pristine · Zero regressions',
-              readyToCommit: false,
-              summary: 'All invariants verified. Memory and AST stable.',
-            };
+            action: 'nominal',
+            title: 'Repository pristine · Zero regressions',
+            readyToCommit: false,
+            summary: 'All invariants verified. Memory and AST stable.',
+          };
 
         res.end(JSON.stringify({
           ok: true,
@@ -2356,7 +2356,7 @@ function apiProxyPlugin(): Plugin {
               const data = fsSync.readFileSync(statePath, 'utf-8');
               return res.end(data);
             }
-          } catch {}
+          } catch { }
           return res.end(JSON.stringify({ state: 'idle', level: 0, text: '', agentName: 'CORTEX' }));
         }
         if (req.method === 'POST') {
@@ -2415,7 +2415,7 @@ function apiProxyPlugin(): Plugin {
           // faces get real amplitude data during speech.
           const samples = state === 'speaking'
             ? Array.from({ length: 64 }, (_, i) =>
-                Math.sin(i * 0.55 + Date.now() / 90) * 9000 * level)
+              Math.sin(i * 0.55 + Date.now() / 90) * 9000 * level)
             : Array(64).fill(0);
           return res.end(JSON.stringify({
             state, level, samples,
@@ -2441,7 +2441,7 @@ function apiProxyPlugin(): Plugin {
                 let meta: any = { id: d, title: d.charAt(0).toUpperCase() + d.slice(1), tagline: '' };
                 try {
                   meta = { ...meta, ...JSON.parse(fsSync.readFileSync(path.join(faceDir, 'face.json'), 'utf-8')) };
-                } catch {}
+                } catch { }
                 meta.id = d;
                 faces.push(meta);
               }
@@ -2479,7 +2479,7 @@ function apiProxyPlugin(): Plugin {
               return res.end(JSON.stringify({ ok: false, error: 'GOVEE_API_KEY not configured in environment' }));
             }
             const { syncCortexMoodToLights, broadcastColor, hexToRgbInt } = await import('./src/utils/govee-client.ts');
-            
+
             if (parsed.mood) {
               const result = await syncCortexMoodToLights(apiKey, parsed.mood);
               return res.end(JSON.stringify({ ok: true, ...result }));
@@ -3032,7 +3032,7 @@ function apiProxyPlugin(): Plugin {
                         maxBuffer: 8 * 1024 * 1024,
                         env: { ...process.env, PAGER: 'cat' },
                       });
-                      try { fsSync.unlinkSync(scratchPy); } catch {}
+                      try { fsSync.unlinkSync(scratchPy); } catch { }
                       const durationMs = Date.now() - startMs;
                       res.writeHead(200, {
                         'Content-Type': 'application/json',
@@ -3242,7 +3242,7 @@ function apiProxyPlugin(): Plugin {
                       break;
                     }
                   }
-                } catch {}
+                } catch { }
               }
               // ── Volition Guardrail: Libet Conscious Veto on Sensitive Credential Reads ──
               const isSensitiveRead = /(^|\/)(id_rsa|id_ed25519|\.ssh|\.aws|\.gnupg|\.netrc|\.npmrc|\.config\/gcloud|\/etc\/shadow|\/etc\/master\.passwd)($|\/)/i.test(resolved)
@@ -3733,7 +3733,7 @@ end tell`;
                     const { getCortexStreamingGazeService } = await import('./src/utils/cortex-visual-gaze.ts');
                     diagnostic = getCortexStreamingGazeService().evaluateDiagnostic(liveGaze);
                   }
-                } catch {}
+                } catch { }
 
                 return res.end(JSON.stringify({
                   ok: true,
@@ -4228,7 +4228,7 @@ end tell`;
                 // per-turn saves don't clobber session state or prior episodes.
                 if (incoming && typeof incoming === 'object' && incoming.ts && !Array.isArray(incoming.episodes)) {
                   let existing: any = {};
-                  try { existing = JSON.parse(await fs.readFile(episodicPath, 'utf-8')); } catch {}
+                  try { existing = JSON.parse(await fs.readFile(episodicPath, 'utf-8')); } catch { }
                   const episodes = Array.isArray(existing.episodes) ? existing.episodes : [];
                   episodes.push(incoming);
                   const merged = { ...existing, episodes: episodes.slice(-50), lastEpisode: incoming };
@@ -4306,7 +4306,7 @@ end tell`;
                             snippet: text.slice(Math.max(0, idx - 80), idx + 320).replace(/\s+/g, ' ').trim(),
                           });
                         }
-                      } catch {}
+                      } catch { }
                     }
                   }
                 };
@@ -4318,7 +4318,7 @@ end tell`;
                       let score = 0;
                       for (const t of terms) score += Math.min(lower.split(t).length - 1, 10);
                       if (score > 0) scored.push({ title: 'MEMORY', path: 'MEMORY.md', score, snippet: text.slice(0, 400).replace(/\s+/g, ' ') });
-                    } catch {}
+                    } catch { }
                   } else {
                     await walk(root.dir, root.prefix, 0);
                   }
@@ -4337,7 +4337,7 @@ end tell`;
                       snippet: eps.map((e: any) => `${e.ts || ''}: ${(e.user || '').slice(0, 80)} → ${(e.reply || '').slice(0, 120)}`).join(' | ').slice(0, 380),
                     });
                   }
-                } catch {}
+                } catch { }
                 scored.sort((a, b) => b.score - a.score);
                 return res.end(JSON.stringify({
                   ok: true, tool, action, query: rq,
@@ -4617,7 +4617,7 @@ end tell`;
                   try {
                     await execAsync(`textutil -convert docx "${htmlPath}" -output "${docxPath}"`, { timeout: 15000 });
                     if (fsSync.existsSync(docxPath)) written.push(docxPath);
-                  } catch {}
+                  } catch { }
                 } else if (format === 'csv') {
                   const csvPath = `${base}.csv`;
                   await fs.writeFile(csvPath, content.endsWith('\n') ? content : content + '\n', 'utf-8');
@@ -5175,7 +5175,7 @@ end tell`;
                 const lockPath = path.resolve(workspaceRoot, 'skills-lock.json');
                 let lockData: any = { version: 1, skills: {} };
                 if (fsSync.existsSync(lockPath)) {
-                  try { lockData = JSON.parse(await fs.readFile(lockPath, 'utf-8')); } catch {}
+                  try { lockData = JSON.parse(await fs.readFile(lockPath, 'utf-8')); } catch { }
                 }
                 if (!lockData.skills) lockData.skills = {};
                 lockData.skills[safeName] = {
@@ -5356,7 +5356,7 @@ end tell`;
               const lockPath = path.resolve(workspaceRoot, 'skills-lock.json');
               let lockData: any = { skills: {} };
               if (fsSync.existsSync(lockPath)) {
-                try { lockData = JSON.parse(await fs.readFile(lockPath, 'utf-8')); } catch {}
+                try { lockData = JSON.parse(await fs.readFile(lockPath, 'utf-8')); } catch { }
               }
               const report = await evo.auditFleet({ installedSkills: lockData.skills });
               res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
@@ -5574,7 +5574,7 @@ end tell`;
                       break;
                     }
                   }
-                } catch {}
+                } catch { }
               }
               // Libet Conscious Veto
               if (isProtectedMutationTarget(resolved)) {
@@ -7448,7 +7448,7 @@ function triggerQuickAction() {
                     await fs.writeFile(path.join(sandboxDir, ef), content, 'utf-8');
                   }
                 }
-              } catch {}
+              } catch { }
 
               res.writeHead(200, {
                 'Content-Type': 'application/json',
@@ -8168,8 +8168,8 @@ function triggerQuickAction() {
                     : (args?.kind === 'comm'
                       ? `Directive transmitted to ${(args?.input as any)?.targetAgent || 'Cortex'} via ${sub.task?.agentId || args?.agentId} — quantum channel is active.`
                       : args?.kind === 'handoff'
-                      ? `Relay baton secured. Task context handed off to ${(args?.input as any)?.toAgent || 'Devin'}.`
-                      : `Task dispatched to ${sub.task?.agentId || args?.agentId}. Telemetry is streaming live on the Foundry deck.`),
+                        ? `Relay baton secured. Task context handed off to ${(args?.input as any)?.toAgent || 'Devin'}.`
+                        : `Task dispatched to ${sub.task?.agentId || args?.agentId}. Telemetry is streaming live on the Foundry deck.`),
                   durationMs: Date.now() - startMs,
                 }));
               }
@@ -8440,7 +8440,7 @@ function triggerQuickAction() {
                   });
                   return res.end(buf);
                 }
-              } catch {}
+              } catch { }
             }
 
             // All neural TTS down — client falls back to browser
@@ -8587,315 +8587,315 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
               // candidate. Once real tokens flow we commit — they can't be
               // unsent. Headers go out on the first attempt only.
               let provCursor = 0;
-              for (;;) {
-              let aiRes: any = null;
-              let activeProvider: AIProviderCandidate | null = null;
+              for (; ;) {
+                let aiRes: any = null;
+                let activeProvider: AIProviderCandidate | null = null;
 
-              for (; provCursor < activeChain.length; provCursor++) {
-                const prov = activeChain[provCursor];
-                if (providerCooling(prov.name)) continue;
-                // Timeout covers time-to-headers ONLY. AbortSignal.timeout on
-                // the fetch signal stays armed for the body stream and kills
-                // long replies mid-flight — use a controller we disarm once
-                // response headers arrive.
-                const provAbort = new AbortController();
-                const provTimer = setTimeout(() => provAbort.abort(), 10000);
-                try {
-                  let candidateRes: any = null;
-                  if (prov.protocol === 'anthropic') {
-                    const anthropicMsgs = trimmedMsgs
-                      .filter(m => m.role === 'user' || m.role === 'assistant')
-                      .map(m => ({ role: m.role, content: m.content || '' }));
-                    if (anthropicMsgs.length === 0) {
-                      anthropicMsgs.push({ role: 'user', content: latestUserMessage || 'Status report' });
-                    }
-                    recordConnectionAudit(prov.url, '/api/ai/nexus-guest');
-                    candidateRes = await fetch(prov.url, {
-                      method: 'POST',
-                      headers: {
-                        'Content-Type': 'application/json',
-                        'x-api-key': prov.key,
-                        'anthropic-version': '2023-06-01',
-                      },
-                      body: JSON.stringify({
-                        model: prov.model,
-                        system: sysContent,
-                        messages: anthropicMsgs,
-                        max_tokens: typeof parsed.maxTokens === 'number' ? Math.min(parsed.maxTokens, parsed.context === 'cortex' ? 8192 : 2048) : (parsed.context === 'cortex' ? 4096 : 1200),
-                        stream: true,
-                        ...(parsed.context === 'cortex' && !parsed.noTools ? {
-                          tools: CORTEX_TOOLS.map(t => ({
-                            name: t.function.name,
-                            description: t.function.description,
-                            input_schema: t.function.parameters,
-                          })),
-                        } : {}),
-                      }),
-                      signal: provAbort.signal,
-                    });
-                  } else {
-                    const headers: Record<string, string> = {
-                      'Content-Type': 'application/json',
-                      'Authorization': `Bearer ${prov.key}`,
-                    };
-                    if (prov.name.includes('openrouter')) {
-                      headers['HTTP-Referer'] = 'http://localhost:5173';
-                      headers['X-Title'] = 'SyncScript Cortex';
-                    }
-
-                    recordConnectionAudit(prov.url, '/api/ai/nexus-guest');
-                    candidateRes = await fetch(prov.url, {
-                      method: 'POST',
-                      headers,
-                      body: JSON.stringify({
-                        model: prov.model,
-                        messages: chatMessages,
-                        max_tokens: typeof parsed.maxTokens === 'number' ? Math.min(parsed.maxTokens, parsed.context === 'cortex' ? 8192 : 2048) : (parsed.context === 'cortex' ? 4096 : 1200),
-                        temperature: 0.2,
-                        stream: true,
-                        // gpt-oss models burn tokens on reasoning deltas the proxy
-                        // cannot forward — cap reasoning so content arrives sooner.
-                        // qwen3.x needs 'none': 'low' still streams a full
-                        // reasoning field that can eat the whole token budget.
-                        ...(prov.name === 'groq-fast' || prov.name === 'groq-oss' ? { reasoning_effort: 'low' }
-                          : prov.name === 'groq-qwen' ? { reasoning_effort: 'none' } : {}),
-                        ...(parsed.context === 'cortex' && !parsed.noTools ? { tools: CORTEX_TOOLS, tool_choice: 'auto' } : {}),
-                      }),
-                      signal: provAbort.signal,
-                    });
-                  }
-
-                  clearTimeout(provTimer);
-                  if (candidateRes && candidateRes.ok && candidateRes.body) {
-                    aiRes = candidateRes;
-                    activeProvider = prov;
-                    providerCooldown.delete(prov.name);
-                    provCursor++;
-                    break;
-                  } else {
-                    tripProvider(prov.name, candidateRes?.status);
-                    const errText = candidateRes ? await candidateRes.text().catch(() => '') : 'no response';
-                    console.warn(`[dev-proxy] Provider ${prov.name} (${prov.model}) failed HTTP ${candidateRes?.status}: ${errText.slice(0, 160)}. Failing over to next provider...`);
-                  }
-                } catch (provErr: any) {
-                  clearTimeout(provTimer);
-                  tripProvider(prov.name);
-                  console.warn(`[dev-proxy] Provider ${prov.name} (${prov.model}) request error: ${provErr?.message || provErr}. Failing over to next provider...`);
-                }
-              }
-
-              if (aiRes && aiRes.body) {
-                if (!res.headersSent) {
-                res.writeHead(200, {
-                  'Content-Type': 'text/event-stream',
-                  'Cache-Control': 'no-cache',
-                  'Connection': 'keep-alive',
-                  'Access-Control-Allow-Origin': '*',
-                  'X-Provider': activeProvider?.name || 'unknown',
-                  'X-Provider-Model': activeProvider?.model || 'unknown',
-                });
-                }
-
-                const reader = (aiRes.body as any).getReader();
-                const decoder = new TextDecoder();
-                // Parallel tool calls stream as separate indices — track each
-                // slot independently or names/args concatenate into garbage
-                // like "cortex_accomplishmentscortex_memory".
-                const toolCallSlots = new Map<number, { name: string; args: string }>();
-                const flushToolCalls = () => {
-                  if (!toolCallSlots.size) return;
-                  for (const [, slot] of toolCallSlots) {
-                    if (!slot.name) continue;
-                    let argsObj = {};
-                    try { argsObj = JSON.parse(slot.args); } catch { }
-                    const block = `\`\`\`tool_call\n${JSON.stringify({ tool: slot.name, args: argsObj })}\n\`\`\`\n`;
-                    res.write(`data: ${JSON.stringify({ token: block, finishReason: 'tool_calls', toolCall: { tool: slot.name, args: argsObj } })}\n\n`);
-                    forwardedTokens++;
-                  }
-                  toolCallSlots.clear();
-                };
-                let sseBuffer = '';
-                let doneSent = false;
-                let forwardedTokens = 0;
-                let sawContent = false;
-                let sawReasoning = false;
-                let sawProperFinish = false;
-                let streamError: any = null;
-
-                // Thinking models (qwen3, gpt-oss, nemotron) sometimes leak
-                // <think>...</think> reasoning into content deltas — strip it so
-                // users never see raw chain-of-thought or duplicated answers.
-                let thinkPending = '';
-                let thinkInBlock = false;
-                const filterReasoning = (chunk: string): string => {
-                  let data = thinkPending + chunk;
-                  thinkPending = '';
-                  let out = '';
-                  while (data.length) {
-                    if (thinkInBlock) {
-                      const end = data.indexOf('</think>');
-                      if (end === -1) { thinkPending = data; return out; }
-                      data = data.slice(end + 8);
-                      thinkInBlock = false;
-                      continue;
-                    }
-                    const start = data.indexOf('<think>');
-                    if (start === -1) {
-                      // Hold back the last 6 chars — a '<think>' tag could be split
-                      // across chunk boundaries.
-                      const keep = Math.min(6, data.length);
-                      out += data.slice(0, data.length - keep);
-                      thinkPending = data.slice(data.length - keep);
-                      return out;
-                    }
-                    out += data.slice(0, start);
-                    data = data.slice(start + 7);
-                    thinkInBlock = true;
-                  }
-                  return out;
-                };
-                const flushReasoning = (): string => {
-                  if (thinkInBlock) { thinkPending = ''; thinkInBlock = false; return ''; }
-                  const t = thinkPending; thinkPending = ''; return t;
-                };
-                // DONE is written only in the post-stream tail, after the
-                // failover decision — see below.
-
-                try {
-                while (true) {
-                  const { done, value } = await reader.read();
-                  if (done) break;
-                  sseBuffer += decoder.decode(value, { stream: true });
-                  const lines = sseBuffer.split('\n');
-                  sseBuffer = lines.pop() || '';
-
-                  for (const line of lines) {
-                    const trimmed = line.trim();
-                    if (!trimmed || trimmed.startsWith('event: ')) continue;
-                    if (!trimmed.startsWith('data: ')) continue;
-                    const payload = trimmed.slice(6);
-
-                    if (payload === '[DONE]') {
-                      sawProperFinish = true;
-                      flushToolCalls();
-                      // DONE is deferred to the post-stream tail — a clean
-                      // finish with ZERO forwarded tokens still fails over to
-                      // the next provider instead of emitting an empty reply.
-                      continue;
-                    }
-
-                    try {
-                      const obj = JSON.parse(payload);
-                      // Anthropic format
-                      if (obj.type === 'content_block_delta') {
-                        if (obj.delta?.text) {
-                          const clean = filterReasoning(obj.delta.text);
-                          if (clean) {
-                            forwardedTokens++;
-                            sawContent = true;
-                            res.write(`data: ${JSON.stringify({ token: clean, finishReason: null })}\n\n`);
-                          }
-                          continue;
-                        }
-                        if (obj.delta?.thinking) {
-                          sawReasoning = true;
-                          res.write(`data: ${JSON.stringify({ reasoning: obj.delta.thinking, finishReason: null })}\n\n`);
-                          continue;
-                        }
+                for (; provCursor < activeChain.length; provCursor++) {
+                  const prov = activeChain[provCursor];
+                  if (providerCooling(prov.name)) continue;
+                  // Timeout covers time-to-headers ONLY. AbortSignal.timeout on
+                  // the fetch signal stays armed for the body stream and kills
+                  // long replies mid-flight — use a controller we disarm once
+                  // response headers arrive.
+                  const provAbort = new AbortController();
+                  const provTimer = setTimeout(() => provAbort.abort(), 10000);
+                  try {
+                    let candidateRes: any = null;
+                    if (prov.protocol === 'anthropic') {
+                      const anthropicMsgs = trimmedMsgs
+                        .filter(m => m.role === 'user' || m.role === 'assistant')
+                        .map(m => ({ role: m.role, content: m.content || '' }));
+                      if (anthropicMsgs.length === 0) {
+                        anthropicMsgs.push({ role: 'user', content: latestUserMessage || 'Status report' });
                       }
-                      if (obj.type === 'message_stop') {
-                        sawProperFinish = true;
+                      recordConnectionAudit(prov.url, '/api/ai/nexus-guest');
+                      candidateRes = await fetch(prov.url, {
+                        method: 'POST',
+                        headers: {
+                          'Content-Type': 'application/json',
+                          'x-api-key': prov.key,
+                          'anthropic-version': '2023-06-01',
+                        },
+                        body: JSON.stringify({
+                          model: prov.model,
+                          system: sysContent,
+                          messages: anthropicMsgs,
+                          max_tokens: typeof parsed.maxTokens === 'number' ? Math.min(parsed.maxTokens, parsed.context === 'cortex' ? 8192 : 2048) : (parsed.context === 'cortex' ? 4096 : 1200),
+                          stream: true,
+                          ...(parsed.context === 'cortex' && !parsed.noTools ? {
+                            tools: CORTEX_TOOLS.map(t => ({
+                              name: t.function.name,
+                              description: t.function.description,
+                              input_schema: t.function.parameters,
+                            })),
+                          } : {}),
+                        }),
+                        signal: provAbort.signal,
+                      });
+                    } else {
+                      const headers: Record<string, string> = {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${prov.key}`,
+                      };
+                      if (prov.name.includes('openrouter')) {
+                        headers['HTTP-Referer'] = 'http://localhost:5173';
+                        headers['X-Title'] = 'SyncScript Cortex';
+                      }
+
+                      recordConnectionAudit(prov.url, '/api/ai/nexus-guest');
+                      candidateRes = await fetch(prov.url, {
+                        method: 'POST',
+                        headers,
+                        body: JSON.stringify({
+                          model: prov.model,
+                          messages: chatMessages,
+                          max_tokens: typeof parsed.maxTokens === 'number' ? Math.min(parsed.maxTokens, parsed.context === 'cortex' ? 8192 : 2048) : (parsed.context === 'cortex' ? 4096 : 1200),
+                          temperature: 0.2,
+                          stream: true,
+                          // gpt-oss models burn tokens on reasoning deltas the proxy
+                          // cannot forward — cap reasoning so content arrives sooner.
+                          // qwen3.x needs 'none': 'low' still streams a full
+                          // reasoning field that can eat the whole token budget.
+                          ...(prov.name === 'groq-fast' || prov.name === 'groq-oss' ? { reasoning_effort: 'low' }
+                            : prov.name === 'groq-qwen' ? { reasoning_effort: 'none' } : {}),
+                          ...(parsed.context === 'cortex' && !parsed.noTools ? { tools: CORTEX_TOOLS, tool_choice: 'auto' } : {}),
+                        }),
+                        signal: provAbort.signal,
+                      });
+                    }
+
+                    clearTimeout(provTimer);
+                    if (candidateRes && candidateRes.ok && candidateRes.body) {
+                      aiRes = candidateRes;
+                      activeProvider = prov;
+                      providerCooldown.delete(prov.name);
+                      provCursor++;
+                      break;
+                    } else {
+                      tripProvider(prov.name, candidateRes?.status);
+                      const errText = candidateRes ? await candidateRes.text().catch(() => '') : 'no response';
+                      console.warn(`[dev-proxy] Provider ${prov.name} (${prov.model}) failed HTTP ${candidateRes?.status}: ${errText.slice(0, 160)}. Failing over to next provider...`);
+                    }
+                  } catch (provErr: any) {
+                    clearTimeout(provTimer);
+                    tripProvider(prov.name);
+                    console.warn(`[dev-proxy] Provider ${prov.name} (${prov.model}) request error: ${provErr?.message || provErr}. Failing over to next provider...`);
+                  }
+                }
+
+                if (aiRes && aiRes.body) {
+                  if (!res.headersSent) {
+                    res.writeHead(200, {
+                      'Content-Type': 'text/event-stream',
+                      'Cache-Control': 'no-cache',
+                      'Connection': 'keep-alive',
+                      'Access-Control-Allow-Origin': '*',
+                      'X-Provider': activeProvider?.name || 'unknown',
+                      'X-Provider-Model': activeProvider?.model || 'unknown',
+                    });
+                  }
+
+                  const reader = (aiRes.body as any).getReader();
+                  const decoder = new TextDecoder();
+                  // Parallel tool calls stream as separate indices — track each
+                  // slot independently or names/args concatenate into garbage
+                  // like "cortex_accomplishmentscortex_memory".
+                  const toolCallSlots = new Map<number, { name: string; args: string }>();
+                  const flushToolCalls = () => {
+                    if (!toolCallSlots.size) return;
+                    for (const [, slot] of toolCallSlots) {
+                      if (!slot.name) continue;
+                      let argsObj = {};
+                      try { argsObj = JSON.parse(slot.args); } catch { }
+                      const block = `\`\`\`tool_call\n${JSON.stringify({ tool: slot.name, args: argsObj })}\n\`\`\`\n`;
+                      res.write(`data: ${JSON.stringify({ token: block, finishReason: 'tool_calls', toolCall: { tool: slot.name, args: argsObj } })}\n\n`);
+                      forwardedTokens++;
+                    }
+                    toolCallSlots.clear();
+                  };
+                  let sseBuffer = '';
+                  let doneSent = false;
+                  let forwardedTokens = 0;
+                  let sawContent = false;
+                  let sawReasoning = false;
+                  let sawProperFinish = false;
+                  let streamError: any = null;
+
+                  // Thinking models (qwen3, gpt-oss, nemotron) sometimes leak
+                  // <think>...</think> reasoning into content deltas — strip it so
+                  // users never see raw chain-of-thought or duplicated answers.
+                  let thinkPending = '';
+                  let thinkInBlock = false;
+                  const filterReasoning = (chunk: string): string => {
+                    let data = thinkPending + chunk;
+                    thinkPending = '';
+                    let out = '';
+                    while (data.length) {
+                      if (thinkInBlock) {
+                        const end = data.indexOf('</think>');
+                        if (end === -1) { thinkPending = data; return out; }
+                        data = data.slice(end + 8);
+                        thinkInBlock = false;
                         continue;
                       }
-
-                      // OpenAI format
-                      const token = obj.choices?.[0]?.delta?.content;
-                      const reasoningToken = obj.choices?.[0]?.delta?.reasoning_content;
-                      if (reasoningToken) {
-                        sawReasoning = true;
-                        res.write(`data: ${JSON.stringify({ reasoning: reasoningToken, finishReason: null })}\n\n`);
+                      const start = data.indexOf('<think>');
+                      if (start === -1) {
+                        // Hold back the last 6 chars — a '<think>' tag could be split
+                        // across chunk boundaries.
+                        const keep = Math.min(6, data.length);
+                        out += data.slice(0, data.length - keep);
+                        thinkPending = data.slice(data.length - keep);
+                        return out;
                       }
-                      const finishReason = obj.choices?.[0]?.finish_reason;
-                      // finish_reason often arrives on a final chunk with an EMPTY
-                      // delta.content — count it as a proper finish regardless.
-                      if (finishReason) sawProperFinish = true;
-                      const toolDeltas = obj.choices?.[0]?.delta?.tool_calls;
-                      if (Array.isArray(toolDeltas)) {
-                        for (const td of toolDeltas) {
-                          const idx = typeof td?.index === 'number' ? td.index : 0;
-                          let slot = toolCallSlots.get(idx);
-                          if (!slot) { slot = { name: '', args: '' }; toolCallSlots.set(idx, slot); }
-                          if (td?.function?.name) slot.name += td.function.name;
-                          if (td?.function?.arguments) slot.args += td.function.arguments;
-                        }
-                      }
-
-                      if (toolCallSlots.size && (finishReason === 'tool_calls' || finishReason === 'stop' || finishReason)) {
-                        flushToolCalls();
-                      } else if (token) {
-                        sawContent = true;
-                        const clean = filterReasoning(token);
-                        if (finishReason) sawProperFinish = true;
-                        if (clean) {
-                          forwardedTokens++;
-                          res.write(`data: ${JSON.stringify({ token: clean, finishReason: finishReason || null })}\n\n`);
-                        }
-                      }
-                    } catch { /* skip malformed */ }
-                  }
-                }
-                } catch (streamErr: any) {
-                  streamError = streamErr;
-                  console.warn(`[dev-proxy] Provider ${activeProvider?.name} stream error mid-flight: ${streamErr?.message || streamErr}`);
-                }
-
-                // Zero-content outcome (dead stream OR reasoning-only
-                // completion) → try the next provider before emitting any
-                // fallback text. sawContent counts raw content deltas even
-                // when filterReasoning holds the <=6-char tail — short replies
-                // like "OK" must commit, not fail over. DONE was deferred, so
-                // nothing reached the client yet either way.
-                if (!sawContent && !sawReasoning && forwardedTokens === 0 &&
-                    provCursor < activeChain.length && !res.writableEnded) {
-                  if (activeProvider) tripProvider(activeProvider.name);
-                  console.warn(`[dev-proxy] Provider ${activeProvider?.name} stream died with zero tokens (finish=${sawProperFinish} err=${streamError?.message || 'none'}) — failing over mid-flight to next provider.`);
-                  continue;
-                }
-
-                if (!doneSent && !res.writableEnded) {
-                  doneSent = true;
-                  // Flush the held-back reasoning-filter tail BEFORE deciding
-                  // emptiness — short replies ("OK") live entirely in
-                  // thinkPending and would otherwise false-positive as empty.
-                  const heldTail = flushReasoning();
-                  if (heldTail) {
-                    forwardedTokens++;
-                    res.write(`data: ${JSON.stringify({ token: heldTail, finishReason: null })}\n\n`);
-                  }
-                  if (forwardedTokens === 0) {
-                    if (sawReasoning) {
-                      res.write(`data: ${JSON.stringify({ token: 'Understood.', finishReason: 'stop' })}\n\n`);
-                    } else {
-                      // Provider streamed only unmappable deltas (e.g. reasoning_content)
-                      // or died before any content — never leave a silent empty response.
-                      res.write(`data: ${JSON.stringify({ token: 'The upstream model returned an empty response for that request. Try rephrasing, or say "retry" and I will run it again.' })}\n\n`);
+                      out += data.slice(0, start);
+                      data = data.slice(start + 7);
+                      thinkInBlock = true;
                     }
-                  } else if (!sawProperFinish) {
-                    // Stream dropped mid-flight (provider closed connection without
-                    // finish_reason) — tell the user honestly instead of silently
-                    // ending mid-word.
-                    res.write(`data: ${JSON.stringify({ token: '\n\n*[Response cut off — the upstream stream dropped. Say "continue" and I will pick up where it stopped.]*', finishReason: null })}\n\n`);
+                    return out;
+                  };
+                  const flushReasoning = (): string => {
+                    if (thinkInBlock) { thinkPending = ''; thinkInBlock = false; return ''; }
+                    const t = thinkPending; thinkPending = ''; return t;
+                  };
+                  // DONE is written only in the post-stream tail, after the
+                  // failover decision — see below.
+
+                  try {
+                    while (true) {
+                      const { done, value } = await reader.read();
+                      if (done) break;
+                      sseBuffer += decoder.decode(value, { stream: true });
+                      const lines = sseBuffer.split('\n');
+                      sseBuffer = lines.pop() || '';
+
+                      for (const line of lines) {
+                        const trimmed = line.trim();
+                        if (!trimmed || trimmed.startsWith('event: ')) continue;
+                        if (!trimmed.startsWith('data: ')) continue;
+                        const payload = trimmed.slice(6);
+
+                        if (payload === '[DONE]') {
+                          sawProperFinish = true;
+                          flushToolCalls();
+                          // DONE is deferred to the post-stream tail — a clean
+                          // finish with ZERO forwarded tokens still fails over to
+                          // the next provider instead of emitting an empty reply.
+                          continue;
+                        }
+
+                        try {
+                          const obj = JSON.parse(payload);
+                          // Anthropic format
+                          if (obj.type === 'content_block_delta') {
+                            if (obj.delta?.text) {
+                              const clean = filterReasoning(obj.delta.text);
+                              if (clean) {
+                                forwardedTokens++;
+                                sawContent = true;
+                                res.write(`data: ${JSON.stringify({ token: clean, finishReason: null })}\n\n`);
+                              }
+                              continue;
+                            }
+                            if (obj.delta?.thinking) {
+                              sawReasoning = true;
+                              res.write(`data: ${JSON.stringify({ reasoning: obj.delta.thinking, finishReason: null })}\n\n`);
+                              continue;
+                            }
+                          }
+                          if (obj.type === 'message_stop') {
+                            sawProperFinish = true;
+                            continue;
+                          }
+
+                          // OpenAI format
+                          const token = obj.choices?.[0]?.delta?.content;
+                          const reasoningToken = obj.choices?.[0]?.delta?.reasoning_content;
+                          if (reasoningToken) {
+                            sawReasoning = true;
+                            res.write(`data: ${JSON.stringify({ reasoning: reasoningToken, finishReason: null })}\n\n`);
+                          }
+                          const finishReason = obj.choices?.[0]?.finish_reason;
+                          // finish_reason often arrives on a final chunk with an EMPTY
+                          // delta.content — count it as a proper finish regardless.
+                          if (finishReason) sawProperFinish = true;
+                          const toolDeltas = obj.choices?.[0]?.delta?.tool_calls;
+                          if (Array.isArray(toolDeltas)) {
+                            for (const td of toolDeltas) {
+                              const idx = typeof td?.index === 'number' ? td.index : 0;
+                              let slot = toolCallSlots.get(idx);
+                              if (!slot) { slot = { name: '', args: '' }; toolCallSlots.set(idx, slot); }
+                              if (td?.function?.name) slot.name += td.function.name;
+                              if (td?.function?.arguments) slot.args += td.function.arguments;
+                            }
+                          }
+
+                          if (toolCallSlots.size && (finishReason === 'tool_calls' || finishReason === 'stop' || finishReason)) {
+                            flushToolCalls();
+                          } else if (token) {
+                            sawContent = true;
+                            const clean = filterReasoning(token);
+                            if (finishReason) sawProperFinish = true;
+                            if (clean) {
+                              forwardedTokens++;
+                              res.write(`data: ${JSON.stringify({ token: clean, finishReason: finishReason || null })}\n\n`);
+                            }
+                          }
+                        } catch { /* skip malformed */ }
+                      }
+                    }
+                  } catch (streamErr: any) {
+                    streamError = streamErr;
+                    console.warn(`[dev-proxy] Provider ${activeProvider?.name} stream error mid-flight: ${streamErr?.message || streamErr}`);
                   }
-                  res.write('data: [DONE]\n\n');
-                  res.end();
-                } else if (!res.writableEnded) {
-                  res.end();
+
+                  // Zero-content outcome (dead stream OR reasoning-only
+                  // completion) → try the next provider before emitting any
+                  // fallback text. sawContent counts raw content deltas even
+                  // when filterReasoning holds the <=6-char tail — short replies
+                  // like "OK" must commit, not fail over. DONE was deferred, so
+                  // nothing reached the client yet either way.
+                  if (!sawContent && !sawReasoning && forwardedTokens === 0 &&
+                    provCursor < activeChain.length && !res.writableEnded) {
+                    if (activeProvider) tripProvider(activeProvider.name);
+                    console.warn(`[dev-proxy] Provider ${activeProvider?.name} stream died with zero tokens (finish=${sawProperFinish} err=${streamError?.message || 'none'}) — failing over mid-flight to next provider.`);
+                    continue;
+                  }
+
+                  if (!doneSent && !res.writableEnded) {
+                    doneSent = true;
+                    // Flush the held-back reasoning-filter tail BEFORE deciding
+                    // emptiness — short replies ("OK") live entirely in
+                    // thinkPending and would otherwise false-positive as empty.
+                    const heldTail = flushReasoning();
+                    if (heldTail) {
+                      forwardedTokens++;
+                      res.write(`data: ${JSON.stringify({ token: heldTail, finishReason: null })}\n\n`);
+                    }
+                    if (forwardedTokens === 0) {
+                      if (sawReasoning) {
+                        res.write(`data: ${JSON.stringify({ token: 'Understood.', finishReason: 'stop' })}\n\n`);
+                      } else {
+                        // Provider streamed only unmappable deltas (e.g. reasoning_content)
+                        // or died before any content — never leave a silent empty response.
+                        res.write(`data: ${JSON.stringify({ token: 'The upstream model returned an empty response for that request. Try rephrasing, or say "retry" and I will run it again.' })}\n\n`);
+                      }
+                    } else if (!sawProperFinish) {
+                      // Stream dropped mid-flight (provider closed connection without
+                      // finish_reason) — tell the user honestly instead of silently
+                      // ending mid-word.
+                      res.write(`data: ${JSON.stringify({ token: '\n\n*[Response cut off — the upstream stream dropped. Say "continue" and I will pick up where it stopped.]*', finishReason: null })}\n\n`);
+                    }
+                    res.write('data: [DONE]\n\n');
+                    res.end();
+                  } else if (!res.writableEnded) {
+                    res.end();
+                  }
+                  return;
                 }
-                return;
-              }
-              // Inner provider scan exhausted with no OK stream — leave the
-              // failover loop; headers were never sent, local engine takes over.
-              if (!aiRes || !aiRes.body) break;
+                // Inner provider scan exhausted with no OK stream — leave the
+                // failover loop; headers were never sent, local engine takes over.
+                if (!aiRes || !aiRes.body) break;
               } // end provider failover loop
 
               // Every candidate failed before producing an OK stream — fall
@@ -8908,7 +8908,7 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
                 res.end();
                 return;
               }
-              }
+            }
 
             // ── Local Autonomous Cognitive Simulation Engine (Zero-Failure Fallback) ──
             // When no cloud AI API keys (GROQ, OPENROUTER, OPENAI) are configured, or if all
@@ -9550,7 +9550,7 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
               repoOwner = match[1];
               repoName = match[2];
             }
-          } catch {}
+          } catch { }
 
           // 3. Resolve GitHub Token for Offline Cloud Fallback
           let githubToken = process.env.GITHUB_TOKEN || process.env.GH_TOKEN || '';
@@ -9558,7 +9558,7 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
             try {
               const { stdout } = await execAsync('gh auth token', { cwd: process.cwd() });
               githubToken = stdout.trim();
-            } catch {}
+            } catch { }
           }
 
           res.writeHead(200, {
@@ -9949,7 +9949,7 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
           const ledger = path.join(process.cwd(), '.cortex-runtime', 'forecasts.jsonl');
           const lines = fsSync.readFileSync(ledger, 'utf8').split('\n').filter(Boolean).slice(-40);
           forecasts = lines.map((l: string) => { try { return JSON.parse(l); } catch { return null; } }).filter(Boolean);
-        } catch {}
+        } catch { }
         res.end(JSON.stringify({ ok: true, ...agentRuntime.snapshot(), forecasts }));
       });
 
@@ -10097,6 +10097,83 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
             const task = agentRuntime.submitTask('distributor', 'queue_process', 'Manual Distribution Queue Drain', {});
             res.writeHead(200, { 'Content-Type': 'application/json' });
             return res.end(JSON.stringify({ ok: true, taskId: task.task?.id, status: task.task?.status }));
+          }
+
+          if (action === 'get_env') {
+            const envPath = path.join(process.cwd(), '.env.local');
+            let email = '';
+            try {
+              const content = fsSync.readFileSync(envPath, 'utf8');
+              const m = content.match(/GUMROAD_EMAIL=(.*)/);
+              if (m) email = m[1].replace(/["']/g, '').trim();
+            } catch {}
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            return res.end(JSON.stringify({ ok: true, email }));
+          }
+
+          if (action === 'click' || action === 'type' || action === 'press' || action === 'scroll' || action === 'fill_login') {
+            const sf = path.join(process.cwd(), 'storefront');
+            const { x, y, text, key, deltaY, email, password, target } = JSON.parse(body || '{}');
+            try {
+              const { chromium } = await import('playwright-core');
+              const browser = await chromium.connectOverCDP('http://localhost:9222');
+              const ctx = browser.contexts()[0];
+              const pages = ctx.pages();
+
+              let activeSub = target ? String(target) : '';
+              if (!activeSub) {
+                try {
+                  const parts = fsSync.readFileSync(path.join(sf, 'browser', 'latest.txt'), 'utf8').trim().split(' ');
+                  if (parts[1]) activeSub = parts[1].replace(/https?:\/\/(www\.)?/, '').split('/')[0];
+                } catch {}
+              }
+
+              const page = (activeSub ? pages.find((p: any) => p.url().includes(activeSub)) : null)
+                || pages.find((p: any) => !p.url().includes('localhost:5173'))
+                || pages[0];
+              if (!page) throw new Error('No active page found in automation Chrome');
+
+              if (action === 'click') {
+                await page.mouse.click(Number(x), Number(y));
+              } else if (action === 'type') {
+                await page.keyboard.type(String(text || ''));
+              } else if (action === 'press') {
+                await page.keyboard.press(String(key || 'Enter'));
+              } else if (action === 'scroll') {
+                await page.mouse.wheel(0, Number(deltaY || 300));
+              } else if (action === 'fill_login') {
+                const emailInp = page.locator('input[type="email"], input[name="email"], input[placeholder*="email" i], input[id*="email" i], input[name*="user" i]').first();
+                if (await emailInp.count()) {
+                  await emailInp.fill(String(email || ''));
+                }
+                const passInp = page.locator('input[type="password"], input[name="password"], input[id*="password" i]').first();
+                if (await passInp.count()) {
+                  await passInp.fill(String(password || ''));
+                }
+                const submitBtn = page.locator('button:has-text("Login"), button:has-text("Log in"), button:has-text("Sign in"), button:has-text("Continue"), button[type="submit"]').first();
+                if (await submitBtn.count()) {
+                  await submitBtn.click();
+                  await Promise.race([
+                    page.waitForNavigation({ timeout: 5000 }).catch(() => {}),
+                    page.waitForTimeout(3000)
+                  ]);
+                }
+              }
+
+              // Take fresh screenshot after action (with short timeout so font loading never hangs)
+              const buf = await page.screenshot({ type: 'png', timeout: 6000 }).catch(() => null);
+              if (buf) {
+                fsSync.writeFileSync(path.join(sf, 'browser', 'latest.png'), buf);
+                fsSync.writeFileSync(path.join(sf, 'browser', 'latest.txt'), `${Date.now()} ${page.url()}\n`);
+              }
+              await browser.close().catch(() => {});
+
+              res.writeHead(200, { 'Content-Type': 'application/json' });
+              return res.end(JSON.stringify({ ok: true, url: page.url(), action }));
+            } catch (err: any) {
+              res.writeHead(500, { 'Content-Type': 'application/json' });
+              return res.end(JSON.stringify({ ok: false, error: err.message }));
+            }
           }
 
           res.writeHead(400, { 'Content-Type': 'application/json' });
@@ -10272,9 +10349,9 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
         for (const e of agentRuntime.recentEvents(since))
           res.write(`data: ${JSON.stringify(e)}\n\n`);
         const unsub = agentRuntime.subscribe((e) => {
-          try { res.write(`data: ${JSON.stringify(e)}\n\n`); } catch {}
+          try { res.write(`data: ${JSON.stringify(e)}\n\n`); } catch { }
         });
-        const hb = setInterval(() => { try { res.write(': hb\n\n'); } catch {} }, 20_000);
+        const hb = setInterval(() => { try { res.write(': hb\n\n'); } catch { } }, 20_000);
         hb.unref?.();
         req.on('close', () => { unsub(); clearInterval(hb); });
       });
@@ -10426,6 +10503,46 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
         }
       });
 
+      // Shared approve/dismiss path for strategy proposals — used by the
+      // proposals POST endpoint, Discord buttons, and the Foundry inbox.
+      // Approval dispatches the underlying action (budget raise, devin_task,
+      // or agent task); a bare status flip without dispatch would lie.
+      const decideStrategyProposalWithDispatch = async (id: string, decision: 'approved' | 'dismissed'): Promise<{ ok: boolean; note?: string }> => {
+        const p = listStrategyProposals().find((x) => x.id === id);
+        if (!p || p.status !== 'pending') return { ok: false, note: 'already decided or unknown' };
+        if (decision === 'dismissed') {
+          decideStrategyProposal(id, 'dismissed');
+          return { ok: true, note: 'dismissed' };
+        }
+        if (p.action?.type === 'budgetRaise') {
+          const okBudget = agentRuntime.setDailyBudget(p.action.agentId as any, p.action.budget);
+          decideStrategyProposal(id, okBudget ? 'executed' : 'approved', okBudget ? `budget ${p.action.agentId} → ${p.action.budget}/day` : 'budget raise failed');
+          return { ok: okBudget, note: okBudget ? `budget raised: ${p.action.agentId} → ${p.action.budget}/day` : 'raise failed' };
+        }
+        if (p.kind === 'devin_task') {
+          // Flip approved BEFORE dispatch — the worker verifies status.
+          decideStrategyProposal(id, 'approved', 'pre-dispatch approval');
+          const t = agentRuntime.submitTask('devin' as any, 'devin_task', String(p.title || '').slice(0, 120), {
+            instruction: p.instruction, ...(p.taskInput || {}), approvedProposalId: p.id,
+          });
+          if (!t.ok) {
+            decideStrategyProposal(id, 'failed', String(t.error || 'dispatch rejected'));
+            return { ok: false, note: String(t.error || 'dispatch rejected') };
+          }
+          decideStrategyProposal(id, 'approved', `dispatched ${t.task.id}`, t.task.id);
+          return { ok: true, note: `devin session launching (${t.task.id})` };
+        }
+        const t = agentRuntime.submitTask(p.agentId as any, p.kind, String(p.title || '').slice(0, 120), {
+          instruction: p.instruction, ...(p.taskInput || {}),
+        });
+        if (!t.ok) {
+          decideStrategyProposal(id, 'failed', String(t.error || 'dispatch rejected'));
+          return { ok: false, note: String(t.error || 'dispatch rejected') };
+        }
+        decideStrategyProposal(id, 'approved', `dispatched ${t.task.id}`, t.task.id);
+        return { ok: true, note: `dispatched to ${p.agentId} (${t.task.id})` };
+      };
+
       // GET /api/cortex/agents/proposals?status=pending — STRATEGIST action
       // plans awaiting human decision (the closed-loop approval bridge).
       server.middlewares.use('/api/cortex/agents/proposals', (req: any, res: any, next: any) => {
@@ -10459,13 +10576,20 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
         if (req.method === 'POST') {
           let body = '';
           req.on('data', (c: Buffer) => { body += c.toString(); });
-          req.on('end', () => {
+          req.on('end', async () => {
             try {
               const parsed = JSON.parse(body || '{}');
               const decision = String(parsed.decision || '');
               if (!['approved', 'dismissed', 'executed', 'failed'].includes(decision)) {
                 res.writeHead(400);
                 return res.end(JSON.stringify({ ok: false, error: 'decision must be approved|dismissed|executed|failed' }));
+              }
+              // approved/dismissed go through the dispatch path so approval
+              // actually runs the action; executed/failed are status corrections.
+              if (decision === 'approved' || decision === 'dismissed') {
+                const r = await decideStrategyProposalWithDispatch(String(parsed.id || ''), decision);
+                res.writeHead(r.ok ? 200 : 404, { 'Content-Type': 'application/json' });
+                return res.end(JSON.stringify(r.ok ? { ok: true, note: r.note } : { ok: false, error: r.note || 'proposal not found or already decided' }));
               }
               const p = decideStrategyProposal(String(parsed.id || ''), decision as any, parsed.note, parsed.taskId ? String(parsed.taskId) : undefined);
               res.writeHead(p ? 200 : 404, { 'Content-Type': 'application/json' });
@@ -10545,10 +10669,10 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
                       fsSync.mkdirSync(rejDir, { recursive: true });
                       fsSync.renameSync(fp, path.join(rejDir, `${Date.now()}-${f}`));
                     }
-                  } catch {}
+                  } catch { }
                 }
               }
-            } catch {}
+            } catch { }
             const url = new URL(req.url || '/', 'http://localhost');
             const status = url.searchParams.get('status') || undefined;
             const sessions = listCounselSessions({ status: status as any }).map((s) => ({
@@ -10687,7 +10811,7 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
             const counts: Record<string, number> = {};
             for (const i of q.items || []) counts[i.status] = (counts[i.status] || 0) + 1;
             missions = Object.entries(counts).map(([status, count]) => ({ name: 'distribution-queue', status, count }));
-          } catch {}
+          } catch { }
 
           res.writeHead(200, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({
@@ -11002,41 +11126,8 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
         // Agent-fleet strategy proposals (incidents, budgets, devin_task).
         // Approval runs the same logic as the Inbox UI, server-side.
         listStrategyProposals: () => listStrategyProposals('pending') as any[],
-        decideStrategyProposal: async (id: string, decision: 'approved' | 'dismissed') => {
-          const p = listStrategyProposals().find((x) => x.id === id);
-          if (!p || p.status !== 'pending') return { ok: false, note: 'already decided or unknown' };
-          if (decision === 'dismissed') {
-            decideStrategyProposal(id, 'dismissed');
-            return { ok: true, note: 'dismissed' };
-          }
-          if (p.action?.type === 'budgetRaise') {
-            const okBudget = agentRuntime.setDailyBudget(p.action.agentId as any, p.action.budget);
-            decideStrategyProposal(id, okBudget ? 'executed' : 'approved', okBudget ? `budget ${p.action.agentId} → ${p.action.budget}/day` : 'budget raise failed');
-            return { ok: okBudget, note: okBudget ? `budget raised: ${p.action.agentId} → ${p.action.budget}/day` : 'raise failed' };
-          }
-          if (p.kind === 'devin_task') {
-            // Flip approved BEFORE dispatch — the worker verifies status.
-            decideStrategyProposal(id, 'approved', 'pre-dispatch approval');
-            const t = agentRuntime.submitTask('devin' as any, 'devin_task', String(p.title || '').slice(0, 120), {
-              instruction: p.instruction, ...(p.taskInput || {}), approvedProposalId: p.id,
-            });
-            if (!t.ok) {
-              decideStrategyProposal(id, 'failed', String(t.error || 'dispatch rejected'));
-              return { ok: false, note: String(t.error || 'dispatch rejected') };
-            }
-            decideStrategyProposal(id, 'approved', `dispatched ${t.task.id}`, t.task.id);
-            return { ok: true, note: `devin session launching (${t.task.id})` };
-          }
-          const t = agentRuntime.submitTask(p.agentId as any, p.kind, String(p.title || '').slice(0, 120), {
-            instruction: p.instruction, ...(p.taskInput || {}),
-          });
-          if (!t.ok) {
-            decideStrategyProposal(id, 'failed', String(t.error || 'dispatch rejected'));
-            return { ok: false, note: String(t.error || 'dispatch rejected') };
-          }
-          decideStrategyProposal(id, 'approved', `dispatched ${t.task.id}`, t.task.id);
-          return { ok: true, note: `dispatched to ${p.agentId} (${t.task.id})` };
-        },
+        decideStrategyProposal: (id: string, decision: 'approved' | 'dismissed') =>
+          decideStrategyProposalWithDispatch(id, decision),
         decideCounsel: (sessionId: string, decision: 'go' | 'no-go', userId: string) => {
           const r = decideCounsel(sessionId, decision, `discord:${userId}`);
           return r.ok ? { ok: true, note: `verdict ${decision} recorded` } : { ok: false, note: r.error };
@@ -11114,7 +11205,7 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
             const sigOk = verifyDiscordSignature(body, sig, ts, dval('DISCORD_PUBLIC_KEY'));
             let payloadType = '?';
             let payloadUser = '';
-            try { const pj = JSON.parse(body || '{}'); payloadType = String(pj?.type ?? '?'); payloadUser = String(pj?.user?.id || pj?.member?.user?.id || ''); } catch {}
+            try { const pj = JSON.parse(body || '{}'); payloadType = String(pj?.type ?? '?'); payloadUser = String(pj?.user?.id || pj?.member?.user?.id || ''); } catch { }
             console.info(`[cortex-discord] interaction type=${payloadType} user=${payloadUser} expectOwner=${discordDeps.ownerId || 'EMPTY'} sig=${sigOk ? 'ok' : 'FAIL'} bytes=${body.length}`);
             if (!sigOk) {
               res.writeHead(401, { 'Content-Type': 'application/json' });
@@ -11322,7 +11413,7 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
                   fsSync.writeFileSync(stateFile, JSON.stringify({ seen: all }));
                 }
               }
-            } catch {}
+            } catch { }
           } catch (e) {
             console.warn('[cortex-discord] poll error:', String(e).slice(0, 160));
           }
@@ -11403,7 +11494,7 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
                     }).catch(() => null);
                   }
                 }
-              } catch {}
+              } catch { }
             }
             if (dirty) saveDiscordThreads(discordDir, threads);
           } catch (e) {
@@ -11432,7 +11523,7 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
         req.on('data', (c: Buffer) => { body += c.toString(); });
         req.on('end', async () => {
           let parsed: any = {};
-          try { parsed = JSON.parse(body || '{}'); } catch {}
+          try { parsed = JSON.parse(body || '{}'); } catch { }
           const messages = Array.isArray(parsed.messages) ? parsed.messages.slice(-12) : [];
           if (!messages.length) {
             agentCors(req, res); res.writeHead(400);
@@ -11526,78 +11617,78 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
       const closedTabsHistory: Array<{ url: string; title: string; closedAt: number }> = [];
 
 
-    // ── Post-hook: reorder stack so API middlewares run before htmlFallbackMiddleware ──
-    return () => {
-      setTimeout(() => {
-        const stack = server.middlewares.stack;
-        console.log('[POST-HOOK DEBUG] Raw stack length:', stack.length);
-        stack.forEach((layer, i) => {
-          console.log(`[POST-HOOK DEBUG] Layer ${i}:`, {
-            routePath: layer.route?.path,
-            handleName: layer.handle?.name,
-            regexp: layer.regexp?.toString(),
-            keys: Object.keys(layer),
+      // ── Post-hook: reorder stack so API middlewares run before htmlFallbackMiddleware ──
+      return () => {
+        setTimeout(() => {
+          const stack = server.middlewares.stack;
+          console.log('[POST-HOOK DEBUG] Raw stack length:', stack.length);
+          stack.forEach((layer, i) => {
+            console.log(`[POST-HOOK DEBUG] Layer ${i}:`, {
+              routePath: layer.route?.path,
+              handleName: layer.handle?.name,
+              regexp: layer.regexp?.toString(),
+              keys: Object.keys(layer),
+            });
           });
-        });
-        const apiMiddlewarePaths = [
-          '/api/cortex/',
-          '/api/ai/',
-          '/dev-sw.js',
-          '/dev-dist/sw.js',
-          '/sandbox',
-        ];
-        const apiHandlers = [];
-        const otherHandlers = [];
-        let debugHandler = null;
-        for (const layer of stack) {
-          // Check multiple sources for the route path
-          let routePath = '';
-          if (layer.route) {
-            if (typeof layer.route.path === 'string') {
-              routePath = layer.route.path;
-            } else if (layer.route.path instanceof RegExp) {
-              routePath = layer.route.path.toString();
-            } else if (layer.route instanceof RegExp) {
-              routePath = layer.route.toString();
-            } else if (layer.route.keys) {
-              // For middleware added via .use('/path', handler), route has keys array with path info
-              routePath = JSON.stringify(layer.route.keys);
+          const apiMiddlewarePaths = [
+            '/api/cortex/',
+            '/api/ai/',
+            '/dev-sw.js',
+            '/dev-dist/sw.js',
+            '/sandbox',
+          ];
+          const apiHandlers = [];
+          const otherHandlers = [];
+          let debugHandler = null;
+          for (const layer of stack) {
+            // Check multiple sources for the route path
+            let routePath = '';
+            if (layer.route) {
+              if (typeof layer.route.path === 'string') {
+                routePath = layer.route.path;
+              } else if (layer.route.path instanceof RegExp) {
+                routePath = layer.route.path.toString();
+              } else if (layer.route instanceof RegExp) {
+                routePath = layer.route.toString();
+              } else if (layer.route.keys) {
+                // For middleware added via .use('/path', handler), route has keys array with path info
+                routePath = JSON.stringify(layer.route.keys);
+              } else {
+                // Last resort: stringify the whole route object
+                try {
+                  routePath = JSON.stringify(layer.route);
+                } catch { }
+              }
+            }
+            const handleName = layer.handle?.name || '';
+            const regexpStr = layer.regexp?.toString() || '';
+            // For middleware added via .use('/path', handler), the path is in route.path as a regexp
+            const path = routePath + ' ' + handleName + ' ' + regexpStr;
+            const isApi = apiMiddlewarePaths.some(p => path.includes(p));
+            console.log(`[DETECT] layer: routePath=${routePath.substring(0, 80)}, handleName=${handleName}, isApi=${isApi}`);
+            if (isApi) {
+              apiHandlers.push(layer);
+            } else if (handleName === '' || path === 'unknown' || path.trim() === '') {
+              // Keep debug logger at front
+              if (!debugHandler) debugHandler = layer;
             } else {
-              // Last resort: stringify the whole route object
-              try {
-                routePath = JSON.stringify(layer.route);
-              } catch {}
+              otherHandlers.push(layer);
             }
           }
-          const handleName = layer.handle?.name || '';
-          const regexpStr = layer.regexp?.toString() || '';
-          // For middleware added via .use('/path', handler), the path is in route.path as a regexp
-          const path = routePath + ' ' + handleName + ' ' + regexpStr;
-          const isApi = apiMiddlewarePaths.some(p => path.includes(p));
-          console.log(`[DETECT] layer: routePath=${routePath.substring(0,80)}, handleName=${handleName}, isApi=${isApi}`);
-          if (isApi) {
-            apiHandlers.push(layer);
-          } else if (handleName === '' || path === 'unknown' || path.trim() === '') {
-            // Keep debug logger at front
-            if (!debugHandler) debugHandler = layer;
+          console.log('[POST-HOOK DEBUG] API handlers found:', apiHandlers.length);
+          // Rebuild: debug -> API -> Vite internals
+          if (debugHandler) {
+            server.middlewares.stack = [debugHandler, ...apiHandlers, ...otherHandlers];
           } else {
-            otherHandlers.push(layer);
+            server.middlewares.stack = [...apiHandlers, ...otherHandlers];
           }
-        }
-        console.log('[POST-HOOK DEBUG] API handlers found:', apiHandlers.length);
-        // Rebuild: debug -> API -> Vite internals
-        if (debugHandler) {
-          server.middlewares.stack = [debugHandler, ...apiHandlers, ...otherHandlers];
-        } else {
-          server.middlewares.stack = [...apiHandlers, ...otherHandlers];
-        }
-        console.log('[STACK REORDERED] Stack length:', server.middlewares.stack.length);
-        server.middlewares.stack.forEach((layer, i) => {
-          const path = layer.route?.path || layer.handle?.name || layer.regexp?.toString() || 'unknown';
-          console.log(`[STACK REORDERED]   ${i}: ${path.substring(0, 100)}`);
-        });
-      }, 50);
-    };
+          console.log('[STACK REORDERED] Stack length:', server.middlewares.stack.length);
+          server.middlewares.stack.forEach((layer, i) => {
+            const path = layer.route?.path || layer.handle?.name || layer.regexp?.toString() || 'unknown';
+            console.log(`[STACK REORDERED]   ${i}: ${path.substring(0, 100)}`);
+          });
+        }, 50);
+      };
     },
   }
 }
