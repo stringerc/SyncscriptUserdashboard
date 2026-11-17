@@ -957,6 +957,14 @@ function apiProxyPlugin(): Plugin {
         return '';
       };
 
+      // Govee handlers read process.env.GOVEE_API_KEY, but .env values live in
+      // loadEnv(), not process.env — publish the resolved key for them.
+      if (!process.env.GOVEE_API_KEY) {
+        const goveeKey = resolveEnvKey('GOVEE_API_KEY');
+        if (goveeKey) process.env.GOVEE_API_KEY = goveeKey;
+      }
+      console.info(`[api-proxy] Govee lights ${process.env.GOVEE_API_KEY ? 'enabled' : 'disabled — GOVEE_API_KEY unset'}`);
+
       aiProviders.length = 0;
       for (const p of DIRECT_AI_PROVIDERS) {
         const key = resolveEnvKey(p.keyEnv);
