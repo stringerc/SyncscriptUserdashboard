@@ -24,6 +24,7 @@ import { archiveTask, readArchive } from './src/lib/cortex-agents/archive';
 import { listStrategyProposals, decideStrategyProposal, reconcileStrategyProposals, fileBudgetProposal, autoApproveSafeStrategyProposals, setOnProposalFiledHook } from './src/lib/cortex-agents/strategy-proposals';
 import { recordIncidentFailure, resolveIncidentsOnSuccess, listIncidents, escalateStaleIncidents, sweepIncidentTtl, dismissIncident, dismissAllIncidents, autoVerifyIncident } from './src/lib/cortex-agents/incidents';
 import { issueDirective, listDirectives, ackDirective, cancelDirective } from './src/lib/cortex-agents/directives';
+import { loadMission, saveMission, upsertGoal, verifyOps, goalProgress, routineYield, suggestCadence, planBlocks, type OpsItem, type MissionGoal, type CadenceEntry } from './src/lib/cortex-agents/mission';
 import { maybeFileAdoptionFollowup } from './src/lib/cortex-agents/adoption';
 import { registerAgentWorkers, makeEphemeralWorker, expandTaskSpec } from './src/lib/cortex-agents/workers';
 import { enqueueDistributionItem, DISTRIBUTION_ITEM_TYPES } from './src/lib/cortex-agents/distribution';
@@ -11256,6 +11257,174 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
             agentCors(req, res);
             res.writeHead(400);
             res.end(JSON.stringify({ ok: false, error: e?.message || 'bad request' }));
+          }
+        });
+      });
+
+      // ── Mission loop (/api/cortex/mission/*) ──
+      // Goals → tasks → calendar → agents → evidence. See CORTEX_MISSION_LOOP_SPEC.md.
+      // GET  ?action=state|cadence  → verified state / cadence report
+      // POST {action: upsert_goal|upsert_ops|set_prefs|verify_ops|plan_blocks|cadence_apply, ...}
+      server.middlewares.use('/api/cortex/mission', (req: any, res: any, next: any) => {
+        const send = (code: number, body: any) => {
+          agentCors(req, res);
+          res.writeHead(code, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify(body));
+        };
+        const missionSources = () => {
+          const now = Date.now();
+          const sf = path.join(process.cwd(), 'storefront');
+          const readJson = (p: string) => { try { return JSON.parse(fsSync.readFileSync(p, 'utf8')); } catch { return null; } };
+          const cal = readJson(path.join(process.cwd(), '.cortex-runtime', 'calendar-upcoming.json'));
+          const queue = readJson(path.join(sf, 'distribution-queue.json'));
+          return {
+            now,
+            archive: readArchive({ limit: 500, since: now - 7 * 86_400_000 }),
+            distributionItems: Array.isArray(queue?.items) ? queue.items : [],
+            calendarEvents: Array.isArray(cal?.events) ? cal.events : [],
+          };
+        };
+        const cadenceReport = (state: any, apply: boolean) => {
+          const src = missionSources();
+          const yields = routineYield(src.archive, src.now - 7 * 86_400_000);
+          const routines = agentRuntime.listRoutines();
+          // Rebuild cadence entries from live routines.
+          const byId = new Map<string, CadenceEntry>(state.cadence.map((c: CadenceEntry) => [c.routineId, c]));
+          const suggestions: any[] = [];
+          const applied: any[] = [];
+          const proposals: any[] = [];
+          for (const r of routines) {
+            let entry = byId.get(r.id);
+            if (!entry) {
+              entry = { routineId: r.id, agentId: r.agentId, kind: r.kind, intervalMin: r.everyMinutes, baseMin: r.everyMinutes, runs: 0, completions: 0, adjustments: [] };
+              byId.set(r.id, entry);
+            }
+            entry.intervalMin = r.everyMinutes;
+            const y = yields.get(r.id) ?? { runs: 0, completions: 0 };
+            entry.runs = y.runs; entry.completions = y.completions;
+            const s = suggestCadence(entry, y);
+            if (!s) continue;
+            suggestions.push(s);
+            if (apply && s.autoApply) {
+              const res = agentRuntime.updateRoutine(r.id, { everyMinutes: s.toMin });
+              if (res.ok) {
+                entry.intervalMin = s.toMin;
+                entry.adjustments.push({ at: src.now, from: s.fromMin, to: s.toMin, reason: s.reason });
+                applied.push({ routineId: r.id, from: s.fromMin, to: s.toMin });
+              }
+            } else if (apply && !s.autoApply) {
+              // Out-of-bounds suggestions never auto-apply — reported for
+              // Crew review instead of silently tuning past guardrails.
+              proposals.push({ routineId: r.id, held: true, reason: s.reason, from: s.fromMin, to: s.toMin });
+            }
+          }
+          state.cadence = [...byId.values()];
+          return { suggestions, applied, proposals };
+        };
+
+        if (req.method === 'OPTIONS') {
+          res.writeHead(204, { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Methods': 'GET, POST, OPTIONS', 'Access-Control-Allow-Headers': 'Content-Type' });
+          return res.end();
+        }
+        if (req.method === 'GET') {
+          const action = new URL(req.url || '/', 'http://localhost').searchParams.get('action') || 'state';
+          try {
+            const state = loadMission();
+            const src = missionSources();
+            verifyOps(state, src);
+            if (action === 'cadence') {
+              const report = cadenceReport(state, false);
+              saveMission(state);
+              return send(200, { ok: true, cadence: state.cadence, ...report });
+            }
+            saveMission(state);
+            return send(200, {
+              ok: true,
+              goals: state.goals,
+              opsItems: state.opsItems,
+              blocks: state.blocks.filter((b) => b.status !== 'done' || Date.now() - b.end < 7 * 86_400_000).slice(-100),
+              prefs: state.prefs,
+              goalProgress: goalProgress(state, src.archive),
+              cadence: state.cadence,
+              updatedAt: state.updatedAt,
+            });
+          } catch (e: any) {
+            return send(500, { ok: false, error: String(e?.message || e) });
+          }
+        }
+        if (req.method !== 'POST') return next();
+        let body = '';
+        req.on('data', (c: Buffer) => { body += c.toString(); });
+        req.on('end', () => {
+          try {
+            const p = JSON.parse(body || '{}');
+            const state = loadMission();
+            const src = missionSources();
+            switch (String(p.action || '')) {
+              case 'upsert_goal': {
+                if (!p.title) return send(400, { ok: false, error: 'title required' });
+                const g = upsertGoal(state, {
+                  id: p.id, title: String(p.title), description: p.description,
+                  horizon: p.horizon, targetDate: p.targetDate, status: p.status,
+                  taskIds: Array.isArray(p.taskIds) ? p.taskIds.map(String) : undefined,
+                });
+                break;
+              }
+              case 'upsert_ops': {
+                const item: OpsItem = {
+                  id: String(p.id || `ops-${Date.now().toString(36)}`),
+                  label: String(p.label || ''),
+                  evidence: p.evidence || { type: 'manual' },
+                  done: false,
+                  staleAfterDays: p.staleAfterDays,
+                  createdAt: Date.now(),
+                };
+                if (!item.label) return send(400, { ok: false, error: 'label required' });
+                state.opsItems = state.opsItems.filter((o) => o.id !== item.id);
+                state.opsItems.push(item);
+                break;
+              }
+              case 'ops_done': {
+                // Crew manually checks a manual-evidence item — the only
+                // legitimate hand-set done in the system.
+                const it = state.opsItems.find((o) => o.id === p.id);
+                if (!it) return send(404, { ok: false, error: 'unknown ops item' });
+                it.done = !!p.done;
+                it.verifiedAt = Date.now();
+                it.lastStatus = it.done ? 'done' : 'pending';
+                break;
+              }
+              case 'set_prefs': {
+                state.prefs = { ...state.prefs, ...p.prefs };
+                break;
+              }
+              case 'verify_ops': {
+                verifyOps(state, src);
+                break;
+              }
+              case 'plan_blocks': {
+                const items = Array.isArray(p.items) ? p.items : [];
+                const busy = [
+                  ...src.calendarEvents.map((e: any) => ({ start: Number(e.start), end: Number(e.end) || Number(e.start) + 3_600_000 })),
+                  ...state.blocks.filter((b) => b.status === 'planned').map((b) => ({ start: b.start, end: b.end })),
+                ];
+                const created = planBlocks(state, items, busy, src.now);
+                saveMission(state);
+                return send(200, { ok: true, created, blocks: state.blocks.slice(-50) });
+              }
+              case 'cadence_apply': {
+                const report = cadenceReport(state, true);
+                saveMission(state);
+                return send(200, { ok: true, ...report, cadence: state.cadence });
+              }
+              default:
+                return send(400, { ok: false, error: `unknown action '${p.action}'` });
+            }
+            verifyOps(state, src);
+            saveMission(state);
+            return send(200, { ok: true, state: { goals: state.goals, opsItems: state.opsItems, blocks: state.blocks.slice(-50), cadence: state.cadence, goalProgress: goalProgress(state, src.archive) } });
+          } catch (e: any) {
+            return send(500, { ok: false, error: String(e?.message || e) });
           }
         });
       });

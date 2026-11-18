@@ -632,6 +632,24 @@ export class AgentRuntime {
     return ok;
   }
 
+  /** Adjust a live routine's cadence without losing run history.
+   *  Used by the mission-loop cadence advisor — bounded, audited. */
+  updateRoutine(routineId: string, patch: { everyMinutes?: number; enabled?: boolean }): { ok: boolean; routine?: AgentRoutine; reason?: string } {
+    const r = this.routines.get(routineId);
+    if (!r) return { ok: false, reason: 'unknown routine' };
+    if (patch.everyMinutes != null) {
+      const every = Math.floor(Number(patch.everyMinutes));
+      if (!Number.isFinite(every) || every < AgentRuntime.ROUTINE_MIN_MINUTES)
+        return { ok: false, reason: `everyMinutes must be >= ${AgentRuntime.ROUTINE_MIN_MINUTES}` };
+      r.everyMinutes = every;
+      // Rebase nextRunAt from now so a tighter interval doesn't burst-fire.
+      r.nextRunAt = Date.now() + every * 60_000;
+    }
+    if (patch.enabled != null) r.enabled = !!patch.enabled;
+    this.persist();
+    return { ok: true, routine: r };
+  }
+
   private fireRoutine(r: AgentRoutine) {
     r.lastRunAt = Date.now();
     r.nextRunAt = r.lastRunAt + r.everyMinutes * 60_000;
