@@ -908,6 +908,7 @@ export const CortexAgentsScene: React.FC = () => {
   const mouse = useRef({ x: 0.5, y: 0.5, inside: false });
   const hoverAgent = useRef<string | null>(null);
   const stationStatus = useRef<Record<string, { busy: boolean; state: 'idle' | 'busy' | 'error' | 'unknown' }>>({});
+  const standupStatus = useRef<Record<string, { status: 'healthy' | 'degraded' | 'offline'; telemetry?: any }>>({});
 
   useEffect(() => {
     agentsClient.start();
@@ -962,6 +963,29 @@ export const CortexAgentsScene: React.FC = () => {
     };
     poll();
     const iv = setInterval(poll, 15_000);
+    return () => { alive = false; clearInterval(iv); };
+  }, []);
+
+  // Poll Fleet Standup roll call status every 30s for live health badges
+  useEffect(() => {
+    let alive = true;
+    const pollStandup = () => {
+      fetch('/api/cortex/standup/status', { cache: 'no-store' })
+        .then((r) => r.json())
+        .then((j: any) => {
+          if (!alive || !j?.ok || !j?.standup?.morning) return;
+          const rawCheckIns = j.standup.morning.checkIns;
+          const checkIns: any[] = Array.isArray(rawCheckIns) ? rawCheckIns : Object.values(rawCheckIns || {});
+          const map: Record<string, { status: 'healthy' | 'degraded' | 'offline'; telemetry?: any }> = {};
+          for (const c of checkIns) {
+            map[c.agentId] = { status: c.status, telemetry: c.probeTelemetry };
+          }
+          standupStatus.current = map;
+        })
+        .catch(() => {});
+    };
+    pollStandup();
+    const iv = setInterval(pollStandup, 30_000);
     return () => { alive = false; clearInterval(iv); };
   }, []);
 
@@ -1733,6 +1757,19 @@ export const CortexAgentsScene: React.FC = () => {
           ctx.beginPath(); ctx.arc(ax, ay, pr, 0, Math.PI * 2); ctx.stroke();
           ctx.beginPath(); ctx.arc(ax, ay, pr * 0.6, 0, Math.PI * 2); ctx.stroke();
         }
+
+        const stInfo = standupStatus.current[a.id];
+        const isStandupDegraded = stInfo?.status === 'degraded';
+        const isStandupOffline = stInfo?.status === 'offline';
+
+        if (isStandupDegraded) {
+          ctx.strokeStyle = 'rgba(251,191,36,0.85)';
+          ctx.lineWidth = 1.2;
+          ctx.setLineDash([2, 4]);
+          ctx.beginPath(); ctx.arc(ax, ay, vr * 1.55, 0, Math.PI * 2); ctx.stroke();
+          ctx.setLineDash([]);
+        }
+
         if (hot) {
           ctx.strokeStyle = hexA(col, 0.65);
           ctx.setLineDash([3, 5]);
@@ -1749,11 +1786,25 @@ export const CortexAgentsScene: React.FC = () => {
         ctx.fillStyle = offline ? 'rgba(100,116,139,0.75)' : INK;
         ctx.font = `700 10px ${MONO}`;
         ctx.fillText(a.name, ax, ay + vr * 1.15 + 16);
-        ctx.fillStyle = errored ? '#f87171' : working ? col : DIM;
+        ctx.fillStyle = errored ? '#f87171' : isStandupDegraded ? '#fbbf24' : working ? col : DIM;
         ctx.font = `8px ${MONO}`;
         const tier = agentOrbitTier(a);
         const tierPrefix = tier === 'enterprise' ? 'SAT·' : tier === 'console' ? 'CON·' : '';
-        ctx.fillText(`${tierPrefix}${a.status.toUpperCase()}`, ax, ay + vr * 1.15 + 27);
+        const statusLabel = isStandupDegraded
+          ? `${tierPrefix}DEGRADED`
+          : isStandupOffline
+          ? `${tierPrefix}OFFLINE`
+          : `${tierPrefix}${a.status.toUpperCase()}`;
+        ctx.fillText(statusLabel, ax, ay + vr * 1.15 + 27);
+
+        // Standup status dot indicator
+        const badgeColor = isStandupDegraded ? '#fbbf24' : isStandupOffline ? '#f87171' : stInfo?.status === 'healthy' ? '#34d399' : null;
+        if (badgeColor) {
+          ctx.fillStyle = badgeColor;
+          ctx.beginPath();
+          ctx.arc(ax - (ctx.measureText(statusLabel).width / 2) - 6, ay + vr * 1.15 + 24, 2, 0, Math.PI * 2);
+          ctx.fill();
+        }
       });
 
       // ── 5b. Enterprise stations — businesses on the outer orbit ──

@@ -21,7 +21,7 @@ const MONO = "'IBM Plex Mono', monospace";
 const INK = '#e0f2fe';
 const DIM = 'rgba(148,163,184,0.55)';
 
-type FoundryView = 'dashboard' | 'tasks' | 'goals' | 'calendar' | 'agents' | 'counsel' | 'inbox' | 'incidents' | 'pipeline';
+type FoundryView = 'dashboard' | 'tasks' | 'goals' | 'calendar' | 'agents' | 'counsel' | 'inbox' | 'incidents' | 'pipeline' | 'standup';
 
 const NAV_ITEMS: { id: FoundryView; glyph: string; label: string; hint: string }[] = [
   { id: 'dashboard', glyph: '◈', label: 'DASHBOARD', hint: 'Mission Control tower board' },
@@ -29,6 +29,7 @@ const NAV_ITEMS: { id: FoundryView; glyph: string; label: string; hint: string }
   { id: 'goals', glyph: '◎', label: 'GOALS', hint: 'Life-goal model & drift' },
   { id: 'calendar', glyph: '▦', label: 'CALENDAR', hint: 'Upcoming events (48h)' },
   { id: 'agents', glyph: '✦', label: 'AGENTS', hint: 'Mission Control roster' },
+  { id: 'standup', glyph: '⚡', label: 'STANDUP', hint: 'Fleet roll call & daily bids' },
   { id: 'counsel', glyph: '⚖', label: 'COUNSEL', hint: 'Go/No-Go deliberation polls' },
   { id: 'inbox', glyph: '✉', label: 'INBOX', hint: 'Proposals awaiting your decision' },
   { id: 'incidents', glyph: '⚠', label: 'INCIDENTS', hint: 'Failure ticket ledger' },
@@ -92,6 +93,10 @@ export function CortexFoundryNav({ snap, onSelectAgent, selectedAgent, onOpenTow
   const [tasksScope, setTasksScope] = useState<'today' | 'all'>('today');
   const [taskSource, setTaskSource] = useState<'all' | 'agents' | 'user'>('all');
   const [userTasks, setUserTasks] = useState<any[] | null>(null);
+  const [standup, setStandup] = useState<{ morning?: any; evening?: any } | null>(null);
+  const [runningStandup, setRunningStandup] = useState(false);
+  const [standupFilter, setStandupFilter] = useState<'all' | 'ready' | 'degraded'>('all');
+  const [standupNote, setStandupNote] = useState('');
   const [, setGoalsTick] = useState(0);
   const goals = getCortexGoals();
   const goalsUnsub = useRef<(() => void) | null>(null);
@@ -117,6 +122,12 @@ export function CortexFoundryNav({ snap, onSelectAgent, selectedAgent, onOpenTow
         .then((r) => r.json())
         .then(setPipeline)
         .catch(() => setPipeline({ error: true }));
+    }
+    if (view === 'standup' && standup === null) {
+      fetch('/api/cortex/standup/status', { cache: 'no-store' })
+        .then((r) => r.json())
+        .then((d) => setStandup(d?.standup || null))
+        .catch(() => setStandup(null));
     }
     if (view === 'goals') {
       goalsUnsub.current?.();
@@ -190,6 +201,44 @@ export function CortexFoundryNav({ snap, onSelectAgent, selectedAgent, onOpenTow
       const d = await fetch('/api/cortex/counsel/sessions', { cache: 'no-store' }).then((r) => r.json()).catch(() => null);
       if (d) setCounsel({ sessions: d?.sessions || [], consoles: d?.consoles || [] });
     } catch {}
+  };
+
+  const triggerRollCall = async (arm: 'A' | 'B' = 'A') => {
+    setRunningStandup(true);
+    setStandupNote('');
+    try {
+      const res = await fetch(`/api/cortex/standup/morning?arm=${arm}`, { method: 'POST' });
+      const data = await res.json();
+      if (data?.ok && data?.report) {
+        setStandup((prev) => ({ ...prev, morning: data.report }));
+        setStandupNote(`ROLL CALL COMPLETE (ARM ${arm}) · ${data.report.healthyCount}/${data.report.totalAgents} READY`);
+      } else {
+        setStandupNote(`ROLL CALL FAILED: ${data?.error || res.statusText}`);
+      }
+    } catch (e: any) {
+      setStandupNote(`ROLL CALL FAILED: ${e?.message || String(e)}`);
+    } finally {
+      setRunningStandup(false);
+    }
+  };
+
+  const approveBid = async (proposalId: string) => {
+    setStandupNote('');
+    try {
+      const res = await fetch('/api/cortex/standup/bid/approve', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ proposalId }),
+      });
+      const data = await res.json();
+      if (data?.ok) {
+        setStandupNote(`BID APPROVED → ${proposalId}`);
+      } else {
+        setStandupNote(`APPROVAL FAILED: ${data?.error || 'Unknown error'}`);
+      }
+    } catch (e: any) {
+      setStandupNote(`APPROVAL FAILED: ${e?.message || String(e)}`);
+    }
   };
 
   const agents = snap.agents || [];
@@ -603,6 +652,274 @@ export function CortexFoundryNav({ snap, onSelectAgent, selectedAgent, onOpenTow
             </pre>
           )}
           {pipeline?.error && <div style={{ padding: '12px 0', color: '#f87171' }}>PIPELINE STATUS UNREACHABLE</div>}
+        </Panel>
+      )}
+
+      {view === 'standup' && (
+        <Panel
+          title="FLEET STANDUP & ROLL CALL (06:00 AM)"
+          right={
+            <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+              <button
+                onClick={() => triggerRollCall('A')}
+                disabled={runningStandup}
+                style={{
+                  background: runningStandup ? 'rgba(56,189,248,0.1)' : 'rgba(52,211,153,0.15)',
+                  border: '1px solid rgba(52,211,153,0.5)',
+                  color: runningStandup ? '#38bdf8' : '#34d399',
+                  fontFamily: MONO,
+                  fontSize: 9.5,
+                  fontWeight: 700,
+                  padding: '3px 8px',
+                  borderRadius: 2,
+                  cursor: runningStandup ? 'wait' : 'pointer',
+                  letterSpacing: '0.12em',
+                }}
+              >
+                {runningStandup ? 'PROBING FLEET…' : '⚡ RUN ROLL CALL'}
+              </button>
+            </div>
+          }
+        >
+          {standupNote && (
+            <div
+              style={{
+                fontSize: 10,
+                color: standupNote.startsWith('ROLL CALL FAILED') || standupNote.startsWith('APPROVAL FAILED')
+                  ? '#f87171'
+                  : '#34d399',
+                marginBottom: 8,
+                padding: '4px 6px',
+                background: 'rgba(255,255,255,0.03)',
+                borderRadius: 2,
+              }}
+            >
+              {standupNote}
+            </div>
+          )}
+
+          {standup === null && <div style={{ padding: '12px 0', color: DIM }}>LOADING FLEET TELEMETRY…</div>}
+
+          {standup && !standup.morning && (
+            <div style={{ padding: '12px 0', color: DIM }}>
+              NO MORNING ROLL CALL RECORDED YET TODAY. CLICK "RUN ROLL CALL" TO PROBE ALL 22 AGENTS.
+            </div>
+          )}
+
+          {standup?.morning && (() => {
+            const m = standup.morning;
+            const checkIns: any[] = Array.isArray(m.checkIns) ? m.checkIns : Object.values(m.checkIns || {});
+            const filtered = checkIns.filter((c: any) => {
+              if (standupFilter === 'ready') return c.status === 'healthy';
+              if (standupFilter === 'degraded') return c.status === 'degraded' || c.status === 'offline';
+              return true;
+            });
+
+            return (
+              <div>
+                {/* Summary Banner */}
+                <div
+                  style={{
+                    display: 'grid',
+                    gridTemplateColumns: 'repeat(4, 1fr)',
+                    gap: 6,
+                    padding: '8px 10px',
+                    marginBottom: 10,
+                    background: 'rgba(56,189,248,0.04)',
+                    border: '1px solid rgba(56,189,248,0.18)',
+                    borderRadius: 3,
+                    textAlign: 'center',
+                  }}
+                >
+                  <div>
+                    <div style={{ fontSize: 9, color: DIM }}>AGENTS</div>
+                    <div style={{ fontSize: 13, fontWeight: 700, color: INK }}>{m.totalAgents}</div>
+                  </div>
+                  <div>
+                    <div style={{ fontSize: 9, color: '#34d399' }}>READY</div>
+                    <div style={{ fontSize: 13, fontWeight: 700, color: '#34d399' }}>{m.healthyCount}</div>
+                  </div>
+                  <div>
+                    <div style={{ fontSize: 9, color: '#fbbf24' }}>DEGRADED</div>
+                    <div style={{ fontSize: 13, fontWeight: 700, color: '#fbbf24' }}>{m.degradedCount}</div>
+                  </div>
+                  <div>
+                    <div style={{ fontSize: 9, color: '#f87171' }}>OFFLINE</div>
+                    <div style={{ fontSize: 13, fontWeight: 700, color: '#f87171' }}>{m.offlineCount}</div>
+                  </div>
+                </div>
+
+                {/* Filter Pills & Arm Meta */}
+                <div
+                  style={{
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                    marginBottom: 8,
+                    fontSize: 9,
+                  }}
+                >
+                  <div style={{ display: 'flex', gap: 4 }}>
+                    {(['all', 'ready', 'degraded'] as const).map((f) => (
+                      <button
+                        key={f}
+                        onClick={() => setStandupFilter(f)}
+                        style={{
+                          background: standupFilter === f ? 'rgba(56,189,248,0.2)' : 'rgba(255,255,255,0.04)',
+                          border: `1px solid ${standupFilter === f ? '#38bdf8' : 'rgba(148,163,184,0.2)'}`,
+                          color: standupFilter === f ? '#38bdf8' : DIM,
+                          fontFamily: MONO,
+                          fontSize: 8.5,
+                          padding: '2px 6px',
+                          borderRadius: 2,
+                          cursor: 'pointer',
+                        }}
+                      >
+                        {f === 'all'
+                          ? `ALL (${checkIns.length})`
+                          : f === 'ready'
+                          ? `READY (${m.healthyCount})`
+                          : `DEGRADED (${m.degradedCount + m.offlineCount})`}
+                      </button>
+                    ))}
+                  </div>
+                  <span style={{ color: DIM }}>ARM {m.arm || 'A'} · {String(m.timestamp || '').slice(11, 19)}</span>
+                </div>
+
+                {/* Agent Check-In Cards */}
+                {filtered.map((c: any) => {
+                  const p = c.probeTelemetry || {};
+                  const isDegraded = c.status === 'degraded';
+                  const isOffline = c.status === 'offline';
+                  const cardBorder = isOffline
+                    ? 'rgba(248,113,113,0.3)'
+                    : isDegraded
+                    ? 'rgba(251,191,36,0.3)'
+                    : 'rgba(56,189,248,0.12)';
+                  const cardBg = isOffline
+                    ? 'rgba(248,113,113,0.04)'
+                    : isDegraded
+                    ? 'rgba(251,191,36,0.04)'
+                    : 'rgba(15,23,42,0.4)';
+
+                  return (
+                    <div
+                      key={c.agentId}
+                      style={{
+                        border: `1px solid ${cardBorder}`,
+                        borderRadius: 3,
+                        padding: '7px 9px',
+                        marginBottom: 7,
+                        background: cardBg,
+                      }}
+                    >
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                          <Lamp status={c.status} />
+                          <span style={{ fontSize: 10, fontWeight: 700, color: INK }}>
+                            {c.agentName || c.agentId.toUpperCase()}
+                          </span>
+                          <span style={{ fontSize: 8.5, color: DIM }}>
+                            ({c.tier || 'fleet'})
+                          </span>
+                        </div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 8.5 }}>
+                          <span style={{ color: DIM }}>{c.latencyMs}ms</span>
+                          <span
+                            style={{
+                              color: isOffline ? '#f87171' : isDegraded ? '#fbbf24' : '#34d399',
+                              fontWeight: 700,
+                            }}
+                          >
+                            {c.status.toUpperCase()}
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* Diagnostic telemetry note */}
+                      <div style={{ fontSize: 8.5, color: DIM, marginTop: 4 }}>
+                        {p.toolEvidence
+                          ? p.toolEvidence
+                          : p.daemonResponding === false
+                          ? 'Daemon: offline'
+                          : `Reachability: ${p.reachability || c.status}`}
+                        {p.notes ? ` · ${p.notes}` : ''}
+                      </div>
+
+                      {/* Daily Mission Bid */}
+                      {c.dailyMissionBid && (
+                        <div
+                          style={{
+                            marginTop: 6,
+                            padding: '5px 7px',
+                            background: 'rgba(56,189,248,0.05)',
+                            borderLeft: '2px solid #38bdf8',
+                            borderRadius: 2,
+                          }}
+                        >
+                          <div style={{ fontSize: 9.5, color: INK, fontWeight: 600 }}>
+                            🎯 {c.dailyMissionBid.missionTitle}
+                          </div>
+                          <div style={{ fontSize: 8.5, color: DIM, marginTop: 2 }}>
+                            {c.dailyMissionBid.initiative}
+                          </div>
+                          <div
+                            style={{
+                              display: 'flex',
+                              justifyContent: 'space-between',
+                              alignItems: 'center',
+                              marginTop: 5,
+                            }}
+                          >
+                            <span style={{ fontSize: 8, color: '#67e8f9' }}>
+                              Conf: {Math.round((c.dailyMissionBid.confidence || 0) * 100)}% · Impact: {c.dailyMissionBid.targetImpact || 'medium'}
+                            </span>
+                            <button
+                              onClick={() => approveBid(`proposal-${c.agentId}-${new Date().toISOString().slice(0, 10)}`)}
+                              style={{
+                                background: 'rgba(52,211,153,0.12)',
+                                border: '1px solid rgba(52,211,153,0.45)',
+                                color: '#34d399',
+                                fontFamily: MONO,
+                                fontSize: 8,
+                                fontWeight: 700,
+                                padding: '2px 6px',
+                                borderRadius: 2,
+                                cursor: 'pointer',
+                                letterSpacing: '0.1em',
+                              }}
+                            >
+                              [ ⚡ APPROVE ]
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+
+                {/* Evening Retrospective section if available */}
+                {standup?.evening && (
+                  <div
+                    style={{
+                      marginTop: 12,
+                      padding: '8px 10px',
+                      background: 'rgba(192,132,252,0.05)',
+                      border: '1px solid rgba(192,132,252,0.2)',
+                      borderRadius: 3,
+                    }}
+                  >
+                    <div style={{ fontSize: 10, fontWeight: 700, color: '#c084fc', marginBottom: 4 }}>
+                      EVENING RETROSPECTIVE (20:00 PM)
+                    </div>
+                    <div style={{ fontSize: 9, color: DIM }}>
+                      Verified: {standup.evening.verifiedAccomplishments?.length || 0} tasks · Blockers: {standup.evening.reconciledBlockers?.length || 0} · Tomorrow Handoffs: {standup.evening.tomorrowHandoffs?.length || 0}
+                    </div>
+                  </div>
+                )}
+              </div>
+            );
+          })()}
         </Panel>
       )}
     </>
