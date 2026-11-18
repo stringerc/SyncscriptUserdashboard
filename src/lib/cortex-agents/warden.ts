@@ -95,6 +95,7 @@ export const REPO_STALE_HOURS = 4;
 /** Minimum gap between repo_hygiene incident re-fires while one is open. */
 export const REPO_INCIDENT_REFIRE_MS = 2 * 60 * 60 * 1000;
 let lastRepoHygieneIncidentAt = 0;
+let lastFileIntegrityIncidentAt = 0;
 
 /** Real git probe — porcelain status + mtime aging. Injectable for tests. */
 export function nodeRepoProbe(repoRoot = process.cwd()): () => RepoHygieneReport {
@@ -131,6 +132,121 @@ export function nodeRepoProbe(repoRoot = process.cwd()): () => RepoHygieneReport
   };
 }
 
+// ── Critical-file integrity ────────────────────────────────────────
+// A single bad agent edit can truncate a 13k-line config and take the
+// whole API surface down silently (happened 2026-11-18: vite.config.ts
+// lost 2,712 lines mid-file). Warden keeps a line-count snapshot plus a
+// last-good backup of each watched file; a >40% shrink or a missing file
+// is a warning-level anomaly that files a Crew-gated incident — Warden
+// detects, never repairs.
+
+export interface FileIntegrityReport {
+  watched: number;
+  /** Files whose line count fell below SHRINK_THRESHOLD of the snapshot. */
+  truncated: string[];
+  /** Watched files that no longer exist on disk. */
+  missing: string[];
+  /** Human-readable detail for the patrol check. */
+  detail: string;
+}
+
+/** Files whose silent truncation has fleet-wide blast radius. */
+export const FILE_INTEGRITY_WATCH = [
+  'vite.config.ts',
+  'src/lib/cortex-agents/runtime.ts',
+  'src/lib/cortex-agents/workers.ts',
+  'src/lib/cortex-agents/mission.ts',
+  'src/lib/cortex-agents/strategy-proposals.ts',
+  'src/lib/cortex-agents/directives.ts',
+  'src/lib/cortex-agents/messages.ts',
+  'src/lib/cortex-agents/warden.ts',
+  'src/components/cortex/CortexFoundryNav.tsx',
+];
+
+/** Below this fraction of the snapshotted line count = truncation suspect. */
+export const FILE_SHRINK_THRESHOLD = 0.6;
+
+interface IntegritySnapshot {
+  files: Record<string, { lines: number; mtimeMs: number }>;
+}
+
+function integrityPaths(repoRoot: string) {
+  const stateDir = process.env.CORTEX_AGENTS_STATE_DIR || path.join(repoRoot, '.cortex-runtime');
+  return {
+    snapshot: path.join(stateDir, 'file-integrity.json'),
+    backups: path.join(stateDir, 'file-backups'),
+  };
+}
+
+function readIntegritySnapshot(p: string): IntegritySnapshot {
+  try {
+    const d = JSON.parse(fs.readFileSync(p, 'utf-8'));
+    return { files: d?.files && typeof d.files === 'object' ? d.files : {} };
+  } catch { return { files: {} }; }
+}
+
+function countLines(file: string): number {
+  try { return fs.readFileSync(file, 'utf-8').split('\n').length; }
+  catch { return -1; }
+}
+
+/** Real probe: compares watched files against the persisted snapshot and
+ *  maintains last-good backups. First run establishes the baseline. */
+export function nodeFileIntegrityProbe(repoRoot = process.cwd()): () => FileIntegrityReport {
+  return () => {
+    const { snapshot: snapPath, backups } = integrityPaths(repoRoot);
+    const snap = readIntegritySnapshot(snapPath);
+    const truncated: string[] = [];
+    const missing: string[] = [];
+    const changed: Record<string, { lines: number; mtimeMs: number }> = {};
+    let detail = '';
+
+    for (const rel of FILE_INTEGRITY_WATCH) {
+      const abs = path.join(repoRoot, rel);
+      const prev = snap.files[rel];
+      const lines = countLines(abs);
+      if (lines < 0) {
+        missing.push(rel);
+        continue; // deleted file — never overwrite last-good snapshot
+      }
+      if (prev && lines < prev.lines * FILE_SHRINK_THRESHOLD) {
+        truncated.push(`${rel} (${prev.lines}→${lines} lines)`);
+        continue; // keep last-good snapshot + backup untouched
+      }
+      let mtimeMs = 0;
+      try { mtimeMs = fs.statSync(abs).mtimeMs; } catch { /* ignore */ }
+      // Accept the change: refresh snapshot and rotate a last-good backup.
+      if (!prev || mtimeMs !== prev.mtimeMs || lines !== prev.lines) {
+        try {
+          fs.mkdirSync(backups, { recursive: true });
+          const safe = rel.replace(/[^a-zA-Z0-9._-]/g, '_');
+          fs.copyFileSync(abs, path.join(backups, safe));
+        } catch { /* backup is best-effort */ }
+        changed[rel] = { lines, mtimeMs };
+      } else {
+        changed[rel] = prev;
+      }
+    }
+
+    // Persist merged snapshot (unchanged entries keep prior values).
+    try {
+      fs.mkdirSync(path.dirname(snapPath), { recursive: true });
+      fs.writeFileSync(snapPath, JSON.stringify({ files: { ...snap.files, ...changed } }, null, 2));
+    } catch { /* persistence best-effort */ }
+
+    if (truncated.length || missing.length) {
+      detail = [
+        truncated.length ? `truncated: ${truncated.join(', ')}` : '',
+        missing.length ? `missing: ${missing.join(', ')}` : '',
+        `last-good backups in .cortex-runtime/file-backups/`,
+      ].filter(Boolean).join(' · ');
+    } else {
+      detail = `${FILE_INTEGRITY_WATCH.length} critical files intact`;
+    }
+    return { watched: FILE_INTEGRITY_WATCH.length, truncated, missing, detail };
+  };
+}
+
 export interface PatrolDeps {
   base?: string;
   fetchImpl?: FetchLike;
@@ -152,6 +268,9 @@ export interface PatrolDeps {
   };
   /** Repo hygiene — uncommitted-work aging. Injectable for tests. */
   repoProbe?: () => RepoHygieneReport;
+  /** Critical-file integrity — truncation/shrink detection with last-good
+   *  backups. Injectable for tests. */
+  fileProbe?: () => FileIntegrityReport;
 }
 
 /** Run the full patrol suite. Pure orchestration — every probe is real. */
@@ -347,6 +466,16 @@ export async function runPatrolChecks(deps: PatrolDeps = {}): Promise<PatrolRepo
     return detail;
   }));
 
+  // ── Critical-file integrity: silent truncation of fleet-wide files.
+  //  Warning-level — detection files a Crew-gated incident; Warden never
+  //  repairs. Last-good backups live in .cortex-runtime/file-backups/.
+  checks.push(await timed('files.integrity', false, 8000, async () => {
+    if (!deps.fileProbe) return 'skipped (no file probe wired)';
+    const r = deps.fileProbe();
+    if (r.truncated.length || r.missing.length) throw new Error(r.detail);
+    return r.detail;
+  }));
+
   const anomalies = checks.filter((c) => !c.ok && c.critical).map((c) => `${c.name}: ${c.detail || 'failed'}`);
   const warnings = checks.filter((c) => !c.ok && !c.critical).map((c) => `${c.name}: ${c.detail || 'failed'}`);
   return {
@@ -441,6 +570,7 @@ const wardenWorker: WorkerHandler = async (ctx) => {
     fsImpl: nodeFsProbes(),
     qcProbe: nodeQcProbes(),
     repoProbe: nodeRepoProbe(),
+    fileProbe: nodeFileIntegrityProbe(),
   });
   ctx.progress(0.8);
 
@@ -532,6 +662,29 @@ const wardenWorker: WorkerHandler = async (ctx) => {
     }
   } else if (repoCheck && repoCheck.ok) {
     resolveIncidentsOnSuccess('warden', 'repo_hygiene', ctx.task.id);
+  }
+
+  // Critical-file truncation → incident ticket → Crew-gated Inbox proposal.
+  // Same cooldown discipline as repo_hygiene; restores stay a human call.
+  const fileCheck = report.checks.find((c) => c.name === 'files.integrity');
+  if (fileCheck && !fileCheck.ok) {
+    const alreadyOpen = listIncidents('open').some(
+      (i) => i.agentId === 'warden' && i.kind === 'file_integrity',
+    );
+    if (!alreadyOpen || Date.now() - lastFileIntegrityIncidentAt > REPO_INCIDENT_REFIRE_MS) {
+      lastFileIntegrityIncidentAt = Date.now();
+      recordIncidentFailure({
+        taskId: ctx.task.id,
+        agentId: 'warden',
+        agentName: 'WARDEN',
+        kind: 'file_integrity',
+        title: 'Critical file truncation or deletion detected',
+        failureClass: 'file_integrity',
+        error: fileCheck.detail,
+      });
+    }
+  } else if (fileCheck && fileCheck.ok) {
+    resolveIncidentsOnSuccess('warden', 'file_integrity', ctx.task.id);
   }
 
   ctx.progress(1);
