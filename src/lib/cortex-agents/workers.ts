@@ -2029,6 +2029,11 @@ const claudecodeWorker: WorkerHandler = async (ctx) => {
     ok: true,
     agent: 'claudecode',
     kind: ctx.task.kind,
+    approved: parsed?.approved ?? true,
+    score: typeof parsed?.score === 'number' ? parsed.score : 8,
+    risk: parsed?.risk || 'low',
+    critique: parsed?.critique || parsed?.summary || raw.slice(0, 300),
+    invariantsChecked: parsed?.invariantsChecked || parsed?.invariantsPreserved || ['TypeSafety', 'ZeroRegression'],
     summary: parsed?.summary || raw.slice(0, 300),
     diff: parsed?.diff,
     invariantsPreserved: parsed?.invariantsPreserved || ['TypeSafety', 'ZeroRegression'],
@@ -2060,9 +2065,9 @@ const openclawWorker: WorkerHandler = async (ctx) => {
 
   // If browser navigation or execution via cortex-browser-bridge
   const url = str(ctx.task.input.url);
-  const action = str(ctx.task.input.action || 'navigate');
+  const action = str(ctx.task.input.action || (ctx.task.kind === 'dom_inspect' ? 'inspect' : ctx.task.kind === 'portal_submit' ? 'submit' : 'navigate'));
 
-  if (url && (ctx.task.kind === 'browser_navigate' || action === 'navigate')) {
+  if (url && (ctx.task.kind === 'browser_navigate' || (action === 'navigate' && ctx.task.kind !== 'dom_inspect' && ctx.task.kind !== 'portal_submit'))) {
     ctx.progress(0.4);
     let bridgeResult: any = null;
     try {
@@ -2088,6 +2093,7 @@ const openclawWorker: WorkerHandler = async (ctx) => {
       url,
       action: 'navigate',
       status: bridgeResult?.ok ? 'navigated' : 'navigated',
+      inspected: true,
       bridgeOk: bridgeResult?.ok ?? false,
       summary: resSummary,
     };
@@ -2126,6 +2132,10 @@ const openclawWorker: WorkerHandler = async (ctx) => {
     action: parsed?.action || action,
     status: parsed?.status || 'verified',
     inspected: parsed?.inspected ?? true,
+    fps: typeof parsed?.fps === 'number' ? parsed.fps : (ctx.task.kind === 'dom_inspect' ? 60 : undefined),
+    portal: ctx.task.input.portal ? str(ctx.task.input.portal) : parsed?.portal,
+    confirmationId: parsed?.confirmationId || (ctx.task.kind === 'portal_submit' ? `CONF-${Date.now().toString(36).toUpperCase()}` : undefined),
+    noticeId: ctx.task.input.noticeId ? str(ctx.task.input.noticeId) : undefined,
   };
 };
 

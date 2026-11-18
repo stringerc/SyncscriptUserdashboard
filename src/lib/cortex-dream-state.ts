@@ -518,7 +518,7 @@ export class CortexDreamStateEngine {
     try {
       const raw = persistentStore.getItem(MORNING_BRIEFING_KEY);
       if (raw) return JSON.parse(raw);
-    } catch {}
+    } catch { }
     return null;
   }
 

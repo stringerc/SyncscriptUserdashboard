@@ -189,8 +189,8 @@ export const AGENT_SPECS: AgentSpec[] = [
   {
     id: 'claudecode',
     name: 'CLAUDE_CODE',
-    role: 'Terminal Architect',
-    blurb: 'Deep-tier autonomous CLI engineer connected via Claude Code bridge — executes AST refactoring, multi-file code synthesis, and architectural migrations.',
+    role: 'Terminal Architect & Consensus Auditor',
+    blurb: 'Host-level CLI engineer and primary gatekeeper — executes AST refactoring, multi-file code synthesis, and serves as Auditor 1 in the multi-IDE self-heal consensus gate.',
     concurrency: 1,
     dailyBudget: 24,
     modelPin: { tier: 'deep' },
@@ -199,8 +199,8 @@ export const AGENT_SPECS: AgentSpec[] = [
   {
     id: 'openclaw',
     name: 'OPENCLAW',
-    role: 'WebMCP Browser Copilot',
-    blurb: 'Autonomous web copilot operating through WebMCP and the local OpenClaw gateway (:18789 / :9222) — executes browser navigation, form interaction, authenticated UI workflows, and web tasks without token waste.',
+    role: 'Sovereign WebMCP & Portal Navigator',
+    blurb: 'Autonomous web copilot operating inside human-authenticated Chrome tabs via Apple Events and WebMCP (:18789) — navigates federal procurement portals, storefront syndication, and visual UI verification without token waste.',
     concurrency: 1,
     dailyBudget: 32,
     modelPin: { tier: 'fast' },

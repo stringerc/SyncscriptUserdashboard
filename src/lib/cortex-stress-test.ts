@@ -197,7 +197,7 @@ class CortexStressTest {
     // Main stress test loop
     for (let i = 0; i < this.config.iterations; i++) {
       await this.runIteration(i);
-      
+
       // Small delay to simulate real-world timing
       if (i % 10 === 0) {
         await sleep(10);
@@ -215,7 +215,7 @@ class CortexStressTest {
     for (const actionType of ['compile', 'test', 'search', 'write_file'] as ActionType[]) {
       const input = this.createValidationInput(actionType);
       const result = this.actionGate.evaluate(input);
-      
+
       if (result.approved) {
         const action = this.sensorimotorLoop.issueAction({
           type: actionType,
@@ -259,7 +259,7 @@ class CortexStressTest {
     const options = generateActionOptions(actionType);
     const criteria = generateCriteria(actionType);
     const verified: Record<string, boolean> = {};
-    
+
     // Simulate criteria verification (some pass, some fail based on failure rate)
     for (const criterion of criteria) {
       verified[criterion] = Math.random() > this.config.failureRate;
@@ -374,7 +374,7 @@ class CortexStressTest {
 
     // Get final calibration snapshot
     const calibration = this.calibrationEngine.getSnapshot();
-    
+
     this.log('\n📊 FINAL CALIBRATION SNAPSHOT:');
     this.log(`  Overall ECE: ${calibration.overallECE.toFixed(4)}`);
     this.log(`  Overall MCE: ${calibration.overallMCE.toFixed(4)}`);
@@ -386,8 +386,8 @@ class CortexStressTest {
 
   private report(): void {
     const duration = this.results.endTime - this.results.startTime;
-    const successRate = this.results.outcomesRecorded > 0 
-      ? (this.results.outcomesSuccess / this.results.outcomesRecorded * 100).toFixed(1) 
+    const successRate = this.results.outcomesRecorded > 0
+      ? (this.results.outcomesSuccess / this.results.outcomesRecorded * 100).toFixed(1)
       : 'N/A';
 
     this.log('\n' + '='.repeat(60));
@@ -442,7 +442,7 @@ class CortexStressTest {
     }
 
     this.log('\n' + '='.repeat(60));
-    
+
     // Assessment
     const passed = this.assess();
     if (passed) {
@@ -459,7 +459,7 @@ class CortexStressTest {
     const hasSufficientDepth = e.avgMastery >= 0.4;
     const hasVolume = e.totalLoopsCompleted >= 20;
     const lowPredictionError = this.results.avgPredictionError < 0.5;
-    
+
     return hasSufficientBreadth && hasSufficientDepth && hasVolume && lowPredictionError;
   }
 
@@ -476,8 +476,8 @@ class CortexStressTest {
 
 async function main() {
   const config: Partial<StressTestConfig> = {
-    iterations: process.argv.includes('--iterations') 
-      ? parseInt(process.argv[process.argv.indexOf('--iterations') + 1]) 
+    iterations: process.argv.includes('--iterations')
+      ? parseInt(process.argv[process.argv.indexOf('--iterations') + 1])
       : 100,
     verbose: process.argv.includes('--verbose'),
     failureRate: process.argv.includes('--failure-rate')
@@ -487,7 +487,7 @@ async function main() {
 
   const test = new CortexStressTest(config);
   await test.run();
-  
+
   // Exit with appropriate code
   const results = test.getResults();
   const passed = results.embodimentScore.overall >= 0.5 && results.avgPredictionError < 0.5;

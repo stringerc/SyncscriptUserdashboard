@@ -439,10 +439,10 @@ function renderTemplate(template: string, data: any): string {
     .replace(/\{\{#each (\w+)\}\}([\s\S]*?)\{\{\/\1\}\}/g, (_, key, content) => {
       const arr = data[key];
       if (!Array.isArray(arr)) return '';
-      return arr.map((item: any, idx: number) => 
+      return arr.map((item: any, idx: number) =>
         content.replace(/\{\{@key\}\}/g, item.key || idx)
-               .replace(/\{\{jsonType\}\}/g, jsonSchemaToTsType(item))
-               .replace(/\{\{(\w+)\}\}/g, (_: string, k: string) => item[k] ?? '')
+          .replace(/\{\{jsonType\}\}/g, jsonSchemaToTsType(item))
+          .replace(/\{\{(\w+)\}\}/g, (_: string, k: string) => item[k] ?? '')
       ).join('');
     });
 }
@@ -513,7 +513,7 @@ interface ToolSpec {
       });
 
       const spec = JSON.parse(result.text || '{}');
-      
+
       // Validate and normalize
       return {
         name: spec.name || 'generatedTool',
@@ -551,7 +551,7 @@ interface ToolSpec {
     // Generate types if complex schemas
     let typesCode = '';
     if (Object.keys(spec.inputSchema.properties || {}).length > 3 ||
-        Object.keys(spec.outputSchema.properties || {}).length > 3) {
+      Object.keys(spec.outputSchema.properties || {}).length > 3) {
       typesCode = this.generateTypes(spec);
     }
 
@@ -717,10 +717,10 @@ Return JSON:
       });
 
       const validation = JSON.parse(result.text || '{}');
-      
+
       // Calibrate confidence using metacognition
       const vigilance = calEngine.assessDomainVigilance('code_synthesis', validation.epistemicConfidence || 0.7);
-      
+
       return {
         passed: (validation.errors?.length || 0) === 0,
         collapseGateScore: validation.collapseGateScore || 0.8,
@@ -776,7 +776,7 @@ Return JSON:
       const exitCode = res.exitCode ?? 0;
 
       const durationMs = Date.now() - startTime;
-      
+
       // Parse test results
       let testResults: SandboxResult['testResults'] = [];
       try {
@@ -790,7 +790,7 @@ Return JSON:
             error: t.errors?.[0]?.message,
           })) || [];
         }
-      } catch {}
+      } catch { }
 
       const passed = exitCode === 0 && testResults.every(t => t.passed);
 
@@ -817,7 +817,7 @@ Return JSON:
       // Cleanup
       try {
         await import('node:fs/promises').then(fs => fs.rm(tmpDir, { recursive: true, force: true }));
-      } catch {}
+      } catch { }
     }
   }
 
@@ -832,7 +832,7 @@ Return JSON:
     try {
       const skillsDir = process.env.OPENCLAW_SKILLS_DIR || `${process.env.HOME || ''}/.openclaw/skills`;
       const toolDir = `${skillsDir}/${tool.spec.name}`;
-      
+
       // Create skill directory structure
       await import('node:fs/promises').then(fs => fs.mkdir(toolDir, { recursive: true }));
       await import('node:fs/promises').then(fs => fs.mkdir(`${toolDir}/src`, { recursive: true }));
@@ -841,7 +841,7 @@ Return JSON:
       await import('node:fs/promises').then(fs => fs.writeFile(`${toolDir}/src/index.ts`, tool.code));
       await import('node:fs/promises').then(fs => fs.writeFile(`${toolDir}/src/${tool.spec.name}.test.ts`, tool.testCode));
       await import('node:fs/promises').then(fs => fs.writeFile(`${toolDir}/README.md`, tool.documentation));
-      
+
       // Write SKILL.md
       const skillMd = `# ${tool.spec.name}
 
