@@ -8461,10 +8461,11 @@ function triggerQuickAction() {
                 recordConnectionAudit(`${cortanaPocketTarget}/tts`, '/api/cortex/tts');
                 const cfd = new FormData();
                 cfd.append('text', String(text || '').slice(0, 2000));
-                // Length-scaled fail-fast: short phrases can't hold the line
-                // for 30s — fall back to Kokoro sooner; long responses still
-                // get room to finish on the correct Cortana voice.
-                const cpTimeout = Math.min(30000, 6000 + String(text || '').length * 5);
+                // Length-scaled fail-fast: Pocket clone baseline is ~8s even
+                // for short phrases — a 6s floor guaranteed timeouts and
+                // browser-speech fallback (the "voice off / too fast" bug).
+                // Floor at 14s, scale gently with length, cap at 45s.
+                const cpTimeout = Math.min(45000, 14000 + String(text || '').length * 8);
                 const cpRes = await fetch(`${cortanaPocketTarget}/tts`, {
                   method: 'POST', body: cfd, signal: AbortSignal.timeout(cpTimeout),
                 });
