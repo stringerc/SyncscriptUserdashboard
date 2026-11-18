@@ -342,7 +342,7 @@ nvidia-nim (Nemotron 3.5 Super 120B) → free-proxy (local Claude) → nvidia-ni
 | **What it helps** | Load-bearing verify/abort, multi-specialist bus, schema-steered attention, env-coupled HGM, falsifiable architecture tests — **not** product AGI |
 
 <!-- cortex-gate:start -->
-**Last cortex gate (2026-11-18T10:15:54.198Z):** **PASS** · cortex-70 59/59 · coverage AVG **1.00** (GWT 1.00 · AST 1.00 · PP 1.00 · RPT 1.00 · HOT 1.00 · IIT 1.00) · git `5af7007` · source: `npm run verify:cortex` · **not a consciousness score**
+**Last cortex gate (2026-11-18T10:30:11.561Z):** **PASS** · cortex-70 59/59 · coverage AVG **1.00** (GWT 1.00 · AST 1.00 · PP 1.00 · RPT 1.00 · HOT 1.00 · IIT 1.00) · git `316deff` · source: `npm run verify:cortex` · **not a consciousness score**
 <!-- cortex-gate:end -->
 
 **Verify (always re-measure before quoting scores):**

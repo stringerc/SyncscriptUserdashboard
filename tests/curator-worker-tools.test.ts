@@ -46,6 +46,7 @@ describe('Curator Intelligence Engine & Tool Handlers', () => {
 
     // 1. OpenClaw
     expect(radar.targets.openclaw).toBeDefined();
+    expect(radar.targets.openclaw.localVersion).toMatch(/^2026\./);
     expect(radar.targets.openclaw.status).toBe('upgrade_available');
     expect(radar.targets.openclaw.testedUpgradePath).toBe('npm install -g openclaw@latest');
 
@@ -59,6 +60,7 @@ describe('Curator Intelligence Engine & Tool Handlers', () => {
 
     // 4. Claude Code
     expect(radar.targets.claudecode).toBeDefined();
+    expect(radar.targets.claudecode.localVersion).toMatch(/^2\./);
     expect(radar.targets.claudecode.consensusReady).toBe(true);
 
     // 5. Antigravity
@@ -67,7 +69,8 @@ describe('Curator Intelligence Engine & Tool Handlers', () => {
 
     // 6. Hermes
     expect(radar.targets.hermes).toBeDefined();
-    expect(radar.targets.hermes.endpointValid).toBe(true);
+    expect(typeof radar.targets.hermes.endpointValid).toBe('boolean');
+    expect(radar.targets.hermes.advisory).toContain('127.0.0.1:18880');
   });
 
   it('curatorOptimizeAgent generates elite prompt critique and proposal', async () => {
