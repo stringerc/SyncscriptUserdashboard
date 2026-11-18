@@ -8537,10 +8537,13 @@ function triggerQuickAction() {
                 const PRESETS: Record<string, string> = {
                   nexus: 'nexus', nexus_emphatic: 'nexus_emphatic',
                   nexus_query: 'nexus_query',
-                  cortana: 'bm_lewis', // Interim: real Kokoro British-butler voice until Cortana clone ships
-                  cortana_ce: 'bm_lewis',
-                  cortana_tactical: 'bm_lewis',
-                  cortana_curious: 'bm_lewis',
+                  // Cortana clone engines (:8911/:8912) own these voices; if
+                  // they fail, fall back to a FEMALE Kokoro voice — bm_lewis
+                  // is male and was the "voice switched to a man mid-reply" bug.
+                  cortana: 'af_sky',
+                  cortana_ce: 'af_sky',
+                  cortana_tactical: 'af_sky',
+                  cortana_curious: 'af_sky',
                   aria: 'aria', commander: 'commander', professional: 'professional',
                   gentle: 'af_heart', playful: 'af_bella', natural: 'af_sky',
                 };

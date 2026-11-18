@@ -89,7 +89,7 @@ async function fetchDirectKokoroBuffer(
         body: JSON.stringify({
           model: 'kokoro-onnx',
           input: seg.text,
-          voice: voice === 'cortana' ? 'bm_lewis' : voice,
+          voice: voice === 'cortana' ? 'af_sky' : voice,
           speed: seg.speed,
         }),
         signal: timeoutController.signal,
