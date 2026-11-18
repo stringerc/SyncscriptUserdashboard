@@ -2177,6 +2177,32 @@ export function registerAgentWorkers(runtime: AgentRuntime) {
     everyMinutes: 1,
     enabled: true,
   });
+
+  // ── Continuous Cognition standing orders (CORTEX_COGNITION_SPEC.md) ──
+  // Code-seeded so the fleet's self-improvement cadence survives runtime
+  // state resets. addRoutine dedupes on agent+kind+title — API-created
+  // copies with identical titles are not duplicated.
+  const COGNITION_ROUTINES: Array<{ agentId: any; kind: string; title: string; input?: Record<string, unknown>; everyMinutes: number }> = [
+    { agentId: 'sentinel', kind: 'catalog_scan', title: 'Sentinel: model catalog scan (30m)', everyMinutes: 30 },
+    { agentId: 'forecaster', kind: 'forecast_cycle', title: 'Forecaster: domain forecast cycle (30m)', everyMinutes: 30 },
+    { agentId: 'scout', kind: 'radar_sweep', title: 'Scout: external radar sweep (60m)', everyMinutes: 60 },
+    { agentId: 'librarian', kind: 'vault_sync', title: 'Librarian: memory vault sync (60m)', everyMinutes: 60 },
+    { agentId: 'scout', kind: 'repo_scan', title: 'Scout: repo drift scan (120m)', everyMinutes: 120 },
+    { agentId: 'strategist', kind: 'cluster', title: 'Strategist: fleet state clustering (120m)', everyMinutes: 120 },
+    { agentId: 'reviewer', kind: 'review', title: 'Reviewer: diff critic pass (180m)', everyMinutes: 180,
+      input: { instruction: 'Review the most recent committed diff (git show HEAD) for correctness, honesty violations, and dead code. Report findings only — do not modify files.' } },
+    { agentId: 'librarian', kind: 'distill', title: 'Librarian: distill recurring learnings (240m)', everyMinutes: 240 },
+    // Deferred-capability orders: self-improvement proposals. These file
+    // into the strategy-proposal/INBOX lane — the Crew approves, agents
+    // never self-modify silently.
+    { agentId: 'strategist', kind: 'regress', title: 'Strategist: regression sweep (360m)', everyMinutes: 360 },
+    { agentId: 'scout', kind: 'agent_ideas', title: 'Scout: agent improvement ideas (360m)', everyMinutes: 360 },
+    { agentId: 'strategist', kind: 'propose_skill', title: 'Strategist: skill-gap proposals (720m)', everyMinutes: 720 },
+    { agentId: 'strategist', kind: 'propose_agent', title: 'Strategist: spawn-candidate proposals (1440m)', everyMinutes: 1440 },
+  ];
+  for (const r of COGNITION_ROUTINES) {
+    runtime.addRoutine({ agentId: r.agentId, kind: r.kind, title: r.title, input: r.input, everyMinutes: r.everyMinutes, enabled: true });
+  }
   registerWardenWorker(runtime);
   runtime.registerWorker('strategist', makeStrategistWorker(runtime));
   runtime.registerWorker('brief', makeBriefWorker());
