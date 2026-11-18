@@ -22,7 +22,7 @@ const MONO = "'IBM Plex Mono', monospace";
 const INK = '#e0f2fe';
 const DIM = 'rgba(148,163,184,0.55)';
 
-type FoundryView = 'dashboard' | 'tasks' | 'goals' | 'calendar' | 'agents' | 'counsel' | 'inbox' | 'incidents' | 'pipeline' | 'standup' | 'messages';
+type FoundryView = 'dashboard' | 'tasks' | 'goals' | 'calendar' | 'agents' | 'counsel' | 'inbox' | 'incidents' | 'pipeline' | 'standup' | 'messages' | 'ventures' | 'voice';
 
 const NAV_ITEMS: { id: FoundryView; glyph: string; label: string; hint: string }[] = [
   { id: 'dashboard', glyph: '◈', label: 'DASHBOARD', hint: 'Mission Control tower board' },
@@ -37,6 +37,7 @@ const NAV_ITEMS: { id: FoundryView; glyph: string; label: string; hint: string }
   { id: 'pipeline', glyph: '⇶', label: 'PIPELINE', hint: 'Distribution / product flow' },
   { id: 'messages', glyph: '⇄', label: 'COMMS', hint: 'Agent message bus traffic' },
   { id: 'voice', glyph: '♪', label: 'VOICE', hint: 'Cortex voice engines — live test' },
+  { id: 'ventures', glyph: '◈', label: 'VENTURES', hint: 'Enterprise scope — OMNI / GOVTECH / CORTEX' },
 ];
 
 const STATUS_COLOR: Record<string, string> = {
@@ -120,6 +121,9 @@ export function CortexFoundryNav({ snap, onSelectAgent, selectedAgent, onOpenTow
   const [runningStandup, setRunningStandup] = useState(false);
   const [standupFilter, setStandupFilter] = useState<'all' | 'ready' | 'degraded'>('all');
   const [standupNote, setStandupNote] = useState('');
+  const [ventures, setVentures] = useState<{ ventures?: any[]; unregisteredYield?: string[] } | null>(null);
+  const [ventureFilter, setVentureFilter] = useState<string>('all');
+  const [newTaskVenture, setNewTaskVenture] = useState<string>('');
   const [, setGoalsTick] = useState(0);
   const goals = getCortexGoals();
   const goalsUnsub = useRef<(() => void) | null>(null);
@@ -158,6 +162,7 @@ export function CortexFoundryNav({ snap, onSelectAgent, selectedAgent, onOpenTow
       priority: newTaskPriority,
       dueDate: now.toISOString(),
       createdAt: now.toISOString(),
+      ventureId: newTaskVenture || undefined,
     };
 
     setUserTasks((prev) => [created, ...(prev || [])]);
@@ -167,7 +172,7 @@ export function CortexFoundryNav({ snap, onSelectAgent, selectedAgent, onOpenTow
       const list = raw ? JSON.parse(raw) : [];
       list.unshift(created);
       localStorage.setItem('syncscript_tasks', JSON.stringify(list));
-    } catch {}
+    } catch { }
 
     try {
       const all = [created, ...(userTasks || [])];
@@ -175,10 +180,11 @@ export function CortexFoundryNav({ snap, onSelectAgent, selectedAgent, onOpenTow
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ tasks: all }),
-      }).catch(() => {});
-    } catch {}
+      }).catch(() => { });
+    } catch { }
 
     setNewTaskTitle('');
+    setNewTaskVenture('');
     setShowNewTask(false);
   };
 
@@ -213,7 +219,7 @@ export function CortexFoundryNav({ snap, onSelectAgent, selectedAgent, onOpenTow
             })));
           }
         }
-      } catch {}
+      } catch { }
       fetch('/api/cortex/calendar/upcoming', { cache: 'no-store' })
         .then((r) => r.json())
         .then((d) => {
@@ -249,6 +255,18 @@ export function CortexFoundryNav({ snap, onSelectAgent, selectedAgent, onOpenTow
       goalsUnsub.current?.(); goalsUnsub.current = null;
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [view]);
+
+  // Venture registry poll while the VENTURES view is open.
+  useEffect(() => {
+    if (view !== 'ventures') return;
+    const loadV = () => fetch('/api/cortex/ventures', { cache: 'no-store' })
+      .then((r) => r.json())
+      .then(setVentures)
+      .catch(() => setVentures({ ventures: [] }));
+    loadV();
+    const iv = setInterval(loadV, 30_000);
+    return () => clearInterval(iv);
   }, [view]);
 
   // User-task mirror poll while the ledger view is open — the snapshot is
@@ -291,7 +309,7 @@ export function CortexFoundryNav({ snap, onSelectAgent, selectedAgent, onOpenTow
       fetch('/api/cortex/tts/config', { cache: 'no-store' })
         .then((r) => r.json())
         .then((d) => setVoiceConfig(d))
-        .catch(() => {});
+        .catch(() => { });
     };
     load();
     const iv = setInterval(load, 15000);
@@ -307,9 +325,9 @@ export function CortexFoundryNav({ snap, onSelectAgent, selectedAgent, onOpenTow
       const d = await r.json().catch(() => null);
       if (d?.ok !== false) {
         setVoiceConfig(d);
-        try { localStorage.setItem('cortex_cartesia_voice', voiceId); } catch {}
+        try { localStorage.setItem('cortex_cartesia_voice', voiceId); } catch { }
       }
-    } catch {}
+    } catch { }
   };
 
   const testVoice = async (voiceId: string) => {
@@ -343,12 +361,12 @@ export function CortexFoundryNav({ snap, onSelectAgent, selectedAgent, onOpenTow
         fetch('/api/cortex/counsel/sessions', { cache: 'no-store' })
           .then((r) => r.json())
           .then((d) => setCounsel({ sessions: d?.sessions || [], consoles: d?.consoles || [], scorecard: d?.scorecard || [] }))
-          .catch(() => {});
+          .catch(() => { });
       } else {
         fetch('/api/cortex/agents/proposals?status=pending', { cache: 'no-store' })
           .then((r) => r.json())
           .then((d) => setInbox(Array.isArray(d?.proposals) ? d.proposals : []))
-          .catch(() => {});
+          .catch(() => { });
       }
     };
     load();
@@ -414,7 +432,7 @@ export function CortexFoundryNav({ snap, onSelectAgent, selectedAgent, onOpenTow
       });
       const d = await fetch('/api/cortex/counsel/sessions', { cache: 'no-store' }).then((r) => r.json()).catch(() => null);
       if (d) setCounsel({ sessions: d?.sessions || [], consoles: d?.consoles || [], scorecard: d?.scorecard || [] });
-    } catch {}
+    } catch { }
   };
 
   const triggerRollCall = async (arm: 'A' | 'B' = 'A') => {
@@ -457,6 +475,10 @@ export function CortexFoundryNav({ snap, onSelectAgent, selectedAgent, onOpenTow
 
   const agents = snap.agents || [];
   const allTasks = snap.tasks || [];
+  // Venture scope (enterprise console): 'all' shows everything; a venture id
+  // filters to that scope; untagged work counts under 'cortex' — never dropped.
+  const ventureOf = (t: any): string => String(t?.input?.ventureId || t?.ventureId || 'cortex');
+  const inVentureScope = (t: any) => ventureFilter === 'all' || ventureOf(t) === ventureFilter;
 
   // ── Task ledger dayparting ──
   // Today scope: only tasks created today, grouped Morning → Night.
@@ -490,9 +512,9 @@ export function CortexFoundryNav({ snap, onSelectAgent, selectedAgent, onOpenTow
     const d = new Date(t);
     return `${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()}`;
   };
-  const scopedTasks = tasksScope === 'today'
+  const scopedTasks = (tasksScope === 'today'
     ? allTasks.filter((t) => sameDay(t.createdAt, Date.now()))
-    : allTasks;
+    : allTasks).filter(inVentureScope);
   const taskGroupKey = (t: AgentTaskClient) =>
     tasksScope === 'today' ? daypartOf(t.createdAt) : `${dayKey(t.createdAt)}|${daypartOf(t.createdAt)}`;
   const tasks = scopedTasks.slice().sort((a, b) => {
@@ -525,6 +547,7 @@ export function CortexFoundryNav({ snap, onSelectAgent, selectedAgent, onOpenTow
   };
   const userLedger = userList
     .filter((t) => tasksScope === 'all' || sameDay(t.createdAt || t.dueDate, Date.now()))
+    .filter(inVentureScope)
     .slice()
     .sort((a, b) => {
       const ga = userGroupKey(a), gb = userGroupKey(b);
@@ -548,6 +571,7 @@ export function CortexFoundryNav({ snap, onSelectAgent, selectedAgent, onOpenTow
   // UP NEXT — today's plan: mission blocks + pending user tasks due/created today.
   const upcomingBlocks = (snap.mission?.upcomingBlocks || [])
     .filter((b) => sameDay(b.start, Date.now()))
+    .filter((b: any) => ventureFilter === 'all' || String(b.ventureId || 'cortex') === ventureFilter)
     .sort((a, b) => a.start - b.start);
   const plannedUserTaskIds = new Set(upcomingBlocks.map((b) => b.taskId).filter(Boolean));
   const userPendingToday = userList.filter((t) =>
@@ -724,6 +748,31 @@ export function CortexFoundryNav({ snap, onSelectAgent, selectedAgent, onOpenTow
                 >
                   AGENT
                 </button>
+
+                <span style={{ fontSize: 8, color: DIM, marginLeft: 4 }}>VENTURE:</span>
+                <button
+                  type="button"
+                  onClick={() => setNewTaskVenture('')}
+                  style={{
+                    background: !newTaskVenture ? 'rgba(148,163,184,0.2)' : 'rgba(8,14,24,0.6)',
+                    border: `1px solid ${!newTaskVenture ? 'rgba(148,163,184,0.5)' : 'rgba(103,232,249,0.18)'}`,
+                    color: !newTaskVenture ? INK : DIM,
+                    fontFamily: MONO, fontSize: 8, padding: '2px 6px', borderRadius: 2, cursor: 'pointer',
+                  }}
+                >FLEET</button>
+                {(ventures?.ventures || []).map((v: any) => (
+                  <button
+                    key={v.id}
+                    type="button"
+                    onClick={() => setNewTaskVenture(v.id)}
+                    style={{
+                      background: newTaskVenture === v.id ? 'rgba(167,139,250,0.25)' : 'rgba(8,14,24,0.6)',
+                      border: `1px solid ${newTaskVenture === v.id ? '#a78bfa' : 'rgba(103,232,249,0.18)'}`,
+                      color: newTaskVenture === v.id ? '#c4b5fd' : DIM,
+                      fontFamily: MONO, fontSize: 8, padding: '2px 6px', borderRadius: 2, cursor: 'pointer',
+                    }}
+                  >{v.callSign || v.id.toUpperCase()}</button>
+                ))}
               </div>
 
               <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 6, marginTop: 2 }}>
@@ -763,6 +812,27 @@ export function CortexFoundryNav({ snap, onSelectAgent, selectedAgent, onOpenTow
               </div>
             </div>
           )}
+          {/* VENTURE SCOPE CHIPS — enterprise console filter dimension */}
+          <div style={{ display: 'flex', gap: 4, alignItems: 'center', flexWrap: 'wrap', marginBottom: 8, paddingBottom: 6, borderBottom: '1px solid rgba(148,163,184,0.08)' }}>
+            <span style={{ fontSize: 8, color: DIM, letterSpacing: '0.14em', marginRight: 2 }}>SCOPE:</span>
+            {(['all', ...(ventures?.ventures || []).map((v: any) => v.id)] as string[]).map((vid) => {
+              const active = ventureFilter === vid;
+              const label = vid === 'all' ? 'ALL' : (ventures?.ventures || []).find((v: any) => v.id === vid)?.callSign || vid.toUpperCase();
+              return (
+                <button
+                  key={vid}
+                  onClick={() => setVentureFilter(vid)}
+                  style={{
+                    background: active ? 'rgba(167,139,250,0.2)' : 'none',
+                    border: `1px solid ${active ? 'rgba(167,139,250,0.6)' : 'rgba(148,163,184,0.16)'}`,
+                    color: active ? '#c4b5fd' : DIM,
+                    fontFamily: MONO, fontSize: 8, padding: '1px 6px', borderRadius: 2,
+                    cursor: 'pointer', letterSpacing: '0.1em',
+                  }}
+                >{label}</button>
+              );
+            })}
+          </div>
           {/* UP NEXT — today's plan: mission blocks + pending user tasks */}
           {(upcomingBlocks.length > 0 || userPendingToday.length > 0) && taskSource !== 'agents' && (
             <div style={{ marginBottom: 8 }}>
@@ -1103,37 +1173,45 @@ export function CortexFoundryNav({ snap, onSelectAgent, selectedAgent, onOpenTow
           {([
             { section: 'THE CREW', col: '#fbbf24', entries: [{ id: null, callSign: 'CREW COMMANDER', desc: 'Holds veto · Final GO/NO-GO', status: 'active' }] },
             { section: 'FLIGHT DIRECTOR', col: '#38bdf8', entries: [{ id: 'strategist', callSign: 'CORTEX CORE', desc: 'Owns console · Decides, never flies', status: 'idle' }] },
-            { section: 'FLIGHT CONSOLES', col: '#67e8f9', entries: [
-              { id: 'antigravity', callSign: 'GUIDANCE', desc: 'Strategy · Vision', status: 'idle' },
-              { id: 'builder', callSign: 'FLT CONTROLS', desc: 'Execute · Builder', status: 'idle' },
-              { id: 'runner', callSign: 'FLT CONTROLS', desc: 'Execute · Runner', status: 'idle' },
-              { id: 'sentinel', callSign: 'EECOM', desc: 'Power/Compute · Model health', status: 'idle' },
-              { id: 'capcom', callSign: 'CAPCOM', desc: 'Voice interface', status: 'idle' },
-              { id: 'forecaster', callSign: 'FDO', desc: 'Trajectory · Forecasts', status: 'idle' },
-              { id: 'warden', callSign: 'SURGEON', desc: 'Quality gate · Safety', status: 'idle' },
-            ]},
-            { section: 'SUPPORT CRAFT', col: '#a78bfa', entries: [
-              { id: 'devin', callSign: 'FLIGHT DYNAMICS', desc: 'Engineering & verification', status: 'idle' },
-              { id: 'scout', callSign: 'SCOUT', desc: 'Recon & web intelligence', status: 'idle' },
-              { id: 'librarian', callSign: 'LIBRARIAN', desc: 'Engram vector archive', status: 'idle' },
-              { id: 'distributor', callSign: 'DISTRIBUTOR', desc: 'Product distribution', status: 'idle' },
-              { id: 'prep', callSign: 'PREP', desc: 'Nightly preparation', status: 'idle' },
-              { id: 'brief', callSign: 'BRIEF', desc: 'Morning brief 06:00', status: 'idle' },
-              { id: 'debrief', callSign: 'DEBRIEF', desc: 'Evening debrief 21:30', status: 'idle' },
-              { id: 'reviewer', callSign: 'REVIEWER', desc: 'Code review', status: 'idle' },
-            ].concat(
-              agents.filter((a) => a.spawnSpec).map((a) => ({ id: a.id, callSign: a.spawnSpec?.callSign || a.id.toUpperCase(), desc: `Spawned · ${a.spawnSpec?.role || ''}`, status: 'idle' }))
-            )},
-            { section: 'SOVEREIGN GATEWAYS & ENTERPRISE FLEET', col: '#ef4444', entries: [
-              { id: 'hermes', callSign: 'HERMES', desc: 'Sovereign mutating tool host (:18880)', status: 'idle' },
-              { id: 'curator', callSign: 'CURATOR', desc: 'Fleet intelligence & dynamic capabilities', status: 'idle' },
-              { id: 'openclaw', callSign: 'OPENCLAW', desc: 'WebMCP browser copilot (:18789)', status: 'idle' },
-              { id: 'claudecode', callSign: 'CLAUDE CODE', desc: 'Terminal architect & consensus auditor', status: 'idle' },
-            ]},
-            { section: 'GROUND SEGMENT', col: '#34d399', entries: [
-              { id: null, callSign: 'LOCAL TOWER', desc: 'Mac host · voice loop · workspace', status: 'active' },
-              { id: null, callSign: 'TDRS SATELLITE', desc: 'Oracle cloud · always-on node', status: 'idle' },
-            ]},
+            {
+              section: 'FLIGHT CONSOLES', col: '#67e8f9', entries: [
+                { id: 'antigravity', callSign: 'GUIDANCE', desc: 'Strategy · Vision', status: 'idle' },
+                { id: 'builder', callSign: 'FLT CONTROLS', desc: 'Execute · Builder', status: 'idle' },
+                { id: 'runner', callSign: 'FLT CONTROLS', desc: 'Execute · Runner', status: 'idle' },
+                { id: 'sentinel', callSign: 'EECOM', desc: 'Power/Compute · Model health', status: 'idle' },
+                { id: 'capcom', callSign: 'CAPCOM', desc: 'Voice interface', status: 'idle' },
+                { id: 'forecaster', callSign: 'FDO', desc: 'Trajectory · Forecasts', status: 'idle' },
+                { id: 'warden', callSign: 'SURGEON', desc: 'Quality gate · Safety', status: 'idle' },
+              ]
+            },
+            {
+              section: 'SUPPORT CRAFT', col: '#a78bfa', entries: [
+                { id: 'devin', callSign: 'FLIGHT DYNAMICS', desc: 'Engineering & verification', status: 'idle' },
+                { id: 'scout', callSign: 'SCOUT', desc: 'Recon & web intelligence', status: 'idle' },
+                { id: 'librarian', callSign: 'LIBRARIAN', desc: 'Engram vector archive', status: 'idle' },
+                { id: 'distributor', callSign: 'DISTRIBUTOR', desc: 'Product distribution', status: 'idle' },
+                { id: 'prep', callSign: 'PREP', desc: 'Nightly preparation', status: 'idle' },
+                { id: 'brief', callSign: 'BRIEF', desc: 'Morning brief 06:00', status: 'idle' },
+                { id: 'debrief', callSign: 'DEBRIEF', desc: 'Evening debrief 21:30', status: 'idle' },
+                { id: 'reviewer', callSign: 'REVIEWER', desc: 'Code review', status: 'idle' },
+              ].concat(
+                agents.filter((a) => a.spawnSpec).map((a) => ({ id: a.id, callSign: a.spawnSpec?.callSign || a.id.toUpperCase(), desc: `Spawned · ${a.spawnSpec?.role || ''}`, status: 'idle' }))
+              )
+            },
+            {
+              section: 'SOVEREIGN GATEWAYS & ENTERPRISE FLEET', col: '#ef4444', entries: [
+                { id: 'hermes', callSign: 'HERMES', desc: 'Sovereign mutating tool host (:18880)', status: 'idle' },
+                { id: 'curator', callSign: 'CURATOR', desc: 'Fleet intelligence & dynamic capabilities', status: 'idle' },
+                { id: 'openclaw', callSign: 'OPENCLAW', desc: 'WebMCP browser copilot (:18789)', status: 'idle' },
+                { id: 'claudecode', callSign: 'CLAUDE CODE', desc: 'Terminal architect & consensus auditor', status: 'idle' },
+              ]
+            },
+            {
+              section: 'GROUND SEGMENT', col: '#34d399', entries: [
+                { id: null, callSign: 'LOCAL TOWER', desc: 'Mac host · voice loop · workspace', status: 'active' },
+                { id: null, callSign: 'TDRS SATELLITE', desc: 'Oracle cloud · always-on node', status: 'idle' },
+              ]
+            },
           ] as { section: string; col: string; entries: { id: string | null; callSign: string; desc: string; status: string }[] }[]).map((sec) => (
             <div key={sec.section} style={{ marginBottom: 8 }}>
               <div style={{ fontSize: 9, fontWeight: 800, letterSpacing: '0.22em', color: sec.col, padding: '3px 2px 2px', borderBottom: `1px solid ${sec.col}33` }}>
@@ -1284,7 +1362,7 @@ export function CortexFoundryNav({ snap, onSelectAgent, selectedAgent, onOpenTow
 
       {view === 'voice' && (
         <Panel title="CORTEX VOICE — ENGINE STATUS" onClose={() => setView(null)} right={
-          <button onClick={() => { setVoiceStatus(null); fetch('/api/cortex/tts/status', { cache: 'no-store' }).then((r) => r.json()).then(setVoiceStatus).catch(() => {}); }} style={{ background: 'none', border: '1px solid rgba(52,211,153,0.4)', color: '#34d399', fontFamily: MONO, fontSize: 9.5, padding: '2px 8px', borderRadius: 2, cursor: 'pointer', letterSpacing: '0.15em' }}>RE-PROBE</button>
+          <button onClick={() => { setVoiceStatus(null); fetch('/api/cortex/tts/status', { cache: 'no-store' }).then((r) => r.json()).then(setVoiceStatus).catch(() => { }); }} style={{ background: 'none', border: '1px solid rgba(52,211,153,0.4)', color: '#34d399', fontFamily: MONO, fontSize: 9.5, padding: '2px 8px', borderRadius: 2, cursor: 'pointer', letterSpacing: '0.15em' }}>RE-PROBE</button>
         }>
           {voiceStatus === null && <div style={{ padding: '12px 0', color: DIM }}>PROBING ENGINES…</div>}
           {voiceStatus?.ok === false && <div style={{ padding: '12px 0', color: '#f87171' }}>STATUS ENDPOINT UNREACHABLE — VITE RESTART NEEDED?</div>}
@@ -1356,8 +1434,8 @@ export function CortexFoundryNav({ snap, onSelectAgent, selectedAgent, onOpenTow
         // govtech_*/sam_gov_* → venture, everything else → GENERAL.
         const ventureOf = (t: string) =>
           t?.startsWith('omni') ? 'OMNI'
-          : (t?.startsWith('govtech') || t?.startsWith('sam_gov')) ? 'GOVTECH'
-          : 'GENERAL';
+            : (t?.startsWith('govtech') || t?.startsWith('sam_gov')) ? 'GOVTECH'
+              : 'GENERAL';
         const ventureCounts: Record<string, number> = {};
         for (const [t, n] of Object.entries(typeCounts)) {
           const v = ventureOf(t);
@@ -1577,8 +1655,8 @@ export function CortexFoundryNav({ snap, onSelectAgent, selectedAgent, onOpenTow
                         {f === 'all'
                           ? `ALL (${checkIns.length})`
                           : f === 'ready'
-                          ? `READY (${m.healthyCount})`
-                          : `DEGRADED (${m.degradedCount + m.offlineCount})`}
+                            ? `READY (${m.healthyCount})`
+                            : `DEGRADED (${m.degradedCount + m.offlineCount})`}
                       </button>
                     ))}
                   </div>
@@ -1593,13 +1671,13 @@ export function CortexFoundryNav({ snap, onSelectAgent, selectedAgent, onOpenTow
                   const cardBorder = isOffline
                     ? 'rgba(248,113,113,0.3)'
                     : isDegraded
-                    ? 'rgba(251,191,36,0.3)'
-                    : 'rgba(56,189,248,0.12)';
+                      ? 'rgba(251,191,36,0.3)'
+                      : 'rgba(56,189,248,0.12)';
                   const cardBg = isOffline
                     ? 'rgba(248,113,113,0.04)'
                     : isDegraded
-                    ? 'rgba(251,191,36,0.04)'
-                    : 'rgba(15,23,42,0.4)';
+                      ? 'rgba(251,191,36,0.04)'
+                      : 'rgba(15,23,42,0.4)';
 
                   return (
                     <div
@@ -1640,8 +1718,8 @@ export function CortexFoundryNav({ snap, onSelectAgent, selectedAgent, onOpenTow
                         {p.toolEvidence
                           ? p.toolEvidence
                           : p.daemonResponding === false
-                          ? 'Daemon: offline'
-                          : `Reachability: ${p.reachability || c.status}`}
+                            ? 'Daemon: offline'
+                            : `Reachability: ${p.reachability || c.status}`}
                         {p.notes ? ` · ${p.notes}` : ''}
                       </div>
 
@@ -1719,6 +1797,57 @@ export function CortexFoundryNav({ snap, onSelectAgent, selectedAgent, onOpenTow
               </div>
             );
           })()}
+        </Panel>
+      )}
+
+      {view === 'ventures' && (
+        <Panel title="VENTURES — ENTERPRISE SCOPE" onClose={() => setView(null)} right={
+          ventures === null ? <span style={{ fontSize: 9.5, color: DIM }}>LOADING…</span> : <span style={{ fontSize: 9.5, color: DIM }}>{(ventures.ventures || []).length} REGISTERED</span>
+        }>
+          {ventures === null && <div style={{ padding: '16px 0', color: DIM }}>PROBING REGISTRY…</div>}
+          {ventures !== null && !(ventures.ventures || []).length && <div style={{ padding: '16px 0', color: DIM }}>NO VENTURES REGISTERED — SEE .cortex-runtime/ventures.json</div>}
+          {(ventures?.ventures || []).map((v: any) => {
+            const y = v.yield7d || { runs: 0, completions: 0 };
+            const yieldRate = y.runs ? Math.round((y.completions / y.runs) * 100) : null;
+            const d = v.distribution || { pending: 0, done: 0, failed: 0 };
+            return (
+              <div key={v.id} style={{
+                border: '1px solid rgba(167,139,250,0.22)', borderLeft: `3px solid ${v.status === 'active' ? '#a78bfa' : DIM}`,
+                borderRadius: 3, padding: '8px 10px', marginBottom: 8, background: 'rgba(167,139,250,0.04)',
+              }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+                  <span style={{ fontSize: 11, fontWeight: 800, color: '#c4b5fd', letterSpacing: '0.12em' }}>{v.callSign || v.name}</span>
+                  <span style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+                    <Lamp status={v.status === 'active' ? 'healthy' : v.status === 'dormant' ? 'idle' : 'cancelled'} />
+                    <span style={{ fontSize: 8, color: DIM, letterSpacing: '0.1em' }}>{String(v.status || 'active').toUpperCase()}</span>
+                  </span>
+                </div>
+                <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', fontSize: 9, color: DIM, marginBottom: 4 }}>
+                  <span>OPEN TASKS <b style={{ color: INK }}>{v.openTasks ?? 0}</b></span>
+                  <span>GOALS <b style={{ color: INK }}>{v.goals ?? 0}</b></span>
+                  <span>OPS <b style={{ color: INK }}>{v.opsItems ?? 0}</b></span>
+                  <span>BLOCKS <b style={{ color: INK }}>{v.openBlocks ?? 0}</b></span>
+                  <span>DIST <b style={{ color: INK }}>{d.pending}◌ {d.done}✓ {d.failed}✗</b></span>
+                  <span>YIELD 7D <b style={{ color: INK }}>{y.runs} runs{yieldRate != null ? ` · ${yieldRate}%` : ''}</b></span>
+                </div>
+                {(v.evidencePaths || []).length > 0 && (
+                  <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+                    {v.evidencePaths.map((ep: string) => (
+                      <span key={ep} style={{ fontSize: 7.5, color: 'rgba(103,232,249,0.6)', border: '1px solid rgba(103,232,249,0.15)', borderRadius: 2, padding: '0 4px' }}>{ep}</span>
+                    ))}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+          {(ventures?.unregisteredYield || []).length > 0 && (
+            <div style={{ fontSize: 9, color: '#fbbf24', border: '1px solid rgba(251,191,36,0.25)', borderRadius: 3, padding: '6px 8px', marginTop: 4 }}>
+              UNREGISTERED YIELD ACTIVITY: {ventures!.unregisteredYield!.join(', ')} — work exists outside the registry; register or re-scope it.
+            </div>
+          )}
+          <div style={{ fontSize: 8, color: DIM, marginTop: 8, lineHeight: 1.6 }}>
+            Venture scope is a filter dimension on TASKS — tasks, goals, ops items, and mission blocks carry ventureId. Untagged work counts under CORTEX. Registry: .cortex-runtime/ventures.json
+          </div>
         </Panel>
       )}
     </>
