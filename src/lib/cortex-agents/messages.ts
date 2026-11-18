@@ -20,6 +20,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { fileStrategyProposals } from './strategy-proposals';
+import { isValidVenture } from '../cortex-ventures';
 
 const STATE_DIR = process.env.CORTEX_AGENTS_STATE_DIR || path.join(process.cwd(), '.cortex-runtime');
 const MESSAGES_PATH = path.join(STATE_DIR, 'messages.json');
@@ -45,6 +46,8 @@ export interface AgentMessage {
   evidenceRefs?: string[];
   /** 'urgent' injects ahead of normal traffic and can wake an idle agent. */
   priority?: 'normal' | 'urgent';
+  /** Venture scope (enterprise spec) — optional; unscoped = cortex bucket. */
+  ventureId?: string;
   /** Dedupe: same key while pending/delivered → returns existing, no dup. */
   dedupeKey?: string;
   status: MessageStatus;
@@ -117,12 +120,16 @@ export function sendMessage(opts: {
   correlationId?: string;
   evidenceRefs?: string[];
   priority?: 'normal' | 'urgent';
+  ventureId?: string;
   dedupeKey?: string;
   ttlMs?: number;
 }): SendResult {
   const { from, to, type, payload } = opts;
   if (!from || !to) return { ok: false, error: 'from and to are required' };
   if (from === to) return { ok: false, error: 'cannot message self' };
+  if (opts.ventureId !== undefined && opts.ventureId !== '' && !isValidVenture(opts.ventureId)) {
+    return { ok: false, error: `unknown venture: ${String(opts.ventureId).slice(0, 40)}` };
+  }
   if (!MESSAGE_TYPES.includes(type as MessageType)) {
     return { ok: false, error: `type must be one of: ${MESSAGE_TYPES.join(', ')}` };
   }
@@ -163,6 +170,7 @@ export function sendMessage(opts: {
     correlationId: opts.correlationId,
     evidenceRefs: opts.evidenceRefs?.slice(0, 10),
     priority: opts.priority === 'urgent' ? 'urgent' : 'normal',
+    ventureId: opts.ventureId || undefined,
     dedupeKey: opts.dedupeKey,
     status: 'pending',
     createdAt: now,
@@ -197,7 +205,7 @@ export function messagesBlock(agentId: string): string {
   const pending = pendingMessages(agentId);
   if (!pending.length) return '';
   const lines = pending.map((m, i) =>
-    `${i + 1}. [${m.id}] ${m.priority === 'urgent' ? 'URGENT ' : ''}${m.type} from ${m.from}: ${m.payload}${m.correlationId ? ` (corr: ${m.correlationId})` : ''}`);
+    `${i + 1}. [${m.id}] ${m.priority === 'urgent' ? 'URGENT ' : ''}${m.ventureId ? `[${m.ventureId}] ` : ''}${m.type} from ${m.from}: ${m.payload}${m.correlationId ? ` (corr: ${m.correlationId})` : ''}`);
   return [
     '## AGENT MESSAGES (typed peer traffic — address in your work; cite message ids in your result to consume them)',
     ...lines,
@@ -237,6 +245,7 @@ export function extractAndSendMessages(agentId: string, resultText: string): { s
         correlationId: obj.correlationId ? String(obj.correlationId) : undefined,
         evidenceRefs: Array.isArray(obj.evidenceRefs) ? obj.evidenceRefs.map(String) : undefined,
         priority: obj.priority === 'urgent' ? 'urgent' : undefined,
+        ventureId: obj.ventureId ? String(obj.ventureId) : undefined,
       });
       if (r.ok && !r.deduped) sent++; else if (!r.ok) rejected++;
     } catch { rejected++; }

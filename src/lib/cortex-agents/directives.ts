@@ -18,6 +18,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
+import { isValidVenture } from '../cortex-ventures';
 
 const STATE_DIR = process.env.CORTEX_AGENTS_STATE_DIR || path.join(process.cwd(), '.cortex-runtime');
 const DIRECTIVES_PATH = path.join(STATE_DIR, 'directives.json');
@@ -38,6 +39,8 @@ export interface Directive {
   evidence?: string;
   /** Dedupe: same key while pending/delivered → returns existing, no dup. */
   dedupeKey?: string;
+  /** Venture scope (enterprise spec) — optional tag shown in injected block. */
+  ventureId?: string;
   status: DirectiveStatus;
   createdAt: number;
   expiresAt: number;
@@ -81,6 +84,7 @@ export interface IssueDirectiveInput {
   message: string;
   evidence?: string;
   dedupeKey?: string;
+  ventureId?: string;
   ttlMs?: number;
 }
 
@@ -90,6 +94,9 @@ export interface IssueDirectiveInput {
  */
 export function issueDirective(input: IssueDirectiveInput): { directive: Directive; created: boolean } {
   const list = sweep(readAll());
+  if (input.ventureId && !isValidVenture(input.ventureId)) {
+    throw new Error(`unknown venture: ${String(input.ventureId).slice(0, 40)}`);
+  }
   if (input.dedupeKey) {
     const existing = list.find(
       (d) => d.dedupeKey === input.dedupeKey && (d.status === 'pending' || d.status === 'delivered')
@@ -105,6 +112,7 @@ export function issueDirective(input: IssueDirectiveInput): { directive: Directi
     message: input.message.slice(0, 2000),
     evidence: input.evidence?.slice(0, 500),
     dedupeKey: input.dedupeKey,
+    ventureId: input.ventureId || undefined,
     status: 'pending',
     createdAt: now,
     expiresAt: now + (input.ttlMs ?? DEFAULT_TTL_MS),
@@ -194,7 +202,7 @@ export function cancelDirective(id: string): boolean {
 export function directivesBlock(agentId: string): string {
   const pending = pendingDirectives(agentId);
   if (!pending.length) return '';
-  const lines = pending.map((d, i) => `${i + 1}. [${d.id}] ${d.message}${d.evidence ? ` (evidence: ${d.evidence})` : ''}`);
+  const lines = pending.map((d, i) => `${i + 1}. [${d.id}] ${d.ventureId ? `[${d.ventureId}] ` : ''}${d.message}${d.evidence ? ` (evidence: ${d.evidence})` : ''}`);
   return [
     '## DIRECTIVES FROM CORTEX (orders-of-the-day — address in your work, cite the directive id in your result evidence)',
     ...lines,

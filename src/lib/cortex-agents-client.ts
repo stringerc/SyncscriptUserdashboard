@@ -16,6 +16,8 @@ export interface AgentTaskClient {
     failureClass?: string;
   } | null;
   createdAt: number; startedAt?: number; finishedAt?: number;
+  /** Task input payload — carries ventureId scope when stamped. */
+  input?: Record<string, unknown>;
 }
 export interface AgentClient {
   id: string; name: string; role: string; blurb: string;
@@ -47,7 +49,7 @@ export interface AgentsSnapshotClient {
     goals: { id: string; title: string; progress: number; orphaned: boolean }[];
     ops: { total: number; done: number; stale: number; pending: number };
     plannedBlocks: number;
-    upcomingBlocks?: { id: string; title: string; start: number; end: number; agentId?: string; kind?: string; goalId?: string; taskId?: string }[];
+    upcomingBlocks?: { id: string; title: string; start: number; end: number; agentId?: string; kind?: string; goalId?: string; taskId?: string; ventureId?: string }[];
     experiments: { id: string; routineId: string; kind: string; variantMin: number }[];
   } | null;
   offline?: boolean;

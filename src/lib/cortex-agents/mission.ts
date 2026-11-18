@@ -28,6 +28,8 @@ export interface MissionGoal {
   status: GoalStatus;
   /** Agent task ids / mission block ids this goal decomposes into. */
   taskIds: string[];
+  /** Venture scope (enterprise spec) — absent = cortex/fleet bucket. */
+  ventureId?: string;
   createdAt: number;
 }
 
@@ -46,6 +48,8 @@ export interface OpsItem {
   verifiedAt?: number;
   lastStatus?: OpsStatus;
   staleAfterDays?: number;       // manual items rot visibly after this
+  /** Venture scope (enterprise spec). */
+  ventureId?: string;
   createdAt: number;
 }
 
@@ -57,6 +61,8 @@ export interface ScheduleBlock {
   kind?: string;
   goalId?: string;
   taskId?: string;
+  /** Venture scope — carried into the dispatched task's input. */
+  ventureId?: string;
   start: number;                 // epoch ms
   end: number;
   status: BlockStatus;
@@ -150,6 +156,7 @@ export function upsertGoal(state: MissionState, g: Partial<MissionGoal> & { titl
     targetDate: g.targetDate ?? existing?.targetDate,
     status: g.status ?? existing?.status ?? 'active',
     taskIds: g.taskIds ?? existing?.taskIds ?? [],
+    ventureId: g.ventureId ?? existing?.ventureId,
     createdAt: existing?.createdAt ?? now,
   };
   if (existing) state.goals = state.goals.map((x) => (x.id === goal.id ? goal : x));
@@ -251,7 +258,7 @@ export function findFreeSlot(
 /** Plan blocks for pending work items into free calendar slots. */
 export function planBlocks(
   state: MissionState,
-  items: { title: string; agentId?: string; kind?: string; goalId?: string; taskId?: string; durMin?: number }[],
+  items: { title: string; agentId?: string; kind?: string; goalId?: string; taskId?: string; ventureId?: string; durMin?: number }[],
   busy: BusySpan[],
   now = Date.now(),
   notAfter?: number,
@@ -265,7 +272,7 @@ export function planBlocks(
     const block: ScheduleBlock = {
       id: `blk-${now.toString(36)}-${created.length}-${Math.random().toString(36).slice(2, 5)}`,
       title: it.title, agentId: it.agentId, kind: it.kind,
-      goalId: it.goalId, taskId: it.taskId,
+      goalId: it.goalId, taskId: it.taskId, ventureId: it.ventureId,
       start: slot.start, end: slot.end, status: 'planned',
       reason: `free slot ${new Date(slot.start).toISOString()} — ${it.goalId ? `goal ${it.goalId}` : 'unlinked'}${it.taskId ? ` task ${it.taskId}` : ''}`,
       createdAt: now,
@@ -502,7 +509,7 @@ export function runMissionPlan(now = Date.now()) {
     if (already) continue;
     goalItems.push({
       title: `Goal review — ${g.title}: assess progress since last review; if stalled, file a governed proposal for the next concrete step`,
-      agentId: 'strategist', kind: 'goal_review', goalId: g.id,
+      agentId: 'strategist', kind: 'goal_review', goalId: g.id, ventureId: g.ventureId,
       durMin: state.prefs?.slotMin ?? 30,
     });
   }
@@ -603,6 +610,28 @@ export function budgetYieldReview(
         });
       }
     }
+  }
+  return out;
+}
+
+/** Per-venture yield attribution (enterprise spec Phase 2) — reporting
+ *  only, no hard caps. Groups trailing-7d archive runs/completions by
+ *  task input.ventureId; unscoped work lands in 'cortex' (never dropped). */
+export function ventureYieldBreakdown(
+  archive: { agentId: string; kind: string; status: string; createdAt: number; finishedAt?: number; input?: Record<string, unknown> }[],
+  now = Date.now(),
+): Record<string, { runs: number; completions: number; agents: Record<string, { runs: number; completions: number }> }> {
+  const since = now - 7 * 86_400_000;
+  const out: Record<string, { runs: number; completions: number; agents: Record<string, { runs: number; completions: number }> }> = {};
+  for (const r of archive) {
+    const t = r.finishedAt ?? r.createdAt;
+    if (t < since || BOOKKEEPING_KIND_SET.has(r.kind)) continue;
+    const vid = String(r.input?.ventureId || 'cortex');
+    const v = out[vid] ??= { runs: 0, completions: 0, agents: {} };
+    const done = r.status === 'completed';
+    v.runs++; if (done) v.completions++;
+    const a = v.agents[r.agentId] ??= { runs: 0, completions: 0 };
+    a.runs++; if (done) a.completions++;
   }
   return out;
 }

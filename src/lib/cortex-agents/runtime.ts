@@ -16,6 +16,7 @@ import { ModelSentinel } from './sentinel';
 import { DETERMINISTIC_TASKS } from './lights';
 import { ackMentioned, directivesBlock, markDelivered } from './directives';
 import { consumeMentioned, extractAndSendMessages, markMessagesDelivered, messagesBlock } from './messages';
+import { isValidVenture } from '../cortex-ventures';
 import type {
   AgentEvent, AgentId, AgentRoutine, AgentState, AgentStatus, AgentTask, AgentsSnapshot, SpawnProposal, SpawnSpec, TaskFailureClass, TaskStatus, TaskTelemetry,
 } from './types';
@@ -437,6 +438,12 @@ export class AgentRuntime {
     if (!agent) return { ok: false, error: `unknown agent: ${agentId}` };
     if (agent.status === 'retired') return { ok: false, error: `${agent.name} is retired` };
     if (!kind || !title) return { ok: false, error: 'kind and title required' };
+    // Venture scope (enterprise spec §5): optional input.ventureId must name
+    // a registered venture — unknown ids rejected like unknown recipients.
+    const ventureId = input?.ventureId;
+    if (ventureId !== undefined && ventureId !== null && ventureId !== '' && !isValidVenture(ventureId)) {
+      return { ok: false, error: `unknown venture: ${String(ventureId).slice(0, 40)}` };
+    }
     if (!BOOKKEEPING_KINDS.has(kind) && this.dailyCount(agentId) >= agent.dailyBudget) {
       const error = `${agent.name} daily budget exhausted (${agent.dailyBudget} tasks)`;
       try { this.onBudgetExhausted?.(agentId, error); } catch { /* hook must never break submit */ }

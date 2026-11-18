@@ -25,7 +25,8 @@ import { listStrategyProposals, decideStrategyProposal, reconcileStrategyProposa
 import { recordIncidentFailure, resolveIncidentsOnSuccess, listIncidents, escalateStaleIncidents, sweepIncidentTtl, dismissIncident, dismissAllIncidents, autoVerifyIncident } from './src/lib/cortex-agents/incidents';
 import { issueDirective, listDirectives, ackDirective, cancelDirective } from './src/lib/cortex-agents/directives';
 import { listMessages, sendMessage } from './src/lib/cortex-agents/messages';
-import { loadMission, saveMission, upsertGoal, verifyOps, goalProgress, routineYield, suggestCadence, planBlocks, startExperiment, reportExperiments, type OpsItem, type MissionGoal, type CadenceEntry } from './src/lib/cortex-agents/mission';
+import { loadMission, saveMission, upsertGoal, verifyOps, goalProgress, routineYield, suggestCadence, planBlocks, startExperiment, reportExperiments, ventureYieldBreakdown, type OpsItem, type MissionGoal, type CadenceEntry } from './src/lib/cortex-agents/mission';
+import { listVentures, isValidVenture, ventureFromQueueType } from './src/lib/cortex-ventures';
 import { maybeFileAdoptionFollowup } from './src/lib/cortex-agents/adoption';
 import { registerAgentWorkers, makeEphemeralWorker, expandTaskSpec } from './src/lib/cortex-agents/workers';
 import { enqueueDistributionItem, DISTRIBUTION_ITEM_TYPES } from './src/lib/cortex-agents/distribution';
@@ -10504,7 +10505,7 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
               .filter((b) => b.status === 'planned' && b.start > Date.now() - 3_600_000)
               .sort((a, b) => a.start - b.start)
               .slice(0, 12)
-              .map((b) => ({ id: b.id, title: b.title, start: b.start, end: b.end, agentId: b.agentId, kind: b.kind, goalId: b.goalId, taskId: b.taskId })),
+              .map((b) => ({ id: b.id, title: b.title, start: b.start, end: b.end, agentId: b.agentId, kind: b.kind, goalId: b.goalId, taskId: b.taskId, ventureId: b.ventureId })),
             experiments: ms.experiments.filter((e) => e.status === 'running').map((e) => ({ id: e.id, routineId: e.routineId, kind: e.kind, variantMin: e.variant.intervalMin })),
           };
         } catch { }
@@ -11501,6 +11502,7 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
               message,
               evidence: parsed.evidence ? String(parsed.evidence) : undefined,
               dedupeKey: parsed.dedupeKey ? String(parsed.dedupeKey) : undefined,
+              ventureId: parsed.ventureId ? String(parsed.ventureId) : undefined,
               ttlMs: parsed.ttlMs ? Number(parsed.ttlMs) : undefined,
             });
             if (created) {
@@ -11565,6 +11567,7 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
               correlationId: parsed.correlationId ? String(parsed.correlationId) : undefined,
               evidenceRefs: Array.isArray(parsed.evidenceRefs) ? parsed.evidenceRefs.map(String) : undefined,
               priority: parsed.priority === 'urgent' ? 'urgent' : undefined,
+              ventureId: parsed.ventureId ? String(parsed.ventureId) : undefined,
               dedupeKey: parsed.dedupeKey ? String(parsed.dedupeKey) : undefined,
               ttlMs: parsed.ttlMs ? Number(parsed.ttlMs) : undefined,
             });
@@ -11592,6 +11595,60 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
             res.end(JSON.stringify({ ok: false, error: e?.message || 'bad request' }));
           }
         });
+      });
+
+      // ── Venture registry (/api/cortex/ventures) ──
+      // Enterprise console scope dimension. GET returns the registry plus
+      // live counts derived from real state — tasks (input.ventureId),
+      // goals/ops/blocks, distribution queue (type-prefix derivation),
+      // and 7d yield attribution. Untagged work counts under 'cortex'.
+      server.middlewares.use('/api/cortex/ventures', (req: any, res: any, next: any) => {
+        if (req.method !== 'GET') return next();
+        agentCors(req, res);
+        try {
+          const ventures = listVentures();
+          const state = loadMission();
+          const src = missionSourcesSafe();
+          const yieldByVenture = ventureYieldBreakdown(src.archive);
+          // Live task counts from the agent runtime snapshot (open tasks only).
+          const tasks: any[] = agentRuntime.snapshot().tasks as any[];
+          const openByVenture: Record<string, number> = {};
+          for (const t of tasks) {
+            if (t.status === 'completed' || t.status === 'failed' || t.status === 'cancelled') continue;
+            const vid = String((t.input as any)?.ventureId || 'cortex');
+            openByVenture[vid] = (openByVenture[vid] || 0) + 1;
+          }
+          // Distribution queue venture derivation (type prefixes).
+          const distCounts: Record<string, { pending: number; done: number; failed: number }> = {};
+          try {
+            const q = JSON.parse(fsSync.readFileSync(path.join(process.cwd(), 'storefront', 'distribution-queue.json'), 'utf-8'));
+            for (const item of (Array.isArray(q) ? q : q.items || [])) {
+              const vid = ventureFromQueueType(item?.type);
+              const c = distCounts[vid] ??= { pending: 0, done: 0, failed: 0 };
+              const st = String(item?.status || '');
+              if (st === 'done' || st === 'completed') c.done++;
+              else if (st === 'failed' || st === 'error') c.failed++;
+              else c.pending++;
+            }
+          } catch { /* queue unreadable — counts stay empty, honest */ }
+          const cards = ventures.map((v) => ({
+            ...v,
+            goals: state.goals.filter((g) => (g.ventureId || 'cortex') === v.id).length,
+            opsItems: state.opsItems.filter((o) => (o.ventureId || 'cortex') === v.id).length,
+            openBlocks: state.blocks.filter((b) => (b.ventureId || 'cortex') === v.id && b.status === 'planned').length,
+            openTasks: openByVenture[v.id] || 0,
+            yield7d: yieldByVenture[v.id] || { runs: 0, completions: 0, agents: {} },
+            distribution: distCounts[v.id] || { pending: 0, done: 0, failed: 0 },
+          }));
+          // Untagged-but-real ventures in yield data that aren't registered
+          // still surface — nothing silently dropped.
+          const unregistered = Object.keys(yieldByVenture).filter((id) => !ventures.some((v) => v.id === id));
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ ok: true, ventures: cards, unregisteredYield: unregistered }));
+        } catch (e: any) {
+          res.writeHead(500, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ ok: false, error: String(e?.message || e) }));
+        }
       });
 
       // ── Mission loop (/api/cortex/mission/*) ──
@@ -11684,20 +11741,24 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
             switch (String(p.action || '')) {
               case 'upsert_goal': {
                 if (!p.title) return send(400, { ok: false, error: 'title required' });
+                if (p.ventureId && !isValidVenture(String(p.ventureId))) return send(400, { ok: false, error: `unknown venture: ${String(p.ventureId).slice(0, 40)}` });
                 const g = upsertGoal(state, {
                   id: p.id, title: String(p.title), description: p.description,
                   horizon: p.horizon, targetDate: p.targetDate, status: p.status,
+                  ventureId: p.ventureId ? String(p.ventureId) : undefined,
                   taskIds: Array.isArray(p.taskIds) ? p.taskIds.map(String) : undefined,
                 });
                 break;
               }
               case 'upsert_ops': {
+                if (p.ventureId && !isValidVenture(String(p.ventureId))) return send(400, { ok: false, error: `unknown venture: ${String(p.ventureId).slice(0, 40)}` });
                 const item: OpsItem = {
                   id: String(p.id || `ops-${Date.now().toString(36)}`),
                   label: String(p.label || ''),
                   evidence: p.evidence || { type: 'manual' },
                   done: false,
                   staleAfterDays: p.staleAfterDays,
+                  ventureId: p.ventureId ? String(p.ventureId) : undefined,
                   createdAt: Date.now(),
                 };
                 if (!item.label) return send(400, { ok: false, error: 'label required' });
@@ -11725,6 +11786,8 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
               }
               case 'plan_blocks': {
                 const items = Array.isArray(p.items) ? p.items : [];
+                const badVenture = items.find((i: any) => i?.ventureId && !isValidVenture(String(i.ventureId)));
+                if (badVenture) return send(400, { ok: false, error: `unknown venture: ${String(badVenture.ventureId).slice(0, 40)}` });
                 const busy = [
                   ...src.calendarEvents.map((e: any) => ({ start: Number(e.start), end: Number(e.end) || Number(e.start) + 3_600_000 })),
                   ...state.blocks.filter((b) => b.status === 'planned').map((b) => ({ start: b.start, end: b.end })),
@@ -11784,6 +11847,7 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
                   const kind = b.kind || 'orchestrate';
                   const res = agentRuntime.submitTask(agentId, kind, b.title, {
                     blockId: b.id, goalId: b.goalId, missionBlock: true,
+                    ventureId: b.ventureId,
                   });
                   if (res.ok) { b.status = 'dispatched'; dispatched.push({ blockId: b.id, taskId: res.task?.id }); }
                   else { failed.push({ blockId: b.id, error: res.error }); }

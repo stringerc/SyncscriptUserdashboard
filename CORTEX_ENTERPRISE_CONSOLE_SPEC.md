@@ -4,7 +4,13 @@
 > + RESEARCH leg (IA evidence, repo survey). Antigravity leg failed to
 > produce a deliverable — see bake-off notes in git history.
 >
-> Status: SPEC ONLY — no implementation yet. Phase 1 is honest-empty safe.
+> Status: Phase 1+2 IMPLEMENTED (verified live 2026-11-18). Registry at
+> `.cortex-runtime/ventures.json` (omni/govtech/cortex seeded); ventureId
+> stamped+validated on tasks/directives/messages/goals/ops/blocks;
+> `/api/cortex/ventures` serves live counts; Foundry VENTURES view + TASKS
+> scope chips + new-task venture selector shipped. Phase 3 (venture health
+> score) still pending real Phase-2 data accumulation. GOALS/CALENDAR scope
+> chips deferred — those surfaces don't carry ventureId yet.
 
 ## 1. DECISION: scope dimension on existing Foundry surfaces — not a new app, not PIPELINE
 
