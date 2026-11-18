@@ -8898,17 +8898,37 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
               let activeChain: AIProviderCandidate[] = aiProviders;
               const wantsMatrix = typeof parsed.tier === 'string' || typeof parsed.agentId === 'string';
 
-              // Conversational cortex chat: Groq LPU first (~1000 t/s gpt-oss-20b,
-              // ~500 t/s gpt-oss-120b — Artificial Analysis verified fastest in
-              // chain) for near-instant replies; the full quality chain stays
-              // as fallback. Agent/matrix routes keep their own ordering.
+              // Conversational cortex chat: route through the sentinel-fed
+              // model matrix 'fast' lane — it already skips down/cooled-down
+              // candidates and ranks healthy+low-latency first, so chat
+              // automatically picks whatever is actually fast right now
+              // (Groq when funded/healthy, fast NIM models otherwise) instead
+              // of hardcoding an order that goes stale. The full quality
+              // chain stays as fallback. Agent/matrix routes keep their own
+              // ordering.
               if (!wantsMatrix && parsed.context === 'cortex') {
-                const fastNames = ['groq-fast', 'groq-oss'];
-                const fast = aiProviders.filter((p) => fastNames.includes(p.name));
-                const rest = aiProviders.filter((p) => !fastNames.includes(p.name));
-                if (fast.length) {
-                  activeChain = [...fast, ...rest];
-                  console.info(`[dev-proxy] chat fast-path → ${activeChain.map(p => p.name).join(' -> ')}`);
+                const matrixFast = agentRuntime.matrix.ordered('fast')
+                  .map((c) => {
+                    const base = aiProviders.find((p) => p.name === c.provider);
+                    return base ? { ...base, model: c.model, name: `${base.name}#${c.model.split('/').pop()}` } : null;
+                  })
+                  .filter(Boolean) as AIProviderCandidate[];
+                if (matrixFast.length) {
+                  // Dedupe on provider|model — matrix names carry a #model
+                  // suffix, static names don't; strip it for the comparison.
+                  const baseName = (n: string) => n.split('#')[0];
+                  const seen = new Set(matrixFast.map((p) => `${baseName(p.name)}|${p.model}`));
+                  const rest = aiProviders.filter((p) => !seen.has(`${p.name}|${p.model}`));
+                  activeChain = [...matrixFast, ...rest];
+                  console.info(`[dev-proxy] chat fast-path (matrix) → ${activeChain.slice(0, 4).map(p => `${p.name}:${p.model}`).join(' -> ')} … +${rest.length} fallback`);
+                } else {
+                  const fastNames = ['groq-fast', 'groq-oss'];
+                  const fast = aiProviders.filter((p) => fastNames.includes(p.name));
+                  const rest = aiProviders.filter((p) => !fastNames.includes(p.name));
+                  if (fast.length) {
+                    activeChain = [...fast, ...rest];
+                    console.info(`[dev-proxy] chat fast-path (static) → ${activeChain.map(p => p.name).join(' -> ')}`);
+                  }
                 }
               }
 
@@ -9012,8 +9032,8 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
                               // cannot forward — cap reasoning so content arrives sooner.
                               // qwen3.x needs 'none': 'low' still streams a full
                               // reasoning field that can eat the whole token budget.
-                              ...(prov.name === 'groq-fast' || prov.name === 'groq-oss' ? { reasoning_effort: 'low' }
-                                : prov.name === 'groq-qwen' ? { reasoning_effort: 'none' } : {}),
+                              ...(['groq-fast', 'groq-oss'].includes(prov.name.split('#')[0]) ? { reasoning_effort: 'low' }
+                                : prov.name.split('#')[0] === 'groq-qwen' ? { reasoning_effort: 'none' } : {}),
                               ...(parsed.context === 'cortex' && !parsed.noTools ? { tools: CORTEX_TOOLS, tool_choice: 'auto' } : {}),
                             }),
                             signal: provAbort.signal,
