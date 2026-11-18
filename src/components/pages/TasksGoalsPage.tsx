@@ -278,6 +278,10 @@ export function ProjectsPage() {
   const [activeGoalCategoryFilter, setActiveGoalCategoryFilter] = useState<string>('all');
   const [activeGoalStatusFilter, setActiveGoalStatusFilter] = useState<string>('all');
   const [activeViewFilter, setActiveViewFilter] = useState<'all' | 'personal' | 'team' | 'assigned'>('all');
+  // Date scope: today's tasks by default; "All" reveals history.
+  const [taskDateScope, setTaskDateScope] = useState<'today' | 'all'>('today');
+  // Daypart filter by task creation time: morning/afternoon/evening/night.
+  const [daypartFilter, setDaypartFilter] = useState<'all' | 'morning' | 'afternoon' | 'evening' | 'night'>('all');
   const [showArchivedTasks, setShowArchivedTasks] = useState(false); // PHASE 5D: Archive toggle
   const [showArchivedGoals, setShowArchivedGoals] = useState(false); // PHASE 5D: Archive toggle
   
@@ -2068,10 +2072,38 @@ function TaskManagementSection({
   };
   
   // Filter tasks based on active priority, energy, tag, view, and archive status (PHASE 5D)
+  // Daypart buckets by creation time — morning 05-12, afternoon 12-17,
+  // evening 17-21, night 21-05. Tasks without a parseable createdAt land in
+  // 'morning' only when scoped to today? No — undated tasks stay visible in
+  // every daypart except they can't match a specific one; treat as 'all'.
+  const taskDaypart = (iso?: string): 'morning' | 'afternoon' | 'evening' | 'night' | null => {
+    if (!iso) return null;
+    const h = new Date(iso).getHours();
+    if (Number.isNaN(h)) return null;
+    if (h >= 5 && h < 12) return 'morning';
+    if (h >= 12 && h < 17) return 'afternoon';
+    if (h >= 17 && h < 21) return 'evening';
+    return 'night';
+  };
+  const isToday = (iso?: string): boolean => {
+    if (!iso) return false;
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return false;
+    const n = new Date();
+    return d.getFullYear() === n.getFullYear() && d.getMonth() === n.getMonth() && d.getDate() === n.getDate();
+  };
+  const todayTaskCount = tasks.filter((t: any) => isToday(t.createdAt)).length;
+  const previousTaskCount = tasks.length - todayTaskCount;
+
   const filteredTasks = tasks.filter(task => {
     const priorityMatch = activePriorityFilter === 'all' || task.priority === activePriorityFilter;
     const energyMatch = activeEnergyFilter === 'all' || task.energyLevel === activeEnergyFilter;
     const tagMatch = activeTagFilter === 'all' || (task.tags && task.tags.includes(activeTagFilter));
+    // Date scope — default shows only tasks created today; undated tasks
+    // count as today so legacy rows never silently vanish.
+    const dateMatch = taskDateScope === 'all' || isToday((task as any).createdAt) || !(task as any).createdAt;
+    const dp = taskDaypart((task as any).createdAt);
+    const daypartMatch = daypartFilter === 'all' || dp === daypartFilter || dp === null;
     
     // View filter: personal (no team), team (has team), or all
     let viewMatch = true;
@@ -2085,8 +2117,8 @@ function TaskManagementSection({
     
     // PHASE 5D: Archive filter
     const archiveMatch = showArchivedTasks || !task.archived;
-    
-    return priorityMatch && energyMatch && tagMatch && viewMatch && archiveMatch;
+
+    return priorityMatch && energyMatch && tagMatch && viewMatch && archiveMatch && dateMatch && daypartMatch;
   });
 
   const activeFilteredTasks = filteredTasks.filter((task) => !task.completed);
@@ -2231,6 +2263,44 @@ function TaskManagementSection({
           itemType="tasks"
         />
         
+        {/* Date scope + daypart filters — today by default, history one click away */}
+        <div className="flex flex-wrap items-center gap-2">
+          <Badge
+            variant="outline"
+            className={`cursor-pointer hover:bg-white/5 text-white transition-all ${
+              taskDateScope === 'today' ? 'bg-cyan-600/20 border-cyan-500/50' : ''
+            }`}
+            data-nav="tasks-today"
+            onClick={() => setTaskDateScope('today')}
+          >
+            Today <span className="ml-1">({todayTaskCount})</span>
+          </Badge>
+          <Badge
+            variant="outline"
+            className={`cursor-pointer hover:bg-white/5 text-white transition-all ${
+              taskDateScope === 'all' ? 'bg-cyan-600/20 border-cyan-500/50' : ''
+            }`}
+            data-nav="tasks-all"
+            onClick={() => setTaskDateScope('all')}
+          >
+            All / Previous <span className="ml-1">({previousTaskCount})</span>
+          </Badge>
+          <span className="mx-1 h-4 w-px bg-white/10" />
+          {(['all', 'morning', 'afternoon', 'evening', 'night'] as const).map((dp) => (
+            <Badge
+              key={dp}
+              variant="outline"
+              className={`cursor-pointer hover:bg-white/5 text-white/80 transition-all ${
+                daypartFilter === dp ? 'bg-violet-600/20 border-violet-500/50' : ''
+              }`}
+              data-nav={`daypart-${dp}`}
+              onClick={() => setDaypartFilter(dp)}
+            >
+              {dp === 'all' ? 'Any time' : dp[0].toUpperCase() + dp.slice(1)}
+            </Badge>
+          ))}
+        </div>
+
         {/* Priority Filter Tabs */}
         <div className="flex gap-2 overflow-x-auto pb-2">
           <Badge 
@@ -2550,6 +2620,17 @@ function TaskManagementSection({
                       formatDueDate={formatDueDate}
                       getDateStatus={getDateStatus}
                     />
+                    {/* Lifecycle timestamps — created always, completed when done */}
+                    {(task as any).createdAt && (
+                      <span
+                        className="text-xs text-gray-500"
+                        title={`Created ${new Date((task as any).createdAt).toLocaleString()}`}
+                      >
+                        · {(task as any).completedAt
+                          ? `done ${new Date((task as any).completedAt).toLocaleString()}`
+                          : `created ${new Date((task as any).createdAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })} ${new Date((task as any).createdAt).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}`}
+                      </span>
+                    )}
                     {/* Location Display */}
                     {task.location && (
                       <div className="flex items-center gap-1 px-2 py-1 bg-gray-800/50 rounded text-sm text-gray-300 border border-gray-700/50">

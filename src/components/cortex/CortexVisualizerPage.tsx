@@ -1288,6 +1288,20 @@ export default function CortexVisualizerPage() {
           <div>MODELS: {(agentCrew.models || []).filter(m => m.status === 'healthy').length}/{(agentCrew.models || []).length} VERIFIED</div>
           <div>LANES: {Object.entries(agentCrew.matrix || {}).map(([k, v]) => `${k.toUpperCase()} ${Array.isArray(v) ? v.length : 0}`).join(' · ')}</div>
           <div>UPTIME: {fmtElapsed(Math.max(0, Math.floor((Date.now() - agentCrew.runtime.startedAt) / 1000)))}</div>
+          {agentCrew.mission && (
+            <>
+              <div style={{ color: 'rgba(196,181,253,0.55)', letterSpacing: '0.28em', marginTop: 8, marginBottom: 2 }}>MISSION OPS</div>
+              <div>OPS: {agentCrew.mission.ops.done}/{agentCrew.mission.ops.total} DONE{agentCrew.mission.ops.stale ? ` · ${agentCrew.mission.ops.stale} STALE` : ''}</div>
+              {(agentCrew.mission.goals || []).slice(0, 3).map(g => (
+                <div key={g.id} title={g.title}>
+                  GOAL: {g.title.slice(0, 26).toUpperCase()}{g.orphaned ? ' ⚠' : ''} {Math.round(g.progress * 100)}%
+                </div>
+              ))}
+              {(agentCrew.mission.experiments || []).length > 0 && (
+                <div>A/B: {agentCrew.mission.experiments.length} RUNNING</div>
+              )}
+            </>
+          )}
         </div>
       )}
 

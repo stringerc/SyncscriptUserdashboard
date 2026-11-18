@@ -42,6 +42,13 @@ export interface AgentsSnapshotClient {
   matrix: Record<string, string[]>;
   proposals?: { id: string; status: string; spec: { callSign: string; role: string; mission: string; ttlHours: number; dailyBudget: number; tools: string[] }; proposedBy: string; createdAt: number }[];
   runtime?: { startedAt: number; eventCount: number };
+  /** Mission-loop summary (CORTEX_MISSION_LOOP_SPEC.md) — goals, ops, experiments. */
+  mission?: {
+    goals: { id: string; title: string; progress: number; orphaned: boolean }[];
+    ops: { total: number; done: number; stale: number; pending: number };
+    plannedBlocks: number;
+    experiments: { id: string; routineId: string; kind: string; variantMin: number }[];
+  } | null;
   offline?: boolean;
 }
 
@@ -69,7 +76,7 @@ class AgentsClientStore {
       const r = await fetch('/api/cortex/agents/state', { cache: 'no-store' });
       const j: any = await r.json();
       if (j?.ok) {
-        this.snapshot = { agents: j.agents || [], models: j.models || [], tasks: j.tasks || [], matrix: j.matrix || {}, runtime: j.runtime, offline: false };
+        this.snapshot = { agents: j.agents || [], models: j.models || [], tasks: j.tasks || [], matrix: j.matrix || {}, runtime: j.runtime, mission: j.mission ?? null, offline: false };
       } else {
         this.snapshot = { ...this.snapshot, offline: true };
       }
