@@ -1,7 +1,8 @@
 // Streamlined pin creation (post-onboarding). Args: img title desc link
 import { chromium } from 'playwright-core';
+import { cdpUrl } from './cdp-url.mjs';
 const [img, title, desc, link] = process.argv.slice(2);
-const browser = await chromium.connectOverCDP('http://localhost:9225');
+const browser = await chromium.connectOverCDP(cdpUrl());
 const page = browser.contexts()[0].pages().find(p => p.url().includes('pinterest.com')) || browser.contexts()[0].pages()[0];
 
 // dismiss any leftover dialog

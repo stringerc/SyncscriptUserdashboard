@@ -1,4 +1,5 @@
 import { chromium } from 'playwright-core';
+import { cdpUrl } from './cdp-url.mjs';
 import { readFileSync, writeFileSync, copyFileSync, existsSync, mkdirSync } from 'fs';
 import path from 'path';
 
@@ -24,14 +25,6 @@ if (!text) {
   process.exit(1);
 }
 
-function cdpUrl() {
-  if (process.env.CORTEX_CDP_URL) return process.env.CORTEX_CDP_URL;
-  try {
-    const f = path.resolve('.cdp-url');
-    if (existsSync(f)) return readFileSync(f, 'utf8').trim();
-  } catch { }
-  return 'http://localhost:9225';
-}
 
 const shotDir = path.resolve('browser');
 mkdirSync(shotDir, { recursive: true });

@@ -2,9 +2,13 @@
 // Usage: node cdp.mjs '<js expression>' [url-to-navigate-first]
 //        node cdp.mjs --list
 import { chromium } from 'playwright-core';
+import { cdpUrl } from './cdp-url.mjs';
+import fs from 'node:fs';
+import path from 'node:path';
+
 
 const args = process.argv.slice(2);
-const browser = await chromium.connectOverCDP('http://localhost:9225');
+const browser = await chromium.connectOverCDP(cdpUrl());
 const ctx = browser.contexts()[0];
 const pages = ctx.pages();
 

@@ -1,8 +1,9 @@
 import { chromium } from 'playwright-core';
+import { cdpUrl } from './cdp-url.mjs';
 import { readFileSync } from 'fs';
 const [link, file] = process.argv.slice(2);
 const text = readFileSync(file, 'utf8').trim();
-const browser = await chromium.connectOverCDP('http://localhost:9225');
+const browser = await chromium.connectOverCDP(cdpUrl());
 const page = browser.contexts()[0].pages().find(p => p.url().includes('reddit.com'));
 await page.goto('https://www.reddit.com' + link, {waitUntil:'domcontentloaded'});
 await page.waitForTimeout(4000);

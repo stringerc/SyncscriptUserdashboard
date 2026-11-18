@@ -1,11 +1,5 @@
 import { chromium } from 'playwright-core';
-import { readFileSync, existsSync } from 'fs';
-import path from 'path';
-function cdpUrl() {
-  if (process.env.CORTEX_CDP_URL) return process.env.CORTEX_CDP_URL;
-  try { const f = path.resolve('.cdp-url'); if (existsSync(f)) return readFileSync(f,'utf8').trim(); } catch {}
-  return 'http://localhost:9225';
-}
+import { cdpUrl } from './cdp-url.mjs';
 const subs = process.argv.slice(2);
 const browser = await chromium.connectOverCDP(cdpUrl());
 const ctx = browser.contexts()[0];
