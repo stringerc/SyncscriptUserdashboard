@@ -931,6 +931,7 @@ function apiProxyPlugin(): Plugin {
     url: string;
     model: string;
     key: string;
+    keys?: string[];
     backupKey?: string;
     protocol?: 'openai' | 'anthropic';
   }
@@ -958,58 +959,73 @@ function apiProxyPlugin(): Plugin {
         console.info('[api-proxy] KOKORO_TTS_URL unset — Cartesia Sonic will serve as primary neural TTS engine');
       }
 
-      const resolveEnvKey = (keyName: string): string => {
-        const aliases = keyName === 'NVIDIA_BACKUP_API_KEY' ? ['NVIDIA_BACKUP_API_KEY', 'NVIDIA_API_KEY_BACKUP', 'NVIDIA_NIM_BACKUP_KEY']
-          : keyName === 'NVIDIA_API_KEY' ? ['NVIDIA_API_KEY', 'NVIDIA_NIM_API_KEY']
+      const resolveEnvKeys = (keyName: string): string[] => {
+        const found = new Set<string>();
+        const aliases = keyName === 'NVIDIA_API_KEY'
+          ? ['NVIDIA_API_KEY', 'NVIDIA_API_KEYS', 'NVIDIA_NIM_API_KEY', 'NVIDIA_NIM_API_KEYS', 'NVIDIA_BACKUP_API_KEY', 'NVIDIA_API_KEY_BACKUP', 'NVIDIA_TERTIARY_API_KEY', 'NVIDIA_BACKUP_API_KEY_2']
           : [keyName];
+
+        const addCandidate = (val?: string) => {
+          if (!val) return;
+          for (const item of val.split(',')) {
+            const trimmed = item.trim().replace(/^["']|["']$/g, '');
+            if (trimmed) found.add(trimmed);
+          }
+        };
+
         for (const k of aliases) {
-          if (env[k]) return env[k];
-          if (process.env[k]) return process.env[k]!;
+          addCandidate(env[k]);
+          addCandidate(process.env[k]);
         }
-        for (const k of aliases) {
-          try {
-            const home = process.env.HOME || '/Users/Apple';
-            const openclawEnvPath = path.join(home, '.openclaw', '.env');
-            if (fs.existsSync(openclawEnvPath)) {
-              const content = fs.readFileSync(openclawEnvPath, 'utf8');
+
+        try {
+          const home = process.env.HOME || '/Users/Apple';
+          const openclawEnvPath = path.join(home, '.openclaw', '.env');
+          if (fs.existsSync(openclawEnvPath)) {
+            const content = fs.readFileSync(openclawEnvPath, 'utf8');
+            for (const k of aliases) {
               const match = content.match(new RegExp(`^${k}=["']?([^"'\\r\\n]+)["']?`, 'm'));
-              if (match && match[1]) return match[1].trim();
+              if (match && match[1]) addCandidate(match[1]);
             }
-          } catch { }
-          try {
-            const fccEnvPath = '/Users/Apple/src/free-claude-code/.env';
-            if (fs.existsSync(fccEnvPath)) {
-              const content = fs.readFileSync(fccEnvPath, 'utf8');
+          }
+        } catch { }
+
+        try {
+          const fccEnvPath = '/Users/Apple/src/free-claude-code/.env';
+          if (fs.existsSync(fccEnvPath)) {
+            const content = fs.readFileSync(fccEnvPath, 'utf8');
+            for (const k of aliases) {
               const match = content.match(new RegExp(`^${k}=["']?([^"'\\r\\n]+)["']?`, 'm'));
-              if (match && match[1]) return match[1].trim();
+              if (match && match[1]) addCandidate(match[1]);
             }
-          } catch { }
-        }
-        return '';
+          }
+        } catch { }
+
+        return Array.from(found);
       };
 
       aiProviders.length = 0;
       for (const p of DIRECT_AI_PROVIDERS) {
-        let key = resolveEnvKey(p.keyEnv);
-        let backupKey = p.backupKeyEnv ? resolveEnvKey(p.backupKeyEnv) : '';
-        if (key && key.includes(',')) {
-          const parts = key.split(',').map((s) => s.trim()).filter(Boolean);
-          key = parts[0];
-          if (!backupKey && parts[1]) backupKey = parts[1];
+        const keys = resolveEnvKeys(p.keyEnv);
+        if (p.backupKeyEnv) {
+          for (const bk of resolveEnvKeys(p.backupKeyEnv)) {
+            if (!keys.includes(bk)) keys.push(bk);
+          }
         }
-        if (key) {
+        if (keys.length > 0) {
           aiProviders.push({
             name: p.name,
             url: p.url,
             model: p.model,
-            key,
-            backupKey: (backupKey && backupKey !== key) ? backupKey : undefined,
+            key: keys[0],
+            keys,
+            backupKey: keys[1],
             protocol: p.protocol || 'openai',
           });
         }
       }
       if (aiProviders.length > 0) {
-        console.info(`[api-proxy] Direct AI multi-provider chain configured (${aiProviders.length} candidate(s)): ${aiProviders.map(p => `${p.name}:${p.model}${p.backupKey ? ' [backup-key-enabled]' : ''}`).join(' -> ')}`);
+        console.info(`[api-proxy] Direct AI multi-provider chain configured (${aiProviders.length} candidate(s)): ${aiProviders.map(p => `${p.name}:${p.model}${p.keys && p.keys.length > 1 ? ` [${p.keys.length}-keys-pooled]` : ''}`).join(' -> ')}`);
       } else {
         console.info('[api-proxy] No local AI key found (add GROQ_API_KEY or OPENROUTER_API_KEY to .env)');
       }
@@ -1165,19 +1181,28 @@ function apiProxyPlugin(): Plugin {
         catalogSources.push({
           provider: 'nvidia-nim',
           fetchIds: async () => {
-            let r = await fetch('https://integrate.api.nvidia.com/v1/models', {
-              headers: { Authorization: `Bearer ${nimProv.key}` },
-              signal: AbortSignal.timeout(10_000),
-            });
-            if (!r.ok && nimProv.backupKey && (r.status === 401 || r.status === 402 || r.status === 403 || r.status === 429)) {
-              r = await fetch('https://integrate.api.nvidia.com/v1/models', {
-                headers: { Authorization: `Bearer ${nimProv.backupKey}` },
-                signal: AbortSignal.timeout(10_000),
-              });
+            const keyPool = nimProv.keys && nimProv.keys.length > 0 ? nimProv.keys : (nimProv.backupKey ? [nimProv.key, nimProv.backupKey] : [nimProv.key]);
+            for (let keyIdx = 0; keyIdx < keyPool.length; keyIdx++) {
+              const currentKey = keyPool[keyIdx];
+              try {
+                const r = await fetch('https://integrate.api.nvidia.com/v1/models', {
+                  headers: { Authorization: `Bearer ${currentKey}` },
+                  signal: AbortSignal.timeout(10_000),
+                });
+                if (!r.ok) {
+                  if ((r.status === 401 || r.status === 402 || r.status === 403 || r.status === 429) && keyIdx < keyPool.length - 1) {
+                    continue;
+                  }
+                  throw new Error(`nim catalog ${r.status}`);
+                }
+                const j: any = await r.json();
+                return (j?.data || []).map((m: any) => String(m.id)).filter(Boolean);
+              } catch (e) {
+                if (keyIdx < keyPool.length - 1) continue;
+                throw e;
+              }
             }
-            if (!r.ok) throw new Error(`nim catalog ${r.status}`);
-            const j: any = await r.json();
-            return (j?.data || []).map((m: any) => String(m.id)).filter(Boolean);
+            return [];
           },
         });
       }
@@ -1464,30 +1489,19 @@ function apiProxyPlugin(): Plugin {
       const ambientLLMObserve = async () => {
         const provider = aiProviders.find((p) => (p.protocol || 'openai') === 'openai');
         if (!provider) return;
-        try {
-          let res = await fetch(provider.url, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${provider.key}` },
-            body: JSON.stringify({
-              model: provider.model,
-              temperature: 0.3,
-              // Reasoning models (e.g. nemotron ultra) spend tokens on
-              // reasoning_content before emitting content — needs headroom.
-              max_tokens: 1024,
-              messages: [
-                { role: 'system', content: 'You are Cortex\'s ambient monitor on an always-on server. Reply with JSON only: {"say":"<one brief spoken sentence, max 20 words>"} if the vitals contain something genuinely worth telling the user unprompted (a problem, risk, or milestone), otherwise {"say":null}. Never comment on states that are fine.' },
-                { role: 'user', content: JSON.stringify(ambientVitals()) },
-              ],
-            }),
-            signal: AbortSignal.timeout(30000),
-          });
-          if (!res.ok && provider.backupKey && (res.status === 401 || res.status === 402 || res.status === 403 || res.status === 429)) {
+        const keyPool = provider.keys && provider.keys.length > 0 ? provider.keys : (provider.backupKey ? [provider.key, provider.backupKey] : [provider.key]);
+        let res: any = null;
+        for (let keyIdx = 0; keyIdx < keyPool.length; keyIdx++) {
+          const currentKey = keyPool[keyIdx];
+          try {
             res = await fetch(provider.url, {
               method: 'POST',
-              headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${provider.backupKey}` },
+              headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${currentKey}` },
               body: JSON.stringify({
                 model: provider.model,
                 temperature: 0.3,
+                // Reasoning models (e.g. nemotron ultra) spend tokens on
+                // reasoning_content before emitting content — needs headroom.
                 max_tokens: 1024,
                 messages: [
                   { role: 'system', content: 'You are Cortex\'s ambient monitor on an always-on server. Reply with JSON only: {"say":"<one brief spoken sentence, max 20 words>"} if the vitals contain something genuinely worth telling the user unprompted (a problem, risk, or milestone), otherwise {"say":null}. Never comment on states that are fine.' },
@@ -1496,8 +1510,18 @@ function apiProxyPlugin(): Plugin {
               }),
               signal: AbortSignal.timeout(30000),
             });
+            if (res && res.ok) break;
+            if (res && !res.ok && (res.status === 401 || res.status === 402 || res.status === 403 || res.status === 429) && keyIdx < keyPool.length - 1) {
+              continue;
+            }
+            break;
+          } catch {
+            if (keyIdx < keyPool.length - 1) continue;
+            break;
           }
-          if (!res.ok) return;
+        }
+        if (!res || !res.ok) return;
+        try {
           // Quota watchdog: surface provider rate-limit exhaustion early.
           try {
             for (const [k, val] of res.headers) {
@@ -1728,37 +1752,35 @@ function apiProxyPlugin(): Plugin {
       const llmComplete = async (system: string, user: string, maxTokens = 1200): Promise<string | null> => {
         const provider = aiProviders.find((p) => (p.protocol || 'openai') === 'openai');
         if (!provider) return null;
-        try {
-          let res = await fetch(provider.url, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${provider.key}` },
-            body: JSON.stringify({
-              model: provider.model, temperature: 0.4, max_tokens: maxTokens,
-              messages: [{ role: 'system', content: system }, { role: 'user', content: user }],
-            }),
-            signal: AbortSignal.timeout(60000),
-          });
-          if (!res.ok && provider.backupKey && (res.status === 401 || res.status === 402 || res.status === 403 || res.status === 429)) {
-            res = await fetch(provider.url, {
+        const keyPool = provider.keys && provider.keys.length > 0 ? provider.keys : (provider.backupKey ? [provider.key, provider.backupKey] : [provider.key]);
+        for (let keyIdx = 0; keyIdx < keyPool.length; keyIdx++) {
+          const currentKey = keyPool[keyIdx];
+          try {
+            const res = await fetch(provider.url, {
               method: 'POST',
-              headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${provider.backupKey}` },
+              headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${currentKey}` },
               body: JSON.stringify({
                 model: provider.model, temperature: 0.4, max_tokens: maxTokens,
                 messages: [{ role: 'system', content: system }, { role: 'user', content: user }],
               }),
               signal: AbortSignal.timeout(60000),
             });
+            if (res && res.ok) {
+              const data: any = await res.json();
+              const msg = data?.choices?.[0]?.message || {};
+              const content = String(msg.content || '').trim();
+              return content || null;
+            }
+            if (res && !res.ok && (res.status === 401 || res.status === 402 || res.status === 403 || res.status === 429) && keyIdx < keyPool.length - 1) {
+              continue;
+            }
+            return null;
+          } catch {
+            if (keyIdx < keyPool.length - 1) continue;
+            return null;
           }
-          if (!res.ok) return null;
-          const data: any = await res.json();
-          const msg = data?.choices?.[0]?.message || {};
-          // Content only — reasoning_content is chain-of-thought and must
-          // never be spoken or written to the vault. If the model spent the
-          // whole budget reasoning, content is empty → skip rather than
-          // emit garbage.
-          const content = String(msg.content || '').trim();
-          return content || null;
-        } catch { return null; }
+        }
+        return null;
       };
 
       const runMemoryConsolidation = async (date: string) => {
@@ -2005,15 +2027,28 @@ function apiProxyPlugin(): Plugin {
           { name: 'voicestudio-tts', url: voiceStudioUrl ? `${voiceStudioUrl}/v1/models` : 'http://127.0.0.1:3900/v1/models' },
           { name: 'ollama-brain', url: 'http://127.0.0.1:11434/api/tags' },
           { name: 'free-claude-code', url: 'http://127.0.0.1:8082/health' },
+          // Pocket TTS (:8911) serves the `cortana` conversational voice.
+          // A bare health ping doesn't load synthesis weights — a tiny real
+          // POST does, so the first voice turn doesn't pay a multi-second
+          // cold start. 10-min cadence keeps it resident at negligible cost.
+          ...(cortanaPocketUrl ? [{
+            name: 'cortana-pocket-tts',
+            url: `${cortanaPocketUrl}/tts`,
+            method: 'POST' as const,
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: 'text=hi',
+          }] : []),
         ];
 
         for (const target of targets) {
           const t0 = performance.now();
           try {
-            recordConnectionAudit(target.url, '/api/cortex/daemon/keep-warm', 'GET');
+            recordConnectionAudit(target.url, '/api/cortex/daemon/keep-warm', (target as any).method || 'GET');
             const res = await fetch(target.url, {
-              method: 'GET',
-              signal: AbortSignal.timeout(2000),
+              method: (target as any).method || 'GET',
+              headers: (target as any).headers,
+              body: (target as any).body,
+              signal: AbortSignal.timeout((target as any).method === 'POST' ? 20000 : 2000),
             });
             const latencyMs = Math.round(performance.now() - t0);
             keepWarmRegistry.services[target.name] = {
@@ -8709,52 +8744,50 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
                       }
 
                       recordConnectionAudit(prov.url, '/api/ai/nexus-guest');
-                      candidateRes = await fetch(prov.url, {
-                        method: 'POST',
-                        headers,
-                        body: JSON.stringify({
-                          model: prov.model,
-                          messages: chatMessages,
-                          max_tokens: typeof parsed.maxTokens === 'number' ? Math.min(parsed.maxTokens, parsed.context === 'cortex' ? 8192 : 2048) : (parsed.context === 'cortex' ? 4096 : 1200),
-                          temperature: 0.2,
-                          stream: true,
-                          // gpt-oss models burn tokens on reasoning deltas the proxy
-                          // cannot forward — cap reasoning so content arrives sooner.
-                          // qwen3.x needs 'none': 'low' still streams a full
-                          // reasoning field that can eat the whole token budget.
-                          ...(prov.name === 'groq-fast' || prov.name === 'groq-oss' ? { reasoning_effort: 'low' }
-                            : prov.name === 'groq-qwen' ? { reasoning_effort: 'none' } : {}),
-                          ...(parsed.context === 'cortex' && !parsed.noTools ? { tools: CORTEX_TOOLS, tool_choice: 'auto' } : {}),
-                        }),
-                        signal: provAbort.signal,
-                      });
-
-                      // Automatic failover to backup key on 401, 402, 403, 429
-                      if (candidateRes && !candidateRes.ok && prov.backupKey && (candidateRes.status === 401 || candidateRes.status === 402 || candidateRes.status === 403 || candidateRes.status === 429)) {
-                        console.warn(`[dev-proxy] Provider ${prov.name} (${prov.model}) failed HTTP ${candidateRes.status} on primary key — attempting failover to backup key...`);
-                        const backupHeaders = { ...headers, Authorization: `Bearer ${prov.backupKey}` };
+                      const keyPool = prov.keys && prov.keys.length > 0 ? prov.keys : (prov.backupKey ? [prov.key, prov.backupKey] : [prov.key]);
+                      for (let keyIdx = 0; keyIdx < keyPool.length; keyIdx++) {
+                        const currentKey = keyPool[keyIdx];
+                        const keyHeaders = { ...headers, Authorization: `Bearer ${currentKey}` };
+                        if (keyIdx > 0) {
+                          console.warn(`[dev-proxy] Provider ${prov.name} (${prov.model}) failing over to backup key ${keyIdx + 1}/${keyPool.length}...`);
+                        }
                         try {
-                          const backupRes = await fetch(prov.url, {
+                          candidateRes = await fetch(prov.url, {
                             method: 'POST',
-                            headers: backupHeaders,
+                            headers: keyHeaders,
                             body: JSON.stringify({
                               model: prov.model,
                               messages: chatMessages,
                               max_tokens: typeof parsed.maxTokens === 'number' ? Math.min(parsed.maxTokens, parsed.context === 'cortex' ? 8192 : 2048) : (parsed.context === 'cortex' ? 4096 : 1200),
                               temperature: 0.2,
                               stream: true,
+                              // gpt-oss models burn tokens on reasoning deltas the proxy
+                              // cannot forward — cap reasoning so content arrives sooner.
+                              // qwen3.x needs 'none': 'low' still streams a full
+                              // reasoning field that can eat the whole token budget.
                               ...(prov.name === 'groq-fast' || prov.name === 'groq-oss' ? { reasoning_effort: 'low' }
                                 : prov.name === 'groq-qwen' ? { reasoning_effort: 'none' } : {}),
                               ...(parsed.context === 'cortex' && !parsed.noTools ? { tools: CORTEX_TOOLS, tool_choice: 'auto' } : {}),
                             }),
                             signal: provAbort.signal,
                           });
-                          if (backupRes && backupRes.ok && backupRes.body) {
-                            candidateRes = backupRes;
-                            console.info(`[dev-proxy] Provider ${prov.name} successfully recovered using backup key (HTTP 200)`);
+                          if (candidateRes && candidateRes.ok && candidateRes.body) {
+                            if (keyIdx > 0) {
+                              console.info(`[dev-proxy] Provider ${prov.name} successfully recovered using backup key ${keyIdx + 1}/${keyPool.length} (HTTP 200)`);
+                            }
+                            break;
                           }
-                        } catch (backupErr: any) {
-                          console.warn(`[dev-proxy] Provider ${prov.name} backup key attempt failed: ${backupErr?.message || backupErr}`);
+                          // If rate limit / quota / auth error and more keys exist in pool, try next key!
+                          if (candidateRes && !candidateRes.ok && (candidateRes.status === 401 || candidateRes.status === 402 || candidateRes.status === 403 || candidateRes.status === 429) && keyIdx < keyPool.length - 1) {
+                            continue;
+                          }
+                          break;
+                        } catch (keyErr: any) {
+                          if (keyIdx < keyPool.length - 1) {
+                            console.warn(`[dev-proxy] Provider ${prov.name} key ${keyIdx + 1} attempt error: ${keyErr?.message || keyErr}. Retrying with next key...`);
+                            continue;
+                          }
+                          throw keyErr;
                         }
                       }
                     }
