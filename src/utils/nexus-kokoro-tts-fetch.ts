@@ -6,9 +6,35 @@ import { disableTtsProxyForSession, isTtsProxyDisabled } from './tts-proxy-sessi
 import type { NexusProsodySegment } from './nexus-tts-prosody';
 import { nexusKokoroVoiceCandidates } from './nexus-tts-prosody';
 
-const TTS_REQUEST_TIMEOUT_MS = 18_000;
-const TTS_MAX_RETRIES = 2;
+const TTS_REQUEST_TIMEOUT_MS = 24_000;
+const TTS_MAX_RETRIES = 1;
 const TTS_RETRY_BACKOFF_MS = 450;
+
+// Sticky served-voice: the proxy tags each response with X-TTS-Voice (the
+// voice id that ACTUALLY produced the audio — e.g. 'af_sky' when Pocket
+// clone timed out and Kokoro served the 'cortana' request). Pinning that id
+// for ~90s keeps a multi-sentence reply on ONE voice and routes follow-up
+// sentences straight to the working engine instead of re-rolling the whole
+// candidate chain per sentence (the mid-reply voice-switch bug).
+const STICKY_VOICE_MS = 90_000;
+let stickyTtsVoice: string | null = null;
+let stickyTtsVoiceUntil = 0;
+
+function pinServedVoice(voiceId: string | null | undefined) {
+  if (voiceId && /^[a-z]{2}_[a-z]+$|^cortana/.test(voiceId)) {
+    stickyTtsVoice = voiceId;
+    stickyTtsVoiceUntil = Date.now() + STICKY_VOICE_MS;
+  } else {
+    stickyTtsVoice = null;
+    stickyTtsVoiceUntil = 0;
+  }
+}
+
+function orderedVoiceCandidates(primary: string): string[] {
+  const base = nexusKokoroVoiceCandidates(primary);
+  if (!stickyTtsVoice || Date.now() >= stickyTtsVoiceUntil) return base;
+  return [stickyTtsVoice, ...base.filter((v) => v !== stickyTtsVoice)];
+}
 
 function isTransientTTSStatus(status: number): boolean {
   return status === 408 || status === 425 || status === 429 || status === 500 || status === 502 || status === 503 || status === 504;
@@ -96,7 +122,12 @@ async function fetchDirectKokoroBuffer(
       });
       if (!res.ok) continue;
       const buffer = await res.arrayBuffer();
-      if (buffer.byteLength > 0) return buffer;
+      if (buffer.byteLength > 0) {
+        // Direct path bypasses the proxy — pin the voice id actually sent
+        // (cortana maps to af_sky here) so the next segment stays consistent.
+        pinServedVoice(voice === 'cortana' ? 'af_sky' : voice);
+        return buffer;
+      }
     } catch {
       /* try next base */
     } finally {
@@ -115,7 +146,7 @@ export async function fetchKokoroBufferForNexusSegment(
   signal?: AbortSignal,
 ): Promise<ArrayBuffer | null> {
   await ensureKokoroOriginsLoaded();
-  const voices = nexusKokoroVoiceCandidates(seg.voice);
+  const voices = orderedVoiceCandidates(seg.voice);
 
   for (const voice of voices) {
     const canTryProxy = !isTtsProxyDisabled();
@@ -135,8 +166,12 @@ export async function fetchKokoroBufferForNexusSegment(
             signal: timeoutController.signal,
           });
           if (response.ok) {
+            const servedVoice = response.headers.get('x-tts-voice');
             const buffer = await response.arrayBuffer();
-            if (buffer.byteLength > 0) return buffer;
+            if (buffer.byteLength > 0) {
+              pinServedVoice(servedVoice);
+              return buffer;
+            }
             break;
           }
           const errData = (await response.json().catch(() => ({}))) as { code?: string };

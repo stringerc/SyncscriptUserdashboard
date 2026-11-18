@@ -8433,6 +8433,8 @@ function triggerQuickAction() {
                     'Content-Type': vsRes.headers.get('content-type') || 'audio/wav',
                     'Content-Length': buf.byteLength.toString(),
                     'Cache-Control': 'no-store',
+                    'X-TTS-Engine': 'voicestudio',
+                    'X-TTS-Voice': voice || 'jarvis',
                   });
                   return res.end(buf);
                 }
@@ -8470,6 +8472,8 @@ function triggerQuickAction() {
                   'Content-Length': cpCached.byteLength.toString(),
                   'Cache-Control': 'no-store',
                   'X-TTS-Cache': 'hit',
+                  'X-TTS-Engine': 'pocket-clone',
+                  'X-TTS-Voice': voice || 'cortana',
                 });
                 return res.end(cpCached);
               }
@@ -8477,11 +8481,11 @@ function triggerQuickAction() {
                 recordConnectionAudit(`${cortanaPocketTarget}/tts`, '/api/cortex/tts');
                 const cfd = new FormData();
                 cfd.append('text', String(text || '').slice(0, 2000));
-                // Length-scaled fail-fast: Pocket clone baseline is ~8s even
-                // for short phrases — a 6s floor guaranteed timeouts and
-                // browser-speech fallback (the "voice off / too fast" bug).
-                // Floor at 14s, scale gently with length, cap at 45s.
-                const cpTimeout = Math.min(45000, 14000 + String(text || '').length * 8);
+                // Length-scaled timeout: Pocket clone is ~2s int8 unloaded but
+                // ~15s+ when the host is CPU-saturated (load>20 observed). A
+                // floor below real degraded latency guarantees abort→fallback
+                // voice-salad. Floor 18s, scale with length, cap 55s.
+                const cpTimeout = Math.min(55000, 18000 + String(text || '').length * 10);
                 const cpRes = await fetch(`${cortanaPocketTarget}/tts`, {
                   method: 'POST', body: cfd, signal: AbortSignal.timeout(cpTimeout),
                 });
@@ -8494,6 +8498,8 @@ function triggerQuickAction() {
                       'Content-Length': buf.byteLength.toString(),
                       'Cache-Control': 'no-store',
                       'X-TTS-Cache': 'miss',
+                      'X-TTS-Engine': 'pocket-clone',
+                      'X-TTS-Voice': voice || 'cortana',
                     });
                     return res.end(buf);
                   }
@@ -8523,6 +8529,8 @@ function triggerQuickAction() {
                     'Content-Type': ctRes.headers.get('content-type') || 'audio/wav',
                     'Content-Length': buf.byteLength.toString(),
                     'Cache-Control': 'no-store',
+                    'X-TTS-Engine': 'cortana-render',
+                    'X-TTS-Voice': voice || 'cortana_h2',
                   });
                   return res.end(buf);
                 }
@@ -8558,6 +8566,8 @@ function triggerQuickAction() {
                     'Content-Length': kokoroCached.byteLength.toString(),
                     'Cache-Control': 'no-store',
                     'X-TTS-Cache': 'hit',
+                    'X-TTS-Engine': 'kokoro',
+                    'X-TTS-Voice': resolvedVoice,
                   });
                   return res.end(kokoroCached);
                 }
@@ -8585,6 +8595,8 @@ function triggerQuickAction() {
                     'Content-Length': buf.byteLength.toString(),
                     'Cache-Control': 'no-store',
                     'X-TTS-Cache': 'miss',
+                    'X-TTS-Engine': 'kokoro',
+                    'X-TTS-Voice': resolvedVoice,
                   });
                   return res.end(buf);
                 }
@@ -8606,6 +8618,8 @@ function triggerQuickAction() {
                     'Content-Length': pfCached.byteLength.toString(),
                     'Cache-Control': 'no-store',
                     'X-TTS-Cache': 'hit',
+                    'X-TTS-Engine': 'pocket',
+                    'X-TTS-Voice': pocketTtsVoice,
                   });
                   return res.end(pfCached);
                 }
@@ -8625,6 +8639,8 @@ function triggerQuickAction() {
                       'Content-Length': buf.byteLength.toString(),
                       'Cache-Control': 'no-store',
                       'X-TTS-Cache': 'miss',
+                      'X-TTS-Engine': 'pocket',
+                      'X-TTS-Voice': pocketTtsVoice,
                     });
                     return res.end(buf);
                   }
@@ -8645,6 +8661,8 @@ function triggerQuickAction() {
                     'Content-Length': vsCached.byteLength.toString(),
                     'Cache-Control': 'no-store',
                     'X-TTS-Cache': 'hit',
+                    'X-TTS-Engine': 'voicestudio',
+                    'X-TTS-Voice': 'jarvis',
                   });
                   return res.end(vsCached);
                 }
@@ -8668,6 +8686,8 @@ function triggerQuickAction() {
                     'Content-Length': buf.byteLength.toString(),
                     'Cache-Control': 'no-store',
                     'X-TTS-Cache': 'miss',
+                    'X-TTS-Engine': 'voicestudio',
+                    'X-TTS-Voice': 'jarvis',
                   });
                   return res.end(buf);
                 }
