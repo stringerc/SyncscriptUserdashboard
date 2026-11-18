@@ -113,6 +113,7 @@ scripts/*
 !scripts/verify-nexus-tools-live.ts
 !scripts/guard-app-ai-react-imports.mjs
 !scripts/skill-source-audit.sh
+!scripts/cortex-proposals.mjs
 # Proxy ownership fix (2026-08-04): tracked because losing these recreates the
 # IDE ConnectionRefused outage.
 !scripts/start-free-claude-code-proxy.sh

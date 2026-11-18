@@ -144,6 +144,57 @@ test('dismiss button by non-owner is rejected', async () => {
   assert.match(res.data!.content!, /Not authorized/);
 });
 
+test('sx strategy proposal approve button resolves and retires buttons', async () => {
+  let decidedId = '';
+  let decisionMade = '';
+  const deps = makeDeps({
+    decideStrategyProposal: async (id: string, decision: 'approved' | 'dismissed') => {
+      decidedId = id;
+      decisionMade = decision;
+      return { ok: true, note: 'dispatched to builder (task-99)' };
+    },
+  });
+  const res = await handleDiscordInteraction(
+    {
+      type: 3, user: { id: 'owner-1' }, channel_id: 'c1',
+      data: { custom_id: 'sxok:strat-standup-2026-11-18-0' },
+      message: { id: 'm1', embeds: [] },
+    },
+    deps,
+  );
+  assert.equal(res.type, 7);
+  assert.equal(decidedId, 'strat-standup-2026-11-18-0');
+  assert.equal(decisionMade, 'approved');
+  assert.match(res.data!.content!, /Approved/);
+  assert.match(res.data!.content!, /dispatched to builder/);
+  assert.deepEqual(res.data!.components, []);
+});
+
+test('counsel poll button records verdict and retires buttons', async () => {
+  let pollSession = '';
+  let pollDecision = '';
+  const deps = makeDeps({
+    decideCounsel: async (sessionId: string, decision: 'go' | 'no-go', userId: string) => {
+      pollSession = sessionId;
+      pollDecision = decision;
+      return { ok: true, note: 'recorded' };
+    },
+  });
+  const res = await handleDiscordInteraction(
+    {
+      type: 3, user: { id: 'owner-1' }, channel_id: 'c1',
+      data: { custom_id: 'counsel:go:sess-abc' },
+      message: { id: 'm1', embeds: [] },
+    },
+    deps,
+  );
+  assert.equal(res.type, 7);
+  assert.equal(pollSession, 'sess-abc');
+  assert.equal(pollDecision, 'go');
+  assert.match(res.data!.content!, /GO/);
+  assert.deepEqual(res.data!.components, []);
+});
+
 test('/cortex ask routes to agent and submits task', async () => {
   let submitted: any = null;
   const res = await handleDiscordInteraction(
