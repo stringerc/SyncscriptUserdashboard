@@ -427,6 +427,17 @@ export const SimpleMultiDayCalendar = forwardRef<SimpleMultiDayCalendarRef, Simp
         >
           <ChevronDown className="w-4 h-4" />
         </Button>
+
+        {onCreateEvent && (
+          <Button
+            size="sm"
+            onClick={() => onCreateEvent(activeDate)}
+            title="Add event on this date"
+            className="w-9 h-9 p-0 rounded-full bg-emerald-600 hover:bg-emerald-500 text-white shadow-lg shadow-emerald-500/30 border border-emerald-400/80 transition-all flex items-center justify-center mt-1"
+          >
+            <Plus className="w-4 h-4" />
+          </Button>
+        )}
       </div>
 
       {/* The Instagram Feed Container: snap-y snap-mandatory bounded to 100% height */}

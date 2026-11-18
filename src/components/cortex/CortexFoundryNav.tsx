@@ -108,6 +108,64 @@ export function CortexFoundryNav({ snap, onSelectAgent, selectedAgent, onOpenTow
   const goals = getCortexGoals();
   const goalsUnsub = useRef<(() => void) | null>(null);
 
+  // Task & Goal Creation states
+  const [showNewTask, setShowNewTask] = useState(false);
+  const [newTaskTitle, setNewTaskTitle] = useState('');
+  const [newTaskPriority, setNewTaskPriority] = useState<'low' | 'medium' | 'high' | 'critical'>('medium');
+  const [newTaskTarget, setNewTaskTarget] = useState<'user' | 'agent'>('user');
+
+  const [showNewGoal, setShowNewGoal] = useState(false);
+  const [newGoalTitle, setNewGoalTitle] = useState('');
+  const [newGoalHorizon, setNewGoalHorizon] = useState<'week' | 'month' | 'quarter' | 'year' | 'life'>('quarter');
+
+  const handleCreateTask = () => {
+    const title = newTaskTitle.trim();
+    if (!title) return;
+    const now = new Date();
+    const created = {
+      id: `ut-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      title,
+      status: 'queued',
+      completed: false,
+      priority: newTaskPriority,
+      dueDate: now.toISOString(),
+      createdAt: now.toISOString(),
+    };
+
+    setUserTasks((prev) => [created, ...(prev || [])]);
+
+    try {
+      const raw = localStorage.getItem('syncscript_tasks');
+      const list = raw ? JSON.parse(raw) : [];
+      list.unshift(created);
+      localStorage.setItem('syncscript_tasks', JSON.stringify(list));
+    } catch {}
+
+    try {
+      const all = [created, ...(userTasks || [])];
+      fetch('/api/cortex/tasks/snapshot', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ tasks: all }),
+      }).catch(() => {});
+    } catch {}
+
+    setNewTaskTitle('');
+    setShowNewTask(false);
+  };
+
+  const handleCreateGoal = () => {
+    const title = newGoalTitle.trim();
+    if (!title) return;
+    goals.declare({
+      title,
+      horizon: newGoalHorizon,
+    });
+    setNewGoalTitle('');
+    setShowNewGoal(false);
+    setGoalsTick((t) => t + 1);
+  };
+
   useEffect(() => () => goalsUnsub.current?.(), []);
 
   // Lazy-fetch section data when its view opens.
@@ -476,6 +534,27 @@ export function CortexFoundryNav({ snap, onSelectAgent, selectedAgent, onOpenTow
       {view === 'tasks' && (
         <Panel title="TASK LEDGER" right={
           <span style={{ display: 'flex', gap: 4, alignItems: 'center', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+            <button
+              onClick={() => setShowNewTask((prev) => !prev)}
+              style={{
+                background: showNewTask ? 'rgba(52,211,153,0.3)' : 'rgba(52,211,153,0.15)',
+                border: '1px solid #34d399',
+                color: '#6ee7b7',
+                fontFamily: MONO,
+                fontSize: 8.5,
+                fontWeight: 800,
+                padding: '2px 8px',
+                borderRadius: 2,
+                cursor: 'pointer',
+                letterSpacing: '0.08em',
+                display: 'flex',
+                alignItems: 'center',
+                gap: 3,
+              }}
+            >
+              <span>+</span> NEW TASK
+            </button>
+            <span style={{ width: 4 }} />
             <button onClick={() => setTaskSource('all')} style={{ background: taskSource === 'all' ? 'rgba(52,211,153,0.14)' : 'none', border: `1px solid ${taskSource === 'all' ? 'rgba(52,211,153,0.5)' : 'rgba(103,232,249,0.16)'}`, color: taskSource === 'all' ? '#6ee7b7' : DIM, fontFamily: MONO, fontSize: 8.5, padding: '1px 6px', borderRadius: 2, cursor: 'pointer', letterSpacing: '0.1em' }}>ALL</button>
             <button onClick={() => setTaskSource('agents')} style={{ background: taskSource === 'agents' ? 'rgba(56,189,248,0.16)' : 'none', border: `1px solid ${taskSource === 'agents' ? 'rgba(56,189,248,0.55)' : 'rgba(103,232,249,0.16)'}`, color: taskSource === 'agents' ? '#7dd3fc' : DIM, fontFamily: MONO, fontSize: 8.5, padding: '1px 6px', borderRadius: 2, cursor: 'pointer', letterSpacing: '0.1em' }}>AGENTS</button>
             <button onClick={() => setTaskSource('user')} style={{ background: taskSource === 'user' ? 'rgba(251,191,36,0.14)' : 'none', border: `1px solid ${taskSource === 'user' ? 'rgba(251,191,36,0.5)' : 'rgba(103,232,249,0.16)'}`, color: taskSource === 'user' ? '#fcd34d' : DIM, fontFamily: MONO, fontSize: 8.5, padding: '1px 6px', borderRadius: 2, cursor: 'pointer', letterSpacing: '0.1em' }}>USER</button>
@@ -484,6 +563,145 @@ export function CortexFoundryNav({ snap, onSelectAgent, selectedAgent, onOpenTow
             <button onClick={() => setTasksScope('all')} style={{ background: tasksScope === 'all' ? 'rgba(56,189,248,0.16)' : 'none', border: `1px solid ${tasksScope === 'all' ? 'rgba(56,189,248,0.55)' : 'rgba(103,232,249,0.16)'}`, color: tasksScope === 'all' ? '#7dd3fc' : DIM, fontFamily: MONO, fontSize: 9, padding: '1px 7px', borderRadius: 2, cursor: 'pointer', letterSpacing: '0.12em' }}>ALL {allTasks.length + userList.length}</button>
           </span>
         }>
+          {/* Inline HUD Task Creation Drawer */}
+          {showNewTask && (
+            <div style={{
+              background: 'rgba(15,23,42,0.92)',
+              border: '1px solid rgba(52,211,153,0.45)',
+              borderLeft: '3px solid #34d399',
+              borderRadius: 3,
+              padding: '10px 12px',
+              marginBottom: 10,
+              display: 'flex',
+              flexDirection: 'column',
+              gap: 8,
+              boxShadow: '0 4px 20px rgba(0,0,0,0.5)',
+            }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <span style={{ fontSize: 9, fontWeight: 800, color: '#34d399', letterSpacing: '0.14em' }}>
+                  + CREATE NEW TASK
+                </span>
+                <button
+                  onClick={() => setShowNewTask(false)}
+                  style={{ background: 'none', border: 'none', color: DIM, cursor: 'pointer', fontSize: 11 }}
+                >
+                  ✕
+                </button>
+              </div>
+
+              <input
+                type="text"
+                placeholder="Task description / operational goal…"
+                value={newTaskTitle}
+                onChange={(e) => setNewTaskTitle(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter') handleCreateTask(); }}
+                style={{
+                  background: 'rgba(8,14,24,0.8)',
+                  border: '1px solid rgba(103,232,249,0.25)',
+                  color: INK,
+                  fontFamily: MONO,
+                  fontSize: 10,
+                  padding: '5px 8px',
+                  borderRadius: 2,
+                  outline: 'none',
+                }}
+                autoFocus
+              />
+
+              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
+                <span style={{ fontSize: 8, color: DIM }}>PRIORITY:</span>
+                {(['low', 'medium', 'high', 'critical'] as const).map((p) => (
+                  <button
+                    key={p}
+                    type="button"
+                    onClick={() => setNewTaskPriority(p)}
+                    style={{
+                      background: newTaskPriority === p ? 'rgba(52,211,153,0.25)' : 'rgba(8,14,24,0.6)',
+                      border: `1px solid ${newTaskPriority === p ? '#34d399' : 'rgba(103,232,249,0.18)'}`,
+                      color: newTaskPriority === p ? '#6ee7b7' : DIM,
+                      fontFamily: MONO,
+                      fontSize: 8,
+                      padding: '2px 6px',
+                      borderRadius: 2,
+                      cursor: 'pointer',
+                    }}
+                  >
+                    {p.toUpperCase()}
+                  </button>
+                ))}
+
+                <span style={{ fontSize: 8, color: DIM, marginLeft: 4 }}>TARGET:</span>
+                <button
+                  type="button"
+                  onClick={() => setNewTaskTarget('user')}
+                  style={{
+                    background: newTaskTarget === 'user' ? 'rgba(251,191,36,0.25)' : 'rgba(8,14,24,0.6)',
+                    border: `1px solid ${newTaskTarget === 'user' ? '#fcd34d' : 'rgba(103,232,249,0.18)'}`,
+                    color: newTaskTarget === 'user' ? '#fcd34d' : DIM,
+                    fontFamily: MONO,
+                    fontSize: 8,
+                    padding: '2px 6px',
+                    borderRadius: 2,
+                    cursor: 'pointer',
+                  }}
+                >
+                  USER
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setNewTaskTarget('agent')}
+                  style={{
+                    background: newTaskTarget === 'agent' ? 'rgba(56,189,248,0.25)' : 'rgba(8,14,24,0.6)',
+                    border: `1px solid ${newTaskTarget === 'agent' ? '#38bdf8' : 'rgba(103,232,249,0.18)'}`,
+                    color: newTaskTarget === 'agent' ? '#7dd3fc' : DIM,
+                    fontFamily: MONO,
+                    fontSize: 8,
+                    padding: '2px 6px',
+                    borderRadius: 2,
+                    cursor: 'pointer',
+                  }}
+                >
+                  AGENT
+                </button>
+              </div>
+
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 6, marginTop: 2 }}>
+                <button
+                  onClick={() => setShowNewTask(false)}
+                  style={{
+                    background: 'none',
+                    border: '1px solid rgba(148,163,184,0.25)',
+                    color: DIM,
+                    fontFamily: MONO,
+                    fontSize: 8.5,
+                    padding: '3px 8px',
+                    borderRadius: 2,
+                    cursor: 'pointer',
+                  }}
+                >
+                  CANCEL
+                </button>
+                <button
+                  onClick={handleCreateTask}
+                  disabled={!newTaskTitle.trim()}
+                  style={{
+                    background: '#059669',
+                    border: '1px solid #34d399',
+                    color: '#ffffff',
+                    fontFamily: MONO,
+                    fontSize: 8.5,
+                    fontWeight: 700,
+                    padding: '3px 10px',
+                    borderRadius: 2,
+                    cursor: newTaskTitle.trim() ? 'pointer' : 'not-allowed',
+                    boxShadow: '0 0 10px rgba(16,185,129,0.3)',
+                  }}
+                >
+                  CONFIRM & DISPATCH
+                </button>
+              </div>
+            </div>
+          )}
           {/* UP NEXT — today's plan: mission blocks + pending user tasks */}
           {(upcomingBlocks.length > 0 || userPendingToday.length > 0) && taskSource !== 'agents' && (
             <div style={{ marginBottom: 8 }}>
@@ -568,7 +786,140 @@ export function CortexFoundryNav({ snap, onSelectAgent, selectedAgent, onOpenTow
       )}
 
       {view === 'goals' && (
-        <Panel title="LIFE GOALS" right={<span style={{ fontSize: 9.5, color: DIM }}>{goalList.length} DECLARED</span>}>
+        <Panel
+          title="LIFE GOALS"
+          right={
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              <button
+                onClick={() => setShowNewGoal((prev) => !prev)}
+                style={{
+                  background: showNewGoal ? 'rgba(56,189,248,0.25)' : 'rgba(56,189,248,0.12)',
+                  border: '1px solid #38bdf8',
+                  color: '#7dd3fc',
+                  fontFamily: MONO,
+                  fontSize: 8.5,
+                  fontWeight: 800,
+                  padding: '2px 8px',
+                  borderRadius: 2,
+                  cursor: 'pointer',
+                  letterSpacing: '0.08em',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 3,
+                }}
+              >
+                <span>+</span> NEW GOAL
+              </button>
+              <span style={{ fontSize: 9.5, color: DIM }}>{goalList.length} DECLARED</span>
+            </div>
+          }
+        >
+          {/* Inline HUD Goal Creation Drawer */}
+          {showNewGoal && (
+            <div style={{
+              background: 'rgba(15,23,42,0.92)',
+              border: '1px solid rgba(56,189,248,0.45)',
+              borderLeft: '3px solid #38bdf8',
+              borderRadius: 3,
+              padding: '10px 12px',
+              marginBottom: 10,
+              display: 'flex',
+              flexDirection: 'column',
+              gap: 8,
+              boxShadow: '0 4px 20px rgba(0,0,0,0.5)',
+            }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <span style={{ fontSize: 9, fontWeight: 800, color: '#38bdf8', letterSpacing: '0.14em' }}>
+                  + DECLARE LIFE GOAL
+                </span>
+                <button
+                  onClick={() => setShowNewGoal(false)}
+                  style={{ background: 'none', border: 'none', color: DIM, cursor: 'pointer', fontSize: 11 }}
+                >
+                  ✕
+                </button>
+              </div>
+
+              <input
+                type="text"
+                placeholder="Goal objective (e.g. Master neural rendering, Run half-marathon)…"
+                value={newGoalTitle}
+                onChange={(e) => setNewGoalTitle(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter') handleCreateGoal(); }}
+                style={{
+                  background: 'rgba(8,14,24,0.8)',
+                  border: '1px solid rgba(103,232,249,0.25)',
+                  color: INK,
+                  fontFamily: MONO,
+                  fontSize: 10,
+                  padding: '5px 8px',
+                  borderRadius: 2,
+                  outline: 'none',
+                }}
+                autoFocus
+              />
+
+              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
+                <span style={{ fontSize: 8, color: DIM }}>HORIZON:</span>
+                {(['week', 'month', 'quarter', 'year', 'life'] as const).map((h) => (
+                  <button
+                    key={h}
+                    type="button"
+                    onClick={() => setNewGoalHorizon(h)}
+                    style={{
+                      background: newGoalHorizon === h ? 'rgba(56,189,248,0.25)' : 'rgba(8,14,24,0.6)',
+                      border: `1px solid ${newGoalHorizon === h ? '#38bdf8' : 'rgba(103,232,249,0.18)'}`,
+                      color: newGoalHorizon === h ? '#7dd3fc' : DIM,
+                      fontFamily: MONO,
+                      fontSize: 8,
+                      padding: '2px 6px',
+                      borderRadius: 2,
+                      cursor: 'pointer',
+                    }}
+                  >
+                    {h.toUpperCase()}
+                  </button>
+                ))}
+              </div>
+
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 6, marginTop: 2 }}>
+                <button
+                  onClick={() => setShowNewGoal(false)}
+                  style={{
+                    background: 'none',
+                    border: '1px solid rgba(148,163,184,0.25)',
+                    color: DIM,
+                    fontFamily: MONO,
+                    fontSize: 8.5,
+                    padding: '3px 8px',
+                    borderRadius: 2,
+                    cursor: 'pointer',
+                  }}
+                >
+                  CANCEL
+                </button>
+                <button
+                  onClick={handleCreateGoal}
+                  disabled={!newGoalTitle.trim()}
+                  style={{
+                    background: 'rgba(56,189,248,0.25)',
+                    border: '1px solid #38bdf8',
+                    color: '#7dd3fc',
+                    fontFamily: MONO,
+                    fontSize: 8.5,
+                    fontWeight: 700,
+                    padding: '3px 10px',
+                    borderRadius: 2,
+                    cursor: newGoalTitle.trim() ? 'pointer' : 'not-allowed',
+                    boxShadow: '0 0 10px rgba(56,189,248,0.3)',
+                  }}
+                >
+                  DECLARE GOAL
+                </button>
+              </div>
+            </div>
+          )}
+
           {goalList.map((g) => (
             <Row key={g.id}>
               <Lamp status={g.status === 'active' ? 'healthy' : g.status === 'achieved' ? 'completed' : 'idle'} />
@@ -588,7 +939,11 @@ export function CortexFoundryNav({ snap, onSelectAgent, selectedAgent, onOpenTow
           title="MISSION CALENDAR"
           right={<span style={{ fontSize: 9.5, color: DIM }}>{calendar ? `${calendar.length} TOTAL` : 'LOADING…'}</span>}
         >
-          <CortexFoundryCalendar events={calendar || []} loading={calendar === null} />
+          <CortexFoundryCalendar
+            events={calendar || []}
+            loading={calendar === null}
+            onAddEvent={(newEvt) => setCalendar((prev) => [...(prev || []), newEvt])}
+          />
         </Panel>
       )}
 

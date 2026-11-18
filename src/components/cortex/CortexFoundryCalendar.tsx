@@ -31,9 +31,10 @@ export type CalendarHorizon = '48h' | 'day' | 'multi' | 'week' | 'month';
 interface Props {
   events: CalendarEventItem[];
   loading?: boolean;
+  onAddEvent?: (newEvent: CalendarEventItem) => void;
 }
 
-export function CortexFoundryCalendar({ events, loading }: Props) {
+export function CortexFoundryCalendar({ events, loading, onAddEvent }: Props) {
   const [horizon, setHorizon] = useState<CalendarHorizon>('48h');
   const [anchorDate, setAnchorDate] = useState<Date>(new Date());
   const [selectedDayTimestamp, setSelectedDayTimestamp] = useState<number>(Date.now());
@@ -90,14 +91,88 @@ export function CortexFoundryCalendar({ events, loading }: Props) {
     return '';
   };
 
+  // Local events support for immediate reactive creation
+  const [localEvents, setLocalEvents] = useState<CalendarEventItem[]>([]);
+  const allEvents = [...(events || []), ...localEvents];
+
+  // Quick Add Event Form state
+  const [showAddModal, setShowAddModal] = useState(false);
+  const [eventTitle, setEventTitle] = useState('');
+  const [eventDate, setEventDate] = useState(() => {
+    const d = new Date();
+    const yr = d.getFullYear();
+    const mo = String(d.getMonth() + 1).padStart(2, '0');
+    const da = String(d.getDate()).padStart(2, '0');
+    return `${yr}-${mo}-${da}`;
+  });
+  const [eventStartTime, setEventStartTime] = useState('09:00');
+  const [eventEndTime, setEventEndTime] = useState('10:00');
+
+  useEffect(() => {
+    try {
+      const yr = anchorDate.getFullYear();
+      const mo = String(anchorDate.getMonth() + 1).padStart(2, '0');
+      const da = String(anchorDate.getDate()).padStart(2, '0');
+      setEventDate(`${yr}-${mo}-${da}`);
+    } catch {}
+  }, [anchorDate]);
+
+  const handleCreateEvent = () => {
+    const title = eventTitle.trim();
+    if (!title) return;
+    const [year, month, day] = eventDate.split('-').map(Number);
+    const [startH, startM] = (eventStartTime || '09:00').split(':').map(Number);
+    const [endH, endM] = (eventEndTime || '10:00').split(':').map(Number);
+
+    const start = new Date(year, month - 1, day, startH || 9, startM || 0).getTime();
+    const end = new Date(year, month - 1, day, endH || 10, endM || 0).getTime();
+
+    const newEvt: CalendarEventItem = {
+      id: `evt-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      title,
+      start,
+      end,
+      attendees: 1,
+    };
+
+    setLocalEvents((prev) => [...prev, newEvt]);
+
+    try {
+      const raw = localStorage.getItem('syncscript_calendar_events');
+      const list = raw ? JSON.parse(raw) : [];
+      list.push({
+        id: newEvt.id,
+        title: newEvt.title,
+        startTime: new Date(newEvt.start).toISOString(),
+        endTime: new Date(newEvt.end!).toISOString(),
+        teamMembers: [],
+        isScheduled: true,
+      });
+      localStorage.setItem('syncscript_calendar_events', JSON.stringify(list));
+    } catch {}
+
+    try {
+      const fullList = [...allEvents, newEvt];
+      fetch('/api/cortex/calendar/upcoming', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ events: fullList }),
+      }).catch(() => {});
+    } catch {}
+
+    onAddEvent?.(newEvt);
+    setEventTitle('');
+    setShowAddModal(false);
+  };
+
   // 1. Next 48 Hours Horizon Data
   const now = Date.now();
-  const next48hEvents = (events || [])
+  const next48hEvents = (allEvents || [])
     .filter((e) => Number(e.start) >= now - 3600_000 && Number(e.start) <= now + 48 * 3600_000)
     .sort((a, b) => a.start - b.start);
 
   // 2. Day Horizon Data
-  const dayEvents = getEventsForDay(events, anchorDate);
+  const dayEvents = getEventsForDay(allEvents, anchorDate);
 
   // 2b. Multi-Day Horizon Data (Truly infinite Instagram-style strip)
   const multiContainerRef = useRef<HTMLDivElement>(null);
@@ -192,7 +267,7 @@ export function CortexFoundryCalendar({ events, loading }: Props) {
   const isMultiFuture = multiDaysAway > 0;
 
   // 3. Week Horizon Data
-  const weekEvents = getEventsForWeek(events, anchorDate);
+  const weekEvents = getEventsForWeek(allEvents, anchorDate);
   const weekDays = (() => {
     const d = new Date(anchorDate);
     const day = d.getDay();
@@ -210,7 +285,7 @@ export function CortexFoundryCalendar({ events, loading }: Props) {
 
   // 4. Month Horizon Data
   const monthMatrix = getMonthMatrix(anchorDate.getFullYear(), anchorDate.getMonth());
-  const selectedDayEvents = getEventsForDay(events, selectedDayTimestamp);
+  const selectedDayEvents = getEventsForDay(allEvents, selectedDayTimestamp);
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 10, fontFamily: MONO }}>
@@ -252,62 +327,233 @@ export function CortexFoundryCalendar({ events, loading }: Props) {
           })}
         </div>
 
-        {/* Step Navigation controls (for Day, Week, Month) */}
-        {horizon !== '48h' && (
-          <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+        {/* Right side controls: Step Navigation & Add Event Button */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          {horizon !== '48h' && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+              <button
+                onClick={() => stepNav(-1)}
+                title="Previous"
+                style={{
+                  background: 'rgba(8,14,24,0.6)',
+                  border: '1px solid rgba(103,232,249,0.18)',
+                  color: INK,
+                  fontFamily: MONO,
+                  fontSize: 10,
+                  padding: '2px 6px',
+                  borderRadius: 2,
+                  cursor: 'pointer',
+                }}
+              >
+                ◀
+              </button>
+              <button
+                onClick={jumpToToday}
+                title="Jump to Today"
+                style={{
+                  background: 'rgba(56,189,248,0.12)',
+                  border: '1px solid rgba(56,189,248,0.35)',
+                  color: '#7dd3fc',
+                  fontFamily: MONO,
+                  fontSize: 8.5,
+                  fontWeight: 700,
+                  padding: '2px 6px',
+                  borderRadius: 2,
+                  cursor: 'pointer',
+                  letterSpacing: '0.08em',
+                }}
+              >
+                TODAY
+              </button>
+              <button
+                onClick={() => stepNav(1)}
+                title="Next"
+                style={{
+                  background: 'rgba(8,14,24,0.6)',
+                  border: '1px solid rgba(103,232,249,0.18)',
+                  color: INK,
+                  fontFamily: MONO,
+                  fontSize: 10,
+                  padding: '2px 6px',
+                  borderRadius: 2,
+                  cursor: 'pointer',
+                }}
+              >
+                ▶
+              </button>
+            </div>
+          )}
+
+          <button
+            onClick={() => setShowAddModal((prev) => !prev)}
+            title="Schedule new event on calendar"
+            style={{
+              background: showAddModal ? 'rgba(56,189,248,0.3)' : 'rgba(56,189,248,0.14)',
+              border: '1px solid #38bdf8',
+              color: '#7dd3fc',
+              fontFamily: MONO,
+              fontSize: 8.5,
+              fontWeight: 800,
+              padding: '2px 8px',
+              borderRadius: 2,
+              cursor: 'pointer',
+              letterSpacing: '0.08em',
+              display: 'flex',
+              alignItems: 'center',
+              gap: 4,
+              transition: 'all 0.15s ease',
+            }}
+          >
+            <span>+</span>
+            <span>ADD EVENT</span>
+          </button>
+        </div>
+      </div>
+
+      {/* Inline HUD Event Creation Form */}
+      {showAddModal && (
+        <div style={{
+          background: 'rgba(15,23,42,0.95)',
+          border: '1px solid rgba(56,189,248,0.4)',
+          borderLeft: '3px solid #38bdf8',
+          borderRadius: 3,
+          padding: '10px 12px',
+          display: 'flex',
+          flexDirection: 'column',
+          gap: 8,
+          boxShadow: '0 4px 20px rgba(0,0,0,0.5)',
+        }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <span style={{ fontSize: 9, fontWeight: 800, color: '#38bdf8', letterSpacing: '0.14em' }}>
+              + SCHEDULE MISSION EVENT
+            </span>
             <button
-              onClick={() => stepNav(-1)}
-              title="Previous"
+              onClick={() => setShowAddModal(false)}
+              style={{ background: 'none', border: 'none', color: DIM, cursor: 'pointer', fontSize: 11 }}
+            >
+              ✕
+            </button>
+          </div>
+
+          <input
+            type="text"
+            placeholder="Event title / mission briefing…"
+            value={eventTitle}
+            onChange={(e) => setEventTitle(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter') handleCreateEvent(); }}
+            style={{
+              background: 'rgba(8,14,24,0.8)',
+              border: '1px solid rgba(103,232,249,0.25)',
+              color: INK,
+              fontFamily: MONO,
+              fontSize: 10,
+              padding: '5px 8px',
+              borderRadius: 2,
+              outline: 'none',
+            }}
+            autoFocus
+          />
+
+          <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1fr 1fr', gap: 6 }}>
+            <div>
+              <div style={{ fontSize: 7.5, color: DIM, marginBottom: 2 }}>DATE</div>
+              <input
+                type="date"
+                value={eventDate}
+                onChange={(e) => setEventDate(e.target.value)}
+                style={{
+                  width: '100%',
+                  background: 'rgba(8,14,24,0.8)',
+                  border: '1px solid rgba(103,232,249,0.25)',
+                  color: INK,
+                  fontFamily: MONO,
+                  fontSize: 8.5,
+                  padding: '3px 4px',
+                  borderRadius: 2,
+                  outline: 'none',
+                  boxSizing: 'border-box',
+                }}
+              />
+            </div>
+            <div>
+              <div style={{ fontSize: 7.5, color: DIM, marginBottom: 2 }}>START</div>
+              <input
+                type="time"
+                value={eventStartTime}
+                onChange={(e) => setEventStartTime(e.target.value)}
+                style={{
+                  width: '100%',
+                  background: 'rgba(8,14,24,0.8)',
+                  border: '1px solid rgba(103,232,249,0.25)',
+                  color: INK,
+                  fontFamily: MONO,
+                  fontSize: 8.5,
+                  padding: '3px 4px',
+                  borderRadius: 2,
+                  outline: 'none',
+                  boxSizing: 'border-box',
+                }}
+              />
+            </div>
+            <div>
+              <div style={{ fontSize: 7.5, color: DIM, marginBottom: 2 }}>END</div>
+              <input
+                type="time"
+                value={eventEndTime}
+                onChange={(e) => setEventEndTime(e.target.value)}
+                style={{
+                  width: '100%',
+                  background: 'rgba(8,14,24,0.8)',
+                  border: '1px solid rgba(103,232,249,0.25)',
+                  color: INK,
+                  fontFamily: MONO,
+                  fontSize: 8.5,
+                  padding: '3px 4px',
+                  borderRadius: 2,
+                  outline: 'none',
+                  boxSizing: 'border-box',
+                }}
+              />
+            </div>
+          </div>
+
+          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 6, marginTop: 2 }}>
+            <button
+              onClick={() => setShowAddModal(false)}
               style={{
-                background: 'rgba(8,14,24,0.6)',
-                border: '1px solid rgba(103,232,249,0.18)',
-                color: INK,
+                background: 'none',
+                border: '1px solid rgba(148,163,184,0.25)',
+                color: DIM,
                 fontFamily: MONO,
-                fontSize: 10,
-                padding: '2px 6px',
+                fontSize: 8.5,
+                padding: '3px 8px',
                 borderRadius: 2,
                 cursor: 'pointer',
               }}
             >
-              ◀
+              CANCEL
             </button>
             <button
-              onClick={jumpToToday}
-              title="Jump to Today"
+              onClick={handleCreateEvent}
+              disabled={!eventTitle.trim()}
               style={{
-                background: 'rgba(56,189,248,0.12)',
-                border: '1px solid rgba(56,189,248,0.35)',
+                background: 'rgba(56,189,248,0.25)',
+                border: '1px solid #38bdf8',
                 color: '#7dd3fc',
                 fontFamily: MONO,
                 fontSize: 8.5,
                 fontWeight: 700,
-                padding: '2px 6px',
+                padding: '3px 10px',
                 borderRadius: 2,
-                cursor: 'pointer',
-                letterSpacing: '0.08em',
+                cursor: eventTitle.trim() ? 'pointer' : 'not-allowed',
+                boxShadow: '0 0 10px rgba(56,189,248,0.3)',
               }}
             >
-              TODAY
-            </button>
-            <button
-              onClick={() => stepNav(1)}
-              title="Next"
-              style={{
-                background: 'rgba(8,14,24,0.6)',
-                border: '1px solid rgba(103,232,249,0.18)',
-                color: INK,
-                fontFamily: MONO,
-                fontSize: 10,
-                padding: '2px 6px',
-                borderRadius: 2,
-                cursor: 'pointer',
-              }}
-            >
-              ▶
+              CONFIRM & SAVE
             </button>
           </div>
-        )}
-      </div>
+        </div>
+      )}
 
       {/* Horizon Context Subtitle */}
       <div style={{
@@ -425,7 +671,7 @@ export function CortexFoundryCalendar({ events, loading }: Props) {
           >
           {multiDays.map((d) => {
             const isCurToday = isSameDay(d, new Date());
-            const dEvents = getEventsForDay(events, d);
+            const dEvents = getEventsForDay(allEvents, d);
             const relLabel = getRelativeDayLabel(d);
             const nowMs = Date.now();
             let greenLineRendered = false;
@@ -658,7 +904,7 @@ export function CortexFoundryCalendar({ events, loading }: Props) {
           {weekDays.map((date) => {
             const dayTs = date.getTime();
             const isToday = isSameDay(date, new Date());
-            const daysEvents = getEventsForDay(events, dayTs);
+            const daysEvents = getEventsForDay(allEvents, dayTs);
 
             return (
               <div
@@ -751,7 +997,7 @@ export function CortexFoundryCalendar({ events, loading }: Props) {
             {monthMatrix.map((week, wIdx) => (
               <div key={wIdx} style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: 3 }}>
                 {week.map((cell) => {
-                  const dayEventsCount = getEventsForDay(events, cell.timestamp).length;
+                  const dayEventsCount = getEventsForDay(allEvents, cell.timestamp).length;
                   const isSelected = isSameDay(cell.timestamp, selectedDayTimestamp);
 
                   return (
