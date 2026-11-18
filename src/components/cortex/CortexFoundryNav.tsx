@@ -36,6 +36,7 @@ const NAV_ITEMS: { id: FoundryView; glyph: string; label: string; hint: string }
   { id: 'incidents', glyph: '⚠', label: 'INCIDENTS', hint: 'Failure ticket ledger' },
   { id: 'pipeline', glyph: '⇶', label: 'PIPELINE', hint: 'Distribution / product flow' },
   { id: 'messages', glyph: '⇄', label: 'COMMS', hint: 'Agent message bus traffic' },
+  { id: 'voice', glyph: '♪', label: 'VOICE', hint: 'Cortex voice engines — live test' },
 ];
 
 const STATUS_COLOR: Record<string, string> = {
@@ -92,6 +93,8 @@ export function CortexFoundryNav({ snap, onSelectAgent, selectedAgent, onOpenTow
   const [counsel, setCounsel] = useState<{ sessions: any[]; consoles: any[]; scorecard?: any[] } | null>(null);
   const [inbox, setInbox] = useState<any[] | null>(null);
   const [agentMsgs, setAgentMsgs] = useState<any[] | null>(null);
+  const [voiceStatus, setVoiceStatus] = useState<any | null>(null);
+  const [voiceTest, setVoiceTest] = useState<Record<string, 'idle' | 'testing' | 'ok' | 'fail'>>({});
   const [inboxNote, setInboxNote] = useState('');
   const [tasksScope, setTasksScope] = useState<'today' | 'all'>('today');
   const [taskSource, setTaskSource] = useState<'all' | 'agents' | 'user'>('all');
@@ -189,6 +192,43 @@ export function CortexFoundryNav({ snap, onSelectAgent, selectedAgent, onOpenTow
     const iv = setInterval(load, 15_000);
     return () => clearInterval(iv);
   }, [view]);
+
+  // Voice engine status poll while the VOICE view is open.
+  useEffect(() => {
+    if (view !== 'voice') return;
+    const load = () => {
+      fetch('/api/cortex/tts/status', { cache: 'no-store' })
+        .then((r) => r.json())
+        .then((d) => setVoiceStatus(d))
+        .catch(() => setVoiceStatus({ ok: false, error: 'status endpoint unreachable' }));
+    };
+    load();
+    const iv = setInterval(load, 15000);
+    return () => clearInterval(iv);
+  }, [view]);
+
+  const testVoice = async (voiceId: string) => {
+    setVoiceTest((m) => ({ ...m, [voiceId]: 'testing' }));
+    const t0 = Date.now();
+    try {
+      const r = await fetch('/api/cortex/tts', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text: 'Voice check. Systems nominal.', voice: voiceId }),
+      });
+      if (!r.ok) throw new Error(`http ${r.status}`);
+      const blob = await r.blob();
+      if (blob.size < 200) throw new Error('empty audio');
+      const url = URL.createObjectURL(blob);
+      const audio = new Audio(url);
+      audio.onended = () => URL.revokeObjectURL(url);
+      await audio.play();
+      setVoiceTest((m) => ({ ...m, [voiceId]: 'ok' }));
+      console.info(`[voice-test] ${voiceId} ok — ${blob.size}b in ${Date.now() - t0}ms`);
+    } catch (e: any) {
+      setVoiceTest((m) => ({ ...m, [voiceId]: 'fail' }));
+      console.warn(`[voice-test] ${voiceId} failed:`, e?.message);
+    }
+  };
 
   // Counsel + inbox poll on their own cadence while their views are open.
   useEffect(() => {
@@ -700,6 +740,49 @@ export function CortexFoundryNav({ snap, onSelectAgent, selectedAgent, onOpenTow
               </div>
             );
           })}
+        </Panel>
+      )}
+
+      {view === 'voice' && (
+        <Panel title="CORTEX VOICE — ENGINE STATUS" right={
+          <button onClick={() => { setVoiceStatus(null); fetch('/api/cortex/tts/status', { cache: 'no-store' }).then((r) => r.json()).then(setVoiceStatus).catch(() => {}); }} style={{ background: 'none', border: '1px solid rgba(52,211,153,0.4)', color: '#34d399', fontFamily: MONO, fontSize: 9.5, padding: '2px 8px', borderRadius: 2, cursor: 'pointer', letterSpacing: '0.15em' }}>RE-PROBE</button>
+        }>
+          {voiceStatus === null && <div style={{ padding: '12px 0', color: DIM }}>PROBING ENGINES…</div>}
+          {voiceStatus?.ok === false && <div style={{ padding: '12px 0', color: '#f87171' }}>STATUS ENDPOINT UNREACHABLE — VITE RESTART NEEDED?</div>}
+          {voiceStatus?.engines && (
+            <div style={{ marginBottom: 8 }}>
+              {voiceStatus.engines.map((e: any) => (
+                <Row key={e.id}>
+                  <Lamp status={e.healthy ? 'healthy' : 'down'} />
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: 10, color: INK, fontWeight: 700 }}>{e.id.toUpperCase()}</div>
+                    <div style={{ fontSize: 8.5, color: DIM, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{e.url} · {e.role}</div>
+                  </div>
+                  <span style={{ fontSize: 8.5, color: e.healthy ? '#34d399' : '#f87171' }}>{e.healthy ? `${e.ms}ms` : 'DOWN'}</span>
+                </Row>
+              ))}
+            </div>
+          )}
+          <div style={{ fontSize: 8.5, fontWeight: 800, letterSpacing: '0.22em', color: '#34d399', margin: '6px 0 4px' }}>VOICES — CLICK TEST TO HEAR</div>
+          {(voiceStatus?.voices || []).map((v: any) => {
+            const eng = voiceStatus?.engines?.find((e: any) => e.id === v.engine);
+            const t = voiceTest[v.id] || 'idle';
+            return (
+              <Row key={v.id}>
+                <Lamp status={eng ? (eng.healthy ? 'healthy' : 'down') : 'idle'} />
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 10, color: INK }}>{v.label}</div>
+                  <div style={{ fontSize: 8.5, color: DIM }}>{v.id} → {v.engine}{eng && !eng.healthy ? ' (ENGINE DOWN)' : ''}</div>
+                </div>
+                <button
+                  onClick={() => testVoice(v.id)}
+                  disabled={t === 'testing'}
+                  style={{ background: t === 'ok' ? 'rgba(52,211,153,0.15)' : t === 'fail' ? 'rgba(248,113,113,0.12)' : 'rgba(52,211,153,0.06)', border: `1px solid ${t === 'fail' ? 'rgba(248,113,113,0.5)' : 'rgba(52,211,153,0.35)'}`, color: t === 'fail' ? '#f87171' : '#34d399', fontFamily: MONO, fontSize: 9, fontWeight: 700, padding: '3px 8px', borderRadius: 2, cursor: t === 'testing' ? 'wait' : 'pointer', letterSpacing: '0.12em' }}
+                >{t === 'testing' ? '…' : t === 'ok' ? '✓' : t === 'fail' ? 'RETRY' : 'TEST'}</button>
+              </Row>
+            );
+          })}
+          {!voiceStatus?.voices?.length && voiceStatus !== null && <div style={{ padding: '8px 0', color: DIM, fontSize: 9.5 }}>NO VOICE DATA</div>}
         </Panel>
       )}
 

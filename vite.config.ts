@@ -8666,6 +8666,50 @@ function triggerQuickAction() {
         });
       };
 
+      // TTS engine status — pings every configured voice engine's /health
+      // in parallel and reports the voice→engine routing map so the Foundry
+      // VOICE panel can show live truth instead of assuming config = reality.
+      server.middlewares.use('/api/cortex/tts/status', async (req: any, res: any, next: any) => {
+        if (req.method !== 'GET') return next();
+        agentCors(req, res);
+        const engines = [
+          { id: 'kokoro', url: kokoroTtsUrl, role: 'fallback voices (gentle/playful/natural/professional/commander)' },
+          { id: 'pocket', url: pocketTtsUrl, role: 'generic pocket fallback' },
+          { id: 'voicestudio', url: voiceStudioUrl, role: 'voice studio' },
+          { id: 'cortana-render', url: cortanaTtsUrl, role: 'render ids: cortana_clone/h2/holo (~60s broadcast)' },
+          { id: 'cortana-chat', url: cortanaPocketUrl, role: 'conversational cortana (~2s)' },
+          { id: 'cortana-emotion', url: cortanaEmotionUrl, role: 'cortana_tactical/curious/ce personas' },
+        ].filter((e) => e.url);
+        const probe = async (e: any) => {
+          const t0 = Date.now();
+          try {
+            const r = await fetch(`${e.url}/health`, { signal: AbortSignal.timeout(2500) });
+            const body = await r.text().catch(() => '');
+            return { ...e, healthy: r.ok, ms: Date.now() - t0, detail: body.slice(0, 120) };
+          } catch (err: any) {
+            return { ...e, healthy: false, ms: Date.now() - t0, detail: err?.message || 'unreachable' };
+          }
+        };
+        const results = await Promise.all(engines.map(probe));
+        res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+        res.end(JSON.stringify({
+          ok: true,
+          voices: [
+            { id: 'cortana', label: 'Cortana (Halo CE — Wry Banter)', engine: 'cortana-chat' },
+            { id: 'cortana_tactical', label: 'Cortana Tactical', engine: 'cortana-emotion' },
+            { id: 'cortana_curious', label: 'Cortana Curious', engine: 'cortana-emotion' },
+            { id: 'cortana_ce', label: 'Cortana Close Encounters', engine: 'cortana-emotion' },
+            { id: 'cortana_clone', label: 'Cortana Render Clone', engine: 'cortana-render' },
+            { id: 'commander', label: 'Commander', engine: 'kokoro' },
+            { id: 'gentle', label: 'Gentle', engine: 'kokoro' },
+            { id: 'playful', label: 'Playful', engine: 'kokoro' },
+            { id: 'natural', label: 'Natural', engine: 'kokoro' },
+            { id: 'professional', label: 'Professional', engine: 'kokoro' },
+          ],
+          engines: results,
+        }));
+      });
+
       server.middlewares.use('/api/ai/tts', ttsHandler);
       server.middlewares.use('/api/cortex/tts', ttsHandler);
 
