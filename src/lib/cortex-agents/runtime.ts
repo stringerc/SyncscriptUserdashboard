@@ -989,6 +989,10 @@ export class AgentRuntime {
           existing.tasksCompleted = saved.tasksCompleted ?? 0;
           existing.tasksFailed = saved.tasksFailed ?? 0;
           existing.recentTaskIds = saved.recentTaskIds ?? [];
+          // Restore human-approved budget overrides — without this every
+          // restart silently resets dailyBudget to the spec default and
+          // approved budgetRaise proposals evaporate.
+          if (typeof saved.dailyBudget === 'number') existing.dailyBudget = saved.dailyBudget;
           existing.status = 'offline'; // never trust persisted liveness
           if (saved.spawnSpec) {
             existing.spawnSpec = saved.spawnSpec;
