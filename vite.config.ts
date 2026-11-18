@@ -24,6 +24,7 @@ import { archiveTask, readArchive } from './src/lib/cortex-agents/archive';
 import { listStrategyProposals, decideStrategyProposal, reconcileStrategyProposals, fileBudgetProposal, autoApproveSafeStrategyProposals, setOnProposalFiledHook } from './src/lib/cortex-agents/strategy-proposals';
 import { recordIncidentFailure, resolveIncidentsOnSuccess, listIncidents, escalateStaleIncidents, sweepIncidentTtl, dismissIncident, dismissAllIncidents, autoVerifyIncident } from './src/lib/cortex-agents/incidents';
 import { issueDirective, listDirectives, ackDirective, cancelDirective } from './src/lib/cortex-agents/directives';
+import { listMessages, sendMessage } from './src/lib/cortex-agents/messages';
 import { loadMission, saveMission, upsertGoal, verifyOps, goalProgress, routineYield, suggestCadence, planBlocks, startExperiment, reportExperiments, type OpsItem, type MissionGoal, type CadenceEntry } from './src/lib/cortex-agents/mission';
 import { maybeFileAdoptionFollowup } from './src/lib/cortex-agents/adoption';
 import { registerAgentWorkers, makeEphemeralWorker, expandTaskSpec } from './src/lib/cortex-agents/workers';
@@ -11362,6 +11363,60 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
             agentCors(req, res);
             res.writeHead(created ? 201 : 200);
             res.end(JSON.stringify({ ok: true, created, directive }));
+          } catch (e: any) {
+            agentCors(req, res);
+            res.writeHead(400);
+            res.end(JSON.stringify({ ok: false, error: e?.message || 'bad request' }));
+          }
+        });
+      });
+
+      // ── Agent→agent message bus (/api/cortex/agents/messages*) ──
+      // Governed peer channel: typed envelopes (handoff/signal/request/ack),
+      // durable, rate-limited, injected into the recipient's next LLM call.
+      // GET lists; POST sends (from may be 'crew'/'cortex' for operators).
+      server.middlewares.use('/api/cortex/agents/messages', (req: any, res: any, next: any) => {
+        const origin = req.headers.origin;
+        const isAllowed = isAllowedOrigin(origin, req.headers.host);
+        if (req.method === 'OPTIONS') {
+          res.writeHead(204, { 'Access-Control-Allow-Origin': origin || '*', 'Access-Control-Allow-Methods': 'GET, POST, OPTIONS', 'Access-Control-Allow-Headers': 'Content-Type' });
+          return res.end();
+        }
+        if (!isAllowed) return next();
+        if (req.method === 'GET') {
+          agentCors(req, res);
+          try {
+            const url = new URL(req.url || '/', 'http://localhost');
+            const agentId = url.searchParams.get('agentId') || undefined;
+            const status = url.searchParams.get('status') || undefined;
+            const limit = Math.min(Number(url.searchParams.get('limit')) || 100, 300);
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ ok: true, messages: listMessages({ agentId, status, limit }) }));
+          } catch (e: any) {
+            res.writeHead(500);
+            res.end(JSON.stringify({ ok: false, error: e?.message || 'messages read failed' }));
+          }
+          return;
+        }
+        if (req.method !== 'POST') return next();
+        let body = '';
+        req.on('data', (c: Buffer) => { body += c.toString(); });
+        req.on('end', () => {
+          try {
+            const parsed = JSON.parse(body || '{}');
+            const result = sendMessage({
+              from: String(parsed.from || 'crew'),
+              to: String(parsed.to || ''),
+              type: String(parsed.type || ''),
+              payload: String(parsed.payload || parsed.message || ''),
+              correlationId: parsed.correlationId ? String(parsed.correlationId) : undefined,
+              evidenceRefs: Array.isArray(parsed.evidenceRefs) ? parsed.evidenceRefs.map(String) : undefined,
+              dedupeKey: parsed.dedupeKey ? String(parsed.dedupeKey) : undefined,
+              ttlMs: parsed.ttlMs ? Number(parsed.ttlMs) : undefined,
+            });
+            agentCors(req, res);
+            res.writeHead(result.ok ? (result.deduped ? 200 : 201) : 400);
+            res.end(JSON.stringify({ ok: result.ok, deduped: result.deduped, message: result.message, error: result.error }));
           } catch (e: any) {
             agentCors(req, res);
             res.writeHead(400);

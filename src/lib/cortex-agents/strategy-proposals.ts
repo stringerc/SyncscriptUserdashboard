@@ -480,6 +480,13 @@ export async function autoApproveSafeStrategyProposals(
       continue;
     }
 
+    // Agent→Crew messages are asks, not maintenance — an agent must never
+    // be able to auto-approve its own request into executed work.
+    if (p.planNote.startsWith('agent-message ')) {
+      skipped++;
+      continue;
+    }
+
     // Safe action classes
     const safeClasses = new Set(['rule', 'prompt', 'eval', 'process', 'config', 'skill']);
     const isSafe = safeClasses.has(p.actionClass.toLowerCase()) || p.title.startsWith('Investigate stale incident:');

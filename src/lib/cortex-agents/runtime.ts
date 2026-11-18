@@ -15,6 +15,7 @@ import { ModelMatrix, type AgentPin } from './registry';
 import { ModelSentinel } from './sentinel';
 import { DETERMINISTIC_TASKS } from './lights';
 import { ackMentioned, directivesBlock, markDelivered } from './directives';
+import { consumeMentioned, extractAndSendMessages, markMessagesDelivered, messagesBlock } from './messages';
 import type {
   AgentEvent, AgentId, AgentRoutine, AgentState, AgentStatus, AgentTask, AgentsSnapshot, SpawnProposal, SpawnSpec, TaskFailureClass, TaskStatus, TaskTelemetry,
 } from './types';
@@ -803,12 +804,15 @@ export class AgentRuntime {
           // (they don't reason) — they expire honestly instead.
           const dirBlock = directivesBlock(agentId);
           if (dirBlock) markDelivered(agentId, task.id);
+          const msgBlock = messagesBlock(agentId);
+          if (msgBlock) markMessagesDelivered(agentId, task.id);
+          const injected = [dirBlock, msgBlock].filter(Boolean).join('\n\n');
           const llmT0 = Date.now();
           const r = await this.llmBridge({
             ...opts,
             agentId,
-            messages: dirBlock
-              ? [{ role: 'system', content: dirBlock }, ...opts.messages]
+            messages: injected
+              ? [{ role: 'system', content: injected }, ...opts.messages]
               : opts.messages,
           });
           telemetry.llmCalls++;
@@ -834,6 +838,13 @@ export class AgentRuntime {
           // Directive ack: if the result cites a delivered directive id,
           // close the loop — Cortex sees the order was actioned.
           try { ackMentioned(agentId, JSON.stringify(result ?? '')); } catch { /* best-effort */ }
+          // Agent-message bus: fenced ```agent_message blocks in the result
+          // are validated + sent; cited inbound ids are consumed.
+          try {
+            const text = JSON.stringify(result ?? '');
+            extractAndSendMessages(agentId, text);
+            consumeMentioned(agentId, text);
+          } catch { /* best-effort */ }
           this.transition(task, 'completed', { result, progress: task.progress ?? 1 });
           this.setStatus(agentId, queue.length ? 'working' : 'idle');
         })
