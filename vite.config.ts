@@ -659,7 +659,7 @@ const CORTEX_TOOLS = [
             description: 'status = fleet + model health; task = submit work; open = Agents face; propose_agent = request a new ephemeral agent (needs evidence); approve_spawn/reject_spawn = decide a pending spawn proposal'
           },
           agentId: { type: 'string', description: 'sentinel | scout | librarian | builder | warden | spawn-* (required for task)' },
-          kind: { type: 'string', description: 'Task kind, e.g. research, summarize, code_patch' },
+          kind: { type: 'string', description: 'Task kind, e.g. research, summarize, code_patch, lights_status, lights_set (deterministic — no LLM)' },
           title: { type: 'string', description: 'Short task title' },
           input: { type: 'object', description: 'Task input payload' },
           proposalId: { type: 'string', description: 'Spawn proposal id (approve_spawn/reject_spawn)' },

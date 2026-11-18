@@ -13,6 +13,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { ModelMatrix, type AgentPin } from './registry';
 import { ModelSentinel } from './sentinel';
+import { DETERMINISTIC_TASKS } from './lights';
 import type {
   AgentEvent, AgentId, AgentRoutine, AgentState, AgentStatus, AgentTask, AgentsSnapshot, SpawnProposal, SpawnSpec, TaskFailureClass, TaskStatus, TaskTelemetry,
 } from './types';
@@ -738,7 +739,11 @@ export class AgentRuntime {
         },
         emit: (e) => this.emit(e),
       };
-      handler(ctx)
+      // Deterministic kinds (lights_status, lights_set, …) bypass the
+      // agent's LLM worker entirely — hardware I/O must not depend on a
+      // model lane being alive.
+      const run = DETERMINISTIC_TASKS[task.kind] ?? (() => handler(ctx));
+      run(ctx)
         .then((result) => {
           this.transition(task, 'completed', { result, progress: task.progress ?? 1 });
           this.setStatus(agentId, queue.length ? 'working' : 'idle');

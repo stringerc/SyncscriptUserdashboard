@@ -1,68 +1,60 @@
 #!/usr/bin/env python3
 """Govee device status reporter.
 
-Reports power, brightness, and color for all known Govee devices
-('TV backlight', 'LED strip') and prints an anomalies line.
+Reports reachability and controllability for all Govee devices.
+IMPORTANT: the Govee OpenAPI is write-only — it does NOT expose live
+power/brightness/color state, so this script cannot report actual
+settings. It verifies the API key works and lists controllable devices.
+
 Exit code 0 on success, non-zero on failure.
 """
 import json
 import os
 import sys
+import urllib.request
 
-DEVICES = ["TV backlight", "LED strip"]
-REQUIRED_FIELDS = ["power", "brightness", "color"]
+DEVICES_ENDPOINT = "https://openapi.api.govee.com/router/api/v1/user/devices"
 
 
-def fetch_status():
-    """Fetch status for each device. Uses GOVEE_API_KEY env var if set,
-    otherwise falls back to a local mock so the script is verifiable offline."""
+def fetch_devices():
+    """Fetch the device list from the Govee OpenAPI."""
     api_key = os.environ.get("GOVEE_API_KEY")
-    results = {}
-    if api_key:
-        try:
-            import urllib.request
-            req = urllib.request.Request(
-                "https://developer-api.govee.com/v1/devices",
-                headers={"Govee-API-Key": api_key},
-            )
-            with urllib.request.urlopen(req, timeout=10) as resp:
-                payload = json.loads(resp.read().decode())
-            for dev in payload.get("data", {}).get("devices", []):
-                name = dev.get("deviceName", dev.get("device", "unknown"))
-                props = {p.get("name"): p.get("value") for p in dev.get("properties", [])}
-                results[name] = {
-                    "power": props.get("powerState", "unknown"),
-                    "brightness": props.get("brightness", "unknown"),
-                    "color": props.get("color", "unknown"),
-                }
-        except Exception as exc:  # network/API failure -> record as anomaly
-            results["_error"] = str(exc)
-    else:
-        # Offline mock so output format is verifiable without credentials.
-        for name in DEVICES:
-            results[name] = {"power": "on", "brightness": 80, "color": {"r": 255, "g": 200, "b": 120}}
-    return results
+    if not api_key:
+        return None, "GOVEE_API_KEY not set"
+    try:
+        req = urllib.request.Request(
+            DEVICES_ENDPOINT,
+            headers={"Govee-API-Key": api_key, "Content-Type": "application/json"},
+        )
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            payload = json.loads(resp.read().decode())
+        if payload.get("code") != 200 or not isinstance(payload.get("data"), list):
+            return None, f"api code={payload.get('code')} message={payload.get('message')}"
+        return payload["data"], None
+    except Exception as exc:
+        return None, str(exc)
 
 
 def main():
-    status = fetch_status()
+    devices, error = fetch_devices()
+    if error:
+        print(f"Govee API: UNREACHABLE — {error}")
+        print("Anomalies: api_error")
+        return 2
+
     anomalies = []
-    lines = []
-    for name in DEVICES:
-        entry = status.get(name)
-        if entry is None:
-            anomalies.append(f"{name}: no data returned")
-            lines.append(f"{name}: MISSING")
-            continue
-        missing = [f for f in REQUIRED_FIELDS if f not in entry or entry[f] in (None, "unknown")]
-        if missing:
-            anomalies.append(f"{name}: missing fields {missing}")
-        lines.append(f"{name}: power={entry.get('power')} brightness={entry.get('brightness')} color={entry.get('color')}")
-    if "_error" in status:
-        anomalies.append(f"api_error: {status['_error']}")
+    lines = [f"Govee API: reachable — {len(devices)} device(s) controllable"]
+    for dev in devices:
+        name = dev.get("deviceName") or dev.get("device", "unknown")
+        caps = len(dev.get("capabilities") or [])
+        lines.append(f"{name}: sku={dev.get('sku')} capabilities={caps}")
+    lines.append(
+        "Note: Govee OpenAPI is write-only — live power/brightness/color "
+        "state is not exposed by the API."
+    )
     print("\n".join(lines))
     print(f"Anomalies: {'; '.join(anomalies) if anomalies else 'none'}")
-    return 0 if not anomalies else 2
+    return 0
 
 
 if __name__ == "__main__":

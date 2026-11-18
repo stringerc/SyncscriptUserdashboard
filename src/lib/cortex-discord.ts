@@ -441,6 +441,14 @@ function subcommandOpt(payload: any, name: string): string {
 export function routeAskAgent(text: string): { agentId: string; kind: string; input: Record<string, unknown> } {
   const t = text.toLowerCase();
   const base = { source: 'discord', text };
+  // Physical lights → deterministic runner tasks (no LLM, no model lane).
+  // Status queries and actuation both bypass orchestrate/deep-tier routing.
+  if (/govee|\blights?\b|\blamps?\b|\bled\b|backlight/.test(t)) {
+    const actionVerb = /\b(turn|set|change|dim|brighten|darken|switch|power|show|mood|scene|pulse|flash)\b/.test(t);
+    const statusVerb = /\b(status|check|state|report|inspect|how|what|current|level)\b/.test(t);
+    const kind = actionVerb || (!statusVerb && /\b(on|off|to|at)\b/.test(t)) ? 'lights_set' : 'lights_status';
+    return { agentId: 'runner', kind, input: { ...base, instruction: text } };
+  }
   if (/forecast|predict|what.*(wrong|right)|risk/.test(t)) return { agentId: 'forecaster', kind: 'forecast_cycle', input: { ...base } };
   if (/prep|brief|meeting/.test(t)) return { agentId: 'prep', kind: 'prep_brief', input: { ...base, title: text.slice(0, 140) } };
   if (/build|code|implement|fix|write/.test(t)) return { agentId: 'builder', kind: 'build_task', input: { ...base, instruction: text } };
