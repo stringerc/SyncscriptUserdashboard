@@ -10,6 +10,16 @@ import http from 'node:http';
 import path from 'node:path';
 import fs from 'node:fs';
 
+// Automatically abort on socket timeout instead of hanging
+const origHttpRequest = http.request;
+http.request = function(...args) {
+  const req = origHttpRequest.apply(this, args);
+  req.on('timeout', () => {
+    req.destroy(new Error('socket timeout'));
+  });
+  return req;
+};
+
 console.log('== verify-cortex-chat ==\n');
 
 let passed = 0;
