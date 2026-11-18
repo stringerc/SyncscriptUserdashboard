@@ -2176,6 +2176,12 @@ export function CalendarEventsPage() {
               if (v === 'multiday') {
                 setCurrentView('multiday');
                 setIsMultiDayMode(true);
+                const today = getCurrentDate();
+                setCenterDate(today);
+                setCurrentDate(today);
+                requestAnimationFrame(() => {
+                  calendarRef.current?.jumpToTodayInstant();
+                });
               } else if (v === 'day') {
                 setCurrentView('day');
                 setIsMultiDayMode(false);
@@ -2205,6 +2211,14 @@ export function CalendarEventsPage() {
                       const nextMulti = currentView === 'multiday' ? false : !isMultiDayMode;
                       setIsMultiDayMode(nextMulti);
                       setCurrentView(nextMulti ? 'multiday' : 'day');
+                      if (nextMulti) {
+                        const today = getCurrentDate();
+                        setCenterDate(today);
+                        setCurrentDate(today);
+                        requestAnimationFrame(() => {
+                          calendarRef.current?.jumpToTodayInstant();
+                        });
+                      }
                       toast.success(nextMulti ? 'Multi-day scroll enabled' : 'Single day view', {
                         description: nextMulti ? 'Scroll through multiple days seamlessly' : 'Showing one day at a time',
                       });

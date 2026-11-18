@@ -291,13 +291,54 @@ export const SimpleMultiDayCalendar = forwardRef<SimpleMultiDayCalendarRef, Simp
     }
   };
 
-  // Initial scroll to today on mount
+  // Robust layout-aware initial jump to Today (avoids ever loading on a past date)
+  const hasInitializedScrollRef = useRef(false);
+
   useEffect(() => {
-    const timer = setTimeout(() => {
-      jumpToTodayInstant();
-    }, 50);
-    return () => clearTimeout(timer);
-  }, []);
+    const container = scrollContainerRef.current;
+    if (!container) return;
+
+    const performInstantJump = () => {
+      const cardHeight = container.clientHeight;
+      if (cardHeight <= 0) return false;
+      const today = getCurrentDate();
+      const idx = daysToRender.findIndex((d) => d.toDateString() === today.toDateString());
+      if (idx !== -1) {
+        container.scrollTop = idx * cardHeight;
+        setActiveDateIndex(idx);
+        return true;
+      }
+      return false;
+    };
+
+    // Try immediately
+    if (performInstantJump()) {
+      hasInitializedScrollRef.current = true;
+    }
+
+    // Try via ResizeObserver when DOM layout dimensions are resolved
+    const ro = new ResizeObserver(() => {
+      if (!hasInitializedScrollRef.current) {
+        if (performInstantJump()) {
+          hasInitializedScrollRef.current = true;
+        }
+      }
+    });
+    ro.observe(container);
+
+    // Progressive retry frames
+    requestAnimationFrame(performInstantJump);
+    const t1 = setTimeout(performInstantJump, 30);
+    const t2 = setTimeout(performInstantJump, 80);
+    const t3 = setTimeout(performInstantJump, 200);
+
+    return () => {
+      ro.disconnect();
+      clearTimeout(t1);
+      clearTimeout(t2);
+      clearTimeout(t3);
+    };
+  }, [daysToRender]);
 
   // Keyboard navigation inside the feed
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -314,6 +355,18 @@ export const SimpleMultiDayCalendar = forwardRef<SimpleMultiDayCalendarRef, Simp
   };
 
   const activeDate = daysToRender[activeDateIndex] || centerDate;
+
+  // Calculate distance from today for the floating Return to Today button
+  const daysAwayFromToday = (() => {
+    const today = getCurrentDate();
+    today.setHours(0, 0, 0, 0);
+    const cur = new Date(activeDate);
+    cur.setHours(0, 0, 0, 0);
+    return Math.round((cur.getTime() - today.getTime()) / 86_400_000);
+  })();
+
+  const isOffToday = daysAwayFromToday !== 0;
+  const isFuture = daysAwayFromToday > 0;
 
   return (
     <div
@@ -615,6 +668,35 @@ export const SimpleMultiDayCalendar = forwardRef<SimpleMultiDayCalendarRef, Simp
           );
         })}
       </div>
+
+      {/* Floating Return to Today Button (pops up when scrolled away from current day) */}
+      <AnimatePresence>
+        {isOffToday && (
+          <motion.div
+            initial={{ opacity: 0, y: 30, scale: 0.9 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: 30, scale: 0.9 }}
+            transition={{ type: 'spring', stiffness: 350, damping: 25 }}
+            className="absolute bottom-6 left-1/2 -translate-x-1/2 z-40 pointer-events-auto"
+          >
+            <Button
+              onClick={jumpToToday}
+              size="sm"
+              className="px-5 py-2.5 h-auto rounded-full bg-emerald-600 hover:bg-emerald-500 text-white font-mono font-bold text-xs shadow-2xl shadow-emerald-500/40 border border-emerald-400/80 flex items-center gap-2.5 backdrop-blur-md hover:scale-105 transition-all group"
+            >
+              {isFuture ? (
+                <ChevronUp className="w-4 h-4 text-emerald-200 group-hover:-translate-y-0.5 transition-transform" />
+              ) : (
+                <ChevronDown className="w-4 h-4 text-emerald-200 group-hover:translate-y-0.5 transition-transform" />
+              )}
+              <span>RETURN TO TODAY</span>
+              <span className="px-2 py-0.5 rounded-full bg-emerald-950/60 border border-emerald-400/40 text-[10px] text-emerald-200">
+                {isFuture ? `${daysAwayFromToday}d ahead` : `${Math.abs(daysAwayFromToday)}d ago`}
+              </span>
+            </Button>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 });

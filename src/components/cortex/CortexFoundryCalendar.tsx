@@ -8,7 +8,7 @@
  *   - MONTH: 7-column calendar grid matrix with day inspection
  */
 
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import {
   CalendarEventItem,
   getEventsForDay,
@@ -55,6 +55,13 @@ export function CortexFoundryCalendar({ events, loading }: Props) {
     const today = new Date();
     setAnchorDate(today);
     setSelectedDayTimestamp(today.getTime());
+    if (horizon === 'multi' && multiContainerRef.current) {
+      const idx = multiDays.findIndex((d) => isSameDay(d, today));
+      if (idx !== -1) {
+        multiContainerRef.current.scrollTo({ top: idx * 372, behavior: 'smooth' });
+        setActiveMultiIndex(idx);
+      }
+    }
   };
 
   // Header Title derivation
@@ -93,6 +100,7 @@ export function CortexFoundryCalendar({ events, loading }: Props) {
   const dayEvents = getEventsForDay(events, anchorDate);
 
   // 2b. Multi-Day Horizon Data (Truly infinite Instagram-style strip)
+  const multiContainerRef = useRef<HTMLDivElement>(null);
   const [multiDays, setMultiDays] = useState<Date[]>(() => {
     const list: Date[] = [];
     const base = new Date(anchorDate);
@@ -103,12 +111,38 @@ export function CortexFoundryCalendar({ events, loading }: Props) {
     }
     return list;
   });
+  const [activeMultiIndex, setActiveMultiIndex] = useState<number>(10);
+
+  // Robust layout-aware initial jump to Today when switching to multi-day horizon
+  useEffect(() => {
+    if (horizon === 'multi') {
+      const today = new Date();
+      const idx = multiDays.findIndex((d) => isSameDay(d, today));
+      if (idx !== -1 && multiContainerRef.current) {
+        multiContainerRef.current.scrollTop = idx * 372;
+        setActiveMultiIndex(idx);
+      }
+      const raf = requestAnimationFrame(() => {
+        if (idx !== -1 && multiContainerRef.current) {
+          multiContainerRef.current.scrollTop = idx * 372;
+          setActiveMultiIndex(idx);
+        }
+      });
+      return () => cancelAnimationFrame(raf);
+    }
+  }, [horizon]);
 
   const isMultiExtendingRef = useRef(false);
   const handleMultiScroll = (e: React.UIEvent<HTMLDivElement>) => {
     const el = e.currentTarget;
-    if (!el || isMultiExtendingRef.current) return;
+    if (!el) return;
     const cardH = 372;
+
+    const currentIdx = Math.max(0, Math.min(multiDays.length - 1, Math.round(el.scrollTop / cardH)));
+    setActiveMultiIndex(currentIdx);
+
+    if (isMultiExtendingRef.current) return;
+
     // Append future days towards 2048+
     if (el.scrollTop + el.clientHeight > el.scrollHeight - cardH * 4) {
       isMultiExtendingRef.current = true;
@@ -138,11 +172,24 @@ export function CortexFoundryCalendar({ events, loading }: Props) {
         requestAnimationFrame(() => {
           if (el) el.scrollTop += 20 * cardH;
         });
+        setActiveMultiIndex((curr) => curr + 20);
         return [...next, ...prev];
       });
       setTimeout(() => { isMultiExtendingRef.current = false; }, 150);
     }
   };
+
+  const multiDaysAway = (() => {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const cur = multiDays[activeMultiIndex] || today;
+    const d = new Date(cur);
+    d.setHours(0, 0, 0, 0);
+    return Math.round((d.getTime() - today.getTime()) / 86_400_000);
+  })();
+
+  const isOffTodayMulti = multiDaysAway !== 0;
+  const isMultiFuture = multiDaysAway > 0;
 
   // 3. Week Horizon Data
   const weekEvents = getEventsForWeek(events, anchorDate);
@@ -362,18 +409,20 @@ export function CortexFoundryCalendar({ events, loading }: Props) {
 
       {/* ────────────────── VIEW 2b: MULTI-DAY INSTAGRAM FEED (INFINITE SCROLL) ────────────────── */}
       {horizon === 'multi' && (
-        <div
-          onScroll={handleMultiScroll}
-          style={{
-            maxHeight: 460,
-            overflowY: 'auto',
-            scrollSnapType: 'y mandatory',
-            display: 'flex',
-            flexDirection: 'column',
-            gap: 12,
-            paddingRight: 4,
-          }}
-        >
+        <div style={{ position: 'relative' }}>
+          <div
+            ref={multiContainerRef}
+            onScroll={handleMultiScroll}
+            style={{
+              maxHeight: 460,
+              overflowY: 'auto',
+              scrollSnapType: 'y mandatory',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: 12,
+              paddingRight: 4,
+            }}
+          >
           {multiDays.map((d) => {
             const isCurToday = isSameDay(d, new Date());
             const dEvents = getEventsForDay(events, d);
@@ -551,6 +600,55 @@ export function CortexFoundryCalendar({ events, loading }: Props) {
               </div>
             );
           })}
+          </div>
+
+          {/* Floating Return to Today Button (pops up when scrolled away from current day) */}
+          {isOffTodayMulti && (
+            <button
+              onClick={() => {
+                const today = new Date();
+                const idx = multiDays.findIndex((d) => isSameDay(d, today));
+                if (idx !== -1 && multiContainerRef.current) {
+                  multiContainerRef.current.scrollTo({ top: idx * 372, behavior: 'smooth' });
+                  setActiveMultiIndex(idx);
+                }
+              }}
+              style={{
+                position: 'absolute',
+                bottom: 12,
+                left: '50%',
+                transform: 'translateX(-50%)',
+                zIndex: 30,
+                background: '#059669',
+                color: '#ffffff',
+                border: '1px solid #34d399',
+                boxShadow: '0 4px 16px rgba(16,185,129,0.5)',
+                padding: '6px 14px',
+                borderRadius: 20,
+                fontFamily: MONO,
+                fontSize: 9.5,
+                fontWeight: 800,
+                letterSpacing: '0.08em',
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                gap: 6,
+                transition: 'all 0.15s ease',
+              }}
+            >
+              <span>{isMultiFuture ? '▲' : '▼'}</span>
+              <span>RETURN TO TODAY</span>
+              <span style={{
+                fontSize: 8,
+                background: 'rgba(6,78,59,0.7)',
+                padding: '1px 5px',
+                borderRadius: 10,
+                border: '1px solid rgba(52,211,153,0.4)',
+              }}>
+                {isMultiFuture ? `${multiDaysAway}d ahead` : `${Math.abs(multiDaysAway)}d ago`}
+              </span>
+            </button>
+          )}
         </div>
       )}
 
