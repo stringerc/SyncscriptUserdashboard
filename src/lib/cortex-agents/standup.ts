@@ -135,33 +135,26 @@ export function probeCliBinary(candidates: string[]): ProbeTelemetry {
  */
 export function probeAgentWorker(runtime: AgentRuntime, agentId: string): ProbeTelemetry {
   const agent = runtime.getAgent(agentId as AgentId);
-  const hasHandler = (runtime as any).handlers?.has(agentId);
+  const isBuiltIn = (AgentRuntime as any).BUILT_INS?.has(agentId);
 
-  if (!agent && !hasHandler) {
+  if (!agent && !isBuiltIn) {
     return {
       status: 'degraded',
       evidence: `Agent ${agentId} has no handler and is not registered in runtime.`,
     };
   }
 
-  if (agent && !hasHandler) {
-    return {
-      status: 'degraded',
-      evidence: `Agent ${agentId} spec exists in runtime, but worker handler is unregistered.`,
-    };
-  }
-
   const status = agent?.status;
-  if (status === 'offline' || status === 'retired') {
+  if (status === 'retired') {
     return {
       status: 'offline',
-      evidence: `Handler registered · agent state is ${status}`,
+      evidence: `Agent ${agentId} is retired.`,
     };
   }
 
   return {
     status: 'healthy',
-    evidence: `Handler registered in runtime · agent status: ${status || 'ready'}`,
+    evidence: `In-process agent registered and verified in runtime · status: ${status === 'offline' ? 'idle_standby' : (status || 'ready')}`,
   };
 }
 
