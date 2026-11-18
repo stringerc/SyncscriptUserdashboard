@@ -10350,7 +10350,7 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
               .filter((b) => b.status === 'planned' && b.start > Date.now() - 3_600_000)
               .sort((a, b) => a.start - b.start)
               .slice(0, 12)
-              .map((b) => ({ id: b.id, title: b.title, start: b.start, end: b.end, agentId: b.agentId, kind: b.kind, goalId: b.goalId })),
+              .map((b) => ({ id: b.id, title: b.title, start: b.start, end: b.end, agentId: b.agentId, kind: b.kind, goalId: b.goalId, taskId: b.taskId })),
             experiments: ms.experiments.filter((e) => e.status === 'running').map((e) => ({ id: e.id, routineId: e.routineId, kind: e.kind, variantMin: e.variant.intervalMin })),
           };
         } catch { }
@@ -11535,6 +11535,9 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
                 const dispatched: any[] = [];
                 const failed: any[] = [];
                 for (const b of due) {
+                  // user_task blocks are Crew-facing plan mirrors — their
+                  // window arriving consumes the slot, no agent dispatch.
+                  if (b.kind === 'user_task') { b.status = 'done'; continue; }
                   const agentId = (b.agentId || 'builder') as any;
                   const kind = b.kind || 'orchestrate';
                   const res = agentRuntime.submitTask(agentId, kind, b.title, {

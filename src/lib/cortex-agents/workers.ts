@@ -2660,6 +2660,9 @@ export function registerAgentWorkers(runtime: AgentRuntime) {
     // distilled-rule proposals. Twice daily is plenty — evals are expensive
     // and clusters need time to recur before they're worth judging.
     { agentId: 'trainer', kind: 'eval_cycle', title: 'Trainer: failure-cluster A/B eval (720m)', everyMinutes: 720 },
+    // Mission planner: keeps UP NEXT filled — user-task mirrors + daily
+    // goal reviews. Self-deduping; safe to run every 6h.
+    { agentId: 'prep', kind: 'mission_plan', title: 'Prep: mission day planner (360m)', everyMinutes: 360 },
   ];
   for (const r of COGNITION_ROUTINES) {
     runtime.addRoutine({ agentId: r.agentId, kind: r.kind, title: r.title, input: r.input, everyMinutes: r.everyMinutes, enabled: true });

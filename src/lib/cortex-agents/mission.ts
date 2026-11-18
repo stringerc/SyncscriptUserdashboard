@@ -252,13 +252,14 @@ export function planBlocks(
   items: { title: string; agentId?: string; kind?: string; goalId?: string; taskId?: string; durMin?: number }[],
   busy: BusySpan[],
   now = Date.now(),
+  notAfter?: number,
 ): ScheduleBlock[] {
   const created: ScheduleBlock[] = [];
   let cursor = now;
   for (const it of items) {
     const durMs = (it.durMin ?? state.prefs.slotMin) * 60_000;
     const slot = findFreeSlot(cursor, durMs, busy, state.prefs);
-    if (!slot) break;
+    if (!slot || (notAfter != null && slot.start > notAfter)) break;
     const block: ScheduleBlock = {
       id: `blk-${now.toString(36)}-${created.length}-${Math.random().toString(36).slice(2, 5)}`,
       title: it.title, agentId: it.agentId, kind: it.kind,
@@ -441,4 +442,79 @@ export function reportExperiments(
     out.push({ experiment: exp, variantRuns: runs, variantRate, controlRate, ready, verdict });
   }
   return out;
+}
+
+// ------------------------------------------------------------- day planner
+
+/**
+ * Nightly/intraday planner — keeps UP NEXT filled with real work.
+ *  - `user_task` blocks mirror pending user tasks due within ~36h (or
+ *    created today with no due date). Display-only: dispatch_due_blocks
+ *    marks them done without spawning agent work.
+ *  - `goal_review` blocks give each active goal one strategist pass per
+ *    day — the mission loop's "is this goal moving?" heartbeat.
+ * Dedupes by taskId and goalId+day; safe to run on a short cadence.
+ */
+export function runMissionPlan(now = Date.now()) {
+  const state = loadMission();
+  const horizon = now + 36 * 3_600_000;
+  const dayStart = new Date(now); dayStart.setHours(0, 0, 0, 0);
+
+  const readJson = (name: string, key: string): any[] => {
+    try {
+      const raw = JSON.parse(fs.readFileSync(path.join(STATE_DIR, name), 'utf8'));
+      return Array.isArray(raw?.[key]) ? raw[key] : [];
+    } catch { return []; }
+  };
+  const calEvents = readJson('calendar-upcoming.json', 'events');
+  const userTasks = readJson('tasks-snapshot.json', 'tasks');
+
+  const busy = [
+    ...calEvents.map((e: any) => ({ start: Number(e.start), end: Number(e.end) || Number(e.start) + 3_600_000 }))
+      .filter((b: any) => Number.isFinite(b.start) && Number.isFinite(b.end) && b.end > b.start),
+    ...state.blocks.filter((b) => b.status === 'planned').map((b) => ({ start: b.start, end: b.end })),
+  ];
+
+  const plannedTaskIds = new Set(state.blocks.map((b) => b.taskId).filter(Boolean));
+  const items: Parameters<typeof planBlocks>[1] = [];
+  for (const t of userTasks) {
+    if (t.completed || plannedTaskIds.has(t.id)) continue;
+    const due = t.dueDate ? new Date(t.dueDate).getTime() : NaN;
+    const created = t.createdAt ? new Date(t.createdAt).getTime() : NaN;
+    const dueSoon = !Number.isNaN(due) && due >= now - 12 * 3_600_000 && due <= horizon;
+    const freshUndated = Number.isNaN(due) && !Number.isNaN(created) && created >= dayStart.getTime();
+    if (!dueSoon && !freshUndated) continue;
+    items.push({ title: `USER TASK — ${String(t.title).slice(0, 140)}`, kind: 'user_task', taskId: t.id, durMin: 30 });
+  }
+
+  // Tomorrow's goal reviews — one per active goal, deduped per calendar day.
+  const tomorrow = new Date(dayStart.getTime() + 86_400_000);
+  const tomorrowStart = tomorrow.getTime() + (state.prefs?.workStartMin ?? 480) * 60_000;
+  const goalItems: Parameters<typeof planBlocks>[1] = [];
+  const sameDay = (a: number, b: number) => {
+    const da = new Date(a), db = new Date(b);
+    return da.getFullYear() === db.getFullYear() && da.getMonth() === db.getMonth() && da.getDate() === db.getDate();
+  };
+  for (const g of state.goals.filter((g) => g.status === 'active')) {
+    const already = state.blocks.some((b) => b.goalId === g.id && b.kind === 'goal_review' && sameDay(b.start, tomorrowStart));
+    if (already) continue;
+    goalItems.push({
+      title: `Goal review — ${g.title}: assess progress since last review; if stalled, file a governed proposal for the next concrete step`,
+      agentId: 'strategist', kind: 'goal_review', goalId: g.id,
+      durMin: state.prefs?.slotMin ?? 30,
+    });
+  }
+
+  let created = planBlocks(state, items, busy, now, horizon);
+  if (goalItems.length) {
+    const busy2 = [...busy, ...created.map((b) => ({ start: b.start, end: b.end }))];
+    const tomorrowEnd = tomorrow.getTime() + (state.prefs?.workEndMin ?? 1320) * 60_000;
+    created = created.concat(planBlocks(state, goalItems, busy2, tomorrowStart, tomorrowEnd));
+  }
+  if (created.length) saveMission(state);
+  return {
+    planned: created.length,
+    userBlocks: created.filter((b) => b.kind === 'user_task').length,
+    goalReviews: created.filter((b) => b.kind === 'goal_review').length,
+  };
 }

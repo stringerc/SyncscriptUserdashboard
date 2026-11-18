@@ -279,7 +279,7 @@ export function ProjectsPage() {
   const [activeGoalStatusFilter, setActiveGoalStatusFilter] = useState<string>('all');
   const [activeViewFilter, setActiveViewFilter] = useState<'all' | 'personal' | 'team' | 'assigned'>('all');
   // Date scope: today's tasks by default; "All" reveals history.
-  const [taskDateScope, setTaskDateScope] = useState<'today' | 'all'>('today');
+  const [taskDateScope, setTaskDateScope] = useState<'today' | 'upcoming' | 'all'>('today');
   // Daypart filter by task creation time: morning/afternoon/evening/night.
   const [daypartFilter, setDaypartFilter] = useState<'all' | 'morning' | 'afternoon' | 'evening' | 'night'>('all');
   const [showArchivedTasks, setShowArchivedTasks] = useState(false); // PHASE 5D: Archive toggle
@@ -2093,24 +2093,30 @@ function TaskManagementSection({
     return d.getFullYear() === n.getFullYear() && d.getMonth() === n.getMonth() && d.getDate() === n.getDate();
   };
   const todayTaskCount = tasks.filter((t: any) => isToday(t.createdAt)).length;
+  const upcomingTaskCount = tasks.filter((t: any) => !t.completed && Boolean((t as any).dueDate || isToday(t.createdAt))).length;
   const previousTaskCount = tasks.length - todayTaskCount;
 
   // ── Daypart grouping (research-backed: OpenTodo/DoEverything/Marvin all
   // ship this; CHI guidance says keep it optional — chips already do that).
   // Groups: chronological day → morning/afternoon/evening/night → time.
+  // 'upcoming' scope groups/sorts by due date (falling back to createdAt) —
+  // the queue is about *when it's due*, not when it was created.
+  const effectiveIso = (t: any): string | undefined =>
+    taskDateScope === 'upcoming' ? ((t?.dueDate || t?.createdAt) as string | undefined) : ((t?.createdAt) as string | undefined);
   const DAYPART_RANK: Record<string, number> = { morning: 0, afternoon: 1, evening: 2, night: 3 };
   const daypartRankOf = (t: any): number => {
-    const dp = taskDaypart((t as any)?.createdAt);
+    const dp = taskDaypart(effectiveIso(t));
     return dp ? DAYPART_RANK[dp] : 4; // undated/any-time last
   };
   const compareTasksByDaypart = (a: any, b: any): number => {
-    const ta = a?.createdAt ? new Date(a.createdAt).getTime() : NaN;
-    const tb = b?.createdAt ? new Date(b.createdAt).getTime() : NaN;
+    const aIso = effectiveIso(a), bIso = effectiveIso(b);
+    const ta = aIso ? new Date(aIso).getTime() : NaN;
+    const tb = bIso ? new Date(bIso).getTime() : NaN;
     const aOk = !Number.isNaN(ta), bOk = !Number.isNaN(tb);
     if (!aOk && !bOk) return 0;
     if (!aOk) return 1;
     if (!bOk) return -1;
-    const da = new Date(a.createdAt), db = new Date(b.createdAt);
+    const da = new Date(aIso!), db = new Date(bIso!);
     const dayA = new Date(da.getFullYear(), da.getMonth(), da.getDate()).getTime();
     const dayB = new Date(db.getFullYear(), db.getMonth(), db.getDate()).getTime();
     if (dayA !== dayB) return dayA - dayB;
@@ -2120,9 +2126,9 @@ function TaskManagementSection({
   // Group key: 'today' scope groups by daypart only; 'all' scope groups by
   // calendar day AND daypart so history stays readable.
   const taskGroupKey = (t: any): string => {
-    const dp = taskDaypart((t as any)?.createdAt) ?? 'anytime';
-    if (taskDateScope === 'today') return dp;
-    const iso = (t as any)?.createdAt;
+    const iso = effectiveIso(t);
+    const dp = taskDaypart(iso) ?? 'anytime';
+    if (taskDateScope !== 'all') return dp;
     const d = iso ? new Date(iso) : null;
     const day = d && !Number.isNaN(d.getTime())
       ? `${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()}` : 'undated';
@@ -2131,10 +2137,10 @@ function TaskManagementSection({
   const renderDaypartHeader = (task: any, prevTask: any) => {
     const key = taskGroupKey(task);
     if (prevTask && taskGroupKey(prevTask) === key) return null;
-    const dp = taskDaypart((task as any)?.createdAt);
+    const iso = effectiveIso(task);
+    const dp = taskDaypart(iso);
     let label = dp ? dp[0].toUpperCase() + dp.slice(1) : 'Any time';
-    if (taskDateScope === 'all') {
-      const iso = (task as any)?.createdAt;
+    if (taskDateScope !== 'today') {
       const d = iso ? new Date(iso) : null;
       label = d && !Number.isNaN(d.getTime())
         ? `${d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })} · ${label}`
@@ -2153,10 +2159,15 @@ function TaskManagementSection({
     const priorityMatch = activePriorityFilter === 'all' || task.priority === activePriorityFilter;
     const energyMatch = activeEnergyFilter === 'all' || task.energyLevel === activeEnergyFilter;
     const tagMatch = activeTagFilter === 'all' || (task.tags && task.tags.includes(activeTagFilter));
-    // Date scope — default shows only tasks created today; undated tasks
-    // count as today so legacy rows never silently vanish.
-    const dateMatch = taskDateScope === 'all' || isToday((task as any).createdAt) || !(task as any).createdAt;
-    const dp = taskDaypart((task as any).createdAt);
+    // Date scope — 'today' shows tasks created today (undated count as
+    // today so legacy rows never vanish); 'upcoming' is the forward queue:
+    // pending tasks with a due date, or undated tasks created today.
+    const upcomingMatch = taskDateScope !== 'upcoming' ||
+      (!task.completed && Boolean((task as any).dueDate || isToday((task as any).createdAt)));
+    const dateMatch = taskDateScope === 'all' || taskDateScope === 'upcoming'
+      ? upcomingMatch
+      : (isToday((task as any).createdAt) || !(task as any).createdAt);
+    const dp = taskDaypart(effectiveIso(task));
     const daypartMatch = daypartFilter === 'all' || dp === daypartFilter || dp === null;
     
     // View filter: personal (no team), team (has team), or all
@@ -2328,6 +2339,16 @@ function TaskManagementSection({
             onClick={() => setTaskDateScope('today')}
           >
             Today <span className="ml-1">({todayTaskCount})</span>
+          </Badge>
+          <Badge
+            variant="outline"
+            className={`cursor-pointer hover:bg-white/5 text-white transition-all ${
+              taskDateScope === 'upcoming' ? 'bg-amber-600/20 border-amber-500/50' : ''
+            }`}
+            data-nav="tasks-upcoming"
+            onClick={() => setTaskDateScope('upcoming')}
+          >
+            Up Next <span className="ml-1">({upcomingTaskCount})</span>
           </Badge>
           <Badge
             variant="outline"

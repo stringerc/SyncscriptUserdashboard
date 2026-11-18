@@ -286,8 +286,10 @@ export function CortexFoundryNav({ snap, onSelectAgent, selectedAgent, onOpenTow
   const upcomingBlocks = (snap.mission?.upcomingBlocks || [])
     .filter((b) => sameDay(b.start, Date.now()))
     .sort((a, b) => a.start - b.start);
+  const plannedUserTaskIds = new Set(upcomingBlocks.map((b) => b.taskId).filter(Boolean));
   const userPendingToday = userList.filter((t) =>
-    !t.completed && (sameDay(t.dueDate, Date.now()) || (!t.dueDate && sameDay(t.createdAt, Date.now()))));
+    !t.completed && !plannedUserTaskIds.has(t.id) &&
+    (sameDay(t.dueDate, Date.now()) || (!t.dueDate && sameDay(t.createdAt, Date.now()))));
 
   const goalList: LifeGoal[] = goals.list();
 
@@ -345,9 +347,9 @@ export function CortexFoundryNav({ snap, onSelectAgent, selectedAgent, onOpenTow
               {upcomingBlocks.map((b) => (
                 <Row key={b.id}>
                   <span style={{ color: '#fbbf24', minWidth: 42, fontSize: 8.5 }}>{new Date(b.start).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}</span>
-                  <span style={{ color: 'rgba(125,211,252,0.8)', fontSize: 8, minWidth: 52 }}>{(b.agentId || 'agent').toUpperCase()}</span>
+                  <span style={{ color: b.kind === 'user_task' ? 'rgba(252,211,77,0.8)' : 'rgba(125,211,252,0.8)', fontSize: 8, minWidth: 52 }}>{b.kind === 'user_task' ? 'USER' : (b.agentId || 'agent').toUpperCase()}</span>
                   <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: INK }}>{b.title}</span>
-                  <span style={{ fontSize: 8, color: DIM }}>PLANNED</span>
+                  <span style={{ fontSize: 8, color: DIM }}>{b.kind === 'user_task' ? 'PLANNED' : 'AGENT'}</span>
                 </Row>
               ))}
               {userPendingToday.map((t: any) => (

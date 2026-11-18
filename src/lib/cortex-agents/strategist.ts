@@ -526,6 +526,66 @@ async function counselSynthesizeWorker(ctx: AgentContext) {
   };
 }
 
+// ── goal_review ─────────────────────────────────────────────────────
+// Daily per-goal heartbeat dispatched by mission `goal_review` blocks.
+// Computes real progress; only files a proposal when the goal is stalled
+// (no linked completions in 48h) — healthy goals report and stay quiet.
+async function goalReviewWorker(ctx: AgentContext) {
+  const { loadMission, goalProgress } = await import('./mission');
+  const { readArchive } = await import('./archive');
+  const goalId = String(ctx.task.input?.goalId || '');
+  const state = loadMission();
+  const goal = state.goals.find((g) => g.id === goalId);
+  if (!goal) return { reviewed: false, reason: `unknown goal '${goalId}'` };
+
+  const progress = goalProgress(state, readArchive({ limit: 500 }));
+  const gp = progress.find((p) => p.goalId === goal.id);
+  const archive = readArchive({ limit: 500 });
+  const cutoff = Date.now() - 48 * 3_600_000;
+  const recentDone = archive.filter((r) =>
+    goal.taskIds.includes(r.id) && r.status === 'completed' &&
+    (r.finishedAt ?? r.createdAt) >= cutoff).length;
+  const linkedBlocks = state.blocks.filter((b) => b.goalId === goal.id);
+  const recentBlockDone = linkedBlocks.filter((b) => b.status === 'done' || b.status === 'dispatched').length;
+
+  const healthy = (gp && gp.progress > 0) || recentDone > 0 || recentBlockDone > 0;
+  if (healthy || goal.status !== 'active') {
+    return {
+      reviewed: true, goalId: goal.id, healthy: true,
+      progress: gp ? `${gp.done}/${gp.linked}` : 'unlinked',
+      recentCompletions: recentDone,
+    };
+  }
+
+  // Stalled — ask the reason tier for the next concrete step, then file
+  // it as a governed proposal (Crew approves; nothing self-executes).
+  const prompt = [
+    `Goal review: "${goal.title}"${goal.description ? ` — ${goal.description}` : ''} is stalled.`,
+    `Progress: ${gp ? `${gp.done}/${gp.linked} linked items done` : 'no linked work'}; recent completions (48h): ${recentDone}.`,
+    `Mission ops pending: ${state.opsItems.filter((o) => !o.done).slice(0, 10).map((o) => o.label).join('; ') || 'none'}.`,
+    `Propose ONE concrete next step an agent lane can execute. JSON only: {"title":"imperative step","agent":"agent-id","why":"one line"}`,
+  ].join('\n');
+  const text = await ctx.llm({
+    tier: 'reason', maxTokens: 400,
+    messages: [
+      { role: 'system', content: 'You are STRATEGIST reviewing a stalled goal. JSON only.' },
+      { role: 'user', content: prompt },
+    ],
+  });
+  const m = text.match(/\{[\s\S]*\}/);
+  if (!m) return { reviewed: true, goalId: goal.id, healthy: false, stalled: true, proposal: 'LLM returned no JSON — reported only' };
+  let step: any;
+  try { step = JSON.parse(m[0]); } catch { return { reviewed: true, goalId: goal.id, healthy: false, stalled: true, proposal: 'unparseable step JSON' }; }
+  const title = String(step.title || '').slice(0, 120);
+  if (!title) return { reviewed: true, goalId: goal.id, healthy: false, stalled: true, proposal: 'empty step' };
+  const filed = fileStrategyProposals({
+    planNote: `goal-review-${goal.id}-${new Date().toISOString().slice(0, 10)}`,
+    planTaskId: ctx.task.id,
+    actions: [`[process] ${title} — assign to ${String(step.agent || 'builder')}; why: ${String(step.why || 'stalled-goal next step').slice(0, 200)}; goal: ${goal.id}`],
+  });
+  return { reviewed: true, goalId: goal.id, healthy: false, stalled: true, proposal: title, filed: filed.filed };
+}
+
 // ── Registration ──────────────────────────────────────────────────
 
 export function makeStrategistWorker(runtime: AgentRuntime): WorkerHandler {
@@ -540,8 +600,9 @@ export function makeStrategistWorker(runtime: AgentRuntime): WorkerHandler {
       case 'counsel_convene': return counselConveneWorker(ctx);
       case 'counsel_synthesize': return counselSynthesizeWorker(ctx);
       case 'goal_plan': return goalPlanWorker(ctx);
+      case 'goal_review': return goalReviewWorker(ctx);
       default:
-        return { error: `unknown strategist kind '${ctx.task.kind}'`, kinds: ['cluster', 'plan', 'manifest', 'regress', 'propose_skill', 'propose_agent', 'counsel_convene', 'counsel_synthesize', 'goal_plan'] };
+        return { error: `unknown strategist kind '${ctx.task.kind}'`, kinds: ['cluster', 'plan', 'manifest', 'regress', 'propose_skill', 'propose_agent', 'counsel_convene', 'counsel_synthesize', 'goal_plan', 'goal_review'] };
     }
   };
 }

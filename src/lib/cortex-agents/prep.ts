@@ -17,6 +17,7 @@ import type { WorkerHandler } from './runtime';
 import { rulesBlock } from './rules';
 import { drainSafePending, listProposals, isSafeAutoProposal } from '../cortex-initiative-ledger';
 import { autoApproveSafeStrategyProposals } from './strategy-proposals';
+import { runMissionPlan } from './mission';
 
 const RUNTIME_DIR = process.env.CORTEX_AGENTS_STATE_DIR || path.join(process.cwd(), '.cortex-runtime');
 const BRIEFS_DIR = path.join(RUNTIME_DIR, 'prep-briefs');
@@ -474,6 +475,7 @@ export function makePrepWorker(deps: {
     const kind = String(ctx.task.kind || '');
 
     if (kind === 'prep_sweep') return runSweep(ctx);
+    if (kind === 'mission_plan') return runMissionPlan();
     if (kind === 'engagement_plan') return buildEngagementPlan(ctx, input);
     if (kind === 'initiative_drain') {
       // Drain the server-side initiative ledger: approve safe tier-1
