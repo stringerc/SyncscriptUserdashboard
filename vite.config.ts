@@ -24,7 +24,7 @@ import { archiveTask, readArchive } from './src/lib/cortex-agents/archive';
 import { listStrategyProposals, decideStrategyProposal, reconcileStrategyProposals, fileBudgetProposal, autoApproveSafeStrategyProposals, setOnProposalFiledHook } from './src/lib/cortex-agents/strategy-proposals';
 import { recordIncidentFailure, resolveIncidentsOnSuccess, listIncidents, escalateStaleIncidents, sweepIncidentTtl, dismissIncident, dismissAllIncidents, autoVerifyIncident } from './src/lib/cortex-agents/incidents';
 import { issueDirective, listDirectives, ackDirective, cancelDirective } from './src/lib/cortex-agents/directives';
-import { loadMission, saveMission, upsertGoal, verifyOps, goalProgress, routineYield, suggestCadence, planBlocks, type OpsItem, type MissionGoal, type CadenceEntry } from './src/lib/cortex-agents/mission';
+import { loadMission, saveMission, upsertGoal, verifyOps, goalProgress, routineYield, suggestCadence, planBlocks, startExperiment, reportExperiments, type OpsItem, type MissionGoal, type CadenceEntry } from './src/lib/cortex-agents/mission';
 import { maybeFileAdoptionFollowup } from './src/lib/cortex-agents/adoption';
 import { registerAgentWorkers, makeEphemeralWorker, expandTaskSpec } from './src/lib/cortex-agents/workers';
 import { enqueueDistributionItem, DISTRIBUTION_ITEM_TYPES } from './src/lib/cortex-agents/distribution';
@@ -11417,6 +11417,56 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
                 saveMission(state);
                 return send(200, { ok: true, ...report, cadence: state.cadence });
               }
+              case 'experiment_start': {
+                // Before/after A/B on one routine's cadence. Applies the
+                // variant interval immediately, then measures yield after
+                // >=8 post-change runs (spec §3).
+                const routineId = String(p.routineId || '');
+                const variantMin = Number(p.variantMin);
+                const routine = agentRuntime.listRoutines().find((r: any) => r.id === routineId);
+                if (!routine) return send(404, { ok: false, error: 'unknown routine' });
+                const res = startExperiment(state, routine, variantMin, src.archive, src.now);
+                if (!res.ok) return send(400, { ok: false, error: res.reason });
+                const applied = agentRuntime.updateRoutine(routineId, { everyMinutes: variantMin });
+                if (!applied.ok) return send(500, { ok: false, error: `experiment recorded but interval update failed: ${applied.reason}` });
+                break;
+              }
+              case 'experiment_report': {
+                const reports = reportExperiments(state, src.archive, src.now);
+                saveMission(state);
+                return send(200, { ok: true, experiments: state.experiments, reports });
+              }
+              case 'experiment_conclude': {
+                // Apply a concluded verdict: keep → no-op (variant already live),
+                // revert → restore baseline interval.
+                const exp = state.experiments.find((e: any) => e.id === p.id);
+                if (!exp) return send(404, { ok: false, error: 'unknown experiment' });
+                if (exp.status !== 'concluded') return send(400, { ok: false, error: 'experiment still running' });
+                if (exp.verdict === 'revert') {
+                  const r = agentRuntime.updateRoutine(exp.routineId, { everyMinutes: exp.baseline.intervalMin });
+                  if (!r.ok) return send(500, { ok: false, error: `revert failed: ${r.reason}` });
+                }
+                break;
+              }
+              case 'dispatch_due_blocks': {
+                // Calendar → agents: planned blocks whose start has arrived
+                // (15m grace for scheduler jitter) become real agent tasks.
+                const grace = 15 * 60_000;
+                const due = state.blocks.filter((b) => b.status === 'planned' && b.start <= src.now + grace);
+                const dispatched: any[] = [];
+                const failed: any[] = [];
+                for (const b of due) {
+                  const agentId = (b.agentId || 'builder') as any;
+                  const kind = b.kind || 'orchestrate';
+                  const res = agentRuntime.submitTask(agentId, kind, b.title, {
+                    blockId: b.id, goalId: b.goalId, missionBlock: true,
+                  });
+                  if (res.ok) { b.status = 'dispatched'; dispatched.push({ blockId: b.id, taskId: res.task?.id }); }
+                  else { failed.push({ blockId: b.id, error: res.error }); }
+                }
+                saveMission(state);
+                return send(200, { ok: true, dispatched, failed, remaining: state.blocks.filter((b) => b.status === 'planned').length });
+              }
               default:
                 return send(400, { ok: false, error: `unknown action '${p.action}'` });
             }
@@ -11757,6 +11807,28 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
             res.end(JSON.stringify({ ok: false, error: String(e?.message || e).slice(0, 200) }));
           }
         });
+      });
+
+      // GET /api/cortex/self-model/capabilities — Dynamic capability reflection & self-model sync
+      server.middlewares.use('/api/cortex/self-model/capabilities', async (req: any, res: any, next: any) => {
+        if (req.method !== 'GET') return next();
+        try {
+          const capsPath = path.join(process.cwd(), '.cortex-runtime', 'dynamic-capabilities.json');
+          let data: any = null;
+          if (fs.existsSync(capsPath)) {
+            data = JSON.parse(fs.readFileSync(capsPath, 'utf-8'));
+          } else {
+            const { curatorAuditSelf } = await import('./src/lib/cortex-agents/curator-tools');
+            data = await curatorAuditSelf();
+          }
+          agentCors(req, res);
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify(data));
+        } catch (err: any) {
+          agentCors(req, res);
+          res.writeHead(500, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ ok: false, error: err?.message || String(err) }));
+        }
       });
 
       // POST /api/cortex/agents/task/cancel — {taskId}

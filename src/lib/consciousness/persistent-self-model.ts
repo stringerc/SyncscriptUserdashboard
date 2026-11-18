@@ -353,6 +353,45 @@ export class PersistentSelfModel {
       this.relationshipBonds.set(k, v);
     }
   }
+
+  getBodySchema(): BodySchema {
+    return {
+      perceptualModalities: [...this.bodySchema.perceptualModalities],
+      motorEffectorTypes: [...this.bodySchema.motorEffectorTypes],
+      boundaryDefinitions: {
+        internalMemorySubstrate: this.bodySchema.boundaryDefinitions.internalMemorySubstrate,
+        externalEnvironmentInterfaces: [...this.bodySchema.boundaryDefinitions.externalEnvironmentInterfaces],
+      },
+    };
+  }
+
+  hydrateFromDynamicCapabilities(caps: {
+    tools?: string[];
+    agents?: string[];
+    modalities?: string[];
+    effectors?: string[];
+  }): void {
+    if (Array.isArray(caps.modalities)) {
+      this.bodySchema.perceptualModalities = Array.from(new Set([
+        ...this.bodySchema.perceptualModalities,
+        ...caps.modalities,
+        'curator_fleet_radar',
+      ]));
+    }
+    if (Array.isArray(caps.effectors)) {
+      this.bodySchema.motorEffectorTypes = Array.from(new Set([
+        ...this.bodySchema.motorEffectorTypes,
+        ...caps.effectors,
+        'hermes_tool_execution',
+      ]));
+    } else if (Array.isArray(caps.tools)) {
+      this.bodySchema.motorEffectorTypes = Array.from(new Set([
+        ...this.bodySchema.motorEffectorTypes,
+        ...caps.tools,
+        'hermes_tool_execution',
+      ]));
+    }
+  }
 }
 
 let singletonSelfModel: PersistentSelfModel | null = null;

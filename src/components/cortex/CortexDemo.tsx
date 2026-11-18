@@ -62,6 +62,7 @@ import remarkGfm from 'remark-gfm';
 import type { CortexArtifact } from '../../lib/cortex-artifacts';
 import { runSurfaceCommand, surfaceManifestSuffix } from '../../lib/cortex-surface-commands';
 import { getUnifiedCortexDirective } from '../../lib/cortex-capabilities';
+import { getPersistentSelfModel } from '../../lib/consciousness/persistent-self-model';
 
 const ArtifactRenderer = lazy(() => import('./artifacts/ArtifactRenderer'));
 import { CortexMissionRailDrawer, type CopilotTask, type CopilotGoal } from './CortexMissionRailDrawer';
@@ -859,6 +860,18 @@ export default function CortexDemo() {
   const activeAiUtteranceRef = useRef<string>('');
   const recentAiSpeechHistoryRef = useRef<string[]>([]);
   const lastSpeechEndTimeRef = useRef<number>(0);
+
+  // Dynamic self-model capability hydration from Curator
+  useEffect(() => {
+    fetch('/api/cortex/self-model/capabilities')
+      .then(res => res.json())
+      .then(data => {
+        if (data?.capabilities) {
+          getPersistentSelfModel().hydrateFromDynamicCapabilities(data.capabilities);
+        }
+      })
+      .catch(() => {});
+  }, []);
 
   useEffect(() => {
     isVoiceActiveRef.current = isVoiceActive;
@@ -1933,7 +1946,7 @@ RULES:
 
 Tool schemas are provided in the tools field — pick the right tool and args; you may chain calls across turns. Synthesize verified findings concisely when observations return.
 
-Internal substrate: GW coalition active | IIT Φ=${phi.toFixed(3)} | AST tracking | Volition veto gating host actions | Agency=${agency.toFixed(2)}
+Internal substrate: GW coalition active | IIT Φ=${phi.toFixed(3)} | AST tracking | Volition veto gating host actions | Agency=${agency.toFixed(2)} | Discovered Effectors: ${getPersistentSelfModel().getBodySchema().motorEffectorTypes.length} verified
 Host telemetry: RAM ${proactiveAuditData?.system?.usedPercent ?? '—'}% (${proactiveAuditData?.system?.freeGB ?? '—'}GB free) | ${proactiveAuditData?.productivity?.tabCount ?? 0} tabs | branch ${proactiveAuditData?.codebase?.branch ?? '—'} (${proactiveAuditData?.codebase?.totalChanges ?? 0} WIP)
 
 FORMATTING: clean structured markdown, bold subheadings, concise bullets; avoid dense tables unless asked; no raw HTML; tone: sharp, executive, Cortana-like.`,
