@@ -53,7 +53,17 @@ async function probeExtensionRelay() {
     const targets = await probeJson(port, token, '/json/list');
     const pages = Array.isArray(targets) ? targets.filter(t => t.type === 'page') : [];
     if (pages.length === 0) continue;
-    return `http://${RELAY_CDP_USER}:${encodeURIComponent(token)}@127.0.0.1:${port}`;
+    // Playwright strips userinfo during http→ws discovery and the relay
+    // requires Basic auth on the WS handshake, so hand it the ws endpoint
+    // with credentials embedded directly.
+    try {
+      const ws = new URL(version.webSocketDebuggerUrl);
+      ws.username = RELAY_CDP_USER;
+      ws.password = token;
+      return ws.toString();
+    } catch {
+      return `http://${RELAY_CDP_USER}:${encodeURIComponent(token)}@127.0.0.1:${port}`;
+    }
   }
   return null;
 }
