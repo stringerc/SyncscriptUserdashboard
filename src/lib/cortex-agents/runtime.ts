@@ -216,6 +216,26 @@ export const AGENT_SPECS: AgentSpec[] = [
     modelPin: { tier: 'fast' },
     tier: 'enterprise',
   },
+  {
+    id: 'hermes',
+    name: 'HERMES',
+    role: 'Sovereign Tool Execution Host & Mutating Action Gateway',
+    blurb: 'Sovereign tool execution runtime (:18880) — executes mutating host commands, sandboxed filesystem mutations, and external network calls under strict safety invariants and state verification.',
+    concurrency: 2,
+    dailyBudget: 48,
+    modelPin: { tier: 'fast' },
+    tier: 'enterprise',
+  },
+  {
+    id: 'curator',
+    name: 'CURATOR',
+    role: 'Fleet Meta-Cognitive Curator & Capability Auditor',
+    blurb: 'Continuous intelligence curator — audits internal host tools and runtime specialists, syncs dynamic bodySchema, tracks upstream agent releases, and files reflexive prompt optimization proposals.',
+    concurrency: 1,
+    dailyBudget: 32,
+    modelPin: { tier: 'reason' },
+    tier: 'enterprise',
+  },
 ];
 
 const GLOBAL_CONCURRENCY = 4;

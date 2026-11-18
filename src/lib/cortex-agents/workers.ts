@@ -2360,6 +2360,56 @@ const openclawWorker: WorkerHandler = async (ctx) => {
   };
 };
 
+const hermesWorker: WorkerHandler = async (ctx) => {
+  const input = ctx.task.input || {};
+  const toolName = String(input.tool || ctx.task.kind || 'ping');
+  const args = (input.arguments || input.args || {}) as Record<string, unknown>;
+  const idempotencyKey = input.idempotency_key ? String(input.idempotency_key) : undefined;
+
+  ctx.progress(0.2);
+  if (toolName === 'hermes_ping' || toolName === 'ping') {
+    ctx.progress(1);
+    return { ok: true, tool: toolName, status: 'alive', host: '127.0.0.1:18880', timestamp: Date.now() };
+  }
+
+  ctx.progress(0.5);
+  try {
+    const { invokeHermesTool } = await import('../../utils/hermes-client');
+    const token = process.env.HERMES_TOKEN || 'sovereign-local-token';
+    const res = await invokeHermesTool(token, { tool: toolName, arguments: args, idempotency_key: idempotencyKey });
+    ctx.progress(1);
+    return res;
+  } catch (err: any) {
+    return { ok: false, tool: toolName, error: err?.message || String(err) };
+  }
+};
+
+const curatorWorker: WorkerHandler = async (ctx) => {
+  const input = ctx.task.input || {};
+  const kind = String(ctx.task.kind || input.kind || 'audit_self');
+  ctx.progress(0.2);
+  const { curatorAuditSelf, curatorRadarAgents, curatorOptimizeAgent } = await import('./curator-tools');
+  if (kind === 'audit_self') {
+    const res = await curatorAuditSelf();
+    ctx.progress(1);
+    return res;
+  }
+  if (kind === 'radar_sweep' || kind === 'radar_agents') {
+    const res = await curatorRadarAgents();
+    ctx.progress(1);
+    return res;
+  }
+  if (kind === 'optimize_agent') {
+    const agentId = String(input.agentId || 'openclaw');
+    const instruction = String(input.instruction || '');
+    const res = await curatorOptimizeAgent(agentId, instruction);
+    ctx.progress(1);
+    return res;
+  }
+  ctx.progress(1);
+  return { ok: true, kind, handledBy: 'curator', timestamp: Date.now() };
+};
+
 // ── TRAINER: offline A/B evaluator ────────────────────────────────
 // Samples the task archive for recurring failure clusters, asks for ONE
 // candidate distilled rule, then A/B-replays the failing instruction:
@@ -2547,6 +2597,8 @@ export function registerAgentWorkers(runtime: AgentRuntime) {
   runtime.registerWorker('devin', devinWorker);
   runtime.registerWorker('claudecode', claudecodeWorker);
   runtime.registerWorker('openclaw', openclawWorker);
+  runtime.registerWorker('hermes', hermesWorker);
+  runtime.registerWorker('curator', curatorWorker);
   runtime.registerWorker('reviewer', reviewerWorker);
   runtime.registerWorker('runner', runnerWorker);
   registerDistributorWorker(runtime);
@@ -2581,6 +2633,8 @@ export function registerAgentWorkers(runtime: AgentRuntime) {
   // copies with identical titles are not duplicated.
   const COGNITION_ROUTINES: Array<{ agentId: any; kind: string; title: string; input?: Record<string, unknown>; everyMinutes: number }> = [
     { agentId: 'sentinel', kind: 'catalog_scan', title: 'Sentinel: model catalog scan (30m)', everyMinutes: 30 },
+    { agentId: 'curator', kind: 'audit_self', title: 'Curator: dynamic capability audit & sync (60m)', everyMinutes: 60 },
+    { agentId: 'curator', kind: 'radar_sweep', title: 'Curator: agent ecosystem radar sweep (180m)', everyMinutes: 180 },
     { agentId: 'forecaster', kind: 'forecast_cycle', title: 'Forecaster: domain forecast cycle (30m)', everyMinutes: 30 },
     { agentId: 'scout', kind: 'radar_sweep', title: 'Scout: external radar sweep (60m)', everyMinutes: 60 },
     { agentId: 'librarian', kind: 'vault_sync', title: 'Librarian: memory vault sync (60m)', everyMinutes: 60 },

@@ -27,6 +27,8 @@ export const AGENT_COLORS: Record<string, string> = {
   devin: '#38bdf8',
   claudecode: '#f97316',
   openclaw: '#06b6d4',
+  hermes: '#ef4444',
+  curator: '#8b5cf6',
   sentinel: '#67e8f9',
   scout: '#e879f9',
   librarian: '#fbbf24',
@@ -39,7 +41,7 @@ export const AGENT_COLORS: Record<string, string> = {
   forecaster: '#2dd4bf',
   strategist: '#e879f9',
 };
-export const AGENT_ORDER = ['antigravity', 'sentinel', 'scout', 'librarian', 'builder', 'devin', 'claudecode', 'openclaw', 'reviewer', 'runner', 'distributor', 'warden', 'prep', 'forecaster', 'strategist'];
+export const AGENT_ORDER = ['antigravity', 'sentinel', 'scout', 'librarian', 'builder', 'devin', 'claudecode', 'openclaw', 'hermes', 'curator', 'reviewer', 'runner', 'distributor', 'warden', 'prep', 'forecaster', 'strategist'];
 // Deterministic hue for spawned agents from their callSign — stable across renders.
 const spawnHue = (id: string) => {
   let h = 0;
