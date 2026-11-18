@@ -10,6 +10,8 @@
  */
 import fs from 'fs';
 import path from 'path';
+import { readArchive } from './archive';
+import { fileBudgetProposal, fileBudgetTrimProposal } from './strategy-proposals';
 
 const STATE_DIR = process.env.CORTEX_AGENTS_STATE_DIR || path.join(process.cwd(), '.cortex-runtime');
 const MISSION_PATH = path.join(STATE_DIR, 'mission.json');
@@ -511,10 +513,96 @@ export function runMissionPlan(now = Date.now()) {
     const tomorrowEnd = tomorrow.getTime() + (state.prefs?.workEndMin ?? 1320) * 60_000;
     created = created.concat(planBlocks(state, goalItems, busy2, tomorrowStart, tomorrowEnd));
   }
+  // Yield-proportional budget review — starved high-yield agents get raise
+  // proposals (auto-execute ≤128), low-yield hogs get Crew-gated trims.
+  let budgetFiled = 0;
+  try {
+    const agents = readJson('agents-state.json', 'agents')
+      .map((a: any) => ({ id: String(a.id || ''), name: a.name, dailyBudget: Number(a.dailyBudget) || 0 }))
+      .filter((a: any) => a.id && a.dailyBudget > 0);
+    const suggestions = budgetYieldReview(readArchive({ limit: 500 }), agents, now);
+    for (const s of suggestions) {
+      const filed = s.direction === 'raise'
+        ? fileBudgetProposal({ agentId: s.agentId, agentName: s.agentName, currentBudget: s.currentBudget, suggestedBudget: s.suggestedBudget, error: s.reason })
+        : fileBudgetTrimProposal({ agentId: s.agentId, agentName: s.agentName, currentBudget: s.currentBudget, suggestedBudget: s.suggestedBudget, evidence: s.evidence });
+      if (filed) budgetFiled++;
+    }
+  } catch { /* budget review is best-effort — never break planning */ }
+
   if (created.length) saveMission(state);
   return {
     planned: created.length,
     userBlocks: created.filter((b) => b.kind === 'user_task').length,
     goalReviews: created.filter((b) => b.kind === 'goal_review').length,
+    budgetProposalsFiled: budgetFiled,
   };
+}
+
+// ------------------------------------------------------------- budget yield
+
+const BOOKKEEPING_KIND_SET = new Set(['initiative_drain']);
+
+export interface BudgetSuggestion {
+  agentId: string;
+  agentName: string;
+  currentBudget: number;
+  suggestedBudget: number;
+  direction: 'raise' | 'trim';
+  reason: string;
+  evidence: string[];
+}
+
+/**
+ * Yield-proportional budget review — the strategic allocation layer.
+ * Per agent over the trailing 7d of archive: completion yield vs budget
+ * pressure (tasks/day vs dailyBudget). High-yield agents running at
+ * capacity get raise proposals (auto-execute ≤128 via existing triage);
+ * low-yield budget hogs get trim proposals (Crew-gated, never auto).
+ * Bookkeeping kinds are excluded — they no longer consume budget.
+ */
+export function budgetYieldReview(
+  archive: { agentId: string; kind: string; status: string; finishedAt?: number; createdAt: number }[],
+  budgets: { id: string; name?: string; dailyBudget: number }[],
+  now = Date.now(),
+): BudgetSuggestion[] {
+  const since = now - 7 * 86_400_000;
+  const stats = new Map<string, { runs: number; completions: number }>();
+  for (const r of archive) {
+    const t = r.finishedAt ?? r.createdAt;
+    if (t < since || BOOKKEEPING_KIND_SET.has(r.kind)) continue;
+    const e = stats.get(r.agentId) ?? { runs: 0, completions: 0 };
+    e.runs++;
+    if (r.status === 'completed') e.completions++;
+    stats.set(r.agentId, e);
+  }
+  const out: BudgetSuggestion[] = [];
+  for (const b of budgets) {
+    const s = stats.get(b.id);
+    if (!s || s.runs < 10) continue;                    // evidence floor
+    const rate = s.completions / s.runs;
+    const tasksPerDay = s.runs / 7;
+    const pressure = tasksPerDay / Math.max(1, b.dailyBudget);
+    if (rate >= 0.7 && pressure >= 0.8) {
+      const suggested = Math.min(128, b.dailyBudget + Math.max(8, Math.round(b.dailyBudget * 0.5)));
+      if (suggested > b.dailyBudget) {
+        out.push({
+          agentId: b.id, agentName: b.name || b.id.toUpperCase(),
+          currentBudget: b.dailyBudget, suggestedBudget: suggested, direction: 'raise',
+          reason: `${(rate * 100).toFixed(0)}% yield over ${s.runs} runs, using ${(pressure * 100).toFixed(0)}% of daily budget`,
+          evidence: [`${s.runs} runs / ${s.completions} completions in 7d`, `${tasksPerDay.toFixed(1)} tasks/day vs budget ${b.dailyBudget}`],
+        });
+      }
+    } else if (rate < 0.5 && b.dailyBudget > 12) {
+      const suggested = Math.max(8, Math.floor(b.dailyBudget * 0.75));
+      if (suggested < b.dailyBudget) {
+        out.push({
+          agentId: b.id, agentName: b.name || b.id.toUpperCase(),
+          currentBudget: b.dailyBudget, suggestedBudget: suggested, direction: 'trim',
+          reason: `${(rate * 100).toFixed(0)}% yield over ${s.runs} runs — low return on ${b.dailyBudget}/day budget`,
+          evidence: [`${s.runs} runs / ${s.completions} completions in 7d`, `${(s.runs - s.completions)} failures`],
+        });
+      }
+    }
+  }
+  return out;
 }

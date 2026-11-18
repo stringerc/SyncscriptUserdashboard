@@ -1116,6 +1116,22 @@ function apiProxyPlugin(): Plugin {
           console.warn('[cortex-agents] instant proposal intake error:', e);
         }
       });
+      // Budget starvation is a governance event on EVERY path — routines
+      // included. fireRoutine ignores submitTask's result, so without this
+      // hook a capped agent's scheduled work vanished silently.
+      agentRuntime.setBudgetExhaustedHook((agentId, error) => {
+        try {
+          const agent = agentRuntime.getAgent(agentId);
+          if (agent) {
+            fileBudgetProposal({
+              agentId, agentName: agent.name,
+              currentBudget: agent.dailyBudget,
+              suggestedBudget: Math.min(200, agent.dailyBudget + 24),
+              error,
+            });
+          }
+        } catch { /* proposal filing must never break submit */ }
+      });
       // Closed-loop recovery: when a strategy proposal executes (a fix
       // landed), transient-class casualties (provider/timeout failures in
       // the last 24h) get one fresh dispatch each — capped, budget-gated,
@@ -11004,10 +11020,11 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
           decideStrategyProposal(id, 'dismissed');
           return { ok: true, note: 'dismissed' };
         }
-        if (p.action?.type === 'budgetRaise') {
+        if (p.action?.type === 'budgetRaise' || p.action?.type === 'budgetTrim') {
           const okBudget = agentRuntime.setDailyBudget(p.action.agentId as any, p.action.budget);
-          decideStrategyProposal(id, okBudget ? 'executed' : 'approved', okBudget ? `budget ${p.action.agentId} → ${p.action.budget}/day` : 'budget raise failed');
-          return { ok: okBudget, note: okBudget ? `budget raised: ${p.action.agentId} → ${p.action.budget}/day` : 'raise failed' };
+          const verb = p.action.type === 'budgetTrim' ? 'trimmed' : 'raised';
+          decideStrategyProposal(id, okBudget ? 'executed' : 'approved', okBudget ? `budget ${p.action.agentId} → ${p.action.budget}/day` : `budget ${p.action.type} failed`);
+          return { ok: okBudget, note: okBudget ? `budget ${verb}: ${p.action.agentId} → ${p.action.budget}/day` : `${p.action.type} failed` };
         }
         if (p.kind === 'devin_task') {
           // Flip approved BEFORE dispatch — the worker verifies status.

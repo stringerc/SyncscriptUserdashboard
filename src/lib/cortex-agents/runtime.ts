@@ -287,6 +287,10 @@ export class AgentRuntime {
   private spawnWorkerFactory: ((spec: SpawnSpec) => WorkerHandler) | null = null;
   private onTaskCompleted: ((task: AgentTask, agent: AgentState) => void) | null = null;
   private onTaskFinished: ((task: AgentTask, agent: AgentState | undefined) => void) | null = null;
+  /** Fires on budget-exhaustion rejections — covers the routine path,
+   *  which previously swallowed rejections silently (fireRoutine ignores
+   *  the submitTask result). vite wires this to fileBudgetProposal. */
+  private onBudgetExhausted: ((agentId: AgentId, error: string) => void) | null = null;
   private proposals = new Map<string, SpawnProposal>();
   private spawnCounter = 0;
   private routines = new Map<string, AgentRoutine>();
@@ -343,6 +347,12 @@ export class AgentRuntime {
    *  outcome capture, and observability wire here. */
   setTaskFinishedHook(fn: (task: AgentTask, agent: AgentState | undefined) => void) {
     this.onTaskFinished = fn;
+  }
+
+  /** Budget-exhaustion hook — fires on every rejection so routine-driven
+   *  starvation becomes a visible governance event, not a silent skip. */
+  setBudgetExhaustedHook(fn: (agentId: AgentId, error: string) => void) {
+    this.onBudgetExhausted = fn;
   }
 
   attachSentinel(sources: ConstructorParameters<typeof ModelSentinel>[2], probeFactory: ConstructorParameters<typeof ModelSentinel>[3]) {
@@ -409,8 +419,11 @@ export class AgentRuntime {
     if (!agent) return { ok: false, error: `unknown agent: ${agentId}` };
     if (agent.status === 'retired') return { ok: false, error: `${agent.name} is retired` };
     if (!kind || !title) return { ok: false, error: 'kind and title required' };
-    if (!BOOKKEEPING_KINDS.has(kind) && this.dailyCount(agentId) >= agent.dailyBudget)
-      return { ok: false, error: `${agent.name} daily budget exhausted (${agent.dailyBudget} tasks)` };
+    if (!BOOKKEEPING_KINDS.has(kind) && this.dailyCount(agentId) >= agent.dailyBudget) {
+      const error = `${agent.name} daily budget exhausted (${agent.dailyBudget} tasks)`;
+      try { this.onBudgetExhausted?.(agentId, error); } catch { /* hook must never break submit */ }
+      return { ok: false, error };
+    }
     // Dedupe: identical queued/running task → return the existing one.
     for (const t of this.tasks.values()) {
       if (t.agentId === agentId && t.kind === kind && t.title === title && (t.status === 'queued' || t.status === 'running'))

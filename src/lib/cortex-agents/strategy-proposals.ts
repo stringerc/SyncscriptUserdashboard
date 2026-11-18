@@ -41,8 +41,9 @@ export interface StrategyProposal {
   /** Agent task dispatched on approval — reconciled to executed/failed. */
   dispatchedTaskId?: string;
   /** Deterministic action executed on approval instead of agent dispatch —
-   *  e.g. budgetRaise adjusts the agent's dailyBudget directly. */
-  action?: { type: 'budgetRaise'; agentId: string; budget: number };
+   *  budgetRaise auto-executes ≤128 via triage; budgetTrim always waits
+   *  for the Crew (cutting capacity is never autonomous). */
+  action?: { type: 'budgetRaise' | 'budgetTrim'; agentId: string; budget: number };
   /** Extra fields merged into the dispatched task's input on approval —
    *  e.g. devin_task carries operatorApproved/approvedProposalId proof. */
   taskInput?: Record<string, unknown>;
@@ -181,6 +182,40 @@ export function fileBudgetProposal(opts: { agentId: string; agentName: string; c
     status: 'pending',
     createdAt: Date.now(),
     action: { type: 'budgetRaise', agentId: opts.agentId, budget: opts.suggestedBudget },
+  };
+  all.push(proposal);
+  writeAll(all);
+  notifyProposalFiled(proposal);
+  return true;
+}
+
+/**
+ * File a budget-trim proposal from the yield review — an agent burning
+ * budget on low-yield work gets a smaller cap. Unlike raises, trims are
+ * NEVER auto-approved: reducing capacity is a Crew decision. Approval
+ * executes the deterministic budgetTrim action (no agent dispatch).
+ * One ask per agent per day; dedupes against pending/approved/answered.
+ */
+export function fileBudgetTrimProposal(opts: { agentId: string; agentName: string; currentBudget: number; suggestedBudget: number; evidence: string[] }): boolean {
+  const all = readAll();
+  const day = new Date().toISOString().slice(0, 10);
+  const proposalId = `budget-trim-${opts.agentId}-${day}`;
+  if (all.some((p) => p.id === proposalId)) return false;
+  if (all.filter((p) => p.status === 'pending').length >= MAX_PENDING) return false;
+  const proposal: StrategyProposal = {
+    id: proposalId,
+    planNote: '',
+    planTaskId: `budget-review-${opts.agentId}`,
+    actionIndex: 0,
+    title: `${opts.agentName} low yield — trim daily budget ${opts.currentBudget}→${opts.suggestedBudget}?`,
+    actionClass: 'config',
+    agentId: 'runtime',
+    kind: 'budget',
+    instruction: `Yield review: ${opts.agentName} completed under half its runs over 7d while consuming ${opts.currentBudget}/day. Approve trims dailyBudget ${opts.currentBudget}→${opts.suggestedBudget} (persists until changed); dismiss keeps current cap. Evidence: ${opts.evidence.slice(0, 3).join('; ')}.`,
+    evidence: opts.evidence.slice(0, 4),
+    status: 'pending',
+    createdAt: Date.now(),
+    action: { type: 'budgetTrim', agentId: opts.agentId, budget: opts.suggestedBudget },
   };
   all.push(proposal);
   writeAll(all);
