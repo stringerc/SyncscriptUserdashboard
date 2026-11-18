@@ -47,6 +47,9 @@ export interface StrategyProposal {
   /** Extra fields merged into the dispatched task's input on approval —
    *  e.g. devin_task carries operatorApproved/approvedProposalId proof. */
   taskInput?: Record<string, unknown>;
+  /** Venture scope (enterprise spec) — tagged proposals aggregate per venture
+   *  in the attention strip; also stamped into taskInput for dispatch. */
+  ventureId?: string;
 }
 
 function readAll(): StrategyProposal[] {
@@ -109,6 +112,7 @@ export function fileStrategyProposals(opts: {
   planNote: string | null;
   planTaskId: string;
   actions: string[];
+  ventureId?: string;
 }): { filed: number; skipped: number } {
   const all = readAll();
   const pending = all.filter((p) => p.status === 'pending').length;
@@ -142,6 +146,8 @@ export function fileStrategyProposals(opts: {
       evidence,
       status: 'pending',
       createdAt: Date.now(),
+      ventureId: opts.ventureId || undefined,
+      ...(opts.ventureId ? { taskInput: { ventureId: opts.ventureId } } : {}),
     };
     all.push(proposal);
     newlyFiled.push(proposal);

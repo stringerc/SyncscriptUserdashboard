@@ -11631,15 +11631,79 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
               else c.pending++;
             }
           } catch { /* queue unreadable — counts stay empty, honest */ }
-          const cards = ventures.map((v) => ({
-            ...v,
-            goals: state.goals.filter((g) => (g.ventureId || 'cortex') === v.id).length,
-            opsItems: state.opsItems.filter((o) => (o.ventureId || 'cortex') === v.id).length,
-            openBlocks: state.blocks.filter((b) => (b.ventureId || 'cortex') === v.id && b.status === 'planned').length,
-            openTasks: openByVenture[v.id] || 0,
-            yield7d: yieldByVenture[v.id] || { runs: 0, completions: 0, agents: {} },
-            distribution: distCounts[v.id] || { pending: 0, done: 0, failed: 0 },
-          }));
+          // Pending Crew decisions per venture — proposals carry ventureId
+          // when filed from scoped work; unscoped proposals count under cortex.
+          const pendingProps = listStrategyProposals('pending');
+          const propsByVenture: Record<string, number> = {};
+          for (const p of pendingProps) {
+            const vid = String((p as any).ventureId || 'cortex');
+            propsByVenture[vid] = (propsByVenture[vid] || 0) + 1;
+          }
+          // Stalled goals per venture — active goals with zero linked work.
+          const gp = goalProgress(state, src.archive);
+          const goalById = new Map(state.goals.map((g) => [g.id, g]));
+          const stalledByVenture: Record<string, number> = {};
+          for (const g of gp) {
+            if (!g.orphaned && g.progress > 0) continue;
+            const full = goalById.get(g.goalId);
+            if (!full || full.status !== 'active') continue;
+            const vid = String(full.ventureId || 'cortex');
+            stalledByVenture[vid] = (stalledByVenture[vid] || 0) + 1;
+          }
+          // Phase 3 health score — computed only from real signals; a venture
+          // with no activity data reports health:null ('no data'), never a
+          // fabricated number. Components: 7d yield rate, distribution
+          // success, goal progress, open-task flow.
+          const healthOf = (v: any) => {
+            const y = v.yield7d || { runs: 0, completions: 0 };
+            const d = v.distribution || { pending: 0, done: 0, failed: 0 };
+            const reasons: string[] = [];
+            const parts: { w: number; v: number }[] = [];
+            if (y.runs > 0) {
+              const rate = y.completions / y.runs;
+              parts.push({ w: 40, v: rate * 40 });
+              reasons.push(`yield ${(rate * 100).toFixed(0)}% over ${y.runs} runs`);
+            }
+            const distTotal = d.done + d.failed + d.pending;
+            if (distTotal > 0) {
+              const dh = d.done / distTotal;
+              parts.push({ w: 30, v: dh * 30 });
+              if (d.failed > 0) reasons.push(`${d.failed} failed distribution items`);
+            }
+            if (v.goals > 0) {
+              const stalled = stalledByVenture[v.id] || 0;
+              const gh = stalled === 0 ? 1 : Math.max(0, 1 - stalled / v.goals);
+              parts.push({ w: 20, v: gh * 20 });
+              if (stalled > 0) reasons.push(`${stalled} stalled goal(s)`);
+            }
+            if (y.runs > 0 || distTotal > 0 || v.goals > 0 || v.openTasks > 0) {
+              parts.push({ w: 10, v: v.openTasks === 0 ? 10 : 10 * Math.min(1, (y.runs / 7) / Math.max(1, v.openTasks)) });
+            }
+            if (!parts.length) return { score: null, band: 'no-data', reasons: ['no activity data yet'] };
+            const wsum = parts.reduce((a, p) => a + p.w, 0);
+            const score = Math.round(parts.reduce((a, p) => a + p.v, 0) / wsum * 100);
+            const band = score >= 70 ? 'nominal' : score >= 40 ? 'degraded' : 'critical';
+            return { score, band, reasons };
+          };
+          const cards = ventures.map((v) => {
+            const card = {
+              ...v,
+              goals: state.goals.filter((g) => (g.ventureId || 'cortex') === v.id).length,
+              opsItems: state.opsItems.filter((o) => (o.ventureId || 'cortex') === v.id).length,
+              openBlocks: state.blocks.filter((b) => (b.ventureId || 'cortex') === v.id && b.status === 'planned').length,
+              openTasks: openByVenture[v.id] || 0,
+              pendingProposals: propsByVenture[v.id] || 0,
+              stalledGoals: stalledByVenture[v.id] || 0,
+              yield7d: yieldByVenture[v.id] || { runs: 0, completions: 0, agents: {} },
+              distribution: distCounts[v.id] || { pending: 0, done: 0, failed: 0 },
+            };
+            const health = healthOf(card);
+            // Attention rank: pending Crew decisions weigh heaviest, then
+            // failures/stalls, then raw backlog. Spec: sort by attention.
+            const d = card.distribution;
+            const attention = card.pendingProposals * 3 + d.failed * 2 + card.stalledGoals * 2 + card.openTasks + d.pending;
+            return { ...card, health, attention };
+          }).sort((a, b) => b.attention - a.attention || a.id.localeCompare(b.id));
           // Untagged-but-real ventures in yield data that aren't registered
           // still surface — nothing silently dropped.
           const unregistered = Object.keys(yieldByVenture).filter((id) => !ventures.some((v) => v.id === id));

@@ -187,6 +187,7 @@ export function sendMessage(opts: {
         planNote: `agent-message ${msg.id}`,
         planTaskId: msg.id,
         actions: [`[process] Agent message ${msg.type} from ${from}: ${payload.slice(0, 900)}`],
+        ventureId: msg.ventureId,
       });
     } catch { /* proposal filing is best-effort; message is still durable */ }
   }

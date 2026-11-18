@@ -37,6 +37,8 @@ export interface LifeGoal {
   driftScore?: number;
   driftWeeks?: number;
   lastReviewAt?: number;
+  /** Venture scope (enterprise spec) — absent = fleet/personal. */
+  ventureId?: string;
 }
 
 export interface PatternRecord {
@@ -103,7 +105,7 @@ export class CortexGoals {
 
   // ── Goal CRUD ────────────────────────────────────────────────────
 
-  public declare(input: { title: string; horizon?: GoalHorizon; signals?: string[]; targetDate?: number }): LifeGoal {
+  public declare(input: { title: string; horizon?: GoalHorizon; signals?: string[]; targetDate?: number; ventureId?: string }): LifeGoal {
     const title = input.title.trim();
     // Dedupe: accepting the same proposal twice must not spam duplicate goals.
     const existing = this.state.goals.find(g => g.status === 'active' && g.title === title);
@@ -116,6 +118,7 @@ export class CortexGoals {
       declaredAt: Date.now(),
       targetDate: input.targetDate,
       signals: input.signals ?? [],
+      ventureId: input.ventureId || undefined,
       history: [],
       driftWeeks: 0,
     };

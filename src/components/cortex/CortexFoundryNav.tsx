@@ -40,6 +40,7 @@ const NAV_ITEMS: { id: FoundryView; glyph: string; label: string; hint: string }
   { id: 'ventures', glyph: '◈', label: 'VENTURES', hint: 'Enterprise scope — OMNI / GOVTECH / CORTEX' },
 ];
 
+const HEALTH_COLOR: Record<string, string> = { nominal: '#34d399', degraded: '#fbbf24', critical: '#f87171', 'no-data': '#64748b' };
 const STATUS_COLOR: Record<string, string> = {
   running: '#34d399', working: '#34d399', queued: '#fbbf24',
   completed: '#67e8f9', failed: '#f87171', error: '#f87171',
@@ -149,6 +150,7 @@ export function CortexFoundryNav({ snap, onSelectAgent, selectedAgent, onOpenTow
   const [showNewGoal, setShowNewGoal] = useState(false);
   const [newGoalTitle, setNewGoalTitle] = useState('');
   const [newGoalHorizon, setNewGoalHorizon] = useState<'week' | 'month' | 'quarter' | 'year' | 'life'>('quarter');
+  const [newGoalVenture, setNewGoalVenture] = useState<string>('');
 
   const handleCreateTask = () => {
     const title = newTaskTitle.trim();
@@ -194,8 +196,10 @@ export function CortexFoundryNav({ snap, onSelectAgent, selectedAgent, onOpenTow
     goals.declare({
       title,
       horizon: newGoalHorizon,
+      ventureId: newGoalVenture || undefined,
     });
     setNewGoalTitle('');
+    setNewGoalVenture('');
     setShowNewGoal(false);
     setGoalsTick((t) => t + 1);
   };
@@ -257,9 +261,10 @@ export function CortexFoundryNav({ snap, onSelectAgent, selectedAgent, onOpenTow
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [view]);
 
-  // Venture registry poll while the VENTURES view is open.
+  // Venture registry poll — needed by VENTURES cards AND the scope chips
+  // on TASKS/GOALS/CALENDAR, so it loads on any scoped surface.
   useEffect(() => {
-    if (view !== 'ventures') return;
+    if (!['ventures', 'tasks', 'goals', 'calendar'].includes(view || '')) return;
     const loadV = () => fetch('/api/cortex/ventures', { cache: 'no-store' })
       .then((r) => r.json())
       .then(setVentures)
@@ -578,7 +583,32 @@ export function CortexFoundryNav({ snap, onSelectAgent, selectedAgent, onOpenTow
     !t.completed && !plannedUserTaskIds.has(t.id) &&
     (sameDay(t.dueDate, Date.now()) || (!t.dueDate && sameDay(t.createdAt, Date.now()))));
 
-  const goalList: LifeGoal[] = goals.list();
+  const goalList: LifeGoal[] = goals.list().filter((g) => ventureFilter === 'all' || String((g as any).ventureId || 'cortex') === ventureFilter);
+
+  // Shared venture scope chips — same filter dimension across TASKS /
+  // GOALS / CALENDAR (spec §4). Untagged items resolve to 'cortex'.
+  const ventureChips = (
+    <div style={{ display: 'flex', gap: 4, alignItems: 'center', flexWrap: 'wrap', marginBottom: 8, paddingBottom: 6, borderBottom: '1px solid rgba(148,163,184,0.08)' }}>
+      <span style={{ fontSize: 8, color: DIM, letterSpacing: '0.14em', marginRight: 2 }}>SCOPE:</span>
+      {(['all', ...(ventures?.ventures || []).map((v: any) => v.id)] as string[]).map((vid) => {
+        const active = ventureFilter === vid;
+        const label = vid === 'all' ? 'ALL' : (ventures?.ventures || []).find((v: any) => v.id === vid)?.callSign || vid.toUpperCase();
+        return (
+          <button
+            key={vid}
+            onClick={() => setVentureFilter(vid)}
+            style={{
+              background: active ? 'rgba(167,139,250,0.2)' : 'none',
+              border: `1px solid ${active ? 'rgba(167,139,250,0.6)' : 'rgba(148,163,184,0.16)'}`,
+              color: active ? '#c4b5fd' : DIM,
+              fontFamily: MONO, fontSize: 8, padding: '1px 6px', borderRadius: 2,
+              cursor: 'pointer', letterSpacing: '0.1em',
+            }}
+          >{label}</button>
+        );
+      })}
+    </div>
+  );
 
   const select = (id: FoundryView) => {
     if (id === 'dashboard') { setView(null); onOpenTower(); return; }
@@ -812,27 +842,7 @@ export function CortexFoundryNav({ snap, onSelectAgent, selectedAgent, onOpenTow
               </div>
             </div>
           )}
-          {/* VENTURE SCOPE CHIPS — enterprise console filter dimension */}
-          <div style={{ display: 'flex', gap: 4, alignItems: 'center', flexWrap: 'wrap', marginBottom: 8, paddingBottom: 6, borderBottom: '1px solid rgba(148,163,184,0.08)' }}>
-            <span style={{ fontSize: 8, color: DIM, letterSpacing: '0.14em', marginRight: 2 }}>SCOPE:</span>
-            {(['all', ...(ventures?.ventures || []).map((v: any) => v.id)] as string[]).map((vid) => {
-              const active = ventureFilter === vid;
-              const label = vid === 'all' ? 'ALL' : (ventures?.ventures || []).find((v: any) => v.id === vid)?.callSign || vid.toUpperCase();
-              return (
-                <button
-                  key={vid}
-                  onClick={() => setVentureFilter(vid)}
-                  style={{
-                    background: active ? 'rgba(167,139,250,0.2)' : 'none',
-                    border: `1px solid ${active ? 'rgba(167,139,250,0.6)' : 'rgba(148,163,184,0.16)'}`,
-                    color: active ? '#c4b5fd' : DIM,
-                    fontFamily: MONO, fontSize: 8, padding: '1px 6px', borderRadius: 2,
-                    cursor: 'pointer', letterSpacing: '0.1em',
-                  }}
-                >{label}</button>
-              );
-            })}
-          </div>
+          {ventureChips}
           {/* UP NEXT — today's plan: mission blocks + pending user tasks */}
           {(upcomingBlocks.length > 0 || userPendingToday.length > 0) && taskSource !== 'agents' && (
             <div style={{ marginBottom: 8 }}>
@@ -1014,6 +1024,15 @@ export function CortexFoundryNav({ snap, onSelectAgent, selectedAgent, onOpenTow
                 ))}
               </div>
 
+              {/* VENTURE selector for the new goal */}
+              <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', alignItems: 'center' }}>
+                <span style={{ fontSize: 8, color: DIM }}>VENTURE:</span>
+                <button type="button" onClick={() => setNewGoalVenture('')} style={{ background: !newGoalVenture ? 'rgba(148,163,184,0.2)' : 'rgba(8,14,24,0.6)', border: `1px solid ${!newGoalVenture ? 'rgba(148,163,184,0.5)' : 'rgba(103,232,249,0.18)'}`, color: !newGoalVenture ? INK : DIM, fontFamily: MONO, fontSize: 8, padding: '2px 6px', borderRadius: 2, cursor: 'pointer' }}>FLEET</button>
+                {(ventures?.ventures || []).map((v: any) => (
+                  <button key={v.id} type="button" onClick={() => setNewGoalVenture(v.id)} style={{ background: newGoalVenture === v.id ? 'rgba(167,139,250,0.25)' : 'rgba(8,14,24,0.6)', border: `1px solid ${newGoalVenture === v.id ? '#a78bfa' : 'rgba(103,232,249,0.18)'}`, color: newGoalVenture === v.id ? '#c4b5fd' : DIM, fontFamily: MONO, fontSize: 8, padding: '2px 6px', borderRadius: 2, cursor: 'pointer' }}>{v.callSign || v.id.toUpperCase()}</button>
+                ))}
+              </div>
+
               <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 6, marginTop: 2 }}>
                 <button
                   onClick={() => setShowNewGoal(false)}
@@ -1052,6 +1071,7 @@ export function CortexFoundryNav({ snap, onSelectAgent, selectedAgent, onOpenTow
             </div>
           )}
 
+          {ventureChips}
           {goalList.map((g) => (
             <Row key={g.id}>
               <Lamp status={g.status === 'active' ? 'healthy' : g.status === 'achieved' ? 'completed' : 'idle'} />
@@ -1070,10 +1090,11 @@ export function CortexFoundryNav({ snap, onSelectAgent, selectedAgent, onOpenTow
         <Panel
           title="MISSION CALENDAR"
           onClose={() => setView(null)}
-          right={<span style={{ fontSize: 9.5, color: DIM }}>{calendar ? `${calendar.length} TOTAL` : 'LOADING…'}</span>}
+          right={<span style={{ fontSize: 9.5, color: DIM }}>{calendar ? `${calendar.filter((e: any) => ventureFilter === 'all' || String(e?.ventureId || 'cortex') === ventureFilter).length} TOTAL` : 'LOADING…'}</span>}
         >
+          {ventureChips}
           <CortexFoundryCalendar
-            events={calendar || []}
+            events={(calendar || []).filter((e: any) => ventureFilter === 'all' || String(e?.ventureId || 'cortex') === ventureFilter)}
             loading={calendar === null}
             onAddEvent={(newEvt) => setCalendar((prev) => [...(prev || []), newEvt])}
           />
@@ -1321,7 +1342,10 @@ export function CortexFoundryNav({ snap, onSelectAgent, selectedAgent, onOpenTow
             <div key={p.id} style={{ border: '1px solid rgba(251,191,36,0.2)', borderRadius: 3, padding: '7px 9px', marginBottom: 7, background: 'rgba(251,191,36,0.04)' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
                 <span style={{ fontSize: 9.5, color: '#fbbf24', fontWeight: 700 }}>{p.agentId?.toUpperCase() || 'STRATEGIST'} · {p.kind?.toUpperCase()}</span>
-                <span style={{ fontSize: 9, color: DIM }}>{p.actionClass?.toUpperCase() || ''}</span>
+                <span style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
+                  {p.ventureId && <span style={{ fontSize: 7.5, color: '#c4b5fd', border: '1px solid rgba(167,139,250,0.4)', borderRadius: 2, padding: '0 4px' }}>{String(p.ventureId).toUpperCase()}</span>}
+                  <span style={{ fontSize: 9, color: DIM }}>{p.actionClass?.toUpperCase() || ''}</span>
+                </span>
               </div>
               <div style={{ fontSize: 10.5, color: INK, marginTop: 3 }}>{p.title}</div>
               {p.instruction && <div style={{ fontSize: 9, color: DIM, marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.instruction}</div>}
@@ -1818,6 +1842,11 @@ export function CortexFoundryNav({ snap, onSelectAgent, selectedAgent, onOpenTow
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
                   <span style={{ fontSize: 11, fontWeight: 800, color: '#c4b5fd', letterSpacing: '0.12em' }}>{v.callSign || v.name}</span>
                   <span style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+                    {v.health?.score != null && (
+                      <span style={{ fontSize: 8.5, fontWeight: 800, color: HEALTH_COLOR[v.health.band] || DIM, border: `1px solid ${HEALTH_COLOR[v.health.band] || DIM}55`, borderRadius: 2, padding: '0 4px' }}>
+                        {v.health.band.toUpperCase()}{v.health.score != null ? ` ${v.health.score}` : ''}
+                      </span>
+                    )}
                     <Lamp status={v.status === 'active' ? 'healthy' : v.status === 'dormant' ? 'idle' : 'cancelled'} />
                     <span style={{ fontSize: 8, color: DIM, letterSpacing: '0.1em' }}>{String(v.status || 'active').toUpperCase()}</span>
                   </span>
@@ -1828,8 +1857,13 @@ export function CortexFoundryNav({ snap, onSelectAgent, selectedAgent, onOpenTow
                   <span>OPS <b style={{ color: INK }}>{v.opsItems ?? 0}</b></span>
                   <span>BLOCKS <b style={{ color: INK }}>{v.openBlocks ?? 0}</b></span>
                   <span>DIST <b style={{ color: INK }}>{d.pending}◌ {d.done}✓ {d.failed}✗</b></span>
+                  <span>DECISIONS <b style={{ color: (v.pendingProposals || 0) > 0 ? '#fbbf24' : INK }}>{v.pendingProposals ?? 0}</b></span>
+                  <span>STALLED <b style={{ color: (v.stalledGoals || 0) > 0 ? '#f87171' : INK }}>{v.stalledGoals ?? 0}</b></span>
                   <span>YIELD 7D <b style={{ color: INK }}>{y.runs} runs{yieldRate != null ? ` · ${yieldRate}%` : ''}</b></span>
                 </div>
+                {v.health?.reasons?.length > 0 && (
+                  <div style={{ fontSize: 8, color: DIM, marginBottom: 3 }}>{v.health.reasons.join(' · ')}</div>
+                )}
                 {(v.evidencePaths || []).length > 0 && (
                   <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
                     {v.evidencePaths.map((ep: string) => (
