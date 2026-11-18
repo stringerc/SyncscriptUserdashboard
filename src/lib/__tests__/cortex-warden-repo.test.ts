@@ -20,11 +20,14 @@ describe('classifyRepoPath', () => {
   it('marks runtime churn as churn', () => {
     for (const p of [
       '.cortex/bus/state.json', '.cortex-runtime/task-archive.jsonl',
+      '.superpowers/sdd/omni-store-syndication/progress.md',
       'tsconfig.tsbuildinfo', 'models.matrix', '__pycache__/x.pyc', 'foo.pyc',
       'public/screenshots/latest-canvas.png',
+      'public/screenshots/cortex-crystalline-agents.png',
+      'public/screenshots/..latest-canvas.png-2H78',
       'storefront/browser/latest.png', 'storefront/browser/latest.txt',
       'storefront/distribution-queue.json', 'storefront/distribution-dashboard.html',
-      'MEMORY.md', 'dream-log.md', 'morning-briefing.md', 'example.txt',
+      'MEMORY.md', 'dream-log.md', 'morning-briefing.md', 'example.txt', '<correct_path>',
       'node_modules/pkg/index.js', 'dist/bundle.js',
     ]) expect(classifyRepoPath(p), p).toBe('churn');
   });

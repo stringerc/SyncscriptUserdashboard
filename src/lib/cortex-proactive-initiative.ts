@@ -276,7 +276,20 @@ export class CortexProactiveInitiativeEngine {
         ? { ok: p.executionResult.ok, summary: p.executionResult.summary, atMs: p.executionResult.at }
         : undefined,
     }));
-    ledgerPost('/api/cortex/initiative/ledger/sync', { proposals });
+    try {
+      fetch('/api/cortex/initiative/ledger/sync', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ proposals }),
+      })
+        .then((res) => (res.ok ? res.json() : null))
+        .then((data) => {
+          if (data?.autoDrained && data.autoDrained > 0) {
+            void this.pickupApprovedProposals();
+          }
+        })
+        .catch(() => {});
+    } catch {}
   }
 
   /**

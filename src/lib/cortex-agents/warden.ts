@@ -16,7 +16,7 @@ import { execSync } from 'node:child_process';
 import type { WorkerHandler } from './runtime';
 import type { AgentEvent } from './types';
 import { rulesBlock } from './rules';
-import { listIncidents, recordIncidentFailure } from './incidents';
+import { listIncidents, recordIncidentFailure, resolveIncidentsOnSuccess } from './incidents';
 import { runCounselPosition } from './counsel-position';
 
 const PORT = process.env.PORT ? parseInt(process.env.PORT) : 5173;
@@ -77,7 +77,7 @@ async function getJson(url: string, fetchImpl: FetchLike, timeoutMs = 6000) {
 export function classifyRepoPath(p: string): 'real' | 'churn' {
   const clean = p.trim().replace(/^"|"$/g, '');
   if (!clean) return 'churn';
-  return /^(\.cortex\/|\.cortex-runtime\/|node_modules\/|dist\/|__pycache__\/|.*\.pyc$|tsconfig\.tsbuildinfo$|models\.matrix$|public\/screenshots\/latest-|storefront\/browser\/latest\.|storefront\/distribution-(queue\.json|dashboard\.html)$|MEMORY\.md$|dream-log\.md$|morning-briefing\.md$|example\.txt$)/.test(clean)
+  return /^(\.cortex\/|\.cortex-runtime\/|\.superpowers\/|node_modules\/|dist\/|__pycache__\/|.*\.pyc$|tsconfig\.tsbuildinfo$|models\.matrix$|public\/screenshots\/|storefront\/browser\/latest\.|storefront\/distribution-(queue\.json|dashboard\.html)$|MEMORY\.md$|dream-log\.md$|morning-briefing\.md$|example\.txt$|<correct_path>$)/.test(clean)
     ? 'churn' : 'real';
 }
 
@@ -530,6 +530,8 @@ const wardenWorker: WorkerHandler = async (ctx) => {
         error: repoCheck.detail,
       });
     }
+  } else if (repoCheck && repoCheck.ok) {
+    resolveIncidentsOnSuccess('warden', 'repo_hygiene', ctx.task.id);
   }
 
   ctx.progress(1);

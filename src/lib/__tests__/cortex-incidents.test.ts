@@ -11,6 +11,9 @@ const {
   resolveIncidentsOnSuccess,
   sweepIncidentTtl,
   listIncidents,
+  dismissIncident,
+  dismissAllIncidents,
+  autoVerifyIncident,
 } = await import('../cortex-agents/incidents');
 
 const fail = (kind = 'heal_anomaly', agentId = 'antigravity') =>
@@ -56,5 +59,83 @@ describe('incident TTL sweep', () => {
     const n = sweepIncidentTtl({ ttlHours: 0.0001, now: Date.now() + 1000 });
     expect(n).toBe(0);
     expect(listIncidents('resolved').length).toBe(1);
+  });
+
+  it('expires stale incidents older than 24h that have been inactive for >2h', () => {
+    const inc = fail('reddit_scan', 'distributor');
+    // First seen 26h ago, last seen 3h ago
+    const now = Date.now();
+    inc.firstSeenAt = now - 26 * 3600_000;
+    inc.lastSeenAt = now - 3 * 3600_000;
+    const fs = require('node:fs');
+    const path = require('node:path');
+    fs.writeFileSync(path.join(tmp, 'incidents.json'), JSON.stringify([inc], null, 1));
+
+    const swept = sweepIncidentTtl({ ttlHours: 24, now });
+    expect(swept).toBe(1);
+    const [resolved] = listIncidents('resolved');
+    expect(resolved.status).toBe('resolved');
+    expect(resolved.resolutionNote).toMatch(/stale incident.*inactive for >2h/i);
+  });
+});
+
+describe('incident manual dismissal', () => {
+  beforeEach(() => {
+    const fs = require('node:fs');
+    const path = require('node:path');
+    fs.rmSync(path.join(tmp, 'incidents.json'), { force: true });
+  });
+
+  it('dismisses a single open incident by id or key', () => {
+    const inc = fail();
+    expect(dismissIncident(inc.id, 'dismissed test')).toBe(true);
+    const [d] = listIncidents('dismissed');
+    expect(d.status).toBe('dismissed');
+    expect(d.resolutionNote).toBe('dismissed test');
+  });
+
+  it('dismisses all open incidents in bulk', () => {
+    fail('kind1', 'builder');
+    fail('kind2', 'runner');
+    expect(listIncidents('open').length).toBe(2);
+    const dismissedCount = dismissAllIncidents(undefined, 'cleared by operator');
+    expect(dismissedCount).toBe(2);
+    expect(listIncidents('open').length).toBe(0);
+    expect(listIncidents('dismissed').length).toBe(2);
+  });
+});
+
+describe('incident auto-verify probe', () => {
+  beforeEach(() => {
+    const fs = require('node:fs');
+    const path = require('node:path');
+    fs.rmSync(path.join(tmp, 'incidents.json'), { force: true });
+  });
+
+  it('dispatches a verification task for warden patrol', () => {
+    const inc = recordIncidentFailure({
+      taskId: 't-1',
+      agentId: 'warden',
+      kind: 'repo_hygiene',
+      title: 'stale repo uncommitted',
+      failureClass: 'hygiene_stale',
+      error: 'dirty',
+    })!;
+
+    let submittedAgent = '';
+    let submittedKind = '';
+    const fakeRuntime = {
+      submitTask: (agentId: string, kind: string, title: string, input?: any) => {
+        submittedAgent = agentId;
+        submittedKind = kind;
+        return { ok: true, task: { id: 'task-probe-1' } };
+      },
+    };
+
+    const res = autoVerifyIncident(fakeRuntime, inc.id);
+    expect(res.ok).toBe(true);
+    expect(res.taskId).toBe('task-probe-1');
+    expect(submittedAgent).toBe('warden');
+    expect(submittedKind).toBe('patrol');
   });
 });

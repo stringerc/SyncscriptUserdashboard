@@ -190,13 +190,91 @@ export function sweepIncidentTtl(opts: { ttlHours?: number; now?: number } = {})
     let changed = 0;
     for (const inc of all) {
       if (inc.status !== 'open') continue;
-      if (now - inc.lastSeenAt < ttlMs) continue;
+      const dormantByLastSeen = now - inc.lastSeenAt >= ttlMs;
+      const staleInactive = (now - inc.firstSeenAt >= ttlMs) && (now - inc.lastSeenAt >= 2 * 3600_000);
+      if (!dormantByLastSeen && !staleInactive) continue;
       inc.status = 'resolved';
       inc.resolvedAt = now;
-      inc.resolutionNote = `auto-expired: no recurrence for ${Math.round(ttlMs / 3600_000)}h — unverified heal, reopens on failure`;
+      inc.resolutionNote = dormantByLastSeen
+        ? `auto-expired: no recurrence for ${Math.round(ttlMs / 3600_000)}h — unverified heal, reopens on failure`
+        : `auto-expired: stale incident (>24h old, inactive for >2h) — unverified heal, reopens on failure`;
       changed++;
     }
     if (changed) writeAll(all);
     return changed;
   } catch { return 0; }
+}
+
+/** Dismiss an open incident ticket manually with an optional operator note. */
+export function dismissIncident(idOrKey: string, note?: string): boolean {
+  try {
+    const all = readAll();
+    const inc = all.find((i) => i.id === idOrKey || i.key === idOrKey);
+    if (!inc || inc.status === 'dismissed') return false;
+    inc.status = 'dismissed';
+    inc.resolvedAt = Date.now();
+    inc.resolutionNote = note || 'manually dismissed by operator';
+    writeAll(all);
+    return true;
+  } catch { return false; }
+}
+
+/** Dismiss all or targeted open incident tickets in bulk. */
+export function dismissAllIncidents(ids?: string[], note?: string): number {
+  try {
+    const all = readAll();
+    let count = 0;
+    const now = Date.now();
+    const defaultNote = note || 'bulk dismissed by operator';
+    const idSet = ids ? new Set(ids) : null;
+    for (const inc of all) {
+      if (inc.status === 'open' && (!idSet || idSet.has(inc.id) || idSet.has(inc.key))) {
+        inc.status = 'dismissed';
+        inc.resolvedAt = now;
+        inc.resolutionNote = defaultNote;
+        count++;
+      }
+    }
+    if (count > 0) writeAll(all);
+    return count;
+  } catch { return 0; }
+}
+
+/**
+ * Dispatch an active verification probe task to test and heal an incident.
+ * When the dispatched task completes successfully, runtime resolution hooks
+ * automatically transition the incident ticket to resolved.
+ */
+export function autoVerifyIncident(
+  runtime: { submitTask: (agentId: string, kind: string, title: string, input?: any) => { ok: boolean; task?: any; error?: string } },
+  idOrKey: string,
+): { ok: boolean; taskId?: string; error?: string } {
+  try {
+    const all = readAll();
+    const inc = all.find((i) => i.id === idOrKey || i.key === idOrKey);
+    if (!inc) return { ok: false, error: 'incident not found' };
+
+    const targetKind = inc.agentId === 'warden' ? 'patrol' : inc.kind;
+    const input: Record<string, unknown> = {
+      autoVerifyIncidentId: inc.id,
+      probeKind: inc.kind,
+      failureClass: inc.failureClass,
+    };
+    if (inc.agentId === 'runner' && inc.kind === 'incident-verify') {
+      input.command = 'echo "incident verification probe"';
+    }
+
+    const t = runtime.submitTask(
+      inc.agentId,
+      targetKind,
+      `Probe & verify: ${inc.title}`.slice(0, 120),
+      input,
+    );
+    if (t.ok && t.task) {
+      return { ok: true, taskId: t.task.id };
+    }
+    return { ok: false, error: t.error || 'task dispatch failed' };
+  } catch (e: any) {
+    return { ok: false, error: e?.message || 'unknown verify error' };
+  }
 }

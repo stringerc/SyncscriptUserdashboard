@@ -21,8 +21,8 @@ import { deriveSomaticState, type SomaticSample } from './src/lib/cortex-somatic
 import { getAgentRuntime } from './src/lib/cortex-agents/runtime';
 import { recordAgentOutcome } from './src/lib/cortex-agents/outcomes';
 import { archiveTask, readArchive } from './src/lib/cortex-agents/archive';
-import { listStrategyProposals, decideStrategyProposal, reconcileStrategyProposals, fileBudgetProposal, autoApproveSafeStrategyProposals } from './src/lib/cortex-agents/strategy-proposals';
-import { recordIncidentFailure, resolveIncidentsOnSuccess, listIncidents, escalateStaleIncidents, sweepIncidentTtl } from './src/lib/cortex-agents/incidents';
+import { listStrategyProposals, decideStrategyProposal, reconcileStrategyProposals, fileBudgetProposal, autoApproveSafeStrategyProposals, setOnProposalFiledHook } from './src/lib/cortex-agents/strategy-proposals';
+import { recordIncidentFailure, resolveIncidentsOnSuccess, listIncidents, escalateStaleIncidents, sweepIncidentTtl, dismissIncident, dismissAllIncidents, autoVerifyIncident } from './src/lib/cortex-agents/incidents';
 import { registerAgentWorkers, makeEphemeralWorker, expandTaskSpec } from './src/lib/cortex-agents/workers';
 import { enqueueDistributionItem, DISTRIBUTION_ITEM_TYPES } from './src/lib/cortex-agents/distribution';
 import {
@@ -1086,6 +1086,15 @@ function apiProxyPlugin(): Plugin {
             failureClass: String(task.telemetry?.failureClass || 'worker'),
             error: task.error,
           });
+        }
+      });
+      // Zero-latency autonomous intake: as soon as a proposal is filed,
+      // auto-approve and dispatch safe classes immediately (<50ms).
+      setOnProposalFiledHook(async (proposal) => {
+        try {
+          await autoApproveSafeStrategyProposals(agentRuntime, 'auto:instant-intake');
+        } catch (e) {
+          console.warn('[cortex-agents] instant proposal intake error:', e);
         }
       });
       // Closed-loop recovery: when a strategy proposal executes (a fix
@@ -10942,6 +10951,86 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
           } catch (e: any) {
             res.writeHead(500);
             res.end(JSON.stringify({ ok: false, error: e?.message || 'batch approve failed' }));
+          }
+        });
+      });
+
+      // POST /api/cortex/agents/incidents/verify — active heal & verification probe.
+      server.middlewares.use('/api/cortex/agents/incidents/verify', (req: any, res: any, next: any) => {
+        agentCors(req, res);
+        if (req.method === 'OPTIONS') return res.end();
+        if (req.method !== 'POST') return next();
+        let body = '';
+        req.on('data', (c: Buffer) => { body += c.toString(); });
+        req.on('end', () => {
+          try {
+            const parsed = JSON.parse(body || '{}');
+            const result = autoVerifyIncident(agentRuntime, parsed.id);
+            res.writeHead(result.ok ? 200 : 400, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify(result));
+          } catch (e: any) {
+            res.writeHead(500, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ ok: false, error: e?.message || 'incident verify failed' }));
+          }
+        });
+      });
+
+      // POST /api/cortex/agents/incidents/dismiss — dismiss single incident.
+      server.middlewares.use('/api/cortex/agents/incidents/dismiss', (req: any, res: any, next: any) => {
+        agentCors(req, res);
+        if (req.method === 'OPTIONS') return res.end();
+        if (req.method !== 'POST') return next();
+        let body = '';
+        req.on('data', (c: Buffer) => { body += c.toString(); });
+        req.on('end', () => {
+          try {
+            const parsed = JSON.parse(body || '{}');
+            const changed = dismissIncident(parsed.id, parsed.note);
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ ok: true, changed }));
+          } catch (e: any) {
+            res.writeHead(500, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ ok: false, error: e?.message || 'incident dismiss failed' }));
+          }
+        });
+      });
+
+      // POST /api/cortex/agents/incidents/dismiss-all — dismiss open incidents in bulk.
+      server.middlewares.use('/api/cortex/agents/incidents/dismiss-all', (req: any, res: any, next: any) => {
+        agentCors(req, res);
+        if (req.method === 'OPTIONS') return res.end();
+        if (req.method !== 'POST') return next();
+        let body = '';
+        req.on('data', (c: Buffer) => { body += c.toString(); });
+        req.on('end', () => {
+          try {
+            const parsed = JSON.parse(body || '{}');
+            const dismissed = dismissAllIncidents(parsed.ids, parsed.note);
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ ok: true, dismissed }));
+          } catch (e: any) {
+            res.writeHead(500, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ ok: false, error: e?.message || 'bulk dismiss failed' }));
+          }
+        });
+      });
+
+      // POST /api/cortex/agents/incidents/sweep — force TTL sweep.
+      server.middlewares.use('/api/cortex/agents/incidents/sweep', (req: any, res: any, next: any) => {
+        agentCors(req, res);
+        if (req.method === 'OPTIONS') return res.end();
+        if (req.method !== 'POST') return next();
+        let body = '';
+        req.on('data', (c: Buffer) => { body += c.toString(); });
+        req.on('end', () => {
+          try {
+            const parsed = JSON.parse(body || '{}');
+            const expired = sweepIncidentTtl({ ttlHours: parsed.ttlHours });
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ ok: true, expired }));
+          } catch (e: any) {
+            res.writeHead(500, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ ok: false, error: e?.message || 'incident sweep failed' }));
           }
         });
       });

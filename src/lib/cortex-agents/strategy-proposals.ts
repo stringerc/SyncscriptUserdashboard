@@ -64,6 +64,29 @@ function writeAll(list: StrategyProposal[]) {
   } catch { /* best-effort */ }
 }
 
+export type ProposalFiledHook = (proposal: StrategyProposal) => void | Promise<void>;
+let onProposalFiledHook: ProposalFiledHook | null = null;
+
+/** Register an event-driven hook to immediately triage or auto-approve filed proposals with zero polling delay. */
+export function setOnProposalFiledHook(hook: ProposalFiledHook | null): void {
+  onProposalFiledHook = hook;
+}
+
+function notifyProposalFiled(proposal: StrategyProposal): void {
+  if (onProposalFiledHook) {
+    try {
+      const res = onProposalFiledHook(proposal);
+      if (res && typeof (res as Promise<void>).catch === 'function') {
+        (res as Promise<void>).catch((err) => {
+          console.warn('[strategy-proposals] onProposalFiledHook async error:', err);
+        });
+      }
+    } catch (e) {
+      console.warn('[strategy-proposals] onProposalFiledHook error:', e);
+    }
+  }
+}
+
 /** Class → executing agent. Routes dynamically to the best specialist agent
  *  so BUILDER is never a single-threaded bottleneck for the whole fleet. */
 export function agentForClass(cls: string): string {
@@ -89,6 +112,7 @@ export function fileStrategyProposals(opts: {
   const all = readAll();
   const pending = all.filter((p) => p.status === 'pending').length;
   let filed = 0, skipped = 0;
+  const newlyFiled: StrategyProposal[] = [];
   for (let i = 0; i < Math.min(opts.actions.length, MAX_FILED_PER_PLAN); i++) {
     const raw = opts.actions[i];
     if (!raw) continue;
@@ -114,9 +138,13 @@ export function fileStrategyProposals(opts: {
       createdAt: Date.now(),
     };
     all.push(proposal);
+    newlyFiled.push(proposal);
     filed++;
   }
-  if (filed) writeAll(all);
+  if (filed) {
+    writeAll(all);
+    for (const p of newlyFiled) notifyProposalFiled(p);
+  }
   return { filed, skipped };
 }
 
@@ -134,7 +162,7 @@ export function fileBudgetProposal(opts: { agentId: string; agentName: string; c
   // raise are a workload problem, not a reason to re-ask the same day.
   if (all.some((p) => p.id === proposalId)) return false;
   if (all.filter((p) => p.status === 'pending').length >= MAX_PENDING) return false;
-  all.push({
+  const proposal: StrategyProposal = {
     id: `budget-${opts.agentId}-${day}`,
     planNote: '',
     planTaskId: `budget-guard-${opts.agentId}`,
@@ -148,8 +176,10 @@ export function fileBudgetProposal(opts: { agentId: string; agentName: string; c
     status: 'pending',
     createdAt: Date.now(),
     action: { type: 'budgetRaise', agentId: opts.agentId, budget: opts.suggestedBudget },
-  });
+  };
+  all.push(proposal);
   writeAll(all);
+  notifyProposalFiled(proposal);
   return true;
 }
 
@@ -180,7 +210,7 @@ export function fileIncidentProposal(inc: {
   }
   const dedupeId = prior.length ? `${base}-r${prior.length + 1}` : base;
   const ageMin = Math.max(1, Math.floor((Date.now() - inc.firstSeenAt) / 60_000));
-  all.push({
+  const proposal: StrategyProposal = {
     id: dedupeId,
     planNote: '',
     planTaskId: `incident-${inc.key.slice(0, 40)}`,
@@ -193,8 +223,10 @@ export function fileIncidentProposal(inc: {
     evidence: inc.evidence.slice(-5),
     status: 'pending',
     createdAt: Date.now(),
-  });
+  };
+  all.push(proposal);
   writeAll(all);
+  notifyProposalFiled(proposal);
   return true;
 }
 
@@ -215,7 +247,7 @@ export function fileDevinSessionProposal(opts: {
   const proposalId = `devin-task-${hash}-${day}`;
   if (all.some((p) => p.id === proposalId)) return false;
   if (all.filter((p) => p.status === 'pending').length >= MAX_PENDING) return false;
-  all.push({
+  const proposal: StrategyProposal = {
     id: proposalId,
     planNote: '',
     planTaskId: opts.taskId,
@@ -229,8 +261,10 @@ export function fileDevinSessionProposal(opts: {
     status: 'pending',
     createdAt: Date.now(),
     taskInput: { ...(opts.taskInput || {}), approvedProposalId: proposalId },
-  });
+  };
+  all.push(proposal);
   writeAll(all);
+  notifyProposalFiled(proposal);
   return true;
 }
 
@@ -254,7 +288,7 @@ export function fileCalendarProposal(opts: {
   const proposalId = `cal-${opts.lifeEventId}`.slice(0, 80);
   if (all.some((p) => p.id === proposalId)) return false;
   if (all.filter((p) => p.status === 'pending').length >= MAX_PENDING) return false;
-  all.push({
+  const proposal: StrategyProposal = {
     id: proposalId,
     planNote: 'life-radar',
     planTaskId: 'radar',
@@ -271,8 +305,10 @@ export function fileCalendarProposal(opts: {
       calendarEvent: opts.event,
       lifeEventId: opts.lifeEventId,
     },
-  });
+  };
+  all.push(proposal);
   writeAll(all);
+  notifyProposalFiled(proposal);
   return true;
 }
 

@@ -553,6 +553,22 @@ async function repoScanWorker(ctx: AgentContext) {
     picks = m ? (JSON.parse(m[0])?.picks || []) : [];
   } catch { picks = []; }
 
+  // Adoption lane: high-fit 'adopt' picks file strategy proposals so repo
+  // discoveries reach the INBOX instead of dying in a vault note. Dedupe is
+  // per-day via planNote; 'watch'/'ignore' picks stay note-only.
+  const adoptPicks = picks.filter((p: any) => p?.action === 'adopt' && Number(p?.fit) >= 0.6).slice(0, 4);
+  let proposalsFiled = 0;
+  if (adoptPicks.length) {
+    try {
+      const { fileStrategyProposals } = await import('./strategy-proposals');
+      const dayKey = new Date().toISOString().slice(0, 10);
+      const actions = adoptPicks.map((p: any) =>
+        `[research] Evaluate adopting ${p.name} into Cortex — ${String(p.why || '').slice(0, 200)} — evidence: ${p.name}, github fit ${p.fit}, ${shortlist.find((r) => r.name === p.name)?.url || 'github'}`);
+      const res = fileStrategyProposals({ planNote: `repo-scan-${dayKey}`, planTaskId: ctx.task.id, actions });
+      proposalsFiled = res.filed;
+    } catch { proposalsFiled = 0; }
+  }
+
   const brief = [
     `# Repo Scan — ${new Date().toISOString().slice(0, 10)}`,
     `Scanned ${repos.length} candidates across ${queries.length} queries (last ${sinceDays}d).`,
@@ -575,7 +591,7 @@ async function repoScanWorker(ctx: AgentContext) {
   } catch {}
 
   ctx.progress(1);
-  return { scanned: repos.length, picks: picks.length, note: '02 - Projects/repo-scan' };
+  return { scanned: repos.length, picks: picks.length, proposalsFiled, note: '02 - Projects/repo-scan' };
 }
 
 async function agentIdeasWorker(ctx: AgentContext) {

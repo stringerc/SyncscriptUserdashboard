@@ -8,6 +8,7 @@ import {
   fileBudgetProposal,
   fileDevinSessionProposal,
   listStrategyProposals,
+  setOnProposalFiledHook,
 } from '../cortex-agents/strategy-proposals';
 import { AGENT_SPECS } from '../cortex-agents/runtime';
 import { makePrepWorker } from '../cortex-agents/prep';
@@ -157,5 +158,24 @@ describe('Initiative Acceleration & Strategy Proposal Auto-Drain', () => {
     expect(res.ok).toBe(true);
     expect(res.strategyApproved.length).toBe(1);
     expect(mockSubmitted).toBe(true);
+  });
+
+  it('setOnProposalFiledHook receives event notification immediately upon filing for zero-latency intake', async () => {
+    let capturedProposal: any = null;
+    setOnProposalFiledHook((p) => {
+      capturedProposal = p;
+    });
+
+    fileStrategyProposals({
+      planNote: 'instant-note',
+      planTaskId: 'task-instant',
+      actions: ['1. [eval] Run fast test suite — evidence: ev-instant — why fast'],
+    });
+
+    expect(capturedProposal).not.toBeNull();
+    expect(capturedProposal.title).toContain('Run fast test suite');
+    expect(capturedProposal.agentId).toBe('runner');
+
+    setOnProposalFiledHook(null);
   });
 });

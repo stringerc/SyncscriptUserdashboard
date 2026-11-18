@@ -428,6 +428,67 @@ export function CortexInitiativeInbox() {
   const [strategyProps, setStrategyProps] = useState<StrategyProposal[]>([]);
   const [incidents, setIncidents] = useState<IncidentTicket[]>([]);
   const [fastDraining, setFastDraining] = useState(false);
+  const [healingAll, setHealingAll] = useState(false);
+  const [incidentLoading, setIncidentLoading] = useState<Record<string, string>>({});
+
+  const handleHealIncident = async (id: string) => {
+    setIncidentLoading(prev => ({ ...prev, [id]: 'verifying...' }));
+    try {
+      const res = await fetch('/api/cortex/agents/incidents/verify', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id }),
+      });
+      const data = await res.json().catch(() => null);
+      if (data?.ok && data?.taskId) {
+        setIncidentLoading(prev => ({ ...prev, [id]: `Dispatched ${data.taskId}` }));
+      } else {
+        setIncidentLoading(prev => ({ ...prev, [id]: data?.error || 'failed' }));
+      }
+    } catch {
+      setIncidentLoading(prev => ({ ...prev, [id]: 'error' }));
+    }
+  };
+
+  const handleDismissIncident = async (id: string) => {
+    try {
+      await fetch('/api/cortex/agents/incidents/dismiss', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id }),
+      });
+      setIncidents(prev => prev.filter(x => x.id !== id));
+    } catch {}
+  };
+
+  const handleDismissAllIncidents = async () => {
+    try {
+      await fetch('/api/cortex/agents/incidents/dismiss-all', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ids: incidents.map(i => i.id) }),
+      });
+      setIncidents([]);
+    } catch {}
+  };
+
+  const handleHealAllIncidents = async () => {
+    setHealingAll(true);
+    try {
+      for (const inc of incidents) {
+        await fetch('/api/cortex/agents/incidents/verify', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id: inc.id }),
+        }).catch(() => {});
+      }
+      const r = await fetch('/api/cortex/agents/incidents?status=open', { cache: 'no-store' });
+      const j = await r.json().catch(() => null);
+      if (j?.ok) setIncidents(j.incidents || []);
+    } finally {
+      setHealingAll(false);
+    }
+  };
 
   useEffect(() => {
     const u1 = engine.subscribe(() => setTick(t => t + 1));
@@ -550,8 +611,45 @@ export function CortexInitiativeInbox() {
           <>
             {incidents.length > 0 && (
               <div style={{ marginBottom: 12 }}>
-                <div style={{ fontSize: 9, color: C.red, fontFamily: MONO, letterSpacing: 1, marginBottom: 6, textTransform: 'uppercase' }}>
-                  Incidents — {incidents.length} open
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
+                  <div style={{ fontSize: 9, color: C.red, fontFamily: MONO, letterSpacing: 1, textTransform: 'uppercase' }}>
+                    Incidents — {incidents.length} open
+                  </div>
+                  <div style={{ display: 'flex', gap: 6 }}>
+                    <button
+                      onClick={handleHealAllIncidents}
+                      disabled={healingAll}
+                      style={{
+                        background: 'rgba(239,68,68,0.15)',
+                        border: '1px solid #ef444466',
+                        color: '#f87171',
+                        borderRadius: 4,
+                        padding: '2px 8px',
+                        fontSize: 9,
+                        fontFamily: MONO,
+                        fontWeight: 600,
+                        cursor: 'pointer',
+                        letterSpacing: 0.5,
+                      }}
+                    >
+                      {healingAll ? '⚡ HEALING...' : '⚡ HEAL ALL INCIDENTS'}
+                    </button>
+                    <button
+                      onClick={handleDismissAllIncidents}
+                      style={{
+                        background: 'transparent',
+                        border: `1px solid ${C.border}`,
+                        color: C.dim,
+                        borderRadius: 4,
+                        padding: '2px 6px',
+                        fontSize: 9,
+                        fontFamily: MONO,
+                        cursor: 'pointer',
+                      }}
+                    >
+                      Dismiss All
+                    </button>
+                  </div>
                 </div>
                 {incidents.map(inc => {
                   const ageH = inc.ageHours ?? Math.floor((Date.now() - inc.firstSeenAt) / 3600_000);
@@ -584,6 +682,40 @@ export function CortexInitiativeInbox() {
                     </div>
                     <div style={{ fontSize: 9, color: C.dim, fontFamily: MONO, marginTop: 4, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                       {inc.title}{inc.lastError ? ` — ${inc.lastError}` : ''}
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 6, paddingTop: 4, borderTop: `1px solid ${C.border}22` }}>
+                      <button
+                        onClick={() => handleHealIncident(inc.id)}
+                        disabled={incidentLoading[inc.id] === 'verifying...'}
+                        style={{
+                          background: 'rgba(239,68,68,0.12)',
+                          border: '1px solid #ef444455',
+                          color: '#f87171',
+                          borderRadius: 4,
+                          padding: '2px 8px',
+                          fontSize: 9,
+                          fontFamily: MONO,
+                          fontWeight: 600,
+                          cursor: 'pointer',
+                        }}
+                      >
+                        {incidentLoading[inc.id] ? incidentLoading[inc.id] : '⚡ Heal & Verify'}
+                      </button>
+                      <button
+                        onClick={() => handleDismissIncident(inc.id)}
+                        style={{
+                          background: 'transparent',
+                          border: `1px solid ${C.border}`,
+                          color: C.dim,
+                          borderRadius: 4,
+                          padding: '2px 6px',
+                          fontSize: 9,
+                          fontFamily: MONO,
+                          cursor: 'pointer',
+                        }}
+                      >
+                        Dismiss
+                      </button>
                     </div>
                   </div>
                   );
