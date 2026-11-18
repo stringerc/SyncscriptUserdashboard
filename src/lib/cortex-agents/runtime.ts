@@ -385,6 +385,10 @@ export class AgentRuntime {
     return this.agents.get(agentId);
   }
 
+  listAgents(): AgentState[] {
+    return [...this.agents.values()];
+  }
+
   pinFor(agentId?: AgentId | null) {
     return agentId ? this.agents.get(agentId)?.modelPin ?? null : null;
   }

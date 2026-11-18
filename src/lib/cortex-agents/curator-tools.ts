@@ -92,7 +92,8 @@ export async function curatorAuditSelf(): Promise<CuratorAuditResult> {
   }));
 
   const rt = getAgentRuntime();
-  const agents = rt.listAgents().map(a => ({
+  const rawAgents = (typeof rt.listAgents === 'function' ? rt.listAgents() : (typeof rt.snapshot === 'function' ? rt.snapshot().agents : [])) || [];
+  const agents = rawAgents.map((a: any) => ({
     id: a.id,
     name: a.name,
     role: a.role,
