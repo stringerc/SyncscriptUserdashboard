@@ -98,12 +98,12 @@ const shouldEnablePrerender = (() => {
  *  /api/ai/nexus-guest  → direct AI provider (if key available) OR production syncscript.app
  */
 
-const DIRECT_AI_PROVIDERS: { name: string; url: string; model: string; keyEnv: string; protocol?: 'openai' | 'anthropic' }[] = [
-  // NVIDIA NIM — direct cloud API with ~470ms TTFT on Nemotron 3.5 Super VL 120B (Key 2 active)
-  { name: 'nvidia-nim', url: 'https://integrate.api.nvidia.com/v1/chat/completions', model: 'nvidia/nemotron-3.5-super-vl-120b-a12b', keyEnv: 'NVIDIA_API_KEY', protocol: 'openai' },
+const DIRECT_AI_PROVIDERS: { name: string; url: string; model: string; keyEnv: string; backupKeyEnv?: string; protocol?: 'openai' | 'anthropic' }[] = [
+  // NVIDIA NIM — direct cloud API with ~470ms TTFT on Nemotron 3.5 Super VL 120B (Key 1 primary, Key 2 backup)
+  { name: 'nvidia-nim', url: 'https://integrate.api.nvidia.com/v1/chat/completions', model: 'nvidia/nemotron-3.5-super-vl-120b-a12b', keyEnv: 'NVIDIA_API_KEY', backupKeyEnv: 'NVIDIA_BACKUP_API_KEY', protocol: 'openai' },
   // Local free-claude-code proxy on 8082 — Anthropic protocol fallback for reasoning & tools
   { name: 'free-proxy', url: 'http://127.0.0.1:8082/v1/messages', model: 'claude-fable-5-2', keyEnv: 'ANTHROPIC_AUTH_TOKEN', protocol: 'anthropic' },
-  { name: 'nvidia-nim-550b', url: 'https://integrate.api.nvidia.com/v1/chat/completions', model: 'nvidia/nemotron-3-ultra-550b-a55b', keyEnv: 'NVIDIA_API_KEY', protocol: 'openai' },
+  { name: 'nvidia-nim-550b', url: 'https://integrate.api.nvidia.com/v1/chat/completions', model: 'nvidia/nemotron-3-ultra-550b-a55b', keyEnv: 'NVIDIA_API_KEY', backupKeyEnv: 'NVIDIA_BACKUP_API_KEY', protocol: 'openai' },
   // Groq LPU fallbacks
   { name: 'groq-fast', url: 'https://api.groq.com/openai/v1/chat/completions', model: 'openai/gpt-oss-20b', keyEnv: 'GROQ_API_KEY', protocol: 'openai' },
   { name: 'groq-oss', url: 'https://api.groq.com/openai/v1/chat/completions', model: 'openai/gpt-oss-120b', keyEnv: 'GROQ_API_KEY', protocol: 'openai' },
@@ -931,6 +931,7 @@ function apiProxyPlugin(): Plugin {
     url: string;
     model: string;
     key: string;
+    backupKey?: string;
     protocol?: 'openai' | 'anthropic';
   }
   const aiProviders: AIProviderCandidate[] = [];
@@ -958,37 +959,57 @@ function apiProxyPlugin(): Plugin {
       }
 
       const resolveEnvKey = (keyName: string): string => {
-        if (env[keyName]) return env[keyName];
-        if (process.env[keyName]) return process.env[keyName]!;
-        try {
-          const home = process.env.HOME || '/Users/Apple';
-          const openclawEnvPath = path.join(home, '.openclaw', '.env');
-          if (fs.existsSync(openclawEnvPath)) {
-            const content = fs.readFileSync(openclawEnvPath, 'utf8');
-            const match = content.match(new RegExp(`^${keyName}=["']?([^"'\\r\\n]+)["']?`, 'm'));
-            if (match && match[1]) return match[1].trim();
-          }
-        } catch { }
-        try {
-          const fccEnvPath = '/Users/Apple/src/free-claude-code/.env';
-          if (fs.existsSync(fccEnvPath)) {
-            const content = fs.readFileSync(fccEnvPath, 'utf8');
-            const match = content.match(new RegExp(`^${keyName}=["']?([^"'\\r\\n]+)["']?`, 'm'));
-            if (match && match[1]) return match[1].trim();
-          }
-        } catch { }
+        const aliases = keyName === 'NVIDIA_BACKUP_API_KEY' ? ['NVIDIA_BACKUP_API_KEY', 'NVIDIA_API_KEY_BACKUP', 'NVIDIA_NIM_BACKUP_KEY']
+          : keyName === 'NVIDIA_API_KEY' ? ['NVIDIA_API_KEY', 'NVIDIA_NIM_API_KEY']
+          : [keyName];
+        for (const k of aliases) {
+          if (env[k]) return env[k];
+          if (process.env[k]) return process.env[k]!;
+        }
+        for (const k of aliases) {
+          try {
+            const home = process.env.HOME || '/Users/Apple';
+            const openclawEnvPath = path.join(home, '.openclaw', '.env');
+            if (fs.existsSync(openclawEnvPath)) {
+              const content = fs.readFileSync(openclawEnvPath, 'utf8');
+              const match = content.match(new RegExp(`^${k}=["']?([^"'\\r\\n]+)["']?`, 'm'));
+              if (match && match[1]) return match[1].trim();
+            }
+          } catch { }
+          try {
+            const fccEnvPath = '/Users/Apple/src/free-claude-code/.env';
+            if (fs.existsSync(fccEnvPath)) {
+              const content = fs.readFileSync(fccEnvPath, 'utf8');
+              const match = content.match(new RegExp(`^${k}=["']?([^"'\\r\\n]+)["']?`, 'm'));
+              if (match && match[1]) return match[1].trim();
+            }
+          } catch { }
+        }
         return '';
       };
 
       aiProviders.length = 0;
       for (const p of DIRECT_AI_PROVIDERS) {
-        const key = resolveEnvKey(p.keyEnv);
+        let key = resolveEnvKey(p.keyEnv);
+        let backupKey = p.backupKeyEnv ? resolveEnvKey(p.backupKeyEnv) : '';
+        if (key && key.includes(',')) {
+          const parts = key.split(',').map((s) => s.trim()).filter(Boolean);
+          key = parts[0];
+          if (!backupKey && parts[1]) backupKey = parts[1];
+        }
         if (key) {
-          aiProviders.push({ name: p.name, url: p.url, model: p.model, key, protocol: p.protocol || 'openai' });
+          aiProviders.push({
+            name: p.name,
+            url: p.url,
+            model: p.model,
+            key,
+            backupKey: (backupKey && backupKey !== key) ? backupKey : undefined,
+            protocol: p.protocol || 'openai',
+          });
         }
       }
       if (aiProviders.length > 0) {
-        console.info(`[api-proxy] Direct AI multi-provider chain configured (${aiProviders.length} candidate(s)): ${aiProviders.map(p => `${p.name}:${p.model}`).join(' -> ')}`);
+        console.info(`[api-proxy] Direct AI multi-provider chain configured (${aiProviders.length} candidate(s)): ${aiProviders.map(p => `${p.name}:${p.model}${p.backupKey ? ' [backup-key-enabled]' : ''}`).join(' -> ')}`);
       } else {
         console.info('[api-proxy] No local AI key found (add GROQ_API_KEY or OPENROUTER_API_KEY to .env)');
       }
@@ -1144,10 +1165,16 @@ function apiProxyPlugin(): Plugin {
         catalogSources.push({
           provider: 'nvidia-nim',
           fetchIds: async () => {
-            const r = await fetch('https://integrate.api.nvidia.com/v1/models', {
+            let r = await fetch('https://integrate.api.nvidia.com/v1/models', {
               headers: { Authorization: `Bearer ${nimProv.key}` },
               signal: AbortSignal.timeout(10_000),
             });
+            if (!r.ok && nimProv.backupKey && (r.status === 401 || r.status === 402 || r.status === 403 || r.status === 429)) {
+              r = await fetch('https://integrate.api.nvidia.com/v1/models', {
+                headers: { Authorization: `Bearer ${nimProv.backupKey}` },
+                signal: AbortSignal.timeout(10_000),
+              });
+            }
             if (!r.ok) throw new Error(`nim catalog ${r.status}`);
             const j: any = await r.json();
             return (j?.data || []).map((m: any) => String(m.id)).filter(Boolean);
@@ -1438,7 +1465,7 @@ function apiProxyPlugin(): Plugin {
         const provider = aiProviders.find((p) => (p.protocol || 'openai') === 'openai');
         if (!provider) return;
         try {
-          const res = await fetch(provider.url, {
+          let res = await fetch(provider.url, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${provider.key}` },
             body: JSON.stringify({
@@ -1454,6 +1481,22 @@ function apiProxyPlugin(): Plugin {
             }),
             signal: AbortSignal.timeout(30000),
           });
+          if (!res.ok && provider.backupKey && (res.status === 401 || res.status === 402 || res.status === 403 || res.status === 429)) {
+            res = await fetch(provider.url, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${provider.backupKey}` },
+              body: JSON.stringify({
+                model: provider.model,
+                temperature: 0.3,
+                max_tokens: 1024,
+                messages: [
+                  { role: 'system', content: 'You are Cortex\'s ambient monitor on an always-on server. Reply with JSON only: {"say":"<one brief spoken sentence, max 20 words>"} if the vitals contain something genuinely worth telling the user unprompted (a problem, risk, or milestone), otherwise {"say":null}. Never comment on states that are fine.' },
+                  { role: 'user', content: JSON.stringify(ambientVitals()) },
+                ],
+              }),
+              signal: AbortSignal.timeout(30000),
+            });
+          }
           if (!res.ok) return;
           // Quota watchdog: surface provider rate-limit exhaustion early.
           try {
@@ -1686,7 +1729,7 @@ function apiProxyPlugin(): Plugin {
         const provider = aiProviders.find((p) => (p.protocol || 'openai') === 'openai');
         if (!provider) return null;
         try {
-          const res = await fetch(provider.url, {
+          let res = await fetch(provider.url, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${provider.key}` },
             body: JSON.stringify({
@@ -1695,6 +1738,17 @@ function apiProxyPlugin(): Plugin {
             }),
             signal: AbortSignal.timeout(60000),
           });
+          if (!res.ok && provider.backupKey && (res.status === 401 || res.status === 402 || res.status === 403 || res.status === 429)) {
+            res = await fetch(provider.url, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${provider.backupKey}` },
+              body: JSON.stringify({
+                model: provider.model, temperature: 0.4, max_tokens: maxTokens,
+                messages: [{ role: 'system', content: system }, { role: 'user', content: user }],
+              }),
+              signal: AbortSignal.timeout(60000),
+            });
+          }
           if (!res.ok) return null;
           const data: any = await res.json();
           const msg = data?.choices?.[0]?.message || {};
@@ -8674,6 +8728,35 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
                         }),
                         signal: provAbort.signal,
                       });
+
+                      // Automatic failover to backup key on 401, 402, 403, 429
+                      if (candidateRes && !candidateRes.ok && prov.backupKey && (candidateRes.status === 401 || candidateRes.status === 402 || candidateRes.status === 403 || candidateRes.status === 429)) {
+                        console.warn(`[dev-proxy] Provider ${prov.name} (${prov.model}) failed HTTP ${candidateRes.status} on primary key — attempting failover to backup key...`);
+                        const backupHeaders = { ...headers, Authorization: `Bearer ${prov.backupKey}` };
+                        try {
+                          const backupRes = await fetch(prov.url, {
+                            method: 'POST',
+                            headers: backupHeaders,
+                            body: JSON.stringify({
+                              model: prov.model,
+                              messages: chatMessages,
+                              max_tokens: typeof parsed.maxTokens === 'number' ? Math.min(parsed.maxTokens, parsed.context === 'cortex' ? 8192 : 2048) : (parsed.context === 'cortex' ? 4096 : 1200),
+                              temperature: 0.2,
+                              stream: true,
+                              ...(prov.name === 'groq-fast' || prov.name === 'groq-oss' ? { reasoning_effort: 'low' }
+                                : prov.name === 'groq-qwen' ? { reasoning_effort: 'none' } : {}),
+                              ...(parsed.context === 'cortex' && !parsed.noTools ? { tools: CORTEX_TOOLS, tool_choice: 'auto' } : {}),
+                            }),
+                            signal: provAbort.signal,
+                          });
+                          if (backupRes && backupRes.ok && backupRes.body) {
+                            candidateRes = backupRes;
+                            console.info(`[dev-proxy] Provider ${prov.name} successfully recovered using backup key (HTTP 200)`);
+                          }
+                        } catch (backupErr: any) {
+                          console.warn(`[dev-proxy] Provider ${prov.name} backup key attempt failed: ${backupErr?.message || backupErr}`);
+                        }
+                      }
                     }
 
                     clearTimeout(provTimer);
