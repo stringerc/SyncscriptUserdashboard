@@ -1198,13 +1198,13 @@ export const CortexAgentsScene: React.FC = () => {
         ctx.globalAlpha = 1;
       });
       // labels for flagship healthy models (top 6 by lane order)
-      ctx.font = `7px ${MONO}`;
+      ctx.font = `8px ${MONO}`;
       ctx.textAlign = 'center';
       starPos.filter(s => s.m.status === 'healthy'
         && s.x > 200 && s.x < w - 200 && s.y > 80 && s.y < h - 90
       ).slice(0, 6).forEach(({ x, y, m }) => {
         const label = String(m.id).split('/').pop() || m.id;
-        ctx.fillStyle = 'rgba(165,243,252,0.4)';
+        ctx.fillStyle = 'rgba(165,243,252,0.65)';
         ctx.fillText(label.slice(0, 26), x, y - 8);
       });
 
@@ -1308,9 +1308,9 @@ export const CortexAgentsScene: React.FC = () => {
         ctx.ellipse(cx, cy, baseRx * 0.60, baseRy * 0.60, 0, 0, Math.PI * 2);
         ctx.stroke();
 
-        ctx.font = `700 7px ${MONO}`;
+        ctx.font = `700 8px ${MONO}`;
         ctx.textAlign = 'center';
-        ctx.fillStyle = 'rgba(56,189,248,0.6)';
+        ctx.fillStyle = 'rgba(56,189,248,0.75)';
         ctx.fillText('FLIGHT CONSOLES // SPECIALIST RING', cx, cy - baseRy * 0.60 - 7);
       }
 
@@ -1324,9 +1324,9 @@ export const CortexAgentsScene: React.FC = () => {
         ctx.ellipse(cx, cy, baseRx, baseRy, 0, 0, Math.PI * 2);
         ctx.stroke();
 
-        ctx.font = `7px ${MONO}`;
+        ctx.font = `700 8px ${MONO}`;
         ctx.textAlign = 'center';
-        ctx.fillStyle = 'rgba(103,232,249,0.35)';
+        ctx.fillStyle = 'rgba(103,232,249,0.55)';
         ctx.fillText('SUPPORT CRAFT // MID ORBIT', cx, cy - baseRy - 8);
       }
 
@@ -1340,9 +1340,9 @@ export const CortexAgentsScene: React.FC = () => {
         ctx.ellipse(cx, cy, baseRx * 1.28, baseRy * 1.28, 0, 0, Math.PI * 2);
         ctx.stroke();
 
-        ctx.font = `7px ${MONO}`;
+        ctx.font = `700 8px ${MONO}`;
         ctx.textAlign = 'center';
-        ctx.fillStyle = 'rgba(251,191,36,0.5)';
+        ctx.fillStyle = 'rgba(251,191,36,0.65)';
         ctx.fillText('ENTERPRISE DECK', cx, cy - baseRy * 1.28 - 8);
       }
       ctx.setLineDash([]);
@@ -1926,46 +1926,35 @@ export const CortexAgentsScene: React.FC = () => {
     <div ref={containerRef} style={{ position: 'absolute', inset: 0, background: '#020308', overflow: 'hidden' }}>
       <canvas ref={canvasRef} style={{ position: 'absolute', inset: 0 }} />
 
-      {(['top-left', 'top-right', 'bottom-left', 'bottom-right'] as const).map(pos => (
-        <div key={pos} style={{
-          position: 'absolute', width: 26, height: 26, zIndex: 6, pointerEvents: 'none',
-          [pos.includes('top') ? 'top' : 'bottom']: 14,
-          [pos.includes('left') ? 'left' : 'right']: 14,
-          borderTop: pos.includes('top') ? '1px solid rgba(103,232,249,0.35)' : undefined,
-          borderBottom: pos.includes('bottom') ? '1px solid rgba(103,232,249,0.35)' : undefined,
-          borderLeft: pos.includes('left') ? '1px solid rgba(103,232,249,0.35)' : undefined,
-          borderRight: pos.includes('right') ? '1px solid rgba(103,232,249,0.35)' : undefined,
-        }} />
-      ))}
-
-      <div style={{ position: 'absolute', top: 18, left: '50%', transform: 'translateX(-50%)', zIndex: 5, textAlign: 'center' }}>
+      {/* Top Header Deck — streamlined, deconflicted from parent HUD */}
+      <div style={{ position: 'absolute', top: 22, left: '50%', transform: 'translateX(-50%)', zIndex: 12, textAlign: 'center' }}>
         <div style={{ fontSize: 13, letterSpacing: '0.55em', fontWeight: 700, color: 'rgba(224,242,254,0.95)', fontFamily: MONO, textShadow: '0 0 18px rgba(103,232,249,0.5)' }}>
           NEXUS FOUNDRY
         </div>
-        <div style={{ fontSize: 8, letterSpacing: '0.3em', color: 'rgba(148,233,255,0.45)', fontFamily: MONO, marginTop: 4 }}>
+        <div style={{ fontSize: 8.5, letterSpacing: '0.28em', color: 'rgba(165,243,252,0.65)', fontFamily: MONO, marginTop: 4 }}>
           {workingCount} AGENTS ACTIVE · {healthyModels}/{(snap.models || []).length} MODELS VERIFIED · {(snap.tasks || []).filter(t => t.status === 'running').length} TASKS IN FLIGHT
         </div>
         <button
           onClick={() => setTowerOpen(o => !o)}
           style={{
-            marginTop: 8, background: towerOpen ? 'rgba(251,191,36,0.12)' : 'rgba(103,232,249,0.06)',
-            border: `1px solid ${towerOpen ? 'rgba(251,191,36,0.5)' : 'rgba(103,232,249,0.3)'}`,
-            color: towerOpen ? '#fbbf24' : 'rgba(165,243,252,0.8)',
-            fontFamily: MONO, fontSize: 8, letterSpacing: '0.25em', padding: '3px 12px',
-            borderRadius: 2, cursor: 'pointer',
+            marginTop: 8, background: towerOpen ? 'rgba(251,191,36,0.14)' : 'rgba(103,232,249,0.08)',
+            border: `1px solid ${towerOpen ? 'rgba(251,191,36,0.6)' : 'rgba(103,232,249,0.35)'}`,
+            color: towerOpen ? '#fbbf24' : 'rgba(165,243,252,0.9)',
+            fontFamily: MONO, fontSize: 8.5, letterSpacing: '0.25em', padding: '3px 14px',
+            borderRadius: 3, cursor: 'pointer', transition: 'all 0.2s',
           }}
         >{towerOpen ? '◈ TOWER OPEN' : '◇ TOWER'}</button>
       </div>
 
       {/* Right rail: merged foundry telemetry — sentinel rotation, model
           lanes, probation pool, event bus. Roster owns the left side. */}
-      <div style={{ position: 'absolute', right: 22, top: '50%', transform: 'translateY(-50%)', zIndex: 5, fontFamily: MONO, fontSize: 8, letterSpacing: '0.18em', color: 'rgba(148,233,255,0.4)', lineHeight: 2, textAlign: 'right' }}>
-        <div style={{ color: 'rgba(165,243,252,0.55)', letterSpacing: '0.28em', marginBottom: 4 }}>FOUNDRY TELEMETRY</div>
+      <div style={{ position: 'absolute', right: 22, top: '50%', transform: 'translateY(-50%)', zIndex: 5, fontFamily: MONO, fontSize: 9, letterSpacing: '0.18em', color: 'rgba(165,243,252,0.65)', lineHeight: 1.85, textAlign: 'right' }}>
+        <div style={{ color: 'rgba(165,243,252,0.85)', letterSpacing: '0.28em', marginBottom: 4, fontWeight: 700 }}>FOUNDRY TELEMETRY</div>
         <div>SENTINEL ROTATION: LIVE</div>
         <div>PROBATION POOL: {(snap.models || []).filter(m => m.status === 'unknown').length}</div>
         <div>LANES: {Object.entries(snap.matrix || {}).map(([k, v]) => `${k.toUpperCase()} ${Array.isArray(v) ? v.length : 0}`).join(' · ')}</div>
         <div>UPTIME: {snap.runtime ? fmtElapsed(Date.now() - snap.runtime.startedAt) : '—'}</div>
-        <div style={{ marginTop: 8, borderTop: '1px solid rgba(103,232,249,0.12)', paddingTop: 8 }}>
+        <div style={{ marginTop: 8, borderTop: '1px solid rgba(103,232,249,0.18)', paddingTop: 8 }}>
           EVENT BUS: {snap.runtime?.eventCount ?? 0}
         </div>
         <div>AGENTS: {agents.length} REGISTERED</div>
@@ -2039,9 +2028,9 @@ export const CortexAgentsScene: React.FC = () => {
         </div>
       )}
 
-      {/* live event ticker */}
+      {/* live event ticker — lifted above centered bottom command dock */}
       {tickerEvents.length > 0 && (
-        <div style={{ position: 'absolute', bottom: 14, left: '50%', transform: 'translateX(-50%)', zIndex: 6, fontFamily: MONO, fontSize: 8, letterSpacing: '0.12em', color: 'rgba(165,243,252,0.55)', textAlign: 'center', lineHeight: 1.9, pointerEvents: 'none' }}>
+        <div style={{ position: 'absolute', bottom: 68, left: '50%', transform: 'translateX(-50%)', zIndex: 6, fontFamily: MONO, fontSize: 8, letterSpacing: '0.12em', color: 'rgba(165,243,252,0.65)', textAlign: 'center', lineHeight: 1.9, pointerEvents: 'none' }}>
           {tickerEvents.map((e, i) => (
             <div key={`${e.at}-${i}`} style={{ opacity: 1 - i * 0.16 }}>{eventLine(e)}</div>
           ))}
@@ -2055,15 +2044,41 @@ export const CortexAgentsScene: React.FC = () => {
         const baseA = (i / Math.max(agents.length, 1)) * Math.PI * 2 - Math.PI / 2;
         const left = (narrow ? 50 : 57) + Math.cos(baseA) * (narrow ? 36 : 33);
         const top = 50 + Math.sin(baseA) * 28;
+        const isFocused = selectedAgent === a.id || tasksByAgent.size === 1;
+
+        if (!isFocused) {
+          const activeTask = tasks[0];
+          const pct = Math.round((activeTask?.progress ?? 0) * 100);
+          return (
+            <div key={a.id} onClick={() => toggleDossier(a.id)}
+              title={`${a.name}: ${activeTask?.title} (${pct}%) — click for full dossier`}
+              style={{
+                position: 'absolute', left: `${left}%`, top: `${top}%`, transform: 'translate(-50%, -120%)',
+                zIndex: 6, cursor: 'pointer', padding: '3px 8px',
+                background: 'rgba(6,11,20,0.88)', border: `1px solid ${hexA(col, 0.55)}`,
+                borderRadius: 12, backdropFilter: 'blur(8px)',
+                boxShadow: `0 0 12px ${hexA(col, 0.25)}`,
+                display: 'flex', alignItems: 'center', gap: 6,
+                fontFamily: MONO, fontSize: 8, whiteSpace: 'nowrap',
+                transition: 'all 0.2s',
+              }}
+            >
+              <span style={{ width: 5, height: 5, borderRadius: '50%', background: a.status === 'working' ? col : '#f87171', boxShadow: `0 0 6px ${col}` }} />
+              <span style={{ color: col, fontWeight: 700, letterSpacing: '0.1em' }}>{a.name.toUpperCase()}</span>
+              <span style={{ color: 'rgba(148,233,255,0.7)' }}>{activeTask?.status === 'queued' ? 'QUEUED' : `${pct}%`}</span>
+            </div>
+          );
+        }
+
         return (
           <div key={a.id} onClick={() => toggleDossier(a.id)}
             style={{
               position: 'absolute', left: `${left}%`, top: `${top}%`, transform: 'translate(-50%,-100%)',
-              zIndex: 6, width: 250, cursor: 'pointer',
-              background: 'linear-gradient(160deg, rgba(8,14,24,0.88), rgba(5,8,15,0.82))',
-              border: `1px solid ${hexA(col, 0.4)}`, borderRadius: 3,
+              zIndex: 7, width: 250, cursor: 'pointer',
+              background: 'linear-gradient(160deg, rgba(8,14,24,0.92), rgba(5,8,15,0.88))',
+              border: `1px solid ${hexA(col, 0.5)}`, borderRadius: 3,
               backdropFilter: 'blur(12px)', padding: '9px 11px',
-              boxShadow: `0 0 32px ${hexA(col, 0.18)}, inset 0 0 18px ${hexA(col, 0.04)}`,
+              boxShadow: `0 0 32px ${hexA(col, 0.22)}, inset 0 0 18px ${hexA(col, 0.05)}`,
             }}>
             <div style={{ position: 'absolute', top: -1, left: -1, width: 8, height: 8, borderTop: `1px solid ${col}`, borderLeft: `1px solid ${col}` }} />
             <div style={{ position: 'absolute', bottom: -1, right: -1, width: 8, height: 8, borderBottom: `1px solid ${col}`, borderRight: `1px solid ${col}` }} />
@@ -2121,8 +2136,6 @@ export const CortexAgentsScene: React.FC = () => {
         onOpenTower={() => setTowerOpen(true)}
       />
       {towerOpen && <CortexTowerPanel onClose={() => setTowerOpen(false)} />}
-
-      <div style={{ position: 'absolute', inset: 0, zIndex: 8, pointerEvents: 'none', background: 'repeating-linear-gradient(0deg, rgba(255,255,255,0.012) 0px, rgba(255,255,255,0.012) 1px, transparent 1px, transparent 3px)' }} />
     </div>
   );
 };

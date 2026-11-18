@@ -875,11 +875,12 @@ export default function CortexVisualizerPage() {
           color: 'rgba(148,233,255,0.55)', textTransform: 'uppercase',
           animation: 'cx-fade-up 0.9s 0.7s cubic-bezier(0.16,1,0.3,1) both',
         }}>
-          Sovereign Core // Neural Sanctum
+          {faceMode === 'agents' ? 'Nexus Foundry // Fleet Command Deck' : 'Sovereign Core // Neural Sanctum'}
         </div>
       </div>
 
-      {/* Top-center: marquee ticker */}
+      {/* Top-center: marquee ticker — hidden on Foundry face to avoid header collision */}
+      {faceMode !== 'agents' && (
       <div style={{
         position: 'absolute', top: 42, left: '50%', transform: 'translateX(-50%)',
         width: '42vw', overflow: 'hidden', zIndex: 15, pointerEvents: 'none',
@@ -899,6 +900,7 @@ export default function CortexVisualizerPage() {
           ))}
         </div>
       </div>
+      )}
 
       {/* Proactive Ambient & Vigilance HUD Bar */}
       <div style={{
@@ -1473,8 +1475,15 @@ export default function CortexVisualizerPage() {
         );
       })()}
 
-      {/* Bottom-left: nav */}
-      <div style={{ position: 'absolute', bottom: 40, left: narrow ? 16 : 64, zIndex: 20, display: 'flex', gap: narrow ? 6 : 10, flexWrap: narrow ? 'wrap' : 'nowrap', maxWidth: narrow ? '46vw' : 'none' }} className="cx-hud-in">
+      {/* Bottom nav command dock: centered to clear left-rail flyouts */}
+      <div style={{
+        position: 'absolute', bottom: 24, left: '50%', transform: 'translateX(-50%)',
+        zIndex: 22, display: 'flex', alignItems: 'center', gap: narrow ? 6 : 8,
+        flexWrap: narrow ? 'wrap' : 'nowrap', maxWidth: 'calc(100vw - 48px)',
+        padding: '5px 8px', background: 'rgba(4,8,16,0.72)',
+        backdropFilter: 'blur(12px)', border: '1px solid rgba(103,232,249,0.18)',
+        borderRadius: 24, boxShadow: '0 8px 32px rgba(0,0,0,0.5), 0 0 16px rgba(103,232,249,0.06)',
+      }} className="cx-hud-in">
         <a href="/cortex/chat" style={{
           textDecoration: 'none', padding: narrow ? '7px 12px' : '9px 20px',
           border: `1px solid ${accent}55`, borderRadius: 2,
@@ -1644,8 +1653,8 @@ export default function CortexVisualizerPage() {
       </div>
 
       {/* Mission Log — always-on feed of real agent tasks, above the nav rail.
-          Click expands to a centered full feed. */}
-      {(() => {
+          Click expands to a centered full feed. Suppressed on Foundry face where scene renders its own dedicated log. */}
+      {faceMode !== 'agents' && (() => {
         const AGENT_HUES: Record<string, string> = { sentinel: '#67e8f9', scout: '#e879f9', librarian: '#fbbf24', builder: '#34d399', reviewer: '#fb7185', runner: '#a3e635', warden: '#818cf8' };
         const STATUS_COLORS: Record<string, string> = { running: '#67e8f9', queued: '#fbbf24', completed: '#34d399', failed: '#f87171', cancelled: '#64748b' };
         const tasks = (agentCrew.tasks || []).slice(0, 10);

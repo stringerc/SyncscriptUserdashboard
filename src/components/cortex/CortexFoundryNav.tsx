@@ -51,19 +51,35 @@ function Lamp({ status }: { status: string }) {
   return <span style={{ width: 6, height: 6, borderRadius: '50%', background: c, boxShadow: c === '#34d399' ? `0 0 5px ${c}` : 'none', flexShrink: 0 }} />;
 }
 
-function Panel({ title, right, children }: { title: string; right?: React.ReactNode; children: React.ReactNode }) {
+function Panel({ title, right, onClose, children }: { title: string; right?: React.ReactNode; onClose?: () => void; children: React.ReactNode }) {
   return (
     <div style={{
-      position: 'absolute', left: 80, top: '50%', transform: 'translateY(-50%)', zIndex: 6,
-      width: 490, maxWidth: 'calc(100vw - 360px)', maxHeight: '78vh', display: 'flex', flexDirection: 'column',
-      background: 'linear-gradient(165deg, rgba(8,14,24,0.94), rgba(5,8,15,0.9))',
-      border: '1px solid rgba(103,232,249,0.22)', borderLeft: '3px solid #38bdf8', borderRadius: 3,
-      padding: '12px 14px', fontFamily: MONO, backdropFilter: 'blur(10px)',
-      boxShadow: '0 0 40px rgba(0,0,0,0.6)',
+      position: 'absolute', left: 80, top: '50%', transform: 'translateY(-50%)', zIndex: 25,
+      width: 490, maxWidth: 'calc(100vw - 360px)', maxHeight: '76vh', display: 'flex', flexDirection: 'column',
+      background: 'linear-gradient(165deg, rgba(8,14,24,0.96), rgba(5,8,15,0.94))',
+      border: '1px solid rgba(103,232,249,0.25)', borderLeft: '3px solid #38bdf8', borderRadius: 4,
+      padding: '12px 14px', fontFamily: MONO, backdropFilter: 'blur(12px)',
+      boxShadow: '0 12px 48px rgba(0,0,0,0.7), 0 0 24px rgba(56,189,248,0.12)',
     }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 8, flexShrink: 0 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8, flexShrink: 0 }}>
         <span style={{ fontSize: 12, letterSpacing: '0.3em', color: '#67e8f9', fontWeight: 700 }}>{title}</span>
-        {right}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          {right}
+          {onClose && (
+            <button
+              onClick={onClose}
+              title="Close panel"
+              style={{
+                background: 'transparent', border: '1px solid rgba(148,163,184,0.25)',
+                borderRadius: 2, color: 'rgba(148,163,184,0.7)', cursor: 'pointer',
+                fontFamily: MONO, fontSize: 9, padding: '1px 6px', lineHeight: 1.2,
+                transition: 'all 0.15s',
+              }}
+              onMouseEnter={(e) => { e.currentTarget.style.color = '#f87171'; e.currentTarget.style.borderColor = '#f87171'; }}
+              onMouseLeave={(e) => { e.currentTarget.style.color = 'rgba(148,163,184,0.7)'; e.currentTarget.style.borderColor = 'rgba(148,163,184,0.25)'; }}
+            >✕</button>
+          )}
+        </div>
       </div>
       <div className="ambient-scrollbar" style={{ overflowY: 'auto', flex: 1, minHeight: 0, fontSize: 10.5, color: DIM, lineHeight: 1.7 }}>
         {children}
@@ -577,7 +593,7 @@ export function CortexFoundryNav({ snap, onSelectAgent, selectedAgent, onOpenTow
 
       {/* Section panels */}
       {view === 'tasks' && (
-        <Panel title="TASK LEDGER" right={
+        <Panel title="TASK LEDGER" onClose={() => setView(null)} right={
           <span style={{ display: 'flex', gap: 4, alignItems: 'center', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
             <button
               onClick={() => setShowNewTask((prev) => !prev)}
@@ -833,6 +849,7 @@ export function CortexFoundryNav({ snap, onSelectAgent, selectedAgent, onOpenTow
       {view === 'goals' && (
         <Panel
           title="LIFE GOALS"
+          onClose={() => setView(null)}
           right={
             <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
               <button
@@ -982,6 +999,7 @@ export function CortexFoundryNav({ snap, onSelectAgent, selectedAgent, onOpenTow
       {view === 'calendar' && (
         <Panel
           title="MISSION CALENDAR"
+          onClose={() => setView(null)}
           right={<span style={{ fontSize: 9.5, color: DIM }}>{calendar ? `${calendar.length} TOTAL` : 'LOADING…'}</span>}
         >
           <CortexFoundryCalendar
@@ -995,6 +1013,7 @@ export function CortexFoundryNav({ snap, onSelectAgent, selectedAgent, onOpenTow
       {view === 'agents' && (
         <Panel
           title="MISSION CONTROL ROSTER"
+          onClose={() => setView(null)}
           right={
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
               {gatewayProbing && <span style={{ fontSize: 8.5, color: '#38bdf8', letterSpacing: '0.1em' }}>PROBING…</span>}
@@ -1167,7 +1186,7 @@ export function CortexFoundryNav({ snap, onSelectAgent, selectedAgent, onOpenTow
       )}
 
       {view === 'counsel' && (
-        <Panel title="THE COUNSEL — GO/NO-GO POLLS" right={
+        <Panel title="THE COUNSEL — GO/NO-GO POLLS" onClose={() => setView(null)} right={
           <button onClick={() => { setView(null); onOpenTower(); }} style={{ background: 'none', border: '1px solid rgba(251,191,36,0.4)', color: '#fbbf24', fontFamily: MONO, fontSize: 9.5, padding: '2px 8px', borderRadius: 2, cursor: 'pointer', letterSpacing: '0.15em' }}>OPEN TOWER</button>
         }>
           {counsel === null && <div style={{ padding: '12px 0', color: DIM }}>LOADING…</div>}
@@ -1214,7 +1233,7 @@ export function CortexFoundryNav({ snap, onSelectAgent, selectedAgent, onOpenTow
       )}
 
       {view === 'inbox' && (
-        <Panel title="INBOX — AWAITING YOUR DECISION" right={
+        <Panel title="INBOX — AWAITING YOUR DECISION" onClose={() => setView(null)} right={
           <span style={{ fontSize: 9.5, color: inbox?.length ? '#fbbf24' : DIM }}>{inbox?.length ?? '…'} PENDING</span>
         }>
           {inboxNote && <div style={{ fontSize: 10, color: inboxNote.startsWith('DECISION FAILED') ? '#f87171' : '#34d399', marginBottom: 6 }}>{inboxNote}</div>}
@@ -1238,7 +1257,7 @@ export function CortexFoundryNav({ snap, onSelectAgent, selectedAgent, onOpenTow
       )}
 
       {view === 'messages' && (
-        <Panel title="AGENT MESSAGE BUS" right={
+        <Panel title="AGENT MESSAGE BUS" onClose={() => setView(null)} right={
           <span style={{ fontSize: 9.5, color: agentMsgs?.length ? '#67e8f9' : DIM }}>{agentMsgs?.length ?? '…'} MSGS</span>
         }>
           {agentMsgs === null && <div style={{ padding: '12px 0', color: DIM }}>LOADING…</div>}
@@ -1264,7 +1283,7 @@ export function CortexFoundryNav({ snap, onSelectAgent, selectedAgent, onOpenTow
       )}
 
       {view === 'voice' && (
-        <Panel title="CORTEX VOICE — ENGINE STATUS" right={
+        <Panel title="CORTEX VOICE — ENGINE STATUS" onClose={() => setView(null)} right={
           <button onClick={() => { setVoiceStatus(null); fetch('/api/cortex/tts/status', { cache: 'no-store' }).then((r) => r.json()).then(setVoiceStatus).catch(() => {}); }} style={{ background: 'none', border: '1px solid rgba(52,211,153,0.4)', color: '#34d399', fontFamily: MONO, fontSize: 9.5, padding: '2px 8px', borderRadius: 2, cursor: 'pointer', letterSpacing: '0.15em' }}>RE-PROBE</button>
         }>
           {voiceStatus === null && <div style={{ padding: '12px 0', color: DIM }}>PROBING ENGINES…</div>}
@@ -1313,7 +1332,7 @@ export function CortexFoundryNav({ snap, onSelectAgent, selectedAgent, onOpenTow
       )}
 
       {view === 'incidents' && (
-        <Panel title="INCIDENT LEDGER" right={incidents === null ? <span style={{ fontSize: 9.5, color: DIM }}>LOADING…</span> : <span style={{ fontSize: 9.5, color: DIM }}>{incidents.filter((i) => i.status === 'open').length} OPEN</span>}>
+        <Panel title="INCIDENT LEDGER" onClose={() => setView(null)} right={incidents === null ? <span style={{ fontSize: 9.5, color: DIM }}>LOADING…</span> : <span style={{ fontSize: 9.5, color: DIM }}>{incidents.filter((i) => i.status === 'open').length} OPEN</span>}>
           {(incidents || []).slice(0, 20).map((i: any) => (
             <Row key={i.id}>
               <Lamp status={i.status === 'open' ? 'failed' : 'resolved'} />
@@ -1354,7 +1373,7 @@ export function CortexFoundryNav({ snap, onSelectAgent, selectedAgent, onOpenTow
         };
         const VCOLOR: Record<string, string> = { OMNI: '#34d399', GOVTECH: '#fbbf24', GENERAL: '#67e8f9' };
         return (
-          <Panel title="DISTRIBUTION PIPELINE">
+          <Panel title="DISTRIBUTION PIPELINE" onClose={() => setView(null)}>
             {pipeline === null && <div style={{ padding: '12px 0', color: DIM }}>LOADING…</div>}
             {pipeline && !pipeline.error && (
               <div>
@@ -1437,6 +1456,7 @@ export function CortexFoundryNav({ snap, onSelectAgent, selectedAgent, onOpenTow
       {view === 'standup' && (
         <Panel
           title="FLEET STANDUP & ROLL CALL (06:00 AM)"
+          onClose={() => setView(null)}
           right={
             <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
               <button
