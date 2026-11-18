@@ -453,7 +453,7 @@ export function CortexChatDrawer({ open, onClose, payload, onSubmitText }: Corte
         const res = await fetch('/api/cortex/tts', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ text: chunks[idx], voice: 'cortana' }),
+          body: JSON.stringify({ text: chunks[idx], voice: (() => { try { return localStorage.getItem('cortex_cartesia_voice') || 'cortana'; } catch { return 'cortana'; } })() }),
         });
         if (res.ok) {
           const blob = await res.blob();

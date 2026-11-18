@@ -94,6 +94,7 @@ export function CortexFoundryNav({ snap, onSelectAgent, selectedAgent, onOpenTow
   const [inbox, setInbox] = useState<any[] | null>(null);
   const [agentMsgs, setAgentMsgs] = useState<any[] | null>(null);
   const [voiceStatus, setVoiceStatus] = useState<any | null>(null);
+  const [voiceConfig, setVoiceConfig] = useState<{ defaultVoice?: string } | null>(null);
   const [voiceTest, setVoiceTest] = useState<Record<string, 'idle' | 'testing' | 'ok' | 'fail'>>({});
   const [inboxNote, setInboxNote] = useState('');
   const [tasksScope, setTasksScope] = useState<'today' | 'all'>('today');
@@ -201,11 +202,29 @@ export function CortexFoundryNav({ snap, onSelectAgent, selectedAgent, onOpenTow
         .then((r) => r.json())
         .then((d) => setVoiceStatus(d))
         .catch(() => setVoiceStatus({ ok: false, error: 'status endpoint unreachable' }));
+      fetch('/api/cortex/tts/config', { cache: 'no-store' })
+        .then((r) => r.json())
+        .then((d) => setVoiceConfig(d))
+        .catch(() => {});
     };
     load();
     const iv = setInterval(load, 15000);
     return () => clearInterval(iv);
   }, [view]);
+
+  const setDefaultVoice = async (voiceId: string) => {
+    try {
+      const r = await fetch('/api/cortex/tts/config', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ defaultVoice: voiceId }),
+      });
+      const d = await r.json().catch(() => null);
+      if (d?.ok !== false) {
+        setVoiceConfig(d);
+        try { localStorage.setItem('cortex_cartesia_voice', voiceId); } catch {}
+      }
+    } catch {}
+  };
 
   const testVoice = async (voiceId: string) => {
     setVoiceTest((m) => ({ ...m, [voiceId]: 'testing' }));
@@ -763,17 +782,23 @@ export function CortexFoundryNav({ snap, onSelectAgent, selectedAgent, onOpenTow
               ))}
             </div>
           )}
-          <div style={{ fontSize: 8.5, fontWeight: 800, letterSpacing: '0.22em', color: '#34d399', margin: '6px 0 4px' }}>VOICES — CLICK TEST TO HEAR</div>
+          <div style={{ fontSize: 8.5, fontWeight: 800, letterSpacing: '0.22em', color: '#34d399', margin: '6px 0 4px' }}>VOICES — CLICK TEST TO HEAR{voiceConfig?.defaultVoice ? ` · DEFAULT: ${voiceConfig.defaultVoice.toUpperCase()}` : ''}</div>
           {(voiceStatus?.voices || []).map((v: any) => {
             const eng = voiceStatus?.engines?.find((e: any) => e.id === v.engine);
             const t = voiceTest[v.id] || 'idle';
+            const isDefault = voiceConfig?.defaultVoice === v.id;
             return (
               <Row key={v.id}>
                 <Lamp status={eng ? (eng.healthy ? 'healthy' : 'down') : 'idle'} />
                 <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: 10, color: INK }}>{v.label}</div>
+                  <div style={{ fontSize: 10, color: INK }}>{v.label}{isDefault ? <span style={{ color: '#34d399', fontSize: 8.5 }}> ◈ DEFAULT</span> : null}</div>
                   <div style={{ fontSize: 8.5, color: DIM }}>{v.id} → {v.engine}{eng && !eng.healthy ? ' (ENGINE DOWN)' : ''}</div>
                 </div>
+                <button
+                  onClick={() => setDefaultVoice(v.id)}
+                  title="Pin as Cortex default voice (survives restarts)"
+                  style={{ background: isDefault ? 'rgba(52,211,153,0.18)' : 'none', border: `1px solid ${isDefault ? '#34d399' : 'rgba(251,191,36,0.3)'}`, color: isDefault ? '#34d399' : '#fbbf24', fontFamily: MONO, fontSize: 8.5, fontWeight: 700, padding: '3px 6px', borderRadius: 2, cursor: 'pointer', letterSpacing: '0.1em' }}
+                >{isDefault ? 'PINNED' : 'SET'}</button>
                 <button
                   onClick={() => testVoice(v.id)}
                   disabled={t === 'testing'}

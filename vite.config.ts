@@ -901,6 +901,20 @@ function apiProxyPlugin(): Plugin {
   const ttsCacheKey = (engine: string, voice: string, speed: unknown, text: string) =>
     `${engine}|${voice || ''}|${typeof speed === 'number' ? speed.toFixed(2) : '1.00'}|${text}`;
   const ttsCacheGet = (key: string): Buffer | null => ttsResponseCache.get(key) || null;
+
+  // Persisted default voice — the Crew can pin Cortex's voice from the
+  // Foundry VOICE panel; survives restarts and applies to every surface
+  // that doesn't pass an explicit voice param.
+  const VOICE_CONFIG_FILE = path.join(process.cwd(), '.cortex-runtime', 'voice-config.json');
+  const loadVoiceConfig = (): { defaultVoice?: string } => {
+    try { return JSON.parse(fsSync.readFileSync(VOICE_CONFIG_FILE, 'utf8')); } catch { return {}; }
+  };
+  const saveVoiceConfig = (cfg: { defaultVoice?: string }) => {
+    try {
+      fsSync.mkdirSync(path.dirname(VOICE_CONFIG_FILE), { recursive: true });
+      fsSync.writeFileSync(VOICE_CONFIG_FILE, JSON.stringify(cfg, null, 1));
+    } catch { /* config persistence is best-effort */ }
+  };
   const ttsCacheSet = (key: string, buf: Buffer) => {
     if (ttsResponseCache.size >= TTS_CACHE_MAX) {
       const firstKey = ttsResponseCache.keys().next().value;
@@ -8384,7 +8398,9 @@ function triggerQuickAction() {
               });
               return res.end();
             }
-            const { text: rawText, voice, speed } = parsed;
+            const { text: rawText, speed } = parsed;
+            // Crew-pinned default voice when the caller doesn't specify one.
+            const voice = parsed.voice || loadVoiceConfig().defaultVoice || undefined;
             // Speakable-text pass: identifiers, acronyms, symbols, markup →
             // forms every TTS provider pronounces correctly. Applied once
             // here so Pocket/Kokoro/F5 all benefit.
@@ -8711,6 +8727,42 @@ function triggerQuickAction() {
         }));
       });
 
+      // Voice config — read/set the Crew-pinned default voice.
+      server.middlewares.use('/api/cortex/tts/config', (req: any, res: any, next: any) => {
+        if (req.method === 'OPTIONS') {
+          res.writeHead(204, { 'Access-Control-Allow-Origin': req.headers.origin || '*', 'Access-Control-Allow-Methods': 'GET, POST, OPTIONS', 'Access-Control-Allow-Headers': 'Content-Type' });
+          return res.end();
+        }
+        agentCors(req, res);
+        if (req.method === 'GET') {
+          res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+          return res.end(JSON.stringify({ ok: true, ...loadVoiceConfig() }));
+        }
+        if (req.method === 'POST') {
+          let body = '';
+          req.on('data', (c: any) => { body += c; if (body.length > 4000) req.destroy(); });
+          req.on('end', () => {
+            try {
+              const parsed = JSON.parse(body || '{}');
+              const cfg = loadVoiceConfig();
+              if (typeof parsed.defaultVoice === 'string' && parsed.defaultVoice.trim()) {
+                cfg.defaultVoice = parsed.defaultVoice.trim().slice(0, 60);
+              } else if (parsed.defaultVoice === null || parsed.defaultVoice === '') {
+                delete cfg.defaultVoice;
+              }
+              saveVoiceConfig(cfg);
+              res.writeHead(200, { 'Content-Type': 'application/json' });
+              res.end(JSON.stringify({ ok: true, ...cfg }));
+            } catch (e: any) {
+              res.writeHead(400, { 'Content-Type': 'application/json' });
+              res.end(JSON.stringify({ ok: false, error: e?.message || 'bad config' }));
+            }
+          });
+          return;
+        }
+        return next();
+      });
+
       server.middlewares.use('/api/ai/tts', ttsHandler);
       server.middlewares.use('/api/cortex/tts', ttsHandler);
 
@@ -8821,6 +8873,21 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
               // the matrix picked may differ from each provider's default.
               let activeChain: AIProviderCandidate[] = aiProviders;
               const wantsMatrix = typeof parsed.tier === 'string' || typeof parsed.agentId === 'string';
+
+              // Conversational cortex chat: Groq LPU first (~1000 t/s gpt-oss-20b,
+              // ~500 t/s gpt-oss-120b — Artificial Analysis verified fastest in
+              // chain) for near-instant replies; the full quality chain stays
+              // as fallback. Agent/matrix routes keep their own ordering.
+              if (!wantsMatrix && parsed.context === 'cortex') {
+                const fastNames = ['groq-fast', 'groq-oss'];
+                const fast = aiProviders.filter((p) => fastNames.includes(p.name));
+                const rest = aiProviders.filter((p) => !fastNames.includes(p.name));
+                if (fast.length) {
+                  activeChain = [...fast, ...rest];
+                  console.info(`[dev-proxy] chat fast-path → ${activeChain.map(p => p.name).join(' -> ')}`);
+                }
+              }
+
               if (wantsMatrix) {
                 const tier: RouteTier = ['fast', 'reason', 'deep'].includes(parsed.tier) ? parsed.tier : 'reason';
                 const pin = agentRuntime.pinFor(parsed.agentId as any) || null;
