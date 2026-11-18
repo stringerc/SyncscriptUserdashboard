@@ -262,6 +262,15 @@ function classifyFailure(msg: string): TaskFailureClass {
   return 'worker';
 }
 
+/**
+ * Bookkeeping kinds — governance plumbing, not cognition. These poll
+ * ledgers/proposals on tight cadences (e.g. initiative_drain every 1m)
+ * and must never consume an agent's daily task budget: a 1-minute poll
+ * would otherwise exhaust a 16-task budget before real work runs.
+ * They neither check nor count against dailyBudget.
+ */
+const BOOKKEEPING_KINDS = new Set(['initiative_drain']);
+
 export class AgentRuntime {
   readonly matrix = new ModelMatrix();
   private agents = new Map<AgentId, AgentState>();
@@ -400,7 +409,7 @@ export class AgentRuntime {
     if (!agent) return { ok: false, error: `unknown agent: ${agentId}` };
     if (agent.status === 'retired') return { ok: false, error: `${agent.name} is retired` };
     if (!kind || !title) return { ok: false, error: 'kind and title required' };
-    if (this.dailyCount(agentId) >= agent.dailyBudget)
+    if (!BOOKKEEPING_KINDS.has(kind) && this.dailyCount(agentId) >= agent.dailyBudget)
       return { ok: false, error: `${agent.name} daily budget exhausted (${agent.dailyBudget} tasks)` };
     // Dedupe: identical queued/running task → return the existing one.
     for (const t of this.tasks.values()) {
@@ -688,7 +697,7 @@ export class AgentRuntime {
     dayStart.setUTCHours(0, 0, 0, 0);
     let n = 0;
     for (const t of this.tasks.values())
-      if (t.agentId === agentId && t.createdAt >= dayStart.getTime()) n++;
+      if (t.agentId === agentId && t.createdAt >= dayStart.getTime() && !BOOKKEEPING_KINDS.has(t.kind)) n++;
     return n;
   }
 
