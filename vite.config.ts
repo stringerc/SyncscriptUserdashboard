@@ -1227,24 +1227,24 @@ function apiProxyPlugin(): Plugin {
         const prov = providerFor(providerName);
         if (!prov) throw new Error(`no credentials for ${providerName}`);
         const started = Date.now();
-        if (prov.protocol === 'anthropic') {
-          const r = await fetch(prov.url, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'x-api-key': prov.key, 'anthropic-version': '2023-06-01' },
-            body: JSON.stringify({ model, system: 'Reply with one word.', messages: [{ role: 'user', content: 'ok' }], max_tokens: 4 }),
-            signal: AbortSignal.timeout(8000),
-          });
-          if (!r.ok) throw new Error(`probe http ${r.status}`);
-          return Date.now() - started;
+        // Walk the same key pool the call paths use — a dead primary key
+        // must not mark a healthy model 'down' in the routing matrix.
+        const keyPool = prov.keys && prov.keys.length > 0 ? prov.keys : (prov.backupKey ? [prov.key, prov.backupKey] : [prov.key]);
+        let lastStatus = 0;
+        for (let keyIdx = 0; keyIdx < keyPool.length; keyIdx++) {
+          const currentKey = keyPool[keyIdx];
+          const headers: Record<string, string> = prov.protocol === 'anthropic'
+            ? { 'Content-Type': 'application/json', 'x-api-key': currentKey, 'anthropic-version': '2023-06-01' }
+            : { 'Content-Type': 'application/json', Authorization: `Bearer ${currentKey}` };
+          const body = prov.protocol === 'anthropic'
+            ? JSON.stringify({ model, system: 'Reply with one word.', messages: [{ role: 'user', content: 'ok' }], max_tokens: 4 })
+            : JSON.stringify({ model, messages: [{ role: 'user', content: 'Reply with one word: ok' }], max_tokens: 4, temperature: 0, stream: false });
+          const r = await fetch(prov.url, { method: 'POST', headers, body, signal: AbortSignal.timeout(8000) });
+          if (r.ok) return Date.now() - started;
+          lastStatus = r.status;
+          if (![401, 402, 403, 429].includes(r.status) || keyIdx >= keyPool.length - 1) break;
         }
-        const r = await fetch(prov.url, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${prov.key}` },
-          body: JSON.stringify({ model, messages: [{ role: 'user', content: 'Reply with one word: ok' }], max_tokens: 4, temperature: 0, stream: false }),
-          signal: AbortSignal.timeout(8000),
-        });
-        if (!r.ok) throw new Error(`probe http ${r.status}`);
-        return Date.now() - started;
+        throw new Error(`probe http ${lastStatus}`);
       };
 
       agentRuntime.attachSentinel(catalogSources, probeFactory);
@@ -11849,29 +11849,46 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
           // happens, retry the same candidate once with a larger budget
           // before counting it as a failure.
           const callProvider = async (cand: any, prov: any, tokens: number) => {
-            if (prov.protocol === 'anthropic') {
+            // Same key-pool failover the chat/voice chains use: a dead primary
+            // key (401/402/403) or saturated one (429) must not count as a
+            // model failure — try backup keys before recording a probe miss.
+            const keyPool = prov.keys && prov.keys.length > 0 ? prov.keys : (prov.backupKey ? [prov.key, prov.backupKey] : [prov.key]);
+            let lastStatus = 0;
+            for (let keyIdx = 0; keyIdx < keyPool.length; keyIdx++) {
+              const currentKey = keyPool[keyIdx];
+              if (prov.protocol === 'anthropic') {
+                const r = await fetch(prov.url, {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json', 'x-api-key': currentKey, 'anthropic-version': '2023-06-01' },
+                  body: JSON.stringify({ model: cand.model, system: chatMessages.find(m => m.role === 'system')?.content || '', messages: chatMessages.filter(m => m.role !== 'system'), max_tokens: tokens }),
+                  signal: AbortSignal.timeout(55_000),
+                });
+                if (!r.ok) {
+                  lastStatus = r.status;
+                  if ([401, 402, 403, 429].includes(r.status) && keyIdx < keyPool.length - 1) continue;
+                  return { httpStatus: r.status, j: null };
+                }
+                const j: any = await r.json();
+                const content = (j?.content || []).filter((b: any) => b.type === 'text').map((b: any) => b.text).join('');
+                return { httpStatus: 200, j, content };
+              }
               const r = await fetch(prov.url, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json', 'x-api-key': prov.key, 'anthropic-version': '2023-06-01' },
-                body: JSON.stringify({ model: cand.model, system: chatMessages.find(m => m.role === 'system')?.content || '', messages: chatMessages.filter(m => m.role !== 'system'), max_tokens: tokens }),
+                headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${currentKey}` },
+                body: JSON.stringify({ model: cand.model, messages: chatMessages, max_tokens: tokens, temperature: 0.3, stream: false }),
                 signal: AbortSignal.timeout(55_000),
               });
-              if (!r.ok) return { httpStatus: r.status, j: null };
+              if (!r.ok) {
+                lastStatus = r.status;
+                if ([401, 402, 403, 429].includes(r.status) && keyIdx < keyPool.length - 1) continue;
+                return { httpStatus: r.status, j: null };
+              }
               const j: any = await r.json();
-              const content = (j?.content || []).filter((b: any) => b.type === 'text').map((b: any) => b.text).join('');
-              return { httpStatus: 200, j, content };
+              const content = j?.choices?.[0]?.message?.content || '';
+              const reasoning = j?.choices?.[0]?.message?.reasoning_content || '';
+              return { httpStatus: 200, j, content, reasoning };
             }
-            const r = await fetch(prov.url, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${prov.key}` },
-              body: JSON.stringify({ model: cand.model, messages: chatMessages, max_tokens: tokens, temperature: 0.3, stream: false }),
-              signal: AbortSignal.timeout(55_000),
-            });
-            if (!r.ok) return { httpStatus: r.status, j: null };
-            const j: any = await r.json();
-            const content = j?.choices?.[0]?.message?.content || '';
-            const reasoning = j?.choices?.[0]?.message?.reasoning_content || '';
-            return { httpStatus: 200, j, content, reasoning };
+            return { httpStatus: lastStatus || 0, j: null };
           };
           for (const cand of candidates.slice(0, 6)) {
             const prov = providerFor(cand.provider);
