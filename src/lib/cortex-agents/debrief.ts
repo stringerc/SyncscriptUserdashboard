@@ -20,6 +20,7 @@ import {
 } from '../cortex-debrief';
 import { discordApi } from '../cortex-discord';
 import { listStrategyProposals } from './strategy-proposals';
+import { runEveningFleetDebrief } from './standup';
 
 const RUNTIME_DIR = process.env.CORTEX_AGENTS_STATE_DIR || path.join(process.cwd(), '.cortex-runtime');
 const DEBRIEFS_DIR = path.join(RUNTIME_DIR, 'debriefs');
@@ -59,6 +60,14 @@ async function gatherDebriefData(now: number): Promise<{ data: DebriefData; raw:
   const failed = todayTasks.filter((t) => t.status === 'failed');
   const verified = verifiedRows.slice(0, 3).map((t) => `${t.agentId || '?'}: ${String(t.title || t.kind || 'task').slice(0, 60)}`);
   const failedTitles = failed.slice(0, 3).map((t) => `${t.agentId || '?'}: ${String(t.title || t.kind || 'task').slice(0, 50)}`);
+
+  // ── Fleet Retrospective (20:00 PM) ──
+  try {
+    const standup = await runEveningFleetDebrief({ dateKey: dayKey, dryRun: true });
+    if (standup) {
+      verified.push(`Fleet Retrospective: ${standup.healthyCount}/${standup.totalAgents} operational (${standup.degradedCount} degraded)`);
+    }
+  } catch { }
 
   // ── §2 GAP: plan-vs-outcome questions (max 3, evidence-attached) ──
   const gaps: DebriefGap[] = [];

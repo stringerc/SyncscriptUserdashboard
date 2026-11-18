@@ -22,6 +22,7 @@ import {
 import { discordApi } from '../cortex-discord';
 import { listStrategyProposals } from './strategy-proposals';
 import { getCortexEnergySpineBridge } from '../cortex-energy-spine';
+import { ensureMorningFleetStandup } from './standup';
 
 const RUNTIME_DIR = process.env.CORTEX_AGENTS_STATE_DIR || path.join(process.cwd(), '.cortex-runtime');
 const BRIEFS_DIR = path.join(RUNTIME_DIR, 'briefs');
@@ -173,6 +174,21 @@ async function gatherBriefData(now: number): Promise<{ data: BriefData; raw: Rec
     } else { coverage.push({ source: 'gmail', ok: false, note: `HTTP ${res.status}` }); }
   } catch (e: any) {
     coverage.push({ source: 'gmail', ok: false, note: String(e?.message || 'unreachable').slice(0, 60) });
+  }
+
+  // ── Fleet Standup Roll Call (06:00 AM) ──
+  try {
+    const standup = await ensureMorningFleetStandup(dayKey);
+    if (standup) {
+      const degradedText = standup.degradedCount > 0 ? ` (${standup.degradedCount} degraded)` : '';
+      watchItems.unshift({
+        text: `Fleet Roll Call: ${standup.healthyCount}/${standup.totalAgents} operational${degradedText} · ${standup.filedProposals} high-leverage initiatives queued`,
+        severity: standup.degradedCount > 0 ? 'warn' : 'info',
+      });
+      coverage.push({ source: 'fleet-standup', ok: true });
+    }
+  } catch (err: any) {
+    coverage.push({ source: 'fleet-standup', ok: false, note: String(err?.message || 'failed') });
   }
 
   // ── Radar hits (life-events ledger) ──

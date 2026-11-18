@@ -1887,7 +1887,7 @@ function apiProxyPlugin(): Plugin {
       const ambientDaily = async () => {
         const { date, hour } = ptParts();
         const consolidateHour = parseInt(process.env.CORTEX_CONSOLIDATE_HOUR || '3', 10);
-        const briefHour = parseInt(process.env.CORTEX_BRIEF_HOUR || '7', 10);
+        const briefHour = parseInt(process.env.CORTEX_BRIEF_HOUR || '6', 10);
         const selftestHour = parseInt(process.env.CORTEX_SELFTEST_HOUR || '4', 10);
         if (hour === consolidateHour && dailyState.consolidation !== date) {
           dailyState.consolidation = date; saveDaily();
@@ -11917,6 +11917,102 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
           res.writeHead(500, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ ok: false, error: err?.message || String(err) }));
         }
+      });
+
+      // ── Cortex Fleet Standup REST Endpoints (/api/cortex/standup/*) ──
+      server.middlewares.use('/api/cortex/standup/status', async (req: any, res: any, next: any) => {
+        if (req.method === 'OPTIONS') {
+          agentCors(req, res);
+          res.statusCode = 204;
+          return res.end();
+        }
+        if (req.method !== 'GET') return next();
+        try {
+          const { getLatestFleetStandup, ensureMorningFleetStandup } = await import('./src/lib/cortex-agents/standup');
+          const morning = getLatestFleetStandup('morning') || await ensureMorningFleetStandup();
+          const evening = getLatestFleetStandup('evening');
+          agentCors(req, res);
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ ok: true, morning, evening }));
+        } catch (err: any) {
+          agentCors(req, res);
+          res.writeHead(500, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ ok: false, error: err?.message || String(err) }));
+        }
+      });
+
+      server.middlewares.use('/api/cortex/standup/morning', async (req: any, res: any, next: any) => {
+        if (req.method === 'OPTIONS') {
+          agentCors(req, res);
+          res.statusCode = 204;
+          return res.end();
+        }
+        if (req.method !== 'POST') return next();
+        try {
+          const url = new URL(req.url, 'http://127.0.0.1');
+          const arm = (url.searchParams.get('arm')?.toUpperCase() === 'B' ? 'B' : 'A') as 'A' | 'B';
+          const { runMorningFleetStandup } = await import('./src/lib/cortex-agents/standup');
+          const report = await runMorningFleetStandup({ arm, force: true });
+          agentCors(req, res);
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ ok: true, report }));
+        } catch (err: any) {
+          agentCors(req, res);
+          res.writeHead(500, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ ok: false, error: err?.message || String(err) }));
+        }
+      });
+
+      server.middlewares.use('/api/cortex/standup/evening', async (req: any, res: any, next: any) => {
+        if (req.method === 'OPTIONS') {
+          agentCors(req, res);
+          res.statusCode = 204;
+          return res.end();
+        }
+        if (req.method !== 'POST') return next();
+        try {
+          const url = new URL(req.url, 'http://127.0.0.1');
+          const arm = (url.searchParams.get('arm')?.toUpperCase() === 'B' ? 'B' : 'A') as 'A' | 'B';
+          const { runEveningFleetDebrief } = await import('./src/lib/cortex-agents/standup');
+          const report = await runEveningFleetDebrief({ arm });
+          agentCors(req, res);
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ ok: true, report }));
+        } catch (err: any) {
+          agentCors(req, res);
+          res.writeHead(500, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ ok: false, error: err?.message || String(err) }));
+        }
+      });
+
+      server.middlewares.use('/api/cortex/standup/bid/approve', (req: any, res: any, next: any) => {
+        if (req.method === 'OPTIONS') {
+          agentCors(req, res);
+          res.statusCode = 204;
+          return res.end();
+        }
+        if (req.method !== 'POST') return next();
+        let body = '';
+        req.on('data', (c: Buffer) => { body += c.toString(); });
+        req.on('end', async () => {
+          try {
+            const parsed = JSON.parse(body || '{}');
+            const proposalId = String(parsed.proposalId || '');
+            const { decideStrategyProposal } = await import('./src/lib/cortex-agents/strategy-proposals');
+            const result = decideStrategyProposal({
+              id: proposalId,
+              decision: 'approved',
+              decidedBy: 'operator-standup-ui',
+            });
+            agentCors(req, res);
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ ok: result.ok, proposal: result.proposal, error: result.reason }));
+          } catch (err: any) {
+            agentCors(req, res);
+            res.writeHead(500, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ ok: false, error: err?.message || String(err) }));
+          }
+        });
       });
 
       // POST /api/cortex/agents/task/cancel — {taskId}
