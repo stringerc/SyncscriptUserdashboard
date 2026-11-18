@@ -2484,7 +2484,7 @@ function apiProxyPlugin(): Plugin {
         req.on('end', async () => {
           try {
             const parsed = JSON.parse(body || '{}');
-            const apiKey = process.env.GOVEE_API_KEY || '';
+            const apiKey = (await import('./src/utils/govee-client.ts')).getGoveeApiKey();
             if (!apiKey) {
               res.statusCode = 401;
               return res.end(JSON.stringify({ ok: false, error: 'GOVEE_API_KEY not configured in environment' }));
@@ -7811,7 +7811,7 @@ function triggerQuickAction() {
 
             // 24. cortex_lights / govee_lights — Real Physical RGBIC Smart Lights
             if (tool === 'cortex_lights' || tool === 'govee_lights' || tool === 'smart_lights') {
-              const apiKey = process.env.GOVEE_API_KEY || '';
+              const apiKey = (await import('./src/utils/govee-client.ts')).getGoveeApiKey();
               if (!apiKey) {
                 res.writeHead(503, { 'Content-Type': 'application/json' });
                 return res.end(JSON.stringify({ ok: false, error: 'GOVEE_API_KEY not configured in environment' }));

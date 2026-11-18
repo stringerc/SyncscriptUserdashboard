@@ -3,6 +3,34 @@
  * Integrates physical RGBIC lights (TV Backlight + LED Strip) with Cortex visualizer states & voice agency.
  */
 
+import fs from 'node:fs';
+import path from 'node:path';
+
+let cachedApiKey: string | null = null;
+
+/**
+ * Resolve the Govee API key. The vite dev server loads .env via loadEnv()
+ * into a local record — process.env.GOVEE_API_KEY stays empty inside
+ * middleware, which previously made every light call report "offline".
+ * Falls back to parsing .env directly. Skipped under vitest so tests
+ * stay hermetic.
+ */
+export function getGoveeApiKey(): string {
+  if (cachedApiKey !== null) return cachedApiKey;
+  let key = process.env.GOVEE_API_KEY || '';
+  if (!key && !process.env.VITEST) {
+    try {
+      const envPath = path.resolve(process.cwd(), '.env');
+      for (const line of fs.readFileSync(envPath, 'utf8').split('\n')) {
+        const m = line.match(/^\s*GOVEE_API_KEY\s*=\s*(.*)\s*$/);
+        if (m) { key = m[1].trim().replace(/^["']|["']$/g, ''); break; }
+      }
+    } catch { /* .env unreadable — key stays empty */ }
+  }
+  cachedApiKey = key;
+  return key;
+}
+
 export interface GoveeDevice {
   sku: string;
   device: string;

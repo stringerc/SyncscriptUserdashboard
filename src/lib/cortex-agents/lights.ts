@@ -16,6 +16,7 @@ import {
   broadcastColor,
   broadcastPower,
   COLOR_PRESETS,
+  getGoveeApiKey,
   getGoveeDevices,
   hexToRgbInt,
   syncCortexMoodToLights,
@@ -86,7 +87,7 @@ export function parseLightCommand(text: string): ParsedLightOps {
 }
 
 function goveeKey(): string {
-  const key = process.env.GOVEE_API_KEY || '';
+  const key = getGoveeApiKey();
   if (!key) throw new Error('GOVEE_API_KEY not configured in environment');
   return key;
 }
