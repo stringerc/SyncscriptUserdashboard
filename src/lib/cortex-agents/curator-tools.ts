@@ -11,12 +11,8 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { exec } from 'node:child_process';
-import { promisify } from 'node:util';
 import { CORTEX_CAPABILITIES_MANIFEST } from '../cortex-capabilities';
 import { getAgentRuntime } from './runtime';
-
-const execAsync = promisify(exec);
 
 export interface DynamicCapabilitiesProfile {
   timestamp: number;
@@ -202,15 +198,15 @@ export async function curatorRadarAgents(): Promise<CuratorRadarResult> {
   let proposalsFiled = 0;
   // If openclaw has an upgrade available, file a StrategyProposal
   try {
-    const { fileInitiativeProposal } = await import('../cortex-proactive-initiative');
-    fileInitiativeProposal({
-      title: 'Upgrade OpenClaw to 2026.3.3 (WebSocket Resilience)',
-      description: 'Upstream patch resolves WebSocket keep-alive under heavy tab cycling. Command: npm install -g openclaw@latest',
-      actionClass: 'capability',
-      tier: 'consequential',
-      metadata: { target: 'openclaw', upgradePath: 'npm install -g openclaw@latest' },
+    const { fileStrategyProposals } = await import('./strategy-proposals');
+    const result = fileStrategyProposals({
+      planNote: 'curator-radar-sweep',
+      planTaskId: `task-curator-${Date.now().toString(36)}`,
+      actions: [
+        '[capability] Upgrade OpenClaw to 2026.3.3 (WebSocket Resilience) — npm install -g openclaw@latest — evidence: Upstream patch resolves WebSocket keep-alive under heavy tab cycling',
+      ],
     });
-    proposalsFiled++;
+    proposalsFiled += result.filed;
   } catch {
     // Graceful fallback if proposal engine not initialized
   }

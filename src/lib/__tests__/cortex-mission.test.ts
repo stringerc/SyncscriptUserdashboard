@@ -11,6 +11,7 @@ process.env.CORTEX_AGENTS_STATE_DIR = tmp;
 const {
   loadMission, saveMission, upsertGoal, verifyOpsItem, verifyOps,
   findFreeSlot, planBlocks, goalProgress, routineYield, suggestCadence,
+  startExperiment, reportExperiments,
 } = await import('../cortex-agents/mission');
 type MissionState = import('../cortex-agents/mission').MissionState;
 type OpsItem = import('../cortex-agents/mission').OpsItem;
@@ -22,7 +23,7 @@ const NOW = Date.now();
 
 function baseState(): MissionState {
   return {
-    goals: [], opsItems: [], blocks: [], cadence: [],
+    goals: [], opsItems: [], blocks: [], cadence: [], experiments: [],
     prefs: { workStartMin: 480, workEndMin: 1320, slotMin: 30 },
     updatedAt: NOW,
   };
@@ -195,5 +196,60 @@ describe('cadence advisor', () => {
   it('returns null without enough evidence or at steady state', () => {
     expect(suggestCadence(entry(60), { runs: 5, completions: 5 })).toBeNull();
     expect(suggestCadence(entry(60), { runs: 10, completions: 7 })).toBeNull(); // 70% → hold
+  });
+});
+
+describe('A/B experiments', () => {
+  const routine = { id: 'r1', agentId: 'scout', kind: 'radar_sweep', everyMinutes: 60 };
+  const archive7d = Array.from({ length: 12 }, (_, i) => ({
+    input: { routineId: 'r1' }, status: i < 10 ? 'completed' : 'failed',
+    createdAt: NOW - (i + 1) * HOUR,
+  }));
+
+  it('startExperiment records baseline and rejects weak evidence', () => {
+    const s = baseState();
+    const thin = routineYield(archive7d.slice(0, 3), NOW - 7 * DAY);
+    void thin;
+    const res = startExperiment(s, routine, 45, archive7d, NOW);
+    expect(res.ok).toBe(true);
+    expect(res.experiment!.baseline.runs).toBe(12);
+    expect(res.experiment!.baseline.intervalMin).toBe(60);
+    expect(res.experiment!.variant.intervalMin).toBe(45);
+    // duplicate running experiment rejected
+    expect(startExperiment(s, routine, 30, archive7d, NOW).ok).toBe(false);
+    // invalid variant rejected
+    const s2 = baseState();
+    expect(startExperiment(s2, routine, 60, archive7d, NOW).ok).toBe(false); // same as current
+    expect(startExperiment(s2, routine, 10, archive7d, NOW).ok).toBe(false); // below floor
+  });
+
+  it('reportExperiments concludes keep/revert only after minVariantRuns', () => {
+    const s = baseState();
+    startExperiment(s, routine, 45, archive7d, NOW);
+    const exp = s.experiments[0];
+    // 7 post-change runs, all completed → not ready yet (need 8)
+    const post7 = Array.from({ length: 7 }, (_, i) => ({
+      input: { routineId: 'r1' }, status: 'completed', createdAt: NOW + i * HOUR,
+    }));
+    let reports = reportExperiments(s, [...archive7d, ...post7], NOW + 8 * HOUR);
+    expect(reports[0].ready).toBe(false);
+    expect(reports[0].verdict).toBeUndefined();
+    // 8th run → ready; variant 100% vs control ~83% → keep
+    const post8 = [...post7, { input: { routineId: 'r1' }, status: 'completed', createdAt: NOW + 8 * HOUR }];
+    reports = reportExperiments(s, [...archive7d, ...post8], NOW + 9 * HOUR);
+    expect(reports[0].ready).toBe(true);
+    expect(reports[0].verdict).toBe('keep');
+    expect(exp.status).toBe('concluded');
+  });
+
+  it('revert verdict when variant underperforms control', () => {
+    const s = baseState();
+    startExperiment(s, routine, 45, archive7d, NOW);
+    // control ~83%; variant 3/8 = 37.5% → revert
+    const post = Array.from({ length: 8 }, (_, i) => ({
+      input: { routineId: 'r1' }, status: i < 3 ? 'completed' : 'failed', createdAt: NOW + i * HOUR,
+    }));
+    const reports = reportExperiments(s, [...archive7d, ...post], NOW + 10 * HOUR);
+    expect(reports[0].verdict).toBe('revert');
   });
 });
