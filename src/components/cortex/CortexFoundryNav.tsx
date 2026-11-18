@@ -89,6 +89,7 @@ export function CortexFoundryNav({ snap, onSelectAgent, selectedAgent, onOpenTow
   const [counsel, setCounsel] = useState<{ sessions: any[]; consoles: any[] } | null>(null);
   const [inbox, setInbox] = useState<any[] | null>(null);
   const [inboxNote, setInboxNote] = useState('');
+  const [tasksScope, setTasksScope] = useState<'today' | 'all'>('today');
   const [, setGoalsTick] = useState(0);
   const goals = getCortexGoals();
   const goalsUnsub = useRef<(() => void) | null>(null);
@@ -175,7 +176,58 @@ export function CortexFoundryNav({ snap, onSelectAgent, selectedAgent, onOpenTow
   };
 
   const agents = snap.agents || [];
-  const tasks = (snap.tasks || []).slice().sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+  const allTasks = snap.tasks || [];
+
+  // ── Task ledger dayparting ──
+  // Today scope: only tasks created today, grouped Morning → Night.
+  // All scope: history grouped by calendar day (newest first) then daypart.
+  // Buckets by creation hour: morning 05-12, afternoon 12-17, evening 17-21,
+  // night 21-05. Undated → 'anytime' last.
+  const DAYPART_ORDER = ['morning', 'afternoon', 'evening', 'night', 'anytime'];
+  const daypartOf = (ts?: number): string => {
+    if (!ts) return 'anytime';
+    const h = new Date(ts).getHours();
+    if (h >= 5 && h < 12) return 'morning';
+    if (h >= 12 && h < 17) return 'afternoon';
+    if (h >= 17 && h < 21) return 'evening';
+    return 'night';
+  };
+  const sameDay = (a?: number, b?: number) => {
+    if (!a || !b) return false;
+    const da = new Date(a), db = new Date(b);
+    return da.getFullYear() === db.getFullYear() && da.getMonth() === db.getMonth() && da.getDate() === db.getDate();
+  };
+  const dayKey = (ts?: number) => {
+    if (!ts) return 'undated';
+    const d = new Date(ts);
+    return `${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()}`;
+  };
+  const scopedTasks = tasksScope === 'today'
+    ? allTasks.filter((t) => sameDay(t.createdAt, Date.now()))
+    : allTasks;
+  const taskGroupKey = (t: AgentTaskClient) =>
+    tasksScope === 'today' ? daypartOf(t.createdAt) : `${dayKey(t.createdAt)}|${daypartOf(t.createdAt)}`;
+  const tasks = scopedTasks.slice().sort((a, b) => {
+    const ga = taskGroupKey(a), gb = taskGroupKey(b);
+    if (ga !== gb) {
+      if (tasksScope === 'today') return DAYPART_ORDER.indexOf(ga) - DAYPART_ORDER.indexOf(gb);
+      // 'all': newest day first, then daypart order within the day
+      const dayA = dayKey(a.createdAt), dayB = dayKey(b.createdAt);
+      if (dayA !== dayB) return dayB.localeCompare(dayA);
+      return DAYPART_ORDER.indexOf(ga.split('|')[1]) - DAYPART_ORDER.indexOf(gb.split('|')[1]);
+    }
+    return (b.createdAt || 0) - (a.createdAt || 0); // newest first within group
+  });
+  const todayCount = allTasks.filter((t) => sameDay(t.createdAt, Date.now())).length;
+  const groupLabel = (t: AgentTaskClient) => {
+    const dp = daypartOf(t.createdAt);
+    const dpStr = dp === 'anytime' ? 'ANY TIME' : dp.toUpperCase();
+    if (tasksScope === 'today') return dpStr;
+    if (!t.createdAt) return `UNDATED · ${dpStr}`;
+    const d = new Date(t.createdAt);
+    const dateStr = d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
+    return `${dateStr} · ${dpStr}`;
+  };
   const goalList: LifeGoal[] = goals.list();
 
   const select = (id: FoundryView) => {
@@ -215,16 +267,33 @@ export function CortexFoundryNav({ snap, onSelectAgent, selectedAgent, onOpenTow
 
       {/* Section panels */}
       {view === 'tasks' && (
-        <Panel title="TASK LEDGER" right={<span style={{ fontSize: 9.5, color: DIM }}>{tasks.length} RECENT</span>}>
-          {tasks.slice(0, 40).map((t: AgentTaskClient) => (
-            <Row key={t.id}>
-              <Lamp status={t.status} />
-              <span style={{ color: 'rgba(165,243,252,0.85)', minWidth: 70 }}>{t.agentId.toUpperCase()}</span>
-              <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{t.title}</span>
-              <span style={{ color: STATUS_COLOR[t.status] || DIM, fontSize: 8 }}>{t.status.toUpperCase()}</span>
-            </Row>
-          ))}
-          {!tasks.length && <div style={{ padding: '12px 0', color: DIM }}>NO TASKS RECORDED</div>}
+        <Panel title="TASK LEDGER" right={
+          <span style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+            <button onClick={() => setTasksScope('today')} style={{ background: tasksScope === 'today' ? 'rgba(56,189,248,0.16)' : 'none', border: `1px solid ${tasksScope === 'today' ? 'rgba(56,189,248,0.55)' : 'rgba(103,232,249,0.16)'}`, color: tasksScope === 'today' ? '#7dd3fc' : DIM, fontFamily: MONO, fontSize: 9, padding: '1px 7px', borderRadius: 2, cursor: 'pointer', letterSpacing: '0.12em' }}>TODAY {todayCount}</button>
+            <button onClick={() => setTasksScope('all')} style={{ background: tasksScope === 'all' ? 'rgba(56,189,248,0.16)' : 'none', border: `1px solid ${tasksScope === 'all' ? 'rgba(56,189,248,0.55)' : 'rgba(103,232,249,0.16)'}`, color: tasksScope === 'all' ? '#7dd3fc' : DIM, fontFamily: MONO, fontSize: 9, padding: '1px 7px', borderRadius: 2, cursor: 'pointer', letterSpacing: '0.12em' }}>ALL {allTasks.length}</button>
+          </span>
+        }>
+          {tasks.slice(0, 60).map((t: AgentTaskClient, i: number, arr: AgentTaskClient[]) => {
+            const prev = i > 0 ? arr[i - 1] : null;
+            const showHeader = !prev || taskGroupKey(prev) !== taskGroupKey(t);
+            return (
+              <React.Fragment key={t.id}>
+                {showHeader && (
+                  <div style={{ fontSize: 8.5, fontWeight: 800, letterSpacing: '0.24em', color: '#67e8f9', padding: '7px 2px 3px', borderBottom: '1px solid rgba(103,232,249,0.14)', marginTop: i > 0 ? 6 : 0 }}>
+                    {groupLabel(t)}
+                  </div>
+                )}
+                <Row>
+                  <Lamp status={t.status} />
+                  <span style={{ color: 'rgba(165,243,252,0.85)', minWidth: 70 }}>{t.agentId.toUpperCase()}</span>
+                  <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{t.title}</span>
+                  <span style={{ color: DIM, fontSize: 8 }}>{t.createdAt ? new Date(t.createdAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : '—'}</span>
+                  <span style={{ color: STATUS_COLOR[t.status] || DIM, fontSize: 8 }}>{t.status.toUpperCase()}</span>
+                </Row>
+              </React.Fragment>
+            );
+          })}
+          {!tasks.length && <div style={{ padding: '12px 0', color: DIM }}>{tasksScope === 'today' ? 'NO TASKS TODAY YET' : 'NO TASKS RECORDED'}</div>}
         </Panel>
       )}
 
