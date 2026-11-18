@@ -278,8 +278,8 @@ export async function runMorningFleetStandup(options?: {
   const startTime = Date.now();
   const runtime = getAgentRuntime();
 
-  // Obtain all agents from runtime snapshot or built-ins
-  const agents = runtime.snapshot().agents;
+  // Obtain all active agents from runtime snapshot (excluding retired ephemeral spawns)
+  const agents = runtime.snapshot().agents.filter((a) => a.status !== 'retired');
   const checkIns: Record<string, AgentCheckIn> = {};
   let filedProposals = 0;
 
@@ -439,7 +439,7 @@ export async function runEveningFleetDebrief(options?: {
   const dateKey = options?.dateKey || getTodayKey();
   const startTime = Date.now();
   const runtime = getAgentRuntime();
-  const agents = runtime.snapshot().agents;
+  const agents = runtime.snapshot().agents.filter((a) => a.status !== 'retired');
 
   // Read task-archive.jsonl to count today's accomplishments
   const archivePath = path.join(getStateDir(), 'task-archive.jsonl');

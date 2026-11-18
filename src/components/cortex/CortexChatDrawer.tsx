@@ -448,40 +448,42 @@ export function CortexChatDrawer({ open, onClose, payload, onSubmitText }: Corte
       if (dead) return;
       if (idx >= chunks.length) { cleanup(); return; }
       try {
-        // Same voice path as live Cortex speech: Cartesia Sonic cortana →
-        // speakStreamSentence falls back to Kokoro internally.
-        const blob = await fetchCartesiaTtsAudio(chunks[idx], { voiceId: 'cortana' });
-        if (!blob || blob.size < 100) throw new Error('tts empty');
-        if (dead) return;
-        const url = URL.createObjectURL(blob);
-        urls.push(url);
-        const audio = new Audio(url);
-        audioRef.current = audio;
-        audio.onended = () => { idx += 1; void playNext(); };
-        audio.onerror = () => { idx += 1; void playNext(); };
-        await audio.play();
+        // Primary conversational voice: Local server TTS chain (Pocket Cortana clone on :8911)
+        // exactly matching Cortex conversational speech when typing.
+        const res = await fetch('/api/cortex/tts', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ text: chunks[idx], voice: 'cortana' }),
+        });
+        if (res.ok) {
+          const blob = await res.blob();
+          if (blob.size > 200) {
+            if (dead) return;
+            const url = URL.createObjectURL(blob);
+            urls.push(url);
+            const audio = new Audio(url);
+            audioRef.current = audio;
+            audio.onended = () => { idx += 1; void playNext(); };
+            audio.onerror = () => { idx += 1; void playNext(); };
+            await audio.play();
+            return;
+          }
+        }
+        throw new Error('local tts empty');
       } catch {
         if (dead) return;
-        // Cartesia unavailable — try the server TTS chain (Pocket Cortana clone)
-        // before degrading to browser speech.
+        // Secondary fallback: Cartesia Sonic cloud voice if local TTS fails
         try {
-          const res = await fetch('/api/cortex/tts', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ text: chunks[idx], voice: 'cortana' }),
-          });
-          if (res.ok) {
-            const blob2 = await res.blob();
-            if (blob2.size > 200) {
-              const url2 = URL.createObjectURL(blob2);
-              urls.push(url2);
-              const audio2 = new Audio(url2);
-              audioRef.current = audio2;
-              audio2.onended = () => { idx += 1; void playNext(); };
-              audio2.onerror = () => { idx += 1; void playNext(); };
-              await audio2.play();
-              return;
-            }
+          const blob2 = await fetchCartesiaTtsAudio(chunks[idx], { voiceId: 'cortana' });
+          if (blob2 && blob2.size >= 100) {
+            const url2 = URL.createObjectURL(blob2);
+            urls.push(url2);
+            const audio2 = new Audio(url2);
+            audioRef.current = audio2;
+            audio2.onended = () => { idx += 1; void playNext(); };
+            audio2.onerror = () => { idx += 1; void playNext(); };
+            await audio2.play();
+            return;
           }
         } catch { }
         // TTS unreachable — read the remainder via browser speech, whole reply
