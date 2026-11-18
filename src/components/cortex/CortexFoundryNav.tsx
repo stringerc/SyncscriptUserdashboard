@@ -1181,17 +1181,112 @@ export function CortexFoundryNav({ snap, onSelectAgent, selectedAgent, onOpenTow
         </Panel>
       )}
 
-      {view === 'pipeline' && (
-        <Panel title="DISTRIBUTION PIPELINE">
-          {pipeline === null && <div style={{ padding: '12px 0', color: DIM }}>LOADING…</div>}
-          {pipeline && !pipeline.error && (
-            <pre style={{ fontSize: 9.5, color: DIM, whiteSpace: 'pre-wrap', wordBreak: 'break-word', margin: 0 }}>
-              {JSON.stringify(pipeline, null, 1).slice(0, 3000)}
-            </pre>
-          )}
-          {pipeline?.error && <div style={{ padding: '12px 0', color: '#f87171' }}>PIPELINE STATUS UNREACHABLE</div>}
-        </Panel>
-      )}
+      {view === 'pipeline' && (() => {
+        const q = pipeline?.queue;
+        const counts = q?.counts || {};
+        const typeCounts: Record<string, number> = q?.typeCounts || {};
+        const attention: any[] = q?.attention || [];
+        const recent: any[] = q?.recent || [];
+        // Venture scope derived from queue type prefixes — omni_*,
+        // govtech_*/sam_gov_* → venture, everything else → GENERAL.
+        const ventureOf = (t: string) =>
+          t?.startsWith('omni') ? 'OMNI'
+          : (t?.startsWith('govtech') || t?.startsWith('sam_gov')) ? 'GOVTECH'
+          : 'GENERAL';
+        const ventureCounts: Record<string, number> = {};
+        for (const [t, n] of Object.entries(typeCounts)) {
+          const v = ventureOf(t);
+          ventureCounts[v] = (ventureCounts[v] || 0) + (n as number);
+        }
+        const age = (ts: number | null | undefined) => {
+          if (!ts) return '';
+          const m = Math.max(0, Math.floor((Date.now() - ts) / 60000));
+          if (m < 60) return `${m}m`;
+          const h = Math.floor(m / 60);
+          if (h < 48) return `${h}h`;
+          return `${Math.floor(h / 24)}d`;
+        };
+        const VCOLOR: Record<string, string> = { OMNI: '#34d399', GOVTECH: '#fbbf24', GENERAL: '#67e8f9' };
+        return (
+          <Panel title="DISTRIBUTION PIPELINE">
+            {pipeline === null && <div style={{ padding: '12px 0', color: DIM }}>LOADING…</div>}
+            {pipeline && !pipeline.error && (
+              <div>
+                {/* Queue depth + distributor health */}
+                <div style={{ display: 'flex', gap: 10, alignItems: 'center', marginBottom: 8, flexWrap: 'wrap' }}>
+                  <span style={{ color: '#34d399' }}>✓{counts.done || 0}</span>
+                  <span style={{ color: '#fbbf24' }}>◌{counts.pending || 0}</span>
+                  <span style={{ color: '#f87171' }}>✗{counts.failed || 0}</span>
+                  <span style={{ color: 'rgba(148,163,184,0.3)' }}>|</span>
+                  {pipeline.distributor ? (
+                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
+                      <Lamp status={pipeline.distributor.status} />
+                      <span style={{ color: DIM }}>DISTRIBUTOR {pipeline.distributor.status}</span>
+                      <span style={{ color: DIM }}>· {pipeline.distributor.tasksCompleted || 0}✓ {pipeline.distributor.tasksFailed || 0}✗</span>
+                    </span>
+                  ) : <span style={{ color: '#f87171' }}>DISTRIBUTOR NOT REGISTERED</span>}
+                </div>
+
+                {/* Venture scope chips — derived from queue type prefixes */}
+                <div style={{ display: 'flex', gap: 6, marginBottom: 10, flexWrap: 'wrap' }}>
+                  {['OMNI', 'GOVTECH', 'GENERAL'].map((v) => (
+                    <span key={v} style={{
+                      fontSize: 9, letterSpacing: '0.08em', padding: '2px 7px', borderRadius: 2,
+                      border: `1px solid ${VCOLOR[v]}55`, color: VCOLOR[v],
+                      background: `${VCOLOR[v]}0d`,
+                    }}>{v} {ventureCounts[v] || 0}</span>
+                  ))}
+                  <span style={{ fontSize: 9, color: 'rgba(148,163,184,0.4)', alignSelf: 'center' }}>scope = queue type prefix</span>
+                </div>
+
+                {/* Attention: failed + pending items needing Crew eyes */}
+                {attention.length > 0 && (
+                  <div style={{ marginBottom: 10 }}>
+                    <div style={{ fontSize: 9.5, letterSpacing: '0.2em', color: '#fbbf24', marginBottom: 4 }}>ATTENTION ({attention.length})</div>
+                    {attention.map((i: any) => (
+                      <Row key={i.id}>
+                        <span style={{ color: i.status === 'failed' ? '#f87171' : '#fbbf24', width: 10, flexShrink: 0 }}>{i.status === 'failed' ? '✗' : '◌'}</span>
+                        <span style={{ color: '#67e8f9', flexShrink: 0 }}>{i.type}</span>
+                        <span style={{ color: 'rgba(148,163,184,0.45)', flexShrink: 0 }}>{age(i.createdAt)} ago{(i.attempts || 0) > 1 ? ` ×${i.attempts}` : ''}</span>
+                        <span style={{ color: 'rgba(248,113,113,0.75)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{i.error || ''}</span>
+                      </Row>
+                    ))}
+                  </div>
+                )}
+
+                {/* Recent completed flow */}
+                {recent.length > 0 && (
+                  <div>
+                    <div style={{ fontSize: 9.5, letterSpacing: '0.2em', color: DIM, marginBottom: 4 }}>RECENT</div>
+                    {recent.slice().reverse().map((i: any) => (
+                      <Row key={i.id}>
+                        <span style={{ color: i.status === 'done' ? '#34d399' : i.status === 'failed' ? '#f87171' : '#fbbf24', width: 10, flexShrink: 0 }}>{i.status === 'done' ? '✓' : i.status === 'failed' ? '✗' : '◌'}</span>
+                        <span style={{ color: '#67e8f9', flexShrink: 0 }}>{i.type}</span>
+                        <span style={{ color: VCOLOR[ventureOf(i.type)], fontSize: 9 }}>{ventureOf(i.type)}</span>
+                      </Row>
+                    ))}
+                  </div>
+                )}
+
+                {!attention.length && !recent.length && (
+                  <div style={{ padding: '12px 0', color: DIM }}>QUEUE EMPTY — NO DISTRIBUTION ITEMS</div>
+                )}
+
+                {/* Launch log tail — readable last lines, not JSON */}
+                {pipeline.launchLogTail && (
+                  <div style={{ marginTop: 10, paddingTop: 8, borderTop: '1px solid rgba(148,163,184,0.1)' }}>
+                    <div style={{ fontSize: 9.5, letterSpacing: '0.2em', color: DIM, marginBottom: 4 }}>LAUNCH LOG</div>
+                    <pre style={{ fontSize: 9, color: 'rgba(148,163,184,0.6)', whiteSpace: 'pre-wrap', wordBreak: 'break-word', margin: 0, maxHeight: 90, overflow: 'hidden' }}>
+                      {pipeline.launchLogTail.slice(-900)}
+                    </pre>
+                  </div>
+                )}
+              </div>
+            )}
+            {pipeline?.error && <div style={{ padding: '12px 0', color: '#f87171' }}>PIPELINE STATUS UNREACHABLE</div>}
+          </Panel>
+        );
+      })()}
 
       {view === 'standup' && (
         <Panel

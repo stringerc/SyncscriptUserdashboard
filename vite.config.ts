@@ -10527,7 +10527,21 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
           const readTail = (p: string, max = 3000) => { try { return fsSync.readFileSync(p, 'utf8').slice(-max); } catch { return null; } };
           const queue = readJson(path.join(sf, 'distribution-queue.json')) || { items: [] };
           const counts: Record<string, number> = {};
-          for (const i of queue.items || []) counts[i.status] = (counts[i.status] || 0) + 1;
+          const typeCounts: Record<string, number> = {};
+          for (const i of queue.items || []) {
+            counts[i.status] = (counts[i.status] || 0) + 1;
+            typeCounts[i.type] = (typeCounts[i.type] || 0) + 1;
+          }
+          // Attention queue: pending + failed items need Crew eyes — surface
+          // them with error context instead of burying them in raw JSON.
+          const attention = (queue.items || [])
+            .filter((i: any) => i.status === 'pending' || i.status === 'failed')
+            .map((i: any) => ({
+              id: i.id, type: i.type, status: i.status,
+              attempts: i.attempts || 0, createdAt: i.createdAt || null,
+              notBefore: i.notBefore || null,
+              error: i.error || i.lastError || null,
+            }));
           const snap = agentRuntime.snapshot();
           const distributor = snap.agents.find((a: any) => a.id === 'distributor') || null;
           const distTasks = snap.tasks
@@ -10537,7 +10551,10 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
           res.end(JSON.stringify({
             ok: true,
             checkedAt: new Date().toISOString(),
-            queue: { counts, recent: (queue.items || []).slice(-8).map((i: any) => ({ id: i.id, type: i.type, status: i.status, notBefore: i.notBefore || null })) },
+            queue: {
+              counts, typeCounts, attention,
+              recent: (queue.items || []).slice(-8).map((i: any) => ({ id: i.id, type: i.type, status: i.status, notBefore: i.notBefore || null })),
+            },
             distributor: distributor ? { status: distributor.status, tasksCompleted: distributor.tasksCompleted, tasksFailed: distributor.tasksFailed } : null,
             tasks: distTasks,
             gumroadState: readJson(path.join(sf, '.gumroad-state.json')),
@@ -12142,6 +12159,65 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
           res.writeHead(500, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ ok: false, error: err?.message || String(err) }));
         }
+      });
+
+      // ── Sovereign Gateways Health & Monitoring (/api/cortex/gateways/status) ──
+      server.middlewares.use('/api/cortex/gateways/status', async (req: any, res: any, next: any) => {
+        if (req.method === 'OPTIONS') {
+          agentCors(req, res);
+          res.statusCode = 204;
+          return res.end();
+        }
+        agentCors(req, res);
+        if (req.method !== 'GET') return next();
+
+        // 1. Probe OpenClaw (:18789)
+        let openclawHealthy = false;
+        let openclawLatency = 0;
+        try {
+          const t0 = Date.now();
+          const r = await fetch('http://127.0.0.1:18789/', { signal: AbortSignal.timeout(1200) });
+          openclawLatency = Date.now() - t0;
+          openclawHealthy = r.ok || r.status < 500;
+        } catch {
+          openclawHealthy = false;
+        }
+
+        // 2. Probe Hermes (:18880)
+        let hermesHealthy = false;
+        let hermesLatency = 0;
+        try {
+          const t0 = Date.now();
+          const r = await fetch('http://127.0.0.1:18880/health', { signal: AbortSignal.timeout(1200) });
+          hermesLatency = Date.now() - t0;
+          hermesHealthy = r.ok;
+        } catch {
+          hermesHealthy = false;
+        }
+
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          ok: true,
+          gateways: {
+            openclaw: {
+              id: 'openclaw',
+              name: 'OpenClaw Gateway',
+              status: openclawHealthy ? 'running' : 'down',
+              port: 18789,
+              wsUrl: 'ws://127.0.0.1:18789',
+              latencyMs: openclawLatency,
+            },
+            hermes: {
+              id: 'hermes',
+              name: 'Hermes Sovereign Host',
+              status: hermesHealthy ? 'running' : 'down',
+              port: 18880,
+              url: 'http://127.0.0.1:18880',
+              latencyMs: hermesLatency,
+            },
+          },
+          timestamp: Date.now(),
+        }));
       });
 
       // ── Cortex Fleet Standup REST Endpoints (/api/cortex/standup/*) ──
