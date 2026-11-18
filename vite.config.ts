@@ -11815,8 +11815,8 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
         try {
           const capsPath = path.join(process.cwd(), '.cortex-runtime', 'dynamic-capabilities.json');
           let data: any = null;
-          if (fs.existsSync(capsPath)) {
-            data = JSON.parse(fs.readFileSync(capsPath, 'utf-8'));
+          if (existsSync(capsPath)) {
+            data = JSON.parse(readFileSync(capsPath, 'utf-8'));
           } else {
             const { curatorAuditSelf } = await import('./src/lib/cortex-agents/curator-tools');
             data = await curatorAuditSelf();
