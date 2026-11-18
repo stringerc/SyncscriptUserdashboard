@@ -136,6 +136,7 @@ export function TasksProvider({ children }: TasksProviderProps) {
   const [error, setError] = useState<string | null>(null);
   const accessTokenRef = React.useRef<string | null>(null);
   accessTokenRef.current = accessToken;
+  const lastTaskSnapshotPushRef = React.useRef<number>(0);
   
   // Energy System Integration
   const energyContext = useEnergy();
@@ -175,6 +176,22 @@ export function TasksProvider({ children }: TasksProviderProps) {
       const allTasks = await withTimeout(taskRepository.getTasks(), TASKS_REFRESH_TIMEOUT_MS);
       if (accessTokenRef.current === tokenAtStart) {
         setTasks(allTasks);
+        // Mirror a normalized snapshot server-side so provider-less surfaces
+        // (Foundry /cortex/visualizer) can show the user's task ledger.
+        // Throttled — refreshes can be frequent; the mirror only needs ~30s.
+        const now = Date.now();
+        if (now - lastTaskSnapshotPushRef.current > 30_000) {
+          lastTaskSnapshotPushRef.current = now;
+          fetch('/api/cortex/tasks/snapshot', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              tasks: (allTasks || []).map((t: any) => ({
+                id: t.id, title: t.title, status: t.status, completed: t.completed ?? t.status === 'completed',
+                priority: t.priority, dueDate: t.dueDate, createdAt: t.createdAt, completedAt: t.completedAt,
+              })),
+            }),
+          }).catch(() => { /* mirror is best-effort */ });
+        }
         if (user?.id && (allTasks?.length || 0) > 0) {
           markDashboardSawRealTasksForUser(user.id);
         }

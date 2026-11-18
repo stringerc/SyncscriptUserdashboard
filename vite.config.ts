@@ -10346,6 +10346,11 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
               pending: ms.opsItems.filter((o) => !o.done && o.lastStatus !== 'stale').length,
             },
             plannedBlocks: ms.blocks.filter((b) => b.status === 'planned').length,
+            upcomingBlocks: ms.blocks
+              .filter((b) => b.status === 'planned' && b.start > Date.now() - 3_600_000)
+              .sort((a, b) => a.start - b.start)
+              .slice(0, 12)
+              .map((b) => ({ id: b.id, title: b.title, start: b.start, end: b.end, agentId: b.agentId, kind: b.kind, goalId: b.goalId })),
             experiments: ms.experiments.filter((e) => e.status === 'running').map((e) => ({ id: e.id, routineId: e.routineId, kind: e.kind, variantMin: e.variant.intervalMin })),
           };
         } catch { }
@@ -10624,6 +10629,55 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
             fsSync.mkdirSync(path.dirname(file), { recursive: true });
             fsSync.writeFileSync(file, JSON.stringify({ updatedAt: new Date().toISOString(), events }, null, 2));
             res.end(JSON.stringify({ ok: true, stored: events.length }));
+          } catch (e: any) {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ ok: false, error: String(e?.message || e) }));
+          }
+        });
+      });
+
+      // GET/POST /api/cortex/tasks/snapshot — client pushes its user-task
+      // list (Supabase/localStorage-backed) so Foundry surfaces outside the
+      // TasksProvider tree (e.g. /cortex/visualizer) can show "Chris's tasks"
+      // next to the agent task ledger. Same mirror pattern as calendar/upcoming.
+      server.middlewares.use('/api/cortex/tasks/snapshot', (req: any, res: any, next: any) => {
+        if (req.method === 'OPTIONS') {
+          res.writeHead(204, { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Methods': 'GET, POST, OPTIONS', 'Access-Control-Allow-Headers': 'Content-Type' });
+          return res.end();
+        }
+        agentCors(req, res);
+        const file = path.join(process.cwd(), '.cortex-runtime', 'tasks-snapshot.json');
+        if (req.method === 'GET') {
+          try {
+            const raw = JSON.parse(fsSync.readFileSync(file, 'utf8'));
+            res.end(JSON.stringify({ ok: true, tasks: Array.isArray(raw?.tasks) ? raw.tasks : [], updatedAt: raw?.updatedAt || null }));
+          } catch {
+            res.end(JSON.stringify({ ok: true, tasks: [], updatedAt: null }));
+          }
+          return;
+        }
+        if (req.method !== 'POST') return next();
+        let body = '';
+        req.on('data', (c: Buffer) => { body += c.toString(); });
+        req.on('end', () => {
+          try {
+            const parsed = JSON.parse(body || '{}');
+            const tasks = (Array.isArray(parsed?.tasks) ? parsed.tasks : [])
+              .slice(0, 200)
+              .map((t: any) => ({
+                id: String(t?.id ?? ''),
+                title: String(t?.title ?? '').slice(0, 200),
+                status: String(t?.status ?? ''),
+                completed: !!(t?.completed ?? (t?.status === 'completed')),
+                priority: t?.priority ? String(t.priority) : undefined,
+                dueDate: t?.dueDate || t?.due_date || undefined,
+                createdAt: t?.createdAt || t?.created_at || undefined,
+                completedAt: t?.completedAt || t?.completed_at || undefined,
+              }))
+              .filter((t: any) => t.id && t.title);
+            fsSync.mkdirSync(path.dirname(file), { recursive: true });
+            fsSync.writeFileSync(file, JSON.stringify({ updatedAt: new Date().toISOString(), tasks }, null, 2));
+            res.end(JSON.stringify({ ok: true, stored: tasks.length }));
           } catch (e: any) {
             res.writeHead(400, { 'Content-Type': 'application/json' });
             res.end(JSON.stringify({ ok: false, error: String(e?.message || e) }));

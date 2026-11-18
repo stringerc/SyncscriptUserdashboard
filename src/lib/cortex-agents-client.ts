@@ -47,6 +47,7 @@ export interface AgentsSnapshotClient {
     goals: { id: string; title: string; progress: number; orphaned: boolean }[];
     ops: { total: number; done: number; stale: number; pending: number };
     plannedBlocks: number;
+    upcomingBlocks?: { id: string; title: string; start: number; end: number; agentId?: string; kind?: string; goalId?: string }[];
     experiments: { id: string; routineId: string; kind: string; variantMin: number }[];
   } | null;
   offline?: boolean;

@@ -90,6 +90,8 @@ export function CortexFoundryNav({ snap, onSelectAgent, selectedAgent, onOpenTow
   const [inbox, setInbox] = useState<any[] | null>(null);
   const [inboxNote, setInboxNote] = useState('');
   const [tasksScope, setTasksScope] = useState<'today' | 'all'>('today');
+  const [taskSource, setTaskSource] = useState<'all' | 'agents' | 'user'>('all');
+  const [userTasks, setUserTasks] = useState<any[] | null>(null);
   const [, setGoalsTick] = useState(0);
   const goals = getCortexGoals();
   const goalsUnsub = useRef<(() => void) | null>(null);
@@ -124,6 +126,21 @@ export function CortexFoundryNav({ snap, onSelectAgent, selectedAgent, onOpenTow
       goalsUnsub.current?.(); goalsUnsub.current = null;
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [view]);
+
+  // User-task mirror poll while the ledger view is open — the snapshot is
+  // pushed by TasksContext; Foundry just reads it.
+  useEffect(() => {
+    if (view !== 'tasks') return;
+    const load = () => {
+      fetch('/api/cortex/tasks/snapshot', { cache: 'no-store' })
+        .then((r) => r.json())
+        .then((d) => setUserTasks(Array.isArray(d?.tasks) ? d.tasks : []))
+        .catch(() => setUserTasks([]));
+    };
+    load();
+    const iv = setInterval(load, 30_000);
+    return () => clearInterval(iv);
   }, [view]);
 
   // Counsel + inbox poll on their own cadence while their views are open.
@@ -184,22 +201,30 @@ export function CortexFoundryNav({ snap, onSelectAgent, selectedAgent, onOpenTow
   // Buckets by creation hour: morning 05-12, afternoon 12-17, evening 17-21,
   // night 21-05. Undated → 'anytime' last.
   const DAYPART_ORDER = ['morning', 'afternoon', 'evening', 'night', 'anytime'];
-  const daypartOf = (ts?: number): string => {
-    if (!ts) return 'anytime';
-    const h = new Date(ts).getHours();
+  const toMs = (v?: number | string | null): number => {
+    if (v == null) return NaN;
+    const t = typeof v === 'string' ? new Date(v).getTime() : v;
+    return Number.isNaN(t) ? NaN : t;
+  };
+  const daypartOf = (ts?: number | string | null): string => {
+    const t = toMs(ts);
+    if (Number.isNaN(t)) return 'anytime';
+    const h = new Date(t).getHours();
     if (h >= 5 && h < 12) return 'morning';
     if (h >= 12 && h < 17) return 'afternoon';
     if (h >= 17 && h < 21) return 'evening';
     return 'night';
   };
-  const sameDay = (a?: number, b?: number) => {
-    if (!a || !b) return false;
-    const da = new Date(a), db = new Date(b);
+  const sameDay = (a?: number | string | null, b?: number | string | null) => {
+    const ta = toMs(a), tb = toMs(b);
+    if (Number.isNaN(ta) || Number.isNaN(tb)) return false;
+    const da = new Date(ta), db = new Date(tb);
     return da.getFullYear() === db.getFullYear() && da.getMonth() === db.getMonth() && da.getDate() === db.getDate();
   };
-  const dayKey = (ts?: number) => {
-    if (!ts) return 'undated';
-    const d = new Date(ts);
+  const dayKey = (ts?: number | string | null) => {
+    const t = toMs(ts);
+    if (Number.isNaN(t)) return 'undated';
+    const d = new Date(t);
     return `${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()}`;
   };
   const scopedTasks = tasksScope === 'today'
@@ -228,6 +253,42 @@ export function CortexFoundryNav({ snap, onSelectAgent, selectedAgent, onOpenTow
     const dateStr = d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
     return `${dateStr} · ${dpStr}`;
   };
+  // ── User tasks (Chris's tasks) — mirrored snapshot, ISO date strings ──
+  const userList: any[] = userTasks || [];
+  const userGroupKey = (t: any) => {
+    const ts = t?.createdAt || t?.dueDate;
+    const dp = daypartOf(ts);
+    return tasksScope === 'today' ? dp : `${dayKey(ts)}|${dp}`;
+  };
+  const userLedger = userList
+    .filter((t) => tasksScope === 'all' || sameDay(t.createdAt || t.dueDate, Date.now()))
+    .slice()
+    .sort((a, b) => {
+      const ga = userGroupKey(a), gb = userGroupKey(b);
+      if (ga !== gb) {
+        if (tasksScope === 'today') return DAYPART_ORDER.indexOf(ga) - DAYPART_ORDER.indexOf(gb);
+        const dayA = dayKey(a.createdAt || a.dueDate), dayB = dayKey(b.createdAt || b.dueDate);
+        if (dayA !== dayB) return dayB.localeCompare(dayA);
+        return DAYPART_ORDER.indexOf(ga.split('|')[1]) - DAYPART_ORDER.indexOf(gb.split('|')[1]);
+      }
+      return toMs(b.createdAt || b.dueDate) - toMs(a.createdAt || a.dueDate);
+    });
+  const userGroupLabel = (t: any) => {
+    const ts = t?.createdAt || t?.dueDate;
+    const dp = daypartOf(ts);
+    const dpStr = dp === 'anytime' ? 'ANY TIME' : dp.toUpperCase();
+    if (tasksScope === 'today') return dpStr;
+    const tms = toMs(ts);
+    if (Number.isNaN(tms)) return `UNDATED · ${dpStr}`;
+    return `${new Date(tms).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })} · ${dpStr}`;
+  };
+  // UP NEXT — today's plan: mission blocks + pending user tasks due/created today.
+  const upcomingBlocks = (snap.mission?.upcomingBlocks || [])
+    .filter((b) => sameDay(b.start, Date.now()))
+    .sort((a, b) => a.start - b.start);
+  const userPendingToday = userList.filter((t) =>
+    !t.completed && (sameDay(t.dueDate, Date.now()) || (!t.dueDate && sameDay(t.createdAt, Date.now()))));
+
   const goalList: LifeGoal[] = goals.list();
 
   const select = (id: FoundryView) => {
@@ -268,32 +329,95 @@ export function CortexFoundryNav({ snap, onSelectAgent, selectedAgent, onOpenTow
       {/* Section panels */}
       {view === 'tasks' && (
         <Panel title="TASK LEDGER" right={
-          <span style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+          <span style={{ display: 'flex', gap: 4, alignItems: 'center', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+            <button onClick={() => setTaskSource('all')} style={{ background: taskSource === 'all' ? 'rgba(52,211,153,0.14)' : 'none', border: `1px solid ${taskSource === 'all' ? 'rgba(52,211,153,0.5)' : 'rgba(103,232,249,0.16)'}`, color: taskSource === 'all' ? '#6ee7b7' : DIM, fontFamily: MONO, fontSize: 8.5, padding: '1px 6px', borderRadius: 2, cursor: 'pointer', letterSpacing: '0.1em' }}>ALL</button>
+            <button onClick={() => setTaskSource('agents')} style={{ background: taskSource === 'agents' ? 'rgba(56,189,248,0.16)' : 'none', border: `1px solid ${taskSource === 'agents' ? 'rgba(56,189,248,0.55)' : 'rgba(103,232,249,0.16)'}`, color: taskSource === 'agents' ? '#7dd3fc' : DIM, fontFamily: MONO, fontSize: 8.5, padding: '1px 6px', borderRadius: 2, cursor: 'pointer', letterSpacing: '0.1em' }}>AGENTS</button>
+            <button onClick={() => setTaskSource('user')} style={{ background: taskSource === 'user' ? 'rgba(251,191,36,0.14)' : 'none', border: `1px solid ${taskSource === 'user' ? 'rgba(251,191,36,0.5)' : 'rgba(103,232,249,0.16)'}`, color: taskSource === 'user' ? '#fcd34d' : DIM, fontFamily: MONO, fontSize: 8.5, padding: '1px 6px', borderRadius: 2, cursor: 'pointer', letterSpacing: '0.1em' }}>USER</button>
+            <span style={{ width: 6 }} />
             <button onClick={() => setTasksScope('today')} style={{ background: tasksScope === 'today' ? 'rgba(56,189,248,0.16)' : 'none', border: `1px solid ${tasksScope === 'today' ? 'rgba(56,189,248,0.55)' : 'rgba(103,232,249,0.16)'}`, color: tasksScope === 'today' ? '#7dd3fc' : DIM, fontFamily: MONO, fontSize: 9, padding: '1px 7px', borderRadius: 2, cursor: 'pointer', letterSpacing: '0.12em' }}>TODAY {todayCount}</button>
-            <button onClick={() => setTasksScope('all')} style={{ background: tasksScope === 'all' ? 'rgba(56,189,248,0.16)' : 'none', border: `1px solid ${tasksScope === 'all' ? 'rgba(56,189,248,0.55)' : 'rgba(103,232,249,0.16)'}`, color: tasksScope === 'all' ? '#7dd3fc' : DIM, fontFamily: MONO, fontSize: 9, padding: '1px 7px', borderRadius: 2, cursor: 'pointer', letterSpacing: '0.12em' }}>ALL {allTasks.length}</button>
+            <button onClick={() => setTasksScope('all')} style={{ background: tasksScope === 'all' ? 'rgba(56,189,248,0.16)' : 'none', border: `1px solid ${tasksScope === 'all' ? 'rgba(56,189,248,0.55)' : 'rgba(103,232,249,0.16)'}`, color: tasksScope === 'all' ? '#7dd3fc' : DIM, fontFamily: MONO, fontSize: 9, padding: '1px 7px', borderRadius: 2, cursor: 'pointer', letterSpacing: '0.12em' }}>ALL {allTasks.length + userList.length}</button>
           </span>
         }>
-          {tasks.slice(0, 60).map((t: AgentTaskClient, i: number, arr: AgentTaskClient[]) => {
-            const prev = i > 0 ? arr[i - 1] : null;
-            const showHeader = !prev || taskGroupKey(prev) !== taskGroupKey(t);
-            return (
-              <React.Fragment key={t.id}>
-                {showHeader && (
-                  <div style={{ fontSize: 8.5, fontWeight: 800, letterSpacing: '0.24em', color: '#67e8f9', padding: '7px 2px 3px', borderBottom: '1px solid rgba(103,232,249,0.14)', marginTop: i > 0 ? 6 : 0 }}>
-                    {groupLabel(t)}
-                  </div>
-                )}
-                <Row>
-                  <Lamp status={t.status} />
-                  <span style={{ color: 'rgba(165,243,252,0.85)', minWidth: 70 }}>{t.agentId.toUpperCase()}</span>
-                  <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{t.title}</span>
-                  <span style={{ color: DIM, fontSize: 8 }}>{t.createdAt ? new Date(t.createdAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : '—'}</span>
-                  <span style={{ color: STATUS_COLOR[t.status] || DIM, fontSize: 8 }}>{t.status.toUpperCase()}</span>
+          {/* UP NEXT — today's plan: mission blocks + pending user tasks */}
+          {(upcomingBlocks.length > 0 || userPendingToday.length > 0) && taskSource !== 'agents' && (
+            <div style={{ marginBottom: 8 }}>
+              <div style={{ fontSize: 8.5, fontWeight: 800, letterSpacing: '0.24em', color: '#fbbf24', padding: '3px 2px', borderBottom: '1px solid rgba(251,191,36,0.2)' }}>UP NEXT — TODAY</div>
+              {upcomingBlocks.map((b) => (
+                <Row key={b.id}>
+                  <span style={{ color: '#fbbf24', minWidth: 42, fontSize: 8.5 }}>{new Date(b.start).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}</span>
+                  <span style={{ color: 'rgba(125,211,252,0.8)', fontSize: 8, minWidth: 52 }}>{(b.agentId || 'agent').toUpperCase()}</span>
+                  <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: INK }}>{b.title}</span>
+                  <span style={{ fontSize: 8, color: DIM }}>PLANNED</span>
                 </Row>
-              </React.Fragment>
-            );
-          })}
-          {!tasks.length && <div style={{ padding: '12px 0', color: DIM }}>{tasksScope === 'today' ? 'NO TASKS TODAY YET' : 'NO TASKS RECORDED'}</div>}
+              ))}
+              {userPendingToday.map((t: any) => (
+                <Row key={`u-${t.id}`}>
+                  <span style={{ color: '#fcd34d', minWidth: 42, fontSize: 8.5 }}>{t.dueDate ? new Date(t.dueDate).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : '—'}</span>
+                  <span style={{ color: 'rgba(252,211,77,0.8)', fontSize: 8, minWidth: 52 }}>USER</span>
+                  <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: INK }}>{t.title}</span>
+                  <span style={{ fontSize: 8, color: DIM }}>PENDING</span>
+                </Row>
+              ))}
+            </div>
+          )}
+
+          {/* AGENT LEDGER */}
+          {taskSource !== 'user' && (
+            <div>
+              <div style={{ fontSize: 8.5, fontWeight: 800, letterSpacing: '0.24em', color: '#67e8f9', padding: '3px 2px', borderBottom: '1px solid rgba(103,232,249,0.2)', marginBottom: 2 }}>AGENT TASKS</div>
+              {tasks.slice(0, 60).map((t: AgentTaskClient, i: number, arr: AgentTaskClient[]) => {
+                const prev = i > 0 ? arr[i - 1] : null;
+                const showHeader = !prev || taskGroupKey(prev) !== taskGroupKey(t);
+                return (
+                  <React.Fragment key={t.id}>
+                    {showHeader && (
+                      <div style={{ fontSize: 8.5, fontWeight: 800, letterSpacing: '0.24em', color: '#67e8f9', padding: '7px 2px 3px', borderBottom: '1px solid rgba(103,232,249,0.14)', marginTop: i > 0 ? 6 : 0 }}>
+                        {groupLabel(t)}
+                      </div>
+                    )}
+                    <Row>
+                      <Lamp status={t.status} />
+                      <span style={{ color: 'rgba(165,243,252,0.85)', minWidth: 70 }}>{t.agentId.toUpperCase()}</span>
+                      <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{t.title}</span>
+                      <span style={{ color: DIM, fontSize: 8 }}>{t.createdAt ? new Date(t.createdAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : '—'}</span>
+                      <span style={{ color: STATUS_COLOR[t.status] || DIM, fontSize: 8 }}>{t.status.toUpperCase()}</span>
+                    </Row>
+                  </React.Fragment>
+                );
+              })}
+              {!tasks.length && <div style={{ padding: '12px 0', color: DIM }}>{tasksScope === 'today' ? 'NO AGENT TASKS TODAY YET' : 'NO AGENT TASKS RECORDED'}</div>}
+            </div>
+          )}
+
+          {/* USER TASKS (Chris's tasks) */}
+          {taskSource !== 'agents' && (
+            <div style={{ marginTop: 8 }}>
+              <div style={{ fontSize: 8.5, fontWeight: 800, letterSpacing: '0.24em', color: '#fcd34d', padding: '3px 2px', borderBottom: '1px solid rgba(251,191,36,0.2)', marginBottom: 2 }}>USER TASKS</div>
+              {userTasks === null && <div style={{ padding: '8px 0', color: DIM }}>LOADING…</div>}
+              {userTasks !== null && userLedger.slice(0, 60).map((t: any, i: number, arr: any[]) => {
+                const prev = i > 0 ? arr[i - 1] : null;
+                const showHeader = !prev || userGroupKey(prev) !== userGroupKey(t);
+                const ts = t.createdAt || t.dueDate;
+                return (
+                  <React.Fragment key={t.id}>
+                    {showHeader && (
+                      <div style={{ fontSize: 8.5, fontWeight: 800, letterSpacing: '0.24em', color: '#fcd34d', padding: '7px 2px 3px', borderBottom: '1px solid rgba(251,191,36,0.14)', marginTop: i > 0 ? 6 : 0 }}>
+                        {userGroupLabel(t)}
+                      </div>
+                    )}
+                    <Row>
+                      <Lamp status={t.completed ? 'completed' : t.status === 'in-progress' ? 'running' : 'queued'} />
+                      <span style={{ color: 'rgba(252,211,77,0.85)', minWidth: 70, fontSize: 9 }}>USER</span>
+                      <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: t.completed ? DIM : INK }}>{t.title}</span>
+                      <span style={{ color: DIM, fontSize: 8 }}>{ts ? new Date(toMs(ts)).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : '—'}</span>
+                      <span style={{ color: t.completed ? '#34d399' : DIM, fontSize: 8 }}>{t.completed ? 'DONE' : (t.status || 'OPEN').toUpperCase()}</span>
+                    </Row>
+                  </React.Fragment>
+                );
+              })}
+              {userTasks !== null && !userLedger.length && <div style={{ padding: '12px 0', color: DIM }}>{tasksScope === 'today' ? 'NO USER TASKS TODAY' : 'NO USER TASKS SYNCED YET — OPEN THE APP ONCE'}</div>}
+            </div>
+          )}
         </Panel>
       )}
 
