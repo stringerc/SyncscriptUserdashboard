@@ -43,6 +43,8 @@ export interface AgentMessage {
   correlationId?: string;
   /** Evidence refs — task ids, archive entries, proposal ids. */
   evidenceRefs?: string[];
+  /** 'urgent' injects ahead of normal traffic and can wake an idle agent. */
+  priority?: 'normal' | 'urgent';
   /** Dedupe: same key while pending/delivered → returns existing, no dup. */
   dedupeKey?: string;
   status: MessageStatus;
@@ -114,6 +116,7 @@ export function sendMessage(opts: {
   payload: string;
   correlationId?: string;
   evidenceRefs?: string[];
+  priority?: 'normal' | 'urgent';
   dedupeKey?: string;
   ttlMs?: number;
 }): SendResult {
@@ -159,6 +162,7 @@ export function sendMessage(opts: {
     payload: payload.trim(),
     correlationId: opts.correlationId,
     evidenceRefs: opts.evidenceRefs?.slice(0, 10),
+    priority: opts.priority === 'urgent' ? 'urgent' : 'normal',
     dedupeKey: opts.dedupeKey,
     status: 'pending',
     createdAt: now,
@@ -166,9 +170,10 @@ export function sendMessage(opts: {
   };
   list.push(msg);
   writeAll(list);
-  // Crew/Cortex-bound traffic surfaces in the INBOX as a governed proposal —
-  // agents may ask, but only the Crew disposes of requests aimed at them.
-  if (to === 'crew' || to === 'cortex') {
+  // Crew/Cortex-bound traffic — and ANY 'request' type, since a request is
+  // by definition asking for something — surfaces in the INBOX as a governed
+  // proposal. Agents may ask; only the Crew disposes.
+  if (to === 'crew' || to === 'cortex' || msg.type === 'request') {
     try {
       fileStrategyProposals({
         planNote: `agent-message ${msg.id}`,
@@ -182,7 +187,9 @@ export function sendMessage(opts: {
 
 /** Pending (undelivered, unexpired) messages for an agent — injected into its next task. */
 export function pendingMessages(agentId: string): AgentMessage[] {
-  return prune(readAll()).filter((m) => m.to === agentId && m.status === 'pending' && m.expiresAt >= Date.now());
+  return prune(readAll())
+    .filter((m) => m.to === agentId && m.status === 'pending' && m.expiresAt >= Date.now())
+    .sort((a, b) => (b.priority === 'urgent' ? 1 : 0) - (a.priority === 'urgent' ? 1 : 0) || a.createdAt - b.createdAt);
 }
 
 /** Render pending messages as a compact system-prompt block, like directivesBlock. */
@@ -190,7 +197,7 @@ export function messagesBlock(agentId: string): string {
   const pending = pendingMessages(agentId);
   if (!pending.length) return '';
   const lines = pending.map((m, i) =>
-    `${i + 1}. [${m.id}] ${m.type} from ${m.from}: ${m.payload}${m.correlationId ? ` (corr: ${m.correlationId})` : ''}`);
+    `${i + 1}. [${m.id}] ${m.priority === 'urgent' ? 'URGENT ' : ''}${m.type} from ${m.from}: ${m.payload}${m.correlationId ? ` (corr: ${m.correlationId})` : ''}`);
   return [
     '## AGENT MESSAGES (typed peer traffic — address in your work; cite message ids in your result to consume them)',
     ...lines,
@@ -229,6 +236,7 @@ export function extractAndSendMessages(agentId: string, resultText: string): { s
         payload: String(obj.payload || ''),
         correlationId: obj.correlationId ? String(obj.correlationId) : undefined,
         evidenceRefs: Array.isArray(obj.evidenceRefs) ? obj.evidenceRefs.map(String) : undefined,
+        priority: obj.priority === 'urgent' ? 'urgent' : undefined,
       });
       if (r.ok && !r.deduped) sent++; else if (!r.ok) rejected++;
     } catch { rejected++; }

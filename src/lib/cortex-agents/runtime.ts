@@ -35,6 +35,23 @@ export interface AgentContext {
 
 export type WorkerHandler = (ctx: AgentContext) => Promise<unknown>;
 
+/** Reserved kind: wakes any agent to drain pending agent_messages. Bypasses
+ *  the per-agent worker vocabulary — one llm() call, messages inject via
+ *  the standard block, fenced replies route back through the bus. */
+export const MESSAGE_FLUSH_KIND = 'message_flush';
+const messageFlushHandler: WorkerHandler = async (ctx) => {
+  const pending = (ctx.task.input?.pendingCount as number) ?? 0;
+  const text = await ctx.llm({
+    tier: 'fast',
+    maxTokens: 500,
+    messages: [{
+      role: 'user',
+      content: `You have ${pending || 'pending'} agent message(s) in your AGENT MESSAGES context block. Acknowledge each by id, state the action you took or will take, and emit an \`\`\`agent_message ack reply per message — "to" must be the exact sender agent id shown after "from" in the block, "correlationId" the original message id. If a message needs Crew approval, say so explicitly — do not act on it.`,
+    }],
+  });
+  return { flushed: true, pendingSeen: pending, reply: String(text).slice(0, 1200) };
+};
+
 export interface AgentSpec {
   id: AgentId;
   name: string;
@@ -832,7 +849,9 @@ export class AgentRuntime {
       // Deterministic kinds (lights_status, lights_set, …) bypass the
       // agent's LLM worker entirely — hardware I/O must not depend on a
       // model lane being alive.
-      const run = DETERMINISTIC_TASKS[task.kind] ?? (() => handler(ctx));
+      const run = task.kind === MESSAGE_FLUSH_KIND
+        ? messageFlushHandler
+        : (DETERMINISTIC_TASKS[task.kind] ?? (() => handler(ctx)));
       run(ctx)
         .then((result) => {
           // Directive ack: if the result cites a delivered directive id,

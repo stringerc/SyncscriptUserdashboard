@@ -21,7 +21,7 @@ const MONO = "'IBM Plex Mono', monospace";
 const INK = '#e0f2fe';
 const DIM = 'rgba(148,163,184,0.55)';
 
-type FoundryView = 'dashboard' | 'tasks' | 'goals' | 'calendar' | 'agents' | 'counsel' | 'inbox' | 'incidents' | 'pipeline' | 'standup';
+type FoundryView = 'dashboard' | 'tasks' | 'goals' | 'calendar' | 'agents' | 'counsel' | 'inbox' | 'incidents' | 'pipeline' | 'standup' | 'messages';
 
 const NAV_ITEMS: { id: FoundryView; glyph: string; label: string; hint: string }[] = [
   { id: 'dashboard', glyph: '◈', label: 'DASHBOARD', hint: 'Mission Control tower board' },
@@ -34,6 +34,7 @@ const NAV_ITEMS: { id: FoundryView; glyph: string; label: string; hint: string }
   { id: 'inbox', glyph: '✉', label: 'INBOX', hint: 'Proposals awaiting your decision' },
   { id: 'incidents', glyph: '⚠', label: 'INCIDENTS', hint: 'Failure ticket ledger' },
   { id: 'pipeline', glyph: '⇶', label: 'PIPELINE', hint: 'Distribution / product flow' },
+  { id: 'messages', glyph: '⇄', label: 'COMMS', hint: 'Agent message bus traffic' },
 ];
 
 const STATUS_COLOR: Record<string, string> = {
@@ -89,6 +90,7 @@ export function CortexFoundryNav({ snap, onSelectAgent, selectedAgent, onOpenTow
   const [pipeline, setPipeline] = useState<any | null>(null);
   const [counsel, setCounsel] = useState<{ sessions: any[]; consoles: any[] } | null>(null);
   const [inbox, setInbox] = useState<any[] | null>(null);
+  const [agentMsgs, setAgentMsgs] = useState<any[] | null>(null);
   const [inboxNote, setInboxNote] = useState('');
   const [tasksScope, setTasksScope] = useState<'today' | 'all'>('today');
   const [taskSource, setTaskSource] = useState<'all' | 'agents' | 'user'>('all');
@@ -151,6 +153,20 @@ export function CortexFoundryNav({ snap, onSelectAgent, selectedAgent, onOpenTow
     };
     load();
     const iv = setInterval(load, 30_000);
+    return () => clearInterval(iv);
+  }, [view]);
+
+  // Agent message bus poll while the COMMS view is open.
+  useEffect(() => {
+    if (view !== 'messages') return;
+    const load = () => {
+      fetch('/api/cortex/agents/messages?limit=60', { cache: 'no-store' })
+        .then((r) => r.json())
+        .then((d) => setAgentMsgs(Array.isArray(d?.messages) ? d.messages : []))
+        .catch(() => setAgentMsgs([]));
+    };
+    load();
+    const iv = setInterval(load, 15_000);
     return () => clearInterval(iv);
   }, [view]);
 
@@ -625,6 +641,32 @@ export function CortexFoundryNav({ snap, onSelectAgent, selectedAgent, onOpenTow
               </div>
             </div>
           ))}
+        </Panel>
+      )}
+
+      {view === 'messages' && (
+        <Panel title="AGENT MESSAGE BUS" right={
+          <span style={{ fontSize: 9.5, color: agentMsgs?.length ? '#67e8f9' : DIM }}>{agentMsgs?.length ?? '…'} MSGS</span>
+        }>
+          {agentMsgs === null && <div style={{ padding: '12px 0', color: DIM }}>LOADING…</div>}
+          {agentMsgs !== null && !agentMsgs.length && <div style={{ padding: '12px 0', color: DIM }}>NO PEER TRAFFIC YET</div>}
+          {(agentMsgs || []).slice().reverse().slice(0, 40).map((m: any) => {
+            const stColor = m.status === 'consumed' ? '#34d399' : m.status === 'pending' ? '#fbbf24' : m.status === 'delivered' ? '#7dd3fc' : m.status === 'expired' ? '#64748b' : '#f87171';
+            const typeColor = m.type === 'request' ? '#fbbf24' : m.type === 'handoff' ? '#38bdf8' : m.type === 'ack' ? '#34d399' : '#a78bfa';
+            return (
+              <div key={m.id} style={{ border: '1px solid rgba(103,232,249,0.12)', borderRadius: 3, padding: '6px 9px', marginBottom: 6, background: 'rgba(103,232,249,0.03)' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 6 }}>
+                  <span style={{ fontSize: 9.5, fontWeight: 700, color: INK }}>{String(m.from).toUpperCase()} → {String(m.to).toUpperCase()}</span>
+                  <span style={{ fontSize: 8.5, color: typeColor, letterSpacing: '0.12em', flexShrink: 0 }}>{m.priority === 'urgent' ? '⏫ ' : ''}{String(m.type).toUpperCase()}</span>
+                </div>
+                <div style={{ fontSize: 10, color: DIM, marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{m.payload}</div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 3 }}>
+                  <span style={{ fontSize: 8.5, color: DIM }}>{m.id}{m.correlationId ? ` · corr ${m.correlationId}` : ''}</span>
+                  <span style={{ fontSize: 8.5, color: stColor, letterSpacing: '0.1em' }}>{String(m.status).toUpperCase()}</span>
+                </div>
+              </div>
+            );
+          })}
         </Panel>
       )}
 

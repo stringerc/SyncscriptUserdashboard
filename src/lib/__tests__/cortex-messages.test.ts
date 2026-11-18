@@ -105,6 +105,26 @@ describe('agent message bus', () => {
     expect(proposals[0].instruction).toContain('approve budget raise');
   });
 
+  it('agent-to-agent request types also file an INBOX proposal', () => {
+    sendMessage({ from: 'scout', to: 'builder', type: 'request', payload: 'need sign-off on approach' });
+    const proposals = JSON.parse(fs.readFileSync(path.join(tmp, 'strategy-proposals.json'), 'utf-8'));
+    expect(proposals.length).toBe(1);
+    expect(proposals[0].instruction).toContain('need sign-off');
+    // non-request traffic does not file proposals
+    sendMessage({ from: 'scout', to: 'builder', type: 'signal', payload: 'fyi only' });
+    const after = JSON.parse(fs.readFileSync(path.join(tmp, 'strategy-proposals.json'), 'utf-8'));
+    expect(after.length).toBe(1);
+  });
+
+  it('urgent messages inject ahead of normal traffic', () => {
+    sendMessage({ from: 'scout', to: 'builder', type: 'signal', payload: 'normal first', dedupeKey: 'n1' });
+    sendMessage({ from: 'scout', to: 'builder', type: 'signal', payload: 'urgent second', dedupeKey: 'u1', priority: 'urgent' });
+    const pending = pendingMessages('builder');
+    expect(pending[0].payload).toBe('urgent second');
+    expect(pending[0].priority).toBe('urgent');
+    expect(messagesBlock('builder').indexOf('URGENT')).toBeLessThan(messagesBlock('builder').indexOf('normal first'));
+  });
+
   it('enforces the per-sender daily cap', () => {
     for (let i = 0; i < 30; i++) {
       sendMessage({ from: 'scout', to: 'builder', type: 'signal', payload: `m${i}`, dedupeKey: `d${i}` });

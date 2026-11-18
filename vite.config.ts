@@ -11411,12 +11411,28 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
               payload: String(parsed.payload || parsed.message || ''),
               correlationId: parsed.correlationId ? String(parsed.correlationId) : undefined,
               evidenceRefs: Array.isArray(parsed.evidenceRefs) ? parsed.evidenceRefs.map(String) : undefined,
+              priority: parsed.priority === 'urgent' ? 'urgent' : undefined,
               dedupeKey: parsed.dedupeKey ? String(parsed.dedupeKey) : undefined,
               ttlMs: parsed.ttlMs ? Number(parsed.ttlMs) : undefined,
             });
+            // Urgent wake: an idle agent never sees messages until its next
+            // routine fires — submit a real task so the injection path runs
+            // now. Never preempts running work; budget gates still apply.
+            let woke = false;
+            if (result.ok && !result.deduped && parsed.priority === 'urgent' && result.message) {
+              const agent = agentRuntime.getAgent(result.message.to as any);
+              if (agent && agent.status === 'idle') {
+                const wakeText = `You have urgent pending agent message(s) — address them per the AGENT MESSAGES block in your context.`;
+                const t = agentRuntime.submitTask(result.message.to as any, 'message_flush', 'Agent message wake-up', {
+                  instruction: wakeText,
+                  pendingCount: 1,
+                });
+                woke = t.ok === true;
+              }
+            }
             agentCors(req, res);
             res.writeHead(result.ok ? (result.deduped ? 200 : 201) : 400);
-            res.end(JSON.stringify({ ok: result.ok, deduped: result.deduped, message: result.message, error: result.error }));
+            res.end(JSON.stringify({ ok: result.ok, deduped: result.deduped, woke, message: result.message, error: result.error }));
           } catch (e: any) {
             agentCors(req, res);
             res.writeHead(400);
@@ -12359,7 +12375,7 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
             const componentId = String(payload?.data?.custom_id || '');
             const isOurs = payload?.type === 1
               || (payload?.type === 2 && cmdName === 'cortex')
-              || (payload?.type === 3 && (componentId.startsWith('cx') || componentId.startsWith('sx')));
+              || (payload?.type === 3 && (componentId.startsWith('cx') || componentId.startsWith('sx') || componentId.startsWith('counsel')));
             if (!isOurs) {
               try {
                 const upstream = await fetch('https://kwhnrlzibgfedtxpkbgb.supabase.co/functions/v1/make-server-57781ad9/discord/interactions', {
@@ -12380,6 +12396,75 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
                 return res.end(JSON.stringify({ type: 4, data: { content: `Upstream error: ${String(e?.message || e).slice(0, 120)}`, flags: 64 } }));
               }
             }
+
+            // PING (type 1) — respond immediately.
+            if (payload?.type === 1) {
+              res.writeHead(200, { 'Content-Type': 'application/json' });
+              return res.end(JSON.stringify({ type: 1 }));
+            }
+
+            // Authorization check — non-owner is rejected immediately with ephemeral error (<2ms).
+            const isOwner = payloadUser === discordDeps.ownerId;
+            if (!isOwner) {
+              res.writeHead(200, { 'Content-Type': 'application/json' });
+              return res.end(JSON.stringify({
+                type: 4,
+                data: { content: 'Cortex commands and proposals are owner-only.', flags: 64 },
+              }));
+            }
+
+            const token = dval('DISCORD_BOT_TOKEN');
+            const appId = String(payload?.application_id || dval('DISCORD_APPLICATION_ID') || '1468755723587420300');
+            const interactionToken = String(payload?.token || '');
+
+            // Discord 3-second hard timeout avoidance:
+            // When interactionToken is present from Discord, immediately return Deferred ACK (type 5/6)
+            // within <100ms, then fulfill asynchronously via PATCH /webhooks/<appId>/<token>/messages/@original.
+            if (interactionToken) {
+              // type 3 (button click) -> type 6 (DEFERRED_UPDATE_MESSAGE)
+              // type 2 (slash command) -> type 5 (DEFERRED_CHANNEL_MESSAGE_WITH_SOURCE)
+              const ackType = payload?.type === 3 ? 6 : 5;
+              res.writeHead(200, { 'Content-Type': 'application/json' });
+              res.end(JSON.stringify({ type: ackType }));
+
+              // Background fulfillment (up to 15 minutes window via Discord webhook)
+              (async () => {
+                try {
+                  const result = await handleDiscordInteraction(payload, discordDeps);
+                  console.info(`[cortex-discord] async interaction resolved → type=${result.type} reply=${JSON.stringify(result.data?.content || '').slice(0, 120)}`);
+                  const patchBody: Record<string, any> = {
+                    content: result.data?.content || '',
+                    embeds: result.data?.embeds || [],
+                    components: result.data?.components || [],
+                  };
+                  if (!patchBody.content && (!patchBody.embeds || patchBody.embeds.length === 0)) {
+                    patchBody.content = 'Done.';
+                  }
+                  await discordApi(
+                    'PATCH',
+                    `/webhooks/${appId}/${interactionToken}/messages/@original`,
+                    { token, body: patchBody },
+                  );
+                } catch (err: any) {
+                  console.error('[cortex-discord] async fulfillment error:', err);
+                  try {
+                    await discordApi(
+                      'PATCH',
+                      `/webhooks/${appId}/${interactionToken}/messages/@original`,
+                      {
+                        token,
+                        body: {
+                          content: `⚠️ Action failed: ${String(err?.message || err).slice(0, 140)}\n\n*Fallback: Check Foundry Inbox at http://127.0.0.1:5173 or run \`node scripts/cortex-proposals.mjs list\`.*`,
+                        },
+                      },
+                    );
+                  } catch {}
+                }
+              })();
+              return;
+            }
+
+            // Fallback for callers/tests without Discord interactionToken — synchronous execution.
             const result = await handleDiscordInteraction(payload, discordDeps);
             console.info(`[cortex-discord] → type=${result.type} reply=${JSON.stringify(result.data?.content || '').slice(0, 120)}`);
             res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -12389,6 +12474,37 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
             res.end(JSON.stringify({ type: 4, data: { content: `Cortex error: ${String(e?.message || e).slice(0, 200)}`, flags: 64 } }));
           }
         });
+      });
+
+      // GET /api/cortex/discord/health — diagnostic probe for Discord connectivity, push budget & status
+      server.middlewares.use('/api/cortex/discord/health', (req: any, res: any, next: any) => {
+        if (req.method === 'OPTIONS') {
+          res.writeHead(204, { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Methods': 'GET, OPTIONS', 'Access-Control-Allow-Headers': 'Content-Type' });
+          return res.end();
+        }
+        if (req.method !== 'GET') return next();
+        const token = dval('DISCORD_BOT_TOKEN');
+        const pubKey = dval('DISCORD_PUBLIC_KEY');
+        const ownerId = dval('DISCORD_OWNER_ID');
+        const pushState = loadPushState(discordDir);
+        const threads = loadDiscordThreads(discordDir);
+        const threadsCount = Object.keys(threads).length;
+        res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+        res.end(JSON.stringify({
+          ok: true,
+          discordConfigured: Boolean(token && pubKey && ownerId),
+          ownerId: ownerId || null,
+          hasBotToken: Boolean(token),
+          hasPublicKey: Boolean(pubKey),
+          pushState: {
+            day: pushState.day,
+            count: pushState.count,
+            proposalsPosted: pushState.postedProposalIds?.length ?? 0,
+            strategiesPosted: pushState.postedStrategyIds?.length ?? 0,
+            lastDigestDay: pushState.lastDigestDay ?? null,
+          },
+          trackedThreadsCount: threadsCount,
+        }));
       });
 
       // POST /api/cortex/discord/sync-commands — register /cortex globally or
