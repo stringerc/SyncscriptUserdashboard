@@ -16,6 +16,7 @@ import {
   getEventsForMonth,
   getMonthMatrix,
   formatTimeRange,
+  getRelativeDayLabel,
   isSameDay,
 } from '../../lib/cortex-calendar-utils';
 
@@ -25,7 +26,7 @@ const DIM = 'rgba(148,163,184,0.55)';
 const CYAN = '#38bdf8';
 const AMBER = '#fbbf24';
 
-export type CalendarHorizon = '48h' | 'day' | 'week' | 'month';
+export type CalendarHorizon = '48h' | 'day' | 'multi' | 'week' | 'month';
 
 interface Props {
   events: CalendarEventItem[];
@@ -40,7 +41,7 @@ export function CortexFoundryCalendar({ events, loading }: Props) {
   // Date Navigation step handlers
   const stepNav = (direction: -1 | 1) => {
     const next = new Date(anchorDate);
-    if (horizon === 'day') {
+    if (horizon === 'day' || horizon === 'multi') {
       next.setDate(next.getDate() + direction);
     } else if (horizon === 'week') {
       next.setDate(next.getDate() + direction * 7);
@@ -59,6 +60,7 @@ export function CortexFoundryCalendar({ events, loading }: Props) {
   // Header Title derivation
   const getNavTitle = () => {
     if (horizon === '48h') return 'NEXT 48 HOURS (TACTICAL AGENDA)';
+    if (horizon === 'multi') return `MULTI-DAY FEED (${getRelativeDayLabel(anchorDate)})`;
     if (horizon === 'day') {
       return anchorDate.toLocaleDateString(undefined, {
         weekday: 'short',
@@ -89,6 +91,18 @@ export function CortexFoundryCalendar({ events, loading }: Props) {
 
   // 2. Day Horizon Data
   const dayEvents = getEventsForDay(events, anchorDate);
+
+  // 2b. Multi-Day Horizon Data (Instagram-style strip)
+  const multiDays = (() => {
+    const list: Date[] = [];
+    const base = new Date(anchorDate);
+    for (let i = -7; i <= 14; i++) {
+      const cur = new Date(base);
+      cur.setDate(base.getDate() + i);
+      list.push(cur);
+    }
+    return list;
+  })();
 
   // 3. Week Horizon Data
   const weekEvents = getEventsForWeek(events, anchorDate);
@@ -125,7 +139,7 @@ export function CortexFoundryCalendar({ events, loading }: Props) {
       }}>
         {/* Horizon Switcher Tabs */}
         <div style={{ display: 'flex', gap: 4 }}>
-          {(['48h', 'day', 'week', 'month'] as CalendarHorizon[]).map((h) => {
+          {(['48h', 'day', 'multi', 'week', 'month'] as CalendarHorizon[]).map((h) => {
             const active = horizon === h;
             return (
               <button
@@ -303,6 +317,156 @@ export function CortexFoundryCalendar({ events, loading }: Props) {
               NO EVENTS SCHEDULED FOR THIS DAY — SCHEDULE CLEAR
             </div>
           )}
+        </div>
+      )}
+
+      {/* ────────────────── VIEW 2b: MULTI-DAY INSTAGRAM FEED ────────────────── */}
+      {horizon === 'multi' && (
+        <div style={{
+          maxHeight: 460,
+          overflowY: 'auto',
+          scrollSnapType: 'y mandatory',
+          display: 'flex',
+          flexDirection: 'column',
+          gap: 12,
+          paddingRight: 4,
+        }}>
+          {multiDays.map((d) => {
+            const isCurToday = isSameDay(d, new Date());
+            const dEvents = getEventsForDay(events, d);
+            const relLabel = getRelativeDayLabel(d);
+
+            return (
+              <div
+                key={d.toISOString()}
+                style={{
+                  height: 360,
+                  minHeight: 360,
+                  scrollSnapAlign: 'start',
+                  scrollSnapStop: 'always',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  background: isCurToday ? 'rgba(56,189,248,0.06)' : 'rgba(8,14,24,0.6)',
+                  border: `1px solid ${isCurToday ? 'rgba(56,189,248,0.45)' : 'rgba(103,232,249,0.18)'}`,
+                  borderRadius: 6,
+                  overflow: 'hidden',
+                  boxShadow: isCurToday ? '0 0 16px rgba(56,189,248,0.15)' : 'none',
+                }}
+              >
+                {/* Card Header Bar */}
+                <div style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  padding: '8px 10px',
+                  background: isCurToday ? 'rgba(56,189,248,0.14)' : 'rgba(15,23,42,0.6)',
+                  borderBottom: `1px solid ${isCurToday ? 'rgba(56,189,248,0.3)' : 'rgba(103,232,249,0.12)'}`,
+                }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <span style={{ fontSize: 18, fontWeight: 800, color: isCurToday ? '#38bdf8' : INK }}>
+                      {d.getDate()}
+                    </span>
+                    <div>
+                      <div style={{ fontSize: 9.5, fontWeight: 700, color: isCurToday ? '#7dd3fc' : INK }}>
+                        {d.toLocaleDateString(undefined, { weekday: 'short' }).toUpperCase()}
+                      </div>
+                      <div style={{ fontSize: 8.5, color: DIM }}>
+                        {d.toLocaleDateString(undefined, { month: 'short', year: 'numeric' }).toUpperCase()}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <span style={{
+                      fontSize: 8,
+                      fontWeight: 700,
+                      color: isCurToday ? '#38bdf8' : DIM,
+                      border: `1px solid ${isCurToday ? 'rgba(56,189,248,0.4)' : 'rgba(148,163,184,0.2)'}`,
+                      padding: '1px 6px',
+                      borderRadius: 2,
+                      letterSpacing: '0.1em',
+                    }}>
+                      {relLabel}
+                    </span>
+                    <span style={{ fontSize: 8, color: DIM }}>
+                      {dEvents.length} EVT{dEvents.length === 1 ? '' : 'S'}
+                    </span>
+                  </div>
+                </div>
+
+                {/* Card Event Feed */}
+                <div style={{
+                  flex: 1,
+                  minHeight: 0,
+                  overflowY: 'auto',
+                  padding: '8px 10px',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: 6,
+                }}>
+                  {dEvents.length > 0 ? (
+                    dEvents.map((e, eIdx) => (
+                      <div
+                        key={e.id || eIdx}
+                        style={{
+                          padding: '6px 8px',
+                          background: 'rgba(15,23,42,0.7)',
+                          borderLeft: `2px solid ${AMBER}`,
+                          border: '1px solid rgba(103,232,249,0.12)',
+                          borderRadius: 3,
+                          display: 'flex',
+                          flexDirection: 'column',
+                          gap: 2,
+                        }}
+                      >
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
+                          <span style={{ fontSize: 8.5, color: AMBER, fontWeight: 700 }}>
+                            {formatTimeRange(e.start, e.end)}
+                          </span>
+                          {e.attendees && e.attendees > 0 && (
+                            <span style={{ fontSize: 7.5, color: CYAN }}>{e.attendees} att</span>
+                          )}
+                        </div>
+                        <div style={{ fontSize: 9.5, color: INK, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                          {e.title}
+                        </div>
+                      </div>
+                    ))
+                  ) : (
+                    <div style={{
+                      flex: 1,
+                      display: 'flex',
+                      flexDirection: 'column',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      textAlign: 'center',
+                      padding: 16,
+                      color: DIM,
+                    }}>
+                      <div style={{ fontSize: 16, marginBottom: 4, opacity: 0.6 }}>✦</div>
+                      <div style={{ fontSize: 9.5, fontWeight: 600, color: INK }}>NO EVENTS SCHEDULED</div>
+                      <div style={{ fontSize: 8.5, color: DIM, marginTop: 2 }}>Open horizon for focus and mission work</div>
+                    </div>
+                  )}
+                </div>
+
+                {/* Card Snap Footer */}
+                <div style={{
+                  padding: '4px 10px',
+                  background: 'rgba(8,14,24,0.8)',
+                  borderTop: '1px solid rgba(103,232,249,0.1)',
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  alignItems: 'center',
+                  fontSize: 8,
+                  color: DIM,
+                }}>
+                  <span>{dEvents.length > 0 ? `${dEvents.length} items on schedule` : 'Free day'}</span>
+                  <span>↕ SNAP SCROLL</span>
+                </div>
+              </div>
+            );
+          })}
         </div>
       )}
 

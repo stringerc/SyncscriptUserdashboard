@@ -190,7 +190,7 @@ export function CalendarEventsPage() {
   const location = useLocation(); // Track route changes
   const navigate = useNavigate();
   const { profile } = useUserProfile(); // Get current user from context
-  const [currentView, setCurrentView] = useState<'day' | 'week' | 'month' | 'timeline'>('day');
+  const [currentView, setCurrentView] = useState<'day' | 'multiday' | 'week' | 'month' | 'timeline'>('day');
   const [isMultiDayMode, setIsMultiDayMode] = useState(true);
 
   // ═══════════════════════════════════════════════════════════════════════════
@@ -287,7 +287,7 @@ export function CalendarEventsPage() {
       if (!calendarRef.current?.scrollContainer) {
         return false;
       }
-      if (currentView !== 'day' || !isMultiDayMode) {
+      if ((currentView !== 'day' && currentView !== 'multiday') || (currentView === 'day' && !isMultiDayMode)) {
         return true;
       }
       calendarRef.current.jumpToTodayInstant();
@@ -864,15 +864,17 @@ export function CalendarEventsPage() {
         }
       }
       
-      // PHASE 4: M key - Toggle multi-day mode (when in day view)
-      if (e.key === 'm' && currentView === 'day' && !e.metaKey && !e.ctrlKey && !e.shiftKey && !e.altKey) {
+      // PHASE 4: M key - Toggle multi-day mode (when in day or multiday view)
+      if (e.key === 'm' && (currentView === 'day' || currentView === 'multiday') && !e.metaKey && !e.ctrlKey && !e.shiftKey && !e.altKey) {
         // Only if not typing in an input
         const target = e.target as HTMLElement;
         if (target.tagName !== 'INPUT' && target.tagName !== 'TEXTAREA') {
           e.preventDefault();
-          setIsMultiDayMode(!isMultiDayMode);
-          toast.success(!isMultiDayMode ? 'Multi-day scroll enabled' : 'Single day view', {
-            description: !isMultiDayMode ? 'Press M to toggle back' : 'Press M to enable multi-day',
+          const nextMulti = currentView === 'multiday' ? false : !isMultiDayMode;
+          setIsMultiDayMode(nextMulti);
+          setCurrentView(nextMulti ? 'multiday' : 'day');
+          toast.success(nextMulti ? 'Multi-day scroll enabled' : 'Single day view', {
+            description: nextMulti ? 'Press M to toggle back' : 'Press M to enable multi-day',
           });
         }
       }
@@ -2023,6 +2025,11 @@ export function CalendarEventsPage() {
   // Dynamic AI Insights based on current view
   // Navigation handlers
   const handlePrevious = () => {
+    if (currentView === 'multiday') {
+      calendarRef.current?.jumpToDay(-1);
+      toast.info('Previous day');
+      return;
+    }
     const newDate = new Date(currentDate);
     if (currentView === 'day') {
       newDate.setDate(newDate.getDate() - 1);
@@ -2038,6 +2045,11 @@ export function CalendarEventsPage() {
   };
 
   const handleNext = () => {
+    if (currentView === 'multiday') {
+      calendarRef.current?.jumpToDay(1);
+      toast.info('Next day');
+      return;
+    }
     const newDate = new Date(currentDate);
     if (currentView === 'day') {
       newDate.setDate(newDate.getDate() + 1);
@@ -2159,42 +2171,53 @@ export function CalendarEventsPage() {
           <div className="flex shrink-0 flex-wrap items-center gap-2 lg:justify-end">
           <Tabs
             className="shrink-0"
-            value={currentView}
-            onValueChange={(v) =>
-              setCurrentView(v as 'day' | 'week' | 'month' | 'timeline')
-            }
+            value={currentView === 'day' && isMultiDayMode ? 'multiday' : currentView}
+            onValueChange={(v) => {
+              if (v === 'multiday') {
+                setCurrentView('multiday');
+                setIsMultiDayMode(true);
+              } else if (v === 'day') {
+                setCurrentView('day');
+                setIsMultiDayMode(false);
+              } else {
+                setCurrentView(v as 'day' | 'multiday' | 'week' | 'month' | 'timeline');
+              }
+            }}
           >
             <TabsList className="flex-wrap">
               <TabsTrigger value="day" className="data-[state=active]:text-white">Day</TabsTrigger>
+              <TabsTrigger value="multiday" className="data-[state=active]:text-white">Multi-Day</TabsTrigger>
               <TabsTrigger value="week" className="data-[state=active]:text-white">Week</TabsTrigger>
               <TabsTrigger value="month" className="data-[state=active]:text-white">Month</TabsTrigger>
               <TabsTrigger value="timeline" className="data-[state=active]:text-white">Timeline</TabsTrigger>
             </TabsList>
           </Tabs>
           
-          {/* PHASE 4: Multi-Day Mode Toggle */}
-          {currentView === 'day' && (
+          {/* Multi-Day Mode Toggle (when on Day or Multi-Day) */}
+          {(currentView === 'day' || currentView === 'multiday') && (
             <TooltipProvider>
               <Tooltip>
                 <TooltipTrigger asChild>
                   <Button
-                    variant={isMultiDayMode ? 'default' : 'outline'}
+                    variant={isMultiDayMode || currentView === 'multiday' ? 'default' : 'outline'}
                     size="sm"
                     onClick={() => {
-                      setIsMultiDayMode(!isMultiDayMode);
-                      toast.success(isMultiDayMode ? 'Single day view' : 'Multi-day scroll enabled', {
-                        description: isMultiDayMode ? 'Showing one day at a time' : 'Scroll through multiple days seamlessly',
+                      const nextMulti = currentView === 'multiday' ? false : !isMultiDayMode;
+                      setIsMultiDayMode(nextMulti);
+                      setCurrentView(nextMulti ? 'multiday' : 'day');
+                      toast.success(nextMulti ? 'Multi-day scroll enabled' : 'Single day view', {
+                        description: nextMulti ? 'Scroll through multiple days seamlessly' : 'Showing one day at a time',
                       });
                     }}
-                    className={isMultiDayMode ? 'bg-teal-600 hover:bg-teal-700' : ''}
+                    className={isMultiDayMode || currentView === 'multiday' ? 'bg-teal-600 hover:bg-teal-700' : ''}
                   >
                     <CalendarIcon className="w-4 h-4 mr-2" />
-                    {isMultiDayMode ? 'Multi-Day' : 'Single Day'}
+                    {isMultiDayMode || currentView === 'multiday' ? 'Multi-Day Feed' : 'Single Day'}
                   </Button>
                 </TooltipTrigger>
                 <TooltipContent className="bg-gray-900 border-gray-700 text-white">
                   <p className="text-sm font-medium">
-                    {isMultiDayMode ? 'Switch to single day' : 'Enable multi-day scroll'}
+                    {isMultiDayMode || currentView === 'multiday' ? 'Switch to single day' : 'Enable Instagram-style multi-day feed'}
                   </p>
                   <p className="text-xs text-gray-400">Press <kbd className="px-1.5 py-0.5 bg-gray-800 rounded text-teal-400">M</kbd> to toggle</p>
                 </TooltipContent>
@@ -2308,12 +2331,21 @@ export function CalendarEventsPage() {
               }}
             />}
             
-            {/* PHASE 4: SIMPLE MULTI-DAY VIEW (Clean Reconstruction) */}
-            {currentView === 'day' && isMultiDayMode && <SimpleMultiDayCalendar
+            {/* PHASE 4: INSTAGRAM-STYLE MULTI-DAY VIEW */}
+            {(currentView === 'multiday' || (currentView === 'day' && isMultiDayMode)) && <SimpleMultiDayCalendar
               ref={calendarRef}
               centerDate={centerDate}
               events={filteredEvents}
               onEventClick={handleOpenEvent}
+              onCreateEvent={(date) => {
+                const startTime = new Date(date);
+                startTime.setHours(9, 0, 0, 0); // Default 9 AM
+                const endTime = new Date(startTime);
+                endTime.setHours(10, 0, 0, 0); // Default 1 hour
+                setNewEventStartTime(startTime);
+                setNewEventEndTime(endTime);
+                setShowEventModal(true);
+              }}
               getParentEventName={getParentEventName}
               onUnschedule={handleUnscheduleEvent}
               onResetPosition={handleResetEventPosition}

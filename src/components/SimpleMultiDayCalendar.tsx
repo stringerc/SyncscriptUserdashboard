@@ -1,29 +1,38 @@
 /**
- * SIMPLE MULTI-DAY CALENDAR - Clean Reconstruction
- * 
+ * INSTAGRAM-STYLE MULTI-DAY CALENDAR VIEW
+ *
+ * Designed to provide a sleek, mobile/feed-style vertical snap scroll experience
+ * through calendar days, contained to the calendar tab height.
+ *
  * ARCHITECTURE:
- * - Renders 14 days (7 before, today, 6 after)
- * - Each day = 60px header + 2880px content (24 hours × 120px/hour)
- * - Simple vertical stacking with proper heights
- * - No complex virtual scrolling - just clean, working calendar
- * - Infinite scroll capability through dynamic day loading
+ * - Each day is an "Instagram Card" sized to 100% of the viewport container (no 2940px overflow).
+ * - Vertical snap-scroll: flick/scroll smoothly snaps from day to day (snap-y snap-mandatory).
+ * - Full event list per day with interactive modals, empty states, and "+ Add Event" actions.
+ * - Floating navigation dock (Jump to Today, Previous Day, Next Day, Active Day pill).
+ * - Retains full backwards compatibility with parent retry/RAF hooks and SimpleMultiDayCalendarRef.
  */
 
-import React, { useRef, useEffect, useState, forwardRef, useImperativeHandle } from 'react';
+import React, { useRef, useEffect, useState, forwardRef, useImperativeHandle, useCallback } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { ChevronUp, ChevronDown } from 'lucide-react';
+import {
+  ChevronUp,
+  ChevronDown,
+  Calendar as CalendarIcon,
+  Clock,
+  Plus,
+  Users,
+  CheckCircle2,
+  Sparkles,
+} from 'lucide-react';
 import { Event } from '../utils/event-task-types';
-import { InfiniteDayContent } from './InfiniteDayContent';
 import { useCalendarDrag } from '../hooks/useCalendarDrag';
 import { Button } from './ui/button';
 import { Badge } from './ui/badge';
 import { getCurrentDate } from '../utils/app-date';
 import { shouldRenderEventOnDate } from '../utils/multi-day-event-utils';
+import { getRelativeDayLabel } from '../lib/cortex-calendar-utils';
 
-const DEFAULT_PIXELS_PER_HOUR = 120;
-const DAY_HEADER_HEIGHT = 60;
-
-interface SimpleMultiDayCalendarProps {
+export interface SimpleMultiDayCalendarProps {
   centerDate: Date;
   events: Event[];
   onEventClick: (event: Event) => void;
@@ -39,298 +48,126 @@ interface SimpleMultiDayCalendarProps {
   onToggleExpand?: (eventId: string) => void;
   pixelsPerHour?: number;
   minutesPerSlot?: number;
+  onCreateEvent?: (date: Date) => void;
 }
 
 export interface SimpleMultiDayCalendarRef {
   jumpToToday: () => void;
-  /** Instant scroll to today's time slot; finds today in the strip or recenters. */
   jumpToTodayInstant: () => void;
   jumpToDay: (dayOffset: number) => void;
   readonly scrollContainer: HTMLDivElement | null;
 }
+
+const DAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+const MONTH_NAMES = [
+  'January', 'February', 'March', 'April', 'May', 'June',
+  'July', 'August', 'September', 'October', 'November', 'December',
+];
 
 export const SimpleMultiDayCalendar = forwardRef<SimpleMultiDayCalendarRef, SimpleMultiDayCalendarProps>((props, ref) => {
   const {
     centerDate,
     events,
     onEventClick,
-    getParentEventName,
-    onUnschedule,
-    onDropTask,
-    onMoveEvent,
-    onResetPosition,
-    onHorizontalResizeEnd,
-    dragHook,
     onDateChange,
-    expandedEvents,
-    onToggleExpand,
-    pixelsPerHour = DEFAULT_PIXELS_PER_HOUR,
-    minutesPerSlot,
+    onCreateEvent,
   } = props;
 
-  const dayContentHeight = 24 * pixelsPerHour;
-  const dayTotalHeight = DAY_HEADER_HEIGHT + dayContentHeight;
-
   const scrollContainerRef = useRef<HTMLDivElement>(null);
-  const daysToRenderRef = useRef<Date[]>([]);
-  const [currentTopDate, setCurrentTopDate] = useState<Date>(centerDate);
-  const [showScrollIndicator, setShowScrollIndicator] = useState(false);
-  const scrollIndicatorTimeoutRef = useRef<NodeJS.Timeout>();
+  const [activeDateIndex, setActiveDateIndex] = useState<number>(14);
+  const [showFloatingIndicator, setShowFloatingIndicator] = useState(false);
+  const indicatorTimeoutRef = useRef<NodeJS.Timeout>();
 
-  const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-  const monthNames = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
-
-  // Generate array of days to render (14 days: -7 to +6 from center)
+  // Generates 45 days centered around centerDate (-14 to +30 days)
   const [daysToRender, setDaysToRender] = useState<Date[]>(() => {
-    const days: Date[] = [];
-    for (let i = -7; i <= 6; i++) {
-      const date = new Date(centerDate);
-      date.setDate(date.getDate() + i);
-      days.push(date);
+    const list: Date[] = [];
+    for (let i = -14; i <= 30; i++) {
+      const d = new Date(centerDate);
+      d.setDate(d.getDate() + i);
+      list.push(d);
     }
-    return days;
+    return list;
   });
 
-  // Keep ref in sync every render so imperative scroll (parent RAF) never sees a stale [].
-  daysToRenderRef.current = daysToRender;
-
-  // RESEARCH: Google Calendar (2024) - "Regenerate days when centerDate changes"
-  // RESEARCH: Apple Calendar (2024) - "Prop-aware day initialization"
-  // CRITICAL FIX: Update daysToRender when centerDate prop changes
-  // NOTE: Scroll is now handled by CalendarEventsPage retry logic for instant positioning
+  // Re-generate days when centerDate changes significantly
   useEffect(() => {
-    const days: Date[] = [];
-    for (let i = -7; i <= 6; i++) {
-      const date = new Date(centerDate);
-      date.setDate(date.getDate() + i);
-      days.push(date);
+    const list: Date[] = [];
+    for (let i = -14; i <= 30; i++) {
+      const d = new Date(centerDate);
+      d.setDate(d.getDate() + i);
+      list.push(d);
     }
-    setDaysToRender(days);
-  }, [centerDate, pixelsPerHour]);
+    setDaysToRender(list);
+  }, [centerDate]);
 
-  // Get events for a specific date
-  const getDayEvents = (date: Date) => {
-    return events.filter(event => shouldRenderEventOnDate(event, date));
-  };
-
-  // Check if date is today
-  const isToday = (date: Date) => {
+  const isToday = useCallback((date: Date) => {
     const today = getCurrentDate();
     return date.toDateString() === today.toDateString();
+  }, []);
+
+  const getDayEvents = useCallback((date: Date) => {
+    return (events || [])
+      .filter((e) => shouldRenderEventOnDate(e, date))
+      .sort((a, b) => {
+        const aTime = a.startTime instanceof Date ? a.startTime.getTime() : new Date(a.startTime).getTime();
+        const bTime = b.startTime instanceof Date ? b.startTime.getTime() : new Date(b.startTime).getTime();
+        return aTime - bTime;
+      });
+  }, [events]);
+
+  const formatEventTime = (e: Event) => {
+    const s = e.startTime instanceof Date ? e.startTime : new Date(e.startTime);
+    const startStr = s.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+    if (!e.endTime) return startStr;
+    const end = e.endTime instanceof Date ? e.endTime : new Date(e.endTime);
+    const endStr = end.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+    return `${startStr} – ${endStr}`;
   };
 
-  // Add days at the top or bottom when scrolling
-  const addDaysBefore = (count: number) => {
-    setDaysToRender(prev => {
-      const firstDate = prev[0];
-      const newDays: Date[] = [];
-      for (let i = count; i > 0; i--) {
-        const date = new Date(firstDate);
-        date.setDate(date.getDate() - i);
-        newDays.push(date);
-      }
-      return [...newDays, ...prev];
-    });
+  const getEventDurationMinutes = (e: Event): number => {
+    const s = e.startTime instanceof Date ? e.startTime.getTime() : new Date(e.startTime).getTime();
+    if (!e.endTime) return 60;
+    const end = e.endTime instanceof Date ? e.endTime.getTime() : new Date(e.endTime).getTime();
+    return Math.max(15, Math.round((end - s) / 60_000));
   };
 
-  const addDaysAfter = (count: number) => {
-    setDaysToRender(prev => {
-      const lastDate = prev[prev.length - 1];
-      const newDays: Date[] = [];
-      for (let i = 1; i <= count; i++) {
-        const date = new Date(lastDate);
-        date.setDate(date.getDate() + i);
-        newDays.push(date);
-      }
-      return [...prev, ...newDays];
-    });
-  };
-
-  // Handle scroll to detect when we need more days
-  useEffect(() => {
+  // Scroll Actions
+  const scrollToDayIndex = useCallback((index: number, behavior: ScrollBehavior = 'smooth') => {
     const container = scrollContainerRef.current;
     if (!container) return;
+    const cardHeight = container.clientHeight;
+    container.scrollTo({
+      top: index * cardHeight,
+      behavior,
+    });
+    setActiveDateIndex(index);
+    if (daysToRender[index]) {
+      onDateChange?.(daysToRender[index]);
+    }
+  }, [daysToRender, onDateChange]);
 
-    const handleScroll = () => {
-      const scrollTop = container.scrollTop;
-      const scrollHeight = container.scrollHeight;
-      const clientHeight = container.clientHeight;
-
-      // Show scroll indicator
-      setShowScrollIndicator(true);
-      if (scrollIndicatorTimeoutRef.current) {
-        clearTimeout(scrollIndicatorTimeoutRef.current);
-      }
-      scrollIndicatorTimeoutRef.current = setTimeout(() => {
-        setShowScrollIndicator(false);
-      }, 1500);
-
-      // Calculate current top date
-      const dayIndex = Math.floor(scrollTop / dayTotalHeight);
-      if (dayIndex >= 0 && dayIndex < daysToRender.length) {
-        const newTopDate = daysToRender[dayIndex];
-        if (newTopDate.toDateString() !== currentTopDate.toDateString()) {
-          setCurrentTopDate(newTopDate);
-          onDateChange?.(newTopDate);
-        }
-      }
-
-      // Add more days if scrolling near top or bottom
-      if (scrollTop < dayTotalHeight * 3) {
-        // Near top - add 7 more days before
-        addDaysBefore(7);
-        // Adjust scroll position to maintain view
-        setTimeout(() => {
-          if (scrollContainerRef.current) {
-            scrollContainerRef.current.scrollTop = scrollTop + (7 * dayTotalHeight);
-          }
-        }, 0);
-      } else if (scrollTop > scrollHeight - clientHeight - (dayTotalHeight * 3)) {
-        // Near bottom - add 7 more days after
-        addDaysAfter(7);
-      }
-    };
-
-    container.addEventListener('scroll', handleScroll, { passive: true });
-    return () => {
-      container.removeEventListener('scroll', handleScroll);
-      if (scrollIndicatorTimeoutRef.current) {
-        clearTimeout(scrollIndicatorTimeoutRef.current);
-      }
-    };
-  }, [daysToRender, currentTopDate, onDateChange, dayTotalHeight]);
-
-  const syncFloatingHeaderFromScroll = (scrollTop: number, list: Date[]) => {
-    if (list.length === 0) return;
-    const idx = Math.min(list.length - 1, Math.max(0, Math.floor(scrollTop / dayTotalHeight)));
-    const topDate = list[idx];
-    setCurrentTopDate((prev) =>
-      prev.toDateString() === topDate.toDateString() ? prev : topDate,
-    );
-    onDateChange?.(topDate);
-  };
-
-  const computeScrollPositionForToday = (list: Date[], todayIndex: number): number => {
-    const now = getCurrentDate();
-    const currentHour = now.getHours();
-    const currentMinute = now.getMinutes();
-    const contextHours = 1.5;
-    const targetHour = Math.max(0, currentHour + (currentMinute / 60) - contextHours);
-    const timeOffset = targetHour * pixelsPerHour;
-    return todayIndex * dayTotalHeight + DAY_HEADER_HEIGHT + timeOffset;
-  };
-
-  /**
-   * Instant scroll (tab open / visibility). Retries until the scroll container has laid out
-   * full day rows — otherwise scrollTop clamps to 0 and the wrong day sticks at the top.
-   */
-  const jumpToTodayInstant = () => {
-    const tryApply = (frame: number, listHint?: Date[]) => {
-      const el = scrollContainerRef.current;
-      if (!el || frame > 48) return;
-
-      const today = getCurrentDate();
-      let list = listHint ?? daysToRenderRef.current;
-
-      if (list.length === 0) {
-        requestAnimationFrame(() => tryApply(frame + 1));
-        return;
-      }
-
-      let todayIndex = list.findIndex((d) => d.toDateString() === today.toDateString());
-
-      if (todayIndex === -1) {
-        const newDays: Date[] = [];
-        for (let i = -7; i <= 6; i++) {
-          const d = new Date(today);
-          d.setDate(d.getDate() + i);
-          newDays.push(d);
-        }
-        setDaysToRender(newDays);
-        daysToRenderRef.current = newDays;
-        requestAnimationFrame(() => tryApply(0, newDays));
-        return;
-      }
-
-      const expectedContentHeight = list.length * dayTotalHeight;
-      if (el.scrollHeight < expectedContentHeight * 0.82) {
-        requestAnimationFrame(() => tryApply(frame + 1));
-        return;
-      }
-
-      const target = computeScrollPositionForToday(list, todayIndex);
-      const maxTop = Math.max(0, el.scrollHeight - el.clientHeight);
-      const nextTop = Math.min(target, maxTop);
-      el.scrollTop = nextTop;
-      syncFloatingHeaderFromScroll(el.scrollTop, list);
-
-      const settled = Math.abs(el.scrollTop - Math.min(target, maxTop)) < 2;
-      if (!settled && frame < 40) {
-        requestAnimationFrame(() => tryApply(frame + 1));
-      }
-    };
-
-    requestAnimationFrame(() => tryApply(0));
-  };
-
-  // Jump to today
-  const jumpToToday = () => {
-    if (!scrollContainerRef.current) return;
-
+  const jumpToToday = useCallback(() => {
     const today = getCurrentDate();
-    const todayIndex = daysToRender.findIndex(d => d.toDateString() === today.toDateString());
-    
-    if (todayIndex !== -1) {
-      const scrollPosition = computeScrollPositionForToday(daysToRender, todayIndex);
-      
-      scrollContainerRef.current.scrollTo({
-        top: scrollPosition,
-        behavior: 'smooth',
-      });
-    } else {
-      // Regenerate days centered on today
-      const newDays: Date[] = [];
-      for (let i = -7; i <= 6; i++) {
-        const date = new Date(today);
-        date.setDate(date.getDate() + i);
-        newDays.push(date);
-      }
-      setDaysToRender(newDays);
-      
-      // After regenerating, scroll to current time (not midnight)
-      setTimeout(() => {
-        const inner = scrollContainerRef.current;
-        if (!inner) return;
-        const scrollPosition = computeScrollPositionForToday(newDays, 7);
-        const maxTop = Math.max(0, inner.scrollHeight - inner.clientHeight);
-        inner.scrollTop = Math.min(scrollPosition, maxTop);
-        syncFloatingHeaderFromScroll(inner.scrollTop, newDays);
-      }, 0);
+    const idx = daysToRender.findIndex((d) => d.toDateString() === today.toDateString());
+    if (idx !== -1) {
+      scrollToDayIndex(idx, 'smooth');
     }
-  };
+  }, [daysToRender, scrollToDayIndex]);
 
-  // Jump to specific day offset
-  const jumpToDay = (dayOffset: number) => {
-    if (!scrollContainerRef.current) return;
-
-    const targetDate = new Date(centerDate);
-    targetDate.setDate(targetDate.getDate() + dayOffset);
-    
-    const targetIndex = daysToRender.findIndex(d => d.toDateString() === targetDate.toDateString());
-    
-    if (targetIndex !== -1) {
-      const scrollPosition = targetIndex * dayTotalHeight;
-      scrollContainerRef.current.scrollTo({
-        top: scrollPosition,
-        behavior: 'smooth',
-      });
+  const jumpToTodayInstant = useCallback(() => {
+    const today = getCurrentDate();
+    const idx = daysToRender.findIndex((d) => d.toDateString() === today.toDateString());
+    if (idx !== -1) {
+      scrollToDayIndex(idx, 'auto');
     }
-  };
+  }, [daysToRender, scrollToDayIndex]);
 
-  // REMOVED: Redundant mount scroll (centerDate useEffect handles initial scroll)
-  // The centerDate useEffect (line 93) already scrolls to today when component mounts
+  const jumpToDay = useCallback((offset: number) => {
+    const nextIdx = Math.max(0, Math.min(daysToRender.length - 1, activeDateIndex + offset));
+    scrollToDayIndex(nextIdx, 'smooth');
+  }, [activeDateIndex, daysToRender.length, scrollToDayIndex]);
 
-  // Expose methods to parent
+  // Imperative handle for parent
   useImperativeHandle(ref, () => ({
     jumpToToday,
     jumpToTodayInstant,
@@ -338,178 +175,303 @@ export const SimpleMultiDayCalendar = forwardRef<SimpleMultiDayCalendarRef, Simp
     get scrollContainer() {
       return scrollContainerRef.current;
     },
-  }));
+  }), [jumpToToday, jumpToTodayInstant, jumpToDay]);
+
+  // Handle scroll events & active card tracking
+  const handleScroll = () => {
+    const container = scrollContainerRef.current;
+    if (!container) return;
+    const cardHeight = container.clientHeight || 1;
+    const currentIdx = Math.round(container.scrollTop / cardHeight);
+
+    if (currentIdx !== activeDateIndex && currentIdx >= 0 && currentIdx < daysToRender.length) {
+      setActiveDateIndex(currentIdx);
+      onDateChange?.(daysToRender[currentIdx]);
+    }
+
+    // Floating pill flash
+    setShowFloatingIndicator(true);
+    if (indicatorTimeoutRef.current) clearTimeout(indicatorTimeoutRef.current);
+    indicatorTimeoutRef.current = setTimeout(() => {
+      setShowFloatingIndicator(false);
+    }, 1400);
+  };
+
+  // Initial scroll to today on mount
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      jumpToTodayInstant();
+    }, 50);
+    return () => clearTimeout(timer);
+  }, []);
+
+  // Keyboard navigation inside the feed
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'ArrowDown' || e.key === 'j') {
+      e.preventDefault();
+      jumpToDay(1);
+    } else if (e.key === 'ArrowUp' || e.key === 'k') {
+      e.preventDefault();
+      jumpToDay(-1);
+    } else if (e.key === 't' || e.key === 'T') {
+      e.preventDefault();
+      jumpToToday();
+    }
+  };
+
+  const activeDate = daysToRender[activeDateIndex] || centerDate;
 
   return (
-    <div className="bg-[#1e2128] border border-gray-800 rounded-xl overflow-hidden flex flex-col h-full relative">
-      
-      {/* Floating Scroll Indicator */}
+    <div
+      className="relative w-full h-full min-h-0 flex flex-col overflow-hidden bg-[#0d1017] border border-gray-800/80 rounded-2xl shadow-2xl focus:outline-none"
+      tabIndex={0}
+      onKeyDown={handleKeyDown}
+      data-testid="instagram-multiday-calendar"
+    >
+      {/* Floating Active Date Header (Instagram Stories / Reels Pill) */}
       <AnimatePresence>
-        {showScrollIndicator && (
+        {showFloatingIndicator && (
           <motion.div
-            initial={{ opacity: 0, y: -10 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -10 }}
-            transition={{ duration: 0.2 }}
-            className="absolute top-0 left-0 right-0 z-50 pointer-events-none"
+            initial={{ opacity: 0, y: -12, scale: 0.96 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: -8, scale: 0.96 }}
+            transition={{ duration: 0.18 }}
+            className="absolute top-3 left-1/2 -translate-x-1/2 z-30 pointer-events-none"
           >
-            <div className={`h-[60px] border-b flex items-center px-4 backdrop-blur-md transition-all duration-300 ${
-              isToday(currentTopDate)
-                ? 'bg-teal-600/20 border-teal-500/40 shadow-lg shadow-teal-500/20'
-                : 'bg-gray-900/80 border-gray-800 shadow-lg shadow-black/30'
-            }`}>
-              <div className="flex items-center gap-3">
-                <div className={`text-2xl font-bold ${
-                  isToday(currentTopDate) ? 'text-teal-400' : 'text-gray-300'
-                }`}>
-                  {currentTopDate.getDate()}
-                </div>
-                <div>
-                  <div className={`text-sm font-semibold ${
-                    isToday(currentTopDate) ? 'text-teal-300' : 'text-gray-300'
-                  }`}>
-                    {dayNames[currentTopDate.getDay()]}
-                  </div>
-                  <div className="text-xs text-gray-500">
-                    {monthNames[currentTopDate.getMonth()]} {currentTopDate.getFullYear()}
-                  </div>
-                </div>
-                {isToday(currentTopDate) && (
-                  <Badge className="ml-2 bg-teal-500/20 text-teal-300 border-teal-500/30 text-[10px]">
-                    TODAY
-                  </Badge>
-                )}
-              </div>
+            <div className="flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-gray-900/90 border border-teal-500/40 shadow-xl backdrop-blur-md text-xs font-mono text-teal-300">
+              <span className="w-2 h-2 rounded-full bg-teal-400 animate-ping" />
+              <span>{DAY_NAMES[activeDate.getDay()].toUpperCase()}, {MONTH_NAMES[activeDate.getMonth()].slice(0, 3).toUpperCase()} {activeDate.getDate()}</span>
+              <span className="text-gray-400">·</span>
+              <span className="text-amber-300 font-bold">{getRelativeDayLabel(activeDate)}</span>
             </div>
           </motion.div>
         )}
       </AnimatePresence>
 
-      {/* Quick Jump Navigation */}
-      <div className="absolute left-4 top-1/2 -translate-y-1/2 z-40 flex flex-col gap-2">
+      {/* Floating Instagram Navigation Dock (Right Rail) */}
+      <div className="absolute right-3 sm:right-5 top-1/2 -translate-y-1/2 z-30 flex flex-col items-center gap-2">
         <Button
           size="sm"
           variant="outline"
-          className="w-10 h-10 p-0 bg-gray-900/90 border-gray-700 hover:bg-gray-800 hover:border-teal-500/50"
-          onClick={() => {
-            const currentIndex = daysToRender.findIndex(d => d.toDateString() === currentTopDate.toDateString());
-            if (currentIndex > 0) {
-              jumpToDay(currentIndex - 8); // Go to previous day relative to center
-            }
-          }}
-          title="Previous day"
+          onClick={() => jumpToDay(-1)}
+          title="Previous day (or press Up/K)"
+          className="w-9 h-9 p-0 rounded-full bg-gray-900/85 border-gray-700 hover:border-teal-400 hover:bg-gray-800 text-gray-200 shadow-lg backdrop-blur-sm transition-all"
         >
           <ChevronUp className="w-4 h-4" />
         </Button>
-        
+
         <Button
           size="sm"
           variant="outline"
-          className="w-10 h-10 p-0 bg-teal-600 border-teal-500 hover:bg-teal-700 text-white"
           onClick={jumpToToday}
-          title="Jump to today"
+          title="Jump to today (or press T)"
+          className="w-10 h-10 p-0 rounded-full bg-teal-600/90 border-teal-400 hover:bg-teal-500 text-white shadow-lg shadow-teal-500/20 backdrop-blur-sm transition-all flex flex-col items-center justify-center"
         >
-          <div className="text-xs font-bold">{getCurrentDate().getDate()}</div>
+          <span className="text-[9px] font-mono leading-none tracking-tight">TODAY</span>
+          <span className="text-xs font-bold leading-none">{getCurrentDate().getDate()}</span>
         </Button>
-        
+
         <Button
           size="sm"
           variant="outline"
-          className="w-10 h-10 p-0 bg-gray-900/90 border-gray-700 hover:bg-gray-800 hover:border-teal-500/50"
-          onClick={() => {
-            const currentIndex = daysToRender.findIndex(d => d.toDateString() === currentTopDate.toDateString());
-            if (currentIndex < daysToRender.length - 1) {
-              jumpToDay(currentIndex - 6); // Go to next day relative to center
-            }
-          }}
-          title="Next day"
+          onClick={() => jumpToDay(1)}
+          title="Next day (or press Down/J)"
+          className="w-9 h-9 p-0 rounded-full bg-gray-900/85 border-gray-700 hover:border-teal-400 hover:bg-gray-800 text-gray-200 shadow-lg backdrop-blur-sm transition-all"
         >
           <ChevronDown className="w-4 h-4" />
         </Button>
       </div>
 
-      {/* Scrollable Calendar Container */}
-      {/* RESEARCH: Chrome DevTools (2023) - "Avoid CSS smooth scrolling for programmatic scrolls"
-          RESEARCH: MDN (2024) - "scroll-behavior: smooth causes race conditions with multiple scrolls"
-          Changed from 'smooth' to 'auto' for instant positioning on mount/tab switch */}
-      <div 
+      {/* The Instagram Feed Container: snap-y snap-mandatory bounded to 100% height */}
+      <div
         ref={scrollContainerRef}
-        className="flex-1 overflow-y-auto hide-scrollbar relative"
-        style={{ scrollBehavior: 'auto' }}
+        onScroll={handleScroll}
+        className="flex-1 w-full h-full min-h-0 overflow-y-auto snap-y snap-mandatory scroll-smooth hide-scrollbar relative"
+        style={{ scrollSnapType: 'y mandatory' }}
       >
-        {daysToRender.map((date, index) => {
+        {daysToRender.map((date, idx) => {
           const dayEvents = getDayEvents(date);
-          const isTodayDate = isToday(date);
-          
+          const isCurrentToday = isToday(date);
+          const relativeLabel = getRelativeDayLabel(date);
+          const totalScheduledMinutes = dayEvents.reduce((acc, e) => acc + getEventDurationMinutes(e), 0);
+          const hours = Math.floor(totalScheduledMinutes / 60);
+          const mins = totalScheduledMinutes % 60;
+          const durationStr = hours > 0 ? `${hours}h ${mins > 0 ? `${mins}m` : ''}` : `${mins}m`;
+
           return (
-            <div 
+            <div
               key={date.toISOString()}
-              className="relative w-full border-b border-gray-800"
-              style={{ height: `${dayTotalHeight}px` }}
+              className="w-full h-full min-h-full max-h-full snap-start snap-always flex items-center justify-center p-2 sm:p-4 box-border"
             >
-              {/* Day Header - Fixed height */}
-              <div 
-                className={`h-[${DAY_HEADER_HEIGHT}px] border-b p-3 transition-all duration-300 ${
-                  isTodayDate
-                    ? 'bg-teal-600/10 border-teal-500/30'
-                    : 'bg-[#1e2128] border-gray-800'
-                }`}
-                style={{ height: `${DAY_HEADER_HEIGHT}px` }}
-              >
-                <div className="flex items-center gap-3">
-                  <div className={`text-2xl font-bold ${
-                    isTodayDate ? 'text-teal-400' : 'text-gray-300'
-                  }`}>
-                    {date.getDate()}
-                  </div>
-                  <div>
-                    <div className={`text-sm font-semibold ${
-                      isTodayDate ? 'text-teal-300' : 'text-gray-300'
+              {/* Instagram Card — Cut to phone/tab size */}
+              <div className={`w-full max-w-xl h-full max-h-full flex flex-col rounded-2xl sm:rounded-3xl border transition-all duration-300 shadow-2xl relative overflow-hidden backdrop-blur-md ${
+                isCurrentToday
+                  ? 'bg-[#151922] border-teal-500/40 shadow-teal-950/30 ring-1 ring-teal-500/20'
+                  : 'bg-[#13161f] border-gray-800/80 hover:border-gray-700'
+              }`}>
+                {/* Card Header Bar */}
+                <div className={`px-4 sm:px-6 py-3.5 border-b flex items-center justify-between shrink-0 transition-colors ${
+                  isCurrentToday
+                    ? 'bg-gradient-to-r from-teal-950/40 via-gray-900/60 to-gray-900/80 border-teal-500/30'
+                    : 'bg-gray-900/60 border-gray-800/80'
+                }`}>
+                  <div className="flex items-center gap-3">
+                    {/* Big Date Number */}
+                    <div className={`text-2xl sm:text-3xl font-bold font-mono tracking-tight leading-none ${
+                      isCurrentToday ? 'text-teal-400 drop-shadow-[0_0_8px_rgba(45,212,191,0.4)]' : 'text-gray-200'
                     }`}>
-                      {dayNames[date.getDay()]}
+                      {date.getDate()}
                     </div>
-                    <div className="text-xs text-gray-500">
-                      {monthNames[date.getMonth()]} {date.getFullYear()}
+                    {/* Day & Month */}
+                    <div>
+                      <div className={`text-sm sm:text-base font-semibold leading-tight ${
+                        isCurrentToday ? 'text-teal-200' : 'text-gray-300'
+                      }`}>
+                        {DAY_NAMES[date.getDay()]}
+                      </div>
+                      <div className="text-xs text-gray-400 font-mono">
+                        {MONTH_NAMES[date.getMonth()]} {date.getFullYear()}
+                      </div>
                     </div>
                   </div>
-                  {isTodayDate && (
-                    <Badge className="ml-2 bg-teal-500/20 text-teal-300 border-teal-500/30 text-[10px]">
-                      TODAY
+
+                  {/* Header Badges & Actions */}
+                  <div className="flex items-center gap-2">
+                    {isCurrentToday ? (
+                      <Badge className="bg-teal-500/20 text-teal-300 border-teal-500/40 text-[10px] font-bold px-2 py-0.5 tracking-wider">
+                        ● TODAY
+                      </Badge>
+                    ) : (
+                      <Badge variant="outline" className="border-gray-700 text-gray-400 text-[10px] font-mono px-2 py-0.5">
+                        {relativeLabel}
+                      </Badge>
+                    )}
+
+                    <Badge variant="outline" className="border-gray-800 bg-gray-900/80 text-gray-400 text-[10px] font-mono">
+                      {dayEvents.length > 0 ? `${dayEvents.length} EVENT${dayEvents.length > 1 ? 'S' : ''}` : 'FREE'}
                     </Badge>
-                  )}
-                  {dayEvents.length > 0 && (
-                    <div className="ml-auto text-xs text-gray-500">
-                      {dayEvents.length} event{dayEvents.length !== 1 ? 's' : ''}
+
+                    {onCreateEvent && (
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => onCreateEvent(date)}
+                        title={`Add event to ${DAY_NAMES[date.getDay()]} ${date.getDate()}`}
+                        className="h-7 w-7 p-0 rounded-full hover:bg-teal-500/20 text-gray-300 hover:text-teal-300"
+                      >
+                        <Plus className="w-3.5 h-3.5" />
+                      </Button>
+                    )}
+                  </div>
+                </div>
+
+                {/* Card Body — Feed of Scheduled Events for this Day */}
+                <div className="flex-1 min-h-0 overflow-y-auto px-4 sm:px-6 py-4 space-y-3 hide-scrollbar">
+                  {dayEvents.length > 0 ? (
+                    dayEvents.map((event) => {
+                      const dur = getEventDurationMinutes(event);
+                      const isCompleted = Boolean(event.completed);
+
+                      return (
+                        <div
+                          key={event.id}
+                          onClick={() => onEventClick(event)}
+                          className={`group p-3.5 rounded-xl border transition-all duration-200 cursor-pointer shadow-md flex flex-col gap-2 relative overflow-hidden ${
+                            isCompleted
+                              ? 'bg-gray-900/40 border-gray-800/60 opacity-60'
+                              : 'bg-gray-900/80 border-gray-700/60 hover:border-teal-500/50 hover:bg-gray-800/90 hover:scale-[1.01]'
+                          }`}
+                        >
+                          {/* Accent line on left */}
+                          <div className={`absolute left-0 top-0 bottom-0 w-1 ${
+                            isCurrentToday ? 'bg-teal-400' : 'bg-cyan-500/60'
+                          }`} />
+
+                          {/* Time & Duration Row */}
+                          <div className="flex items-center justify-between text-xs font-mono pl-1.5">
+                            <div className="flex items-center gap-1.5 text-teal-300 font-semibold">
+                              <Clock className="w-3.5 h-3.5 text-teal-400" />
+                              <span>{formatEventTime(event)}</span>
+                            </div>
+                            <span className="text-gray-400 text-[11px]">
+                              {dur >= 60 ? `${Math.floor(dur / 60)}h ${dur % 60 ? `${dur % 60}m` : ''}` : `${dur}m`}
+                            </span>
+                          </div>
+
+                          {/* Title & Description */}
+                          <div className="pl-1.5">
+                            <h4 className={`text-sm sm:text-base font-semibold leading-snug transition-colors ${
+                              isCompleted
+                                ? 'line-through text-gray-400'
+                                : 'text-gray-100 group-hover:text-teal-200'
+                            }`}>
+                              {event.title || '(Untitled Event)'}
+                            </h4>
+                            {event.description && (
+                              <p className="text-xs text-gray-400 mt-1 line-clamp-2 leading-relaxed">
+                                {event.description}
+                              </p>
+                            )}
+                          </div>
+
+                          {/* Footer Meta Row: Team avatars / Tasks */}
+                          <div className="flex items-center justify-between pt-1 pl-1.5 text-xs text-gray-400 border-t border-gray-800/60">
+                            {event.teamMembers && event.teamMembers.length > 0 ? (
+                              <div className="flex items-center gap-1.5 text-[11px]">
+                                <Users className="w-3 h-3 text-cyan-400" />
+                                <span>{event.teamMembers.length} member{event.teamMembers.length > 1 ? 's' : ''}</span>
+                              </div>
+                            ) : (
+                              <span className="text-[11px] text-gray-400 font-mono">Personal block</span>
+                            )}
+
+                            {event.tasks && event.tasks.length > 0 && (
+                              <div className="flex items-center gap-1 text-[11px] text-amber-400/90">
+                                <CheckCircle2 className="w-3 h-3" />
+                                <span>{event.tasks.filter((t) => t.completed).length}/{event.tasks.length} tasks</span>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })
+                  ) : (
+                    /* Instagram Empty State Card */
+                    <div className="h-full min-h-[220px] flex flex-col items-center justify-center text-center p-6 bg-gray-900/30 rounded-2xl border border-dashed border-gray-800/80 my-auto">
+                      <div className="w-12 h-12 rounded-full bg-teal-500/10 border border-teal-500/20 flex items-center justify-center text-teal-400 mb-3 shadow-inner">
+                        <Sparkles className="w-6 h-6" />
+                      </div>
+                      <h4 className="text-sm sm:text-base font-semibold text-gray-200">
+                        No Events Scheduled
+                      </h4>
+                      <p className="text-xs text-gray-400 mt-1 max-w-xs leading-relaxed">
+                        Your calendar is open for deep focus, creative flow, or rest on {DAY_NAMES[date.getDay()]}.
+                      </p>
+                      {onCreateEvent && (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => onCreateEvent(date)}
+                          className="mt-4 text-xs bg-gray-800/80 border-gray-700 hover:border-teal-400 hover:bg-gray-800 text-teal-300"
+                        >
+                          <Plus className="w-3.5 h-3.5 mr-1.5" />
+                          Schedule Event
+                        </Button>
+                      )}
                     </div>
                   )}
                 </div>
-              </div>
-              
-              {/* Day Content - 24 hours */}
-              <div 
-                className="relative"
-                style={{ height: `${dayContentHeight}px` }}
-              >
-                <InfiniteDayContent
-                  events={dayEvents}
-                  currentDate={date}
-                  onEventClick={onEventClick}
-                  getParentEventName={getParentEventName}
-                  onUnschedule={onUnschedule}
-                  onDropTask={(task, hour, minute, xPosition, width) => {
-                    onDropTask?.(task, hour, minute, xPosition, width, date);
-                  }}
-                  onMoveEvent={(event, hour, minute, xPosition, width, eventDate) => {
-                    onMoveEvent?.(event, hour, minute, xPosition, width, eventDate || date);
-                  }}
-                  onResetPosition={onResetPosition}
-                  onHorizontalResizeEnd={onHorizontalResizeEnd}
-                  dragHook={dragHook}
-                  expandedEvents={expandedEvents}
-                  onToggleExpand={onToggleExpand}
-                  pixelsPerHour={pixelsPerHour}
-                  minutesPerSlot={minutesPerSlot}
-                />
+
+                {/* Card Footer Bar */}
+                <div className="px-4 sm:px-6 py-2.5 bg-gray-950/60 border-t border-gray-800/80 flex items-center justify-between text-[11px] text-gray-400 font-mono shrink-0">
+                  <div className="flex items-center gap-1.5">
+                    <CalendarIcon className="w-3.5 h-3.5 text-gray-400" />
+                    <span>{dayEvents.length > 0 ? `${durationStr} planned` : '0h planned'}</span>
+                  </div>
+                  <div className="flex items-center gap-1 text-gray-400 text-[10px]">
+                    <span>↕ Scroll to swipe days</span>
+                  </div>
+                </div>
               </div>
             </div>
           );
@@ -520,3 +482,4 @@ export const SimpleMultiDayCalendar = forwardRef<SimpleMultiDayCalendarRef, Simp
 });
 
 SimpleMultiDayCalendar.displayName = 'SimpleMultiDayCalendar';
+export default SimpleMultiDayCalendar;

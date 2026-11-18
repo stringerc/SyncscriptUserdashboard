@@ -194,3 +194,22 @@ export function formatTimeRange(start: number, end?: number): string {
   const eStr = e.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
   return `${sStr} - ${eStr}`;
 }
+
+/**
+ * Format relative day description ("TODAY", "TOMORROW", "YESTERDAY", "IN N DAYS", "N DAYS AGO")
+ */
+export function getRelativeDayLabel(targetDate: number | Date, baseDate: number | Date = Date.now()): string {
+  const t = new Date(targetDate);
+  t.setHours(0, 0, 0, 0);
+  const b = new Date(baseDate);
+  b.setHours(0, 0, 0, 0);
+
+  const diffMs = t.getTime() - b.getTime();
+  const diffDays = Math.round(diffMs / 86_400_000);
+
+  if (diffDays === 0) return 'TODAY';
+  if (diffDays === 1) return 'TOMORROW';
+  if (diffDays === -1) return 'YESTERDAY';
+  if (diffDays > 1) return `IN ${diffDays} DAYS`;
+  return `${Math.abs(diffDays)} DAYS AGO`;
+}
