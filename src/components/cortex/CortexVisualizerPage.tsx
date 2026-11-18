@@ -37,6 +37,10 @@ const HUD_CSS = `
     from { opacity: 0; transform: translateY(18px); }
     to   { opacity: 1; transform: translateY(0); }
   }
+  @keyframes cx-fade-up-center {
+    from { opacity: 0; transform: translate(-50%, 18px); }
+    to   { opacity: 1; transform: translate(-50%, 0); }
+  }
   @keyframes cx-letter-in {
     from { opacity: 0; transform: translateY(0.55em) skewY(4deg); filter: blur(6px); }
     to   { opacity: 1; transform: translateY(0) skewY(0); filter: blur(0); }
@@ -88,13 +92,15 @@ const HUD_CSS = `
     50% { opacity: 0.4; }
   }
   @media (prefers-reduced-motion: reduce) {
-    .cx-letter, .cx-hud-in, .cx-think-dot, .cx-pulse-dot, .cx-busy-slide,
+    .cx-letter, .cx-hud-in, .cx-hud-center-in, .cx-think-dot, .cx-pulse-dot, .cx-busy-slide,
     .cx-scan-drift, .cx-marquee, .cx-bar-fill, .cx-fade-up, .cx-shimmer { animation: none !important; }
+    .cx-hud-center-in { transform: translate(-50%, 0) !important; }
     .cx-think-dot { opacity: 0.8; }
     .cx-caret { animation: none !important; opacity: 1; }
   }
   .cx-letter { display: inline-block; animation: cx-letter-in 0.9s cubic-bezier(0.16,1,0.3,1) both; }
   .cx-hud-in  { animation: cx-fade-up 0.9s cubic-bezier(0.16,1,0.3,1) both; }
+  .cx-hud-center-in { animation: cx-fade-up-center 0.9s cubic-bezier(0.16,1,0.3,1) both; }
   .cx-caret   { display: inline-block; animation: cx-caret 1.1s steps(1) infinite; }
 `;
 
@@ -902,13 +908,13 @@ export default function CortexVisualizerPage() {
       </div>
       )}
 
-      {/* Proactive Ambient & Vigilance HUD Bar */}
+      {/* Proactive Ambient & Vigilance HUD Bar — centered directly under header */}
       <div style={{
-        position: 'absolute', top: busy ? 116 : 68, left: '50%', transform: 'translateX(-50%)',
+        position: 'absolute', top: busy ? 116 : (faceMode === 'agents' ? 70 : 68), left: '50%', transform: 'translate(-50%, 0)',
         zIndex: 21, display: 'flex', alignItems: 'center', gap: 10,
         pointerEvents: 'auto',
         transition: 'top 0.3s cubic-bezier(0.16,1,0.3,1)',
-      }} className="cx-hud-in">
+      }} className="cx-hud-center-in">
         {/* Ambient macOS App & Context Sensor */}
         {ambientContext && (
           <div
@@ -996,12 +1002,12 @@ export default function CortexVisualizerPage() {
       {/* Free Energy Epistemic Telemetry Popover */}
       {showVigilanceDetails && vigilanceData && (
         <div style={{
-          position: 'absolute', top: busy ? 150 : 102, left: '50%', transform: 'translateX(-50%)',
+          position: 'absolute', top: busy ? 150 : (faceMode === 'agents' ? 106 : 102), left: '50%', transform: 'translate(-50%, 0)',
           zIndex: 25, width: 340, padding: '12px 14px', borderRadius: 6,
           background: 'rgba(4,8,16,0.92)', border: '1px solid rgba(56,189,248,0.35)',
           backdropFilter: 'blur(16px)', boxShadow: '0 8px 32px rgba(0,0,0,0.6)',
           fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, color: '#e0f2fe',
-        }}>
+        }} className="cx-hud-center-in">
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8, borderBottom: '1px solid rgba(56,189,248,0.2)', paddingBottom: 4 }}>
             <span style={{ fontWeight: 700, color: '#38bdf8', letterSpacing: '0.1em' }}>VARIATIONAL FREE ENERGY (F)</span>
             <button
@@ -1060,14 +1066,13 @@ export default function CortexVisualizerPage() {
       {/* Mission Console: persistent busy chyron */}
       {busy && (
         <div style={{
-          position: 'absolute', top: 68, left: '50%', transform: 'translateX(-50%)',
+          position: 'absolute', top: 68, left: '50%', transform: 'translate(-50%, 0)',
           zIndex: 22, display: 'flex', alignItems: 'center', gap: 14,
           padding: '8px 16px', maxWidth: 'min(620px, 78vw)',
           border: '1px solid rgba(232,121,249,0.35)', borderRadius: 3,
           background: 'rgba(10,4,18,0.72)', backdropFilter: 'blur(12px)',
           boxShadow: '0 0 32px rgba(232,121,249,0.15), inset 0 0 18px rgba(232,121,249,0.05)',
-          animation: 'cx-fade-up 0.4s cubic-bezier(0.16,1,0.3,1) both',
-        }} className="cx-hud-in">
+        }} className="cx-hud-center-in">
           <span style={{
             width: 7, height: 7, borderRadius: '50%', background: '#e879f9', flexShrink: 0,
             animation: reducedMotion ? 'none' : 'cx-pulse-dot 1.1s ease-in-out infinite',
@@ -1477,13 +1482,13 @@ export default function CortexVisualizerPage() {
 
       {/* Bottom nav command dock: centered to clear left-rail flyouts */}
       <div style={{
-        position: 'absolute', bottom: 24, left: '50%', transform: 'translateX(-50%)',
+        position: 'absolute', bottom: 24, left: '50%', transform: 'translate(-50%, 0)',
         zIndex: 22, display: 'flex', alignItems: 'center', gap: narrow ? 6 : 8,
         flexWrap: narrow ? 'wrap' : 'nowrap', maxWidth: 'calc(100vw - 48px)',
         padding: '5px 8px', background: 'rgba(4,8,16,0.72)',
         backdropFilter: 'blur(12px)', border: '1px solid rgba(103,232,249,0.18)',
         borderRadius: 24, boxShadow: '0 8px 32px rgba(0,0,0,0.5), 0 0 16px rgba(103,232,249,0.06)',
-      }} className="cx-hud-in">
+      }} className="cx-hud-center-in">
         <a href="/cortex/chat" style={{
           textDecoration: 'none', padding: narrow ? '7px 12px' : '9px 20px',
           border: `1px solid ${accent}55`, borderRadius: 2,
@@ -1875,9 +1880,9 @@ export default function CortexVisualizerPage() {
 
       {/* Bottom-center: live caption */}
       <div style={{
-        position: 'absolute', bottom: 40, left: '50%', transform: 'translateX(-50%)',
+        position: 'absolute', bottom: 40, left: '50%', transform: 'translate(-50%, 0)',
         width: 'min(640px, 72vw)', zIndex: 20, textAlign: 'center',
-      }} className="cx-hud-in">
+      }} className="cx-hud-center-in">
         <div style={{ fontSize: 9, letterSpacing: '0.4em', color: 'rgba(148,233,255,0.4)', marginBottom: 10 }}>
           ── LIVE TRANSMISSION ──
         </div>
