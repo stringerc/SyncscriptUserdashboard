@@ -35,6 +35,7 @@ import {
   getCounselSession, listCounselSessions, markCounselDiscordNotified,
   autoClearCounselPolls, pollBoard,
 } from './src/lib/cortex-counsel';
+import { computeCounselScorecard } from './src/lib/cortex-agents/counsel-scorecard';
 import type { RouteTier } from './src/lib/cortex-agents/types';
 import { normalizeForSpeech } from './src/lib/tts-speech-normalize';
 import {
@@ -11711,7 +11712,7 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
               ...s,
               poll: s.status === 'poll' || s.status === 'cleared' ? pollBoard(s) : undefined,
             }));
-            return counselJson(res, 200, { ok: true, sessions, consoles: COUNSEL_CONSOLES });
+            return counselJson(res, 200, { ok: true, sessions, consoles: COUNSEL_CONSOLES, scorecard: computeCounselScorecard() });
           } catch (e: any) {
             return counselJson(res, 500, { ok: false, error: e?.message || 'sessions read failed' });
           }

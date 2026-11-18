@@ -89,7 +89,7 @@ export function CortexFoundryNav({ snap, onSelectAgent, selectedAgent, onOpenTow
   const [calendar, setCalendar] = useState<any[] | null>(null);
   const [incidents, setIncidents] = useState<any[] | null>(null);
   const [pipeline, setPipeline] = useState<any | null>(null);
-  const [counsel, setCounsel] = useState<{ sessions: any[]; consoles: any[] } | null>(null);
+  const [counsel, setCounsel] = useState<{ sessions: any[]; consoles: any[]; scorecard?: any[] } | null>(null);
   const [inbox, setInbox] = useState<any[] | null>(null);
   const [agentMsgs, setAgentMsgs] = useState<any[] | null>(null);
   const [inboxNote, setInboxNote] = useState('');
@@ -197,7 +197,7 @@ export function CortexFoundryNav({ snap, onSelectAgent, selectedAgent, onOpenTow
       if (view === 'counsel') {
         fetch('/api/cortex/counsel/sessions', { cache: 'no-store' })
           .then((r) => r.json())
-          .then((d) => setCounsel({ sessions: d?.sessions || [], consoles: d?.consoles || [] }))
+          .then((d) => setCounsel({ sessions: d?.sessions || [], consoles: d?.consoles || [], scorecard: d?.scorecard || [] }))
           .catch(() => {});
       } else {
         fetch('/api/cortex/agents/proposals?status=pending', { cache: 'no-store' })
@@ -235,7 +235,7 @@ export function CortexFoundryNav({ snap, onSelectAgent, selectedAgent, onOpenTow
         body: JSON.stringify({ action: 'decide', sessionId, decision, by: 'foundry-nav' }),
       });
       const d = await fetch('/api/cortex/counsel/sessions', { cache: 'no-store' }).then((r) => r.json()).catch(() => null);
-      if (d) setCounsel({ sessions: d?.sessions || [], consoles: d?.consoles || [] });
+      if (d) setCounsel({ sessions: d?.sessions || [], consoles: d?.consoles || [], scorecard: d?.scorecard || [] });
     } catch {}
   };
 
@@ -611,6 +611,22 @@ export function CortexFoundryNav({ snap, onSelectAgent, selectedAgent, onOpenTow
           <button onClick={() => { setView(null); onOpenTower(); }} style={{ background: 'none', border: '1px solid rgba(251,191,36,0.4)', color: '#fbbf24', fontFamily: MONO, fontSize: 9.5, padding: '2px 8px', borderRadius: 2, cursor: 'pointer', letterSpacing: '0.15em' }}>OPEN TOWER</button>
         }>
           {counsel === null && <div style={{ padding: '12px 0', color: DIM }}>LOADING…</div>}
+          {counsel?.scorecard?.some((m: any) => m.grade || m.sessions > 0) && (
+            <div style={{ marginBottom: 8, border: '1px solid rgba(192,132,252,0.18)', borderRadius: 3, padding: '6px 8px', background: 'rgba(192,132,252,0.04)' }}>
+              <div style={{ fontSize: 8.5, fontWeight: 800, letterSpacing: '0.22em', color: '#c084fc', marginBottom: 4 }}>CONSOLE SCORECARD — VERDICT ALIGNMENT</div>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '3px 10px' }}>
+                {counsel.scorecard.filter((m: any) => m.id !== 'user').map((m: any) => (
+                  <span key={m.id} title={m.flags?.length ? m.flags.join(' · ') : `${m.aligned}/${m.scored} aligned · ${m.positions} positions · ${m.rejected} rejected`} style={{ fontSize: 9, fontFamily: MONO }}>
+                    <span style={{ color: DIM }}>{m.callSign.split(' ')[0]}</span>{' '}
+                    <span style={{ color: !m.grade ? DIM : m.grade === 'A' ? '#34d399' : m.grade === 'B' ? '#7dd3fc' : m.grade === 'C' ? '#fbbf24' : '#f87171', fontWeight: 800 }}>
+                      {m.grade || '—'}
+                    </span>
+                    {m.flags?.length ? <span style={{ color: '#f87171' }}> ⚑</span> : null}
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
           {counsel && !counsel.sessions.length && <div style={{ padding: '12px 0', color: DIM }}>NO SESSIONS — CONVENE FROM THE TOWER BOARD</div>}
           {(counsel?.sessions || []).map((s: any) => {
             const stanceCounts = (s.positions || []).reduce((m: any, p: any) => { m[p.stance] = (m[p.stance] || 0) + 1; return m; }, {} as Record<string, number>);
