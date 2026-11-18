@@ -138,4 +138,80 @@ describe('incident auto-verify probe', () => {
     expect(submittedAgent).toBe('warden');
     expect(submittedKind).toBe('patrol');
   });
+
+  const writeArchiveRecord = (rec: Record<string, unknown>) => {
+    fs.appendFileSync(path.join(tmp, 'task-archive.jsonl'), JSON.stringify({
+      agentId: 'distributor', kind: 'reddit_scan', title: 'scan', status: 'failed',
+      createdAt: Date.now(), ...rec,
+    }) + '\n');
+  };
+
+  it('probe inherits the failing task input so payload kinds stay runnable', () => {
+    fs.rmSync(path.join(tmp, 'task-archive.jsonl'), { force: true });
+    writeArchiveRecord({ id: 'task-orig-1', input: { subs: [' Entrepreneur'] } });
+    const inc = recordIncidentFailure({
+      taskId: 'task-orig-1', agentId: 'distributor', kind: 'reddit_scan',
+      title: 'reddit scan failed', failureClass: 'no_threads', error: 'no threads',
+    })!;
+
+    let captured: any;
+    const fakeRuntime = {
+      submitTask: (_a: string, _k: string, _t: string, input?: any) => {
+        captured = input; return { ok: true, task: { id: 'probe-1' } };
+      },
+    };
+    const res = autoVerifyIncident(fakeRuntime, inc.id);
+    expect(res.ok).toBe(true);
+    expect(captured.subs).toEqual([' Entrepreneur']);
+    expect(captured.autoVerifyIncidentId).toBe(inc.id);
+    expect(captured.probeKind).toBe('reddit_scan');
+  });
+
+  it('probe-of-probe redirects to the parent incident instead of nesting', () => {
+    fs.rmSync(path.join(tmp, 'task-archive.jsonl'), { force: true });
+    const parent = recordIncidentFailure({
+      taskId: 'task-real-1', agentId: 'distributor', kind: 'reddit_scan',
+      title: 'reddit scan failed', failureClass: 'no_threads', error: 'no threads',
+    })!;
+    writeArchiveRecord({
+      id: 'task-probe-task', kind: 'reddit_scan', status: 'failed',
+      input: { autoVerifyIncidentId: parent.id, probeKind: 'reddit_scan' },
+    });
+    const child = recordIncidentFailure({
+      taskId: 'task-probe-task', agentId: 'distributor', kind: 'reddit_scan',
+      title: 'Probe & verify: reddit scan failed', failureClass: 'bad_payload', error: 'requires payload.subs',
+    })!;
+
+    const submittedFor: string[] = [];
+    const fakeRuntime = {
+      submitTask: (agentId: string, kind: string, title: string, input?: any) => {
+        submittedFor.push(`${agentId}|${kind}|${title}`);
+        return { ok: true, task: { id: 'probe-2' } };
+      },
+    };
+    const res = autoVerifyIncident(fakeRuntime, child.id);
+    expect(res.ok).toBe(true);
+    // Redirected to the PARENT incident — one probe, no nesting.
+    expect(submittedFor.length).toBe(1);
+    expect(submittedFor[0]).toContain('reddit_scan');
+    expect(submittedFor[0]).not.toContain('Probe & verify: Probe & verify:');
+  });
+
+  it('runner probes never inherit the original command', () => {
+    fs.rmSync(path.join(tmp, 'task-archive.jsonl'), { force: true });
+    writeArchiveRecord({ id: 'task-cmd-1', agentId: 'runner', kind: 'shell', input: { command: 'rm -rf /tmp/x' } });
+    const inc = recordIncidentFailure({
+      taskId: 'task-cmd-1', agentId: 'runner', kind: 'shell',
+      title: 'shell failed', failureClass: 'exec', error: 'exit 1',
+    })!;
+    let captured: any;
+    const fakeRuntime = {
+      submitTask: (_a: string, _k: string, _t: string, input?: any) => {
+        captured = input; return { ok: true, task: { id: 'probe-3' } };
+      },
+    };
+    autoVerifyIncident(fakeRuntime, inc.id);
+    expect(captured.command).toBeUndefined();
+    expect(captured.autoVerifyIncidentId).toBe(inc.id);
+  });
 });

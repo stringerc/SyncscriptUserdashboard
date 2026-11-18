@@ -15,6 +15,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileIncidentProposal } from './strategy-proposals';
+import { readArchive } from './archive';
 
 const STATE_DIR = process.env.CORTEX_AGENTS_STATE_DIR || path.join(process.cwd(), '.cortex-runtime');
 const INCIDENTS_PATH = path.join(STATE_DIR, 'incidents.json');
@@ -248,14 +249,45 @@ export function dismissAllIncidents(ids?: string[], note?: string): number {
 export function autoVerifyIncident(
   runtime: { submitTask: (agentId: string, kind: string, title: string, input?: any) => { ok: boolean; task?: any; error?: string } },
   idOrKey: string,
+  depth = 0,
 ): { ok: boolean; taskId?: string; error?: string } {
   try {
+    if (depth > 3) return { ok: false, error: 'verification probe chain too deep' };
     const all = readAll();
     const inc = all.find((i) => i.id === idOrKey || i.key === idOrKey);
     if (!inc) return { ok: false, error: 'incident not found' };
 
+    // Carry the failing task's original input so payload-requiring kinds
+    // (reddit_scan subs[], reddit_comment permalink+text, …) get a runnable
+    // probe instead of a guaranteed "requires payload.X" failure. The
+    // archive retains task input for exactly this kind of replay.
+    let baseInput: Record<string, unknown> = {};
+    if (inc.lastTaskId) {
+      const rec = readArchive({ limit: 500 }).find((r) => r.id === inc.lastTaskId);
+      if (rec?.input && typeof rec.input === 'object') baseInput = { ...rec.input };
+    }
+
+    // Probe-of-probe guard: if the failing task was itself a verification
+    // probe, redirect to the incident it was probing. Without this, a
+    // payload-less probe fails → new incident → next probe inherits
+    // "Probe & verify: Probe & verify: …" titles and the chain never ends
+    // (observed: 7x nested titles, 21 doomed reddit_scan probes).
+    const parentProbeId = typeof baseInput.autoVerifyIncidentId === 'string'
+      ? baseInput.autoVerifyIncidentId : null;
+    if (parentProbeId) {
+      const redirected = autoVerifyIncident(runtime, parentProbeId, depth + 1);
+      if (redirected.ok || redirected.error !== 'incident not found') return redirected;
+      // Parent incident already gone — fall through and probe this one.
+    }
+
     const targetKind = inc.agentId === 'warden' ? 'patrol' : inc.kind;
+    // Runner probes never inherit the original command — re-executing an
+    // arbitrary failed shell command as a "probe" can repeat real side
+    // effects. incident-verify keeps its safe echo; other runner kinds
+    // probe with marker input only.
+    const inheritInput = inc.agentId !== 'runner';
     const input: Record<string, unknown> = {
+      ...(inheritInput ? baseInput : {}),
       autoVerifyIncidentId: inc.id,
       probeKind: inc.kind,
       failureClass: inc.failureClass,
@@ -267,7 +299,7 @@ export function autoVerifyIncident(
     const t = runtime.submitTask(
       inc.agentId,
       targetKind,
-      `Probe & verify: ${inc.title}`.slice(0, 120),
+      `Probe & verify: ${inc.title.replace(/^Probe & verify:\s*/, '')}`.slice(0, 120),
       input,
     );
     if (t.ok && t.task) {

@@ -8,7 +8,13 @@ function cdpUrl() {
 }
 const subs = process.argv.slice(2);
 const browser = await chromium.connectOverCDP(cdpUrl());
-const page = browser.contexts()[0].pages().find(p => p.url().includes('reddit.com'));
+const ctx = browser.contexts()[0];
+// No reddit tab? Reuse any open page as the vehicle — goto() navigates it
+// anyway. Only open a new tab when the browser has zero pages (fresh VM
+// Chrome sits on about:blank with one page, but be safe).
+const page = ctx.pages().find(p => p.url().includes('reddit.com'))
+  || ctx.pages()[0]
+  || await ctx.newPage();
 for (const sub of subs) {
   await page.goto(`https://www.reddit.com/r/${sub}/hot/`, {waitUntil:'domcontentloaded'});
   await page.waitForTimeout(3500);
