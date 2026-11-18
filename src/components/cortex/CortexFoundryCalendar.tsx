@@ -1,0 +1,518 @@
+/**
+ * CortexFoundryCalendar
+ * Multi-horizon mission calendar view for the Foundry left-rail navigation.
+ * Supports:
+ *   - 48H: Immediate next 48-hour tactical agenda
+ *   - DAY: Hourly breakdown and time-blocked timeline for selected day
+ *   - WEEK: 7-day strategic strip (Mon-Sun) with event density
+ *   - MONTH: 7-column calendar grid matrix with day inspection
+ */
+
+import React, { useState } from 'react';
+import {
+  CalendarEventItem,
+  getEventsForDay,
+  getEventsForWeek,
+  getEventsForMonth,
+  getMonthMatrix,
+  formatTimeRange,
+  isSameDay,
+} from '../../lib/cortex-calendar-utils';
+
+const MONO = "'IBM Plex Mono', monospace";
+const INK = '#e0f2fe';
+const DIM = 'rgba(148,163,184,0.55)';
+const CYAN = '#38bdf8';
+const AMBER = '#fbbf24';
+
+export type CalendarHorizon = '48h' | 'day' | 'week' | 'month';
+
+interface Props {
+  events: CalendarEventItem[];
+  loading?: boolean;
+}
+
+export function CortexFoundryCalendar({ events, loading }: Props) {
+  const [horizon, setHorizon] = useState<CalendarHorizon>('48h');
+  const [anchorDate, setAnchorDate] = useState<Date>(new Date());
+  const [selectedDayTimestamp, setSelectedDayTimestamp] = useState<number>(Date.now());
+
+  // Date Navigation step handlers
+  const stepNav = (direction: -1 | 1) => {
+    const next = new Date(anchorDate);
+    if (horizon === 'day') {
+      next.setDate(next.getDate() + direction);
+    } else if (horizon === 'week') {
+      next.setDate(next.getDate() + direction * 7);
+    } else if (horizon === 'month') {
+      next.setMonth(next.getMonth() + direction);
+    }
+    setAnchorDate(next);
+  };
+
+  const jumpToToday = () => {
+    const today = new Date();
+    setAnchorDate(today);
+    setSelectedDayTimestamp(today.getTime());
+  };
+
+  // Header Title derivation
+  const getNavTitle = () => {
+    if (horizon === '48h') return 'NEXT 48 HOURS (TACTICAL AGENDA)';
+    if (horizon === 'day') {
+      return anchorDate.toLocaleDateString(undefined, {
+        weekday: 'short',
+        month: 'short',
+        day: 'numeric',
+        year: 'numeric',
+      }).toUpperCase();
+    }
+    if (horizon === 'week') {
+      const d = new Date(anchorDate);
+      const day = d.getDay();
+      const diff = (day + 6) % 7;
+      const mon = new Date(d); mon.setDate(d.getDate() - diff);
+      const sun = new Date(mon); sun.setDate(mon.getDate() + 6);
+      return `WEEK: ${mon.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })} – ${sun.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}`.toUpperCase();
+    }
+    if (horizon === 'month') {
+      return anchorDate.toLocaleDateString(undefined, { month: 'long', year: 'numeric' }).toUpperCase();
+    }
+    return '';
+  };
+
+  // 1. Next 48 Hours Horizon Data
+  const now = Date.now();
+  const next48hEvents = (events || [])
+    .filter((e) => Number(e.start) >= now - 3600_000 && Number(e.start) <= now + 48 * 3600_000)
+    .sort((a, b) => a.start - b.start);
+
+  // 2. Day Horizon Data
+  const dayEvents = getEventsForDay(events, anchorDate);
+
+  // 3. Week Horizon Data
+  const weekEvents = getEventsForWeek(events, anchorDate);
+  const weekDays = (() => {
+    const d = new Date(anchorDate);
+    const day = d.getDay();
+    const diff = (day + 6) % 7;
+    d.setDate(d.getDate() - diff);
+    d.setHours(0, 0, 0, 0);
+    const days: Date[] = [];
+    for (let i = 0; i < 7; i++) {
+      const cur = new Date(d);
+      cur.setDate(d.getDate() + i);
+      days.push(cur);
+    }
+    return days;
+  })();
+
+  // 4. Month Horizon Data
+  const monthMatrix = getMonthMatrix(anchorDate.getFullYear(), anchorDate.getMonth());
+  const selectedDayEvents = getEventsForDay(events, selectedDayTimestamp);
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 10, fontFamily: MONO }}>
+      {/* Top Controls: Horizon Tabs & Date Navigator */}
+      <div style={{
+        display: 'flex',
+        flexWrap: 'wrap',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        gap: 6,
+        paddingBottom: 8,
+        borderBottom: '1px solid rgba(103,232,249,0.18)',
+      }}>
+        {/* Horizon Switcher Tabs */}
+        <div style={{ display: 'flex', gap: 4 }}>
+          {(['48h', 'day', 'week', 'month'] as CalendarHorizon[]).map((h) => {
+            const active = horizon === h;
+            return (
+              <button
+                key={h}
+                onClick={() => setHorizon(h)}
+                style={{
+                  background: active ? 'rgba(56,189,248,0.22)' : 'rgba(8,14,24,0.6)',
+                  border: `1px solid ${active ? CYAN : 'rgba(103,232,249,0.18)'}`,
+                  color: active ? '#7dd3fc' : DIM,
+                  fontFamily: MONO,
+                  fontSize: 9.5,
+                  fontWeight: active ? 700 : 500,
+                  padding: '2px 8px',
+                  borderRadius: 2,
+                  cursor: 'pointer',
+                  letterSpacing: '0.12em',
+                  transition: 'all 0.15s ease',
+                }}
+              >
+                {h.toUpperCase()}
+              </button>
+            );
+          })}
+        </div>
+
+        {/* Step Navigation controls (for Day, Week, Month) */}
+        {horizon !== '48h' && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+            <button
+              onClick={() => stepNav(-1)}
+              title="Previous"
+              style={{
+                background: 'rgba(8,14,24,0.6)',
+                border: '1px solid rgba(103,232,249,0.18)',
+                color: INK,
+                fontFamily: MONO,
+                fontSize: 10,
+                padding: '2px 6px',
+                borderRadius: 2,
+                cursor: 'pointer',
+              }}
+            >
+              ◀
+            </button>
+            <button
+              onClick={jumpToToday}
+              title="Jump to Today"
+              style={{
+                background: 'rgba(56,189,248,0.12)',
+                border: '1px solid rgba(56,189,248,0.35)',
+                color: '#7dd3fc',
+                fontFamily: MONO,
+                fontSize: 8.5,
+                fontWeight: 700,
+                padding: '2px 6px',
+                borderRadius: 2,
+                cursor: 'pointer',
+                letterSpacing: '0.08em',
+              }}
+            >
+              TODAY
+            </button>
+            <button
+              onClick={() => stepNav(1)}
+              title="Next"
+              style={{
+                background: 'rgba(8,14,24,0.6)',
+                border: '1px solid rgba(103,232,249,0.18)',
+                color: INK,
+                fontFamily: MONO,
+                fontSize: 10,
+                padding: '2px 6px',
+                borderRadius: 2,
+                cursor: 'pointer',
+              }}
+            >
+              ▶
+            </button>
+          </div>
+        )}
+      </div>
+
+      {/* Horizon Context Subtitle */}
+      <div style={{
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        fontSize: 9,
+        letterSpacing: '0.16em',
+        color: CYAN,
+        fontWeight: 700,
+      }}>
+        <span>{getNavTitle()}</span>
+        {loading && <span style={{ color: AMBER, fontSize: 8 }}>SYNCING…</span>}
+      </div>
+
+      {/* ────────────────── VIEW 1: NEXT 48H HORIZON ────────────────── */}
+      {horizon === '48h' && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+          {next48hEvents.map((e, idx) => (
+            <div
+              key={e.id || idx}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 8,
+                padding: '5px 4px',
+                borderBottom: '1px solid rgba(148,163,184,0.08)',
+                fontSize: 10,
+              }}
+            >
+              <span style={{ color: AMBER, minWidth: 84, fontSize: 8.5, flexShrink: 0 }}>
+                {e.start ? new Date(e.start).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : '—'}
+              </span>
+              <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: INK }}>
+                {e.title || '(untitled)'}
+              </span>
+              {e.attendees && e.attendees > 0 ? (
+                <span style={{ fontSize: 8, color: DIM, border: '1px solid rgba(148,163,184,0.2)', padding: '0 4px', borderRadius: 2 }}>
+                  {e.attendees} att
+                </span>
+              ) : null}
+            </div>
+          ))}
+          {!loading && next48hEvents.length === 0 && (
+            <div style={{ padding: '24px 0', textAlign: 'center', color: DIM, fontSize: 9.5 }}>
+              NO EVENTS SCHEDULED IN THE NEXT 48 HOURS
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ────────────────── VIEW 2: DAY HORIZON ────────────────── */}
+      {horizon === 'day' && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+          {/* Day Summary Bar */}
+          <div style={{
+            fontSize: 9,
+            color: DIM,
+            padding: '3px 0',
+            borderBottom: '1px dashed rgba(103,232,249,0.15)',
+          }}>
+            {dayEvents.length} EVENT{dayEvents.length === 1 ? '' : 'S'} SCHEDULED ON THIS DAY
+          </div>
+
+          {/* Chronological hourly list */}
+          {dayEvents.length > 0 ? (
+            dayEvents.map((e, idx) => (
+              <div
+                key={e.id || idx}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 10,
+                  padding: '6px 4px',
+                  background: 'rgba(8,14,24,0.4)',
+                  borderLeft: `2px solid ${AMBER}`,
+                  borderBottom: '1px solid rgba(148,163,184,0.08)',
+                  borderRadius: '0 2px 2px 0',
+                }}
+              >
+                <span style={{ color: AMBER, fontSize: 9, minWidth: 92, fontWeight: 700 }}>
+                  {formatTimeRange(e.start, e.end)}
+                </span>
+                <span style={{ flex: 1, color: INK, fontSize: 10, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {e.title}
+                </span>
+                {e.attendees && e.attendees > 0 ? (
+                  <span style={{ fontSize: 8, color: '#38bdf8' }}>{e.attendees} attendees</span>
+                ) : null}
+              </div>
+            ))
+          ) : (
+            <div style={{ padding: '24px 0', textAlign: 'center', color: DIM, fontSize: 9.5 }}>
+              NO EVENTS SCHEDULED FOR THIS DAY — SCHEDULE CLEAR
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ────────────────── VIEW 3: WEEK HORIZON ────────────────── */}
+      {horizon === 'week' && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+          {weekDays.map((date) => {
+            const dayTs = date.getTime();
+            const isToday = isSameDay(date, new Date());
+            const daysEvents = getEventsForDay(events, dayTs);
+
+            return (
+              <div
+                key={dayTs}
+                style={{
+                  background: isToday ? 'rgba(56,189,248,0.07)' : 'rgba(8,14,24,0.3)',
+                  border: `1px solid ${isToday ? 'rgba(56,189,248,0.4)' : 'rgba(103,232,249,0.1)'}`,
+                  borderRadius: 2,
+                  padding: '6px 8px',
+                }}
+              >
+                {/* Day Header */}
+                <div style={{
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  alignItems: 'baseline',
+                  marginBottom: 4,
+                  borderBottom: '1px solid rgba(148,163,184,0.08)',
+                  paddingBottom: 2,
+                }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <span style={{
+                      fontSize: 9.5,
+                      fontWeight: 800,
+                      color: isToday ? '#38bdf8' : INK,
+                    }}>
+                      {date.toLocaleDateString(undefined, { weekday: 'short' }).toUpperCase()}
+                    </span>
+                    <span style={{ fontSize: 9, color: isToday ? '#38bdf8' : DIM }}>
+                      {date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
+                    </span>
+                    {isToday && (
+                      <span style={{
+                        fontSize: 7.5,
+                        background: '#38bdf8',
+                        color: '#040812',
+                        fontWeight: 900,
+                        padding: '0 4px',
+                        borderRadius: 2,
+                        letterSpacing: '0.06em',
+                      }}>
+                        TODAY
+                      </span>
+                    )}
+                  </div>
+                  <span style={{ fontSize: 8, color: daysEvents.length ? AMBER : DIM }}>
+                    {daysEvents.length ? `${daysEvents.length} EVENT${daysEvents.length === 1 ? '' : 'S'}` : 'QUIET'}
+                  </span>
+                </div>
+
+                {/* Day Events list */}
+                {daysEvents.length > 0 ? (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                    {daysEvents.map((ev, i) => (
+                      <div key={ev.id || i} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 9 }}>
+                        <span style={{ color: AMBER, fontSize: 8, minWidth: 54 }}>
+                          {new Date(ev.start).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}
+                        </span>
+                        <span style={{ flex: 1, color: INK, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                          {ev.title}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div style={{ fontSize: 8, color: 'rgba(148,163,184,0.3)', fontStyle: 'italic' }}>
+                    No scheduled commitments
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* ────────────────── VIEW 4: MONTH HORIZON ────────────────── */}
+      {horizon === 'month' && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          {/* Weekday headers: MON, TUE, WED, THU, FRI, SAT, SUN */}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: 3, textAlign: 'center' }}>
+            {['MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT', 'SUN'].map((wd) => (
+              <span key={wd} style={{ fontSize: 8, color: CYAN, fontWeight: 700, letterSpacing: '0.06em' }}>
+                {wd}
+              </span>
+            ))}
+          </div>
+
+          {/* 7-column calendar grid matrix */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+            {monthMatrix.map((week, wIdx) => (
+              <div key={wIdx} style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: 3 }}>
+                {week.map((cell) => {
+                  const dayEventsCount = getEventsForDay(events, cell.timestamp).length;
+                  const isSelected = isSameDay(cell.timestamp, selectedDayTimestamp);
+
+                  return (
+                    <button
+                      key={cell.timestamp}
+                      onClick={() => setSelectedDayTimestamp(cell.timestamp)}
+                      style={{
+                        display: 'flex',
+                        flexDirection: 'column',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        height: 38,
+                        padding: 2,
+                        cursor: 'pointer',
+                        background: isSelected
+                          ? 'rgba(56,189,248,0.22)'
+                          : cell.isToday
+                            ? 'rgba(56,189,248,0.1)'
+                            : cell.isCurrentMonth
+                              ? 'rgba(8,14,24,0.45)'
+                              : 'rgba(4,8,16,0.25)',
+                        border: `1px solid ${
+                          isSelected
+                            ? '#38bdf8'
+                            : cell.isToday
+                              ? 'rgba(56,189,248,0.6)'
+                              : 'rgba(103,232,249,0.1)'
+                        }`,
+                        borderRadius: 2,
+                        color: cell.isCurrentMonth ? (cell.isToday ? '#7dd3fc' : INK) : 'rgba(148,163,184,0.28)',
+                        fontFamily: MONO,
+                        position: 'relative',
+                        transition: 'all 0.12s ease',
+                      }}
+                    >
+                      <span style={{ fontSize: 9.5, fontWeight: cell.isToday || isSelected ? 800 : 500 }}>
+                        {cell.dayNumber}
+                      </span>
+                      {/* Density indicator dots */}
+                      {dayEventsCount > 0 && (
+                        <div style={{ display: 'flex', gap: 2, marginTop: 2 }}>
+                          <span style={{
+                            width: 4,
+                            height: 4,
+                            borderRadius: '50%',
+                            background: AMBER,
+                            boxShadow: `0 0 4px ${AMBER}`,
+                          }} />
+                        </div>
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+            ))}
+          </div>
+
+          {/* Selected Day Agenda Drawer */}
+          <div style={{
+            marginTop: 4,
+            padding: '8px',
+            background: 'rgba(8,14,24,0.7)',
+            border: '1px solid rgba(56,189,248,0.25)',
+            borderLeft: '2px solid #38bdf8',
+            borderRadius: 2,
+          }}>
+            <div style={{
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+              marginBottom: 4,
+              borderBottom: '1px solid rgba(148,163,184,0.1)',
+              paddingBottom: 2,
+            }}>
+              <span style={{ fontSize: 9, fontWeight: 700, color: '#38bdf8' }}>
+                {new Date(selectedDayTimestamp).toLocaleDateString(undefined, {
+                  weekday: 'short',
+                  month: 'short',
+                  day: 'numeric',
+                }).toUpperCase()}
+              </span>
+              <span style={{ fontSize: 8, color: DIM }}>
+                {selectedDayEvents.length} EVENT{selectedDayEvents.length === 1 ? '' : 'S'}
+              </span>
+            </div>
+
+            {selectedDayEvents.length > 0 ? (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+                {selectedDayEvents.map((e, idx) => (
+                  <div key={e.id || idx} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 9 }}>
+                    <span style={{ color: AMBER, fontSize: 8, minWidth: 84 }}>
+                      {formatTimeRange(e.start, e.end)}
+                    </span>
+                    <span style={{ color: INK, flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {e.title}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div style={{ fontSize: 8.5, color: DIM, fontStyle: 'italic', padding: '4px 0' }}>
+                No events on this date
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
