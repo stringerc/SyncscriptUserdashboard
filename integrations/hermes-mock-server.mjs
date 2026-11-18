@@ -10,7 +10,17 @@ const seenKeys = new Set();
 const server = http.createServer((req, res) => {
   const url = req.url || '/';
 
-  if (req.method === 'GET' && (url === '/health' || url === '/healthz' || url === '/')) {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, HEAD, POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+
+  if (req.method === 'OPTIONS') {
+    res.writeHead(204);
+    res.end();
+    return;
+  }
+
+  if ((req.method === 'GET' || req.method === 'HEAD') && (url === '/health' || url === '/healthz' || url === '/')) {
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ ok: true, status: 'healthy', timestamp: Date.now() }));
     return;
@@ -32,7 +42,7 @@ const server = http.createServer((req, res) => {
     req.on('data', chunk => body += chunk);
     req.on('end', () => {
       let parsed = {};
-      try { parsed = JSON.parse(body || '{}'); } catch {}
+      try { parsed = JSON.parse(body || '{}'); } catch { }
 
       const idemKey = parsed.idempotency_key;
       const isDeduped = Boolean(idemKey && seenKeys.has(idemKey));

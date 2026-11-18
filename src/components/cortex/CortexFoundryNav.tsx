@@ -108,6 +108,18 @@ export function CortexFoundryNav({ snap, onSelectAgent, selectedAgent, onOpenTow
   const goals = getCortexGoals();
   const goalsUnsub = useRef<(() => void) | null>(null);
 
+  // Sovereign Gateways status state (OpenClaw :18789 & Hermes :18880)
+  const [gatewayStatus, setGatewayStatus] = useState<Record<string, {
+    id: string;
+    name: string;
+    status: 'running' | 'down';
+    port: number;
+    latencyMs?: number;
+    wsUrl?: string;
+    url?: string;
+  }> | null>(null);
+  const [gatewayProbing, setGatewayProbing] = useState(false);
+
   // Task & Goal Creation states
   const [showNewTask, setShowNewTask] = useState(false);
   const [newTaskTitle, setNewTaskTitle] = useState('');
@@ -326,6 +338,39 @@ export function CortexFoundryNav({ snap, onSelectAgent, selectedAgent, onOpenTow
     load();
     const iv = setInterval(load, view === 'counsel' ? 8000 : 10000);
     return () => clearInterval(iv);
+  }, [view]);
+
+  // Sovereign Gateways live monitoring poll (OpenClaw :18789 & Hermes :18880)
+  useEffect(() => {
+    if (view !== 'agents') return;
+    let cancelled = false;
+    const probeGateways = () => {
+      setGatewayProbing(true);
+      fetch('/api/cortex/gateways/status', { cache: 'no-store' })
+        .then((r) => r.json())
+        .then((d) => {
+          if (!cancelled && d?.ok && d?.gateways) {
+            setGatewayStatus(d.gateways);
+          }
+        })
+        .catch(() => {
+          if (!cancelled) {
+            setGatewayStatus({
+              openclaw: { id: 'openclaw', name: 'OpenClaw Gateway', status: 'down', port: 18789 },
+              hermes: { id: 'hermes', name: 'Hermes Sovereign Host', status: 'down', port: 18880 },
+            });
+          }
+        })
+        .finally(() => {
+          if (!cancelled) setGatewayProbing(false);
+        });
+    };
+    probeGateways();
+    const iv = setInterval(probeGateways, 8000);
+    return () => {
+      cancelled = true;
+      clearInterval(iv);
+    };
   }, [view]);
 
   const decideProposal = async (id: string, decision: 'approved' | 'dismissed') => {
@@ -948,7 +993,94 @@ export function CortexFoundryNav({ snap, onSelectAgent, selectedAgent, onOpenTow
       )}
 
       {view === 'agents' && (
-        <Panel title="MISSION CONTROL ROSTER" right={<span style={{ fontSize: 9.5, color: DIM }}>{agents.length} REGISTERED</span>}>
+        <Panel
+          title="MISSION CONTROL ROSTER"
+          right={
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              {gatewayProbing && <span style={{ fontSize: 8.5, color: '#38bdf8', letterSpacing: '0.1em' }}>PROBING…</span>}
+              <span style={{ fontSize: 9.5, color: DIM }}>{agents.length} REGISTERED</span>
+            </div>
+          }
+        >
+          {/* Sovereign Gateways Live Radar Strip */}
+          <div style={{
+            marginBottom: 10,
+            padding: '8px 10px',
+            background: 'linear-gradient(180deg, rgba(15,23,42,0.85) 0%, rgba(2,6,23,0.7) 100%)',
+            border: '1px solid rgba(56, 189, 248, 0.28)',
+            borderRadius: 4,
+            boxShadow: '0 2px 8px rgba(0,0,0,0.3)',
+          }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+              <span style={{ fontSize: 9, fontWeight: 800, letterSpacing: '0.22em', color: '#38bdf8' }}>
+                SOVEREIGN GATEWAYS TELEMETRY
+              </span>
+              <span style={{ fontSize: 8.5, color: DIM, letterSpacing: '0.12em' }}>
+                LOCAL SOCKET MONITOR
+              </span>
+            </div>
+
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+              {/* OpenClaw Gateway */}
+              <div style={{
+                padding: '6px 8px',
+                background: gatewayStatus?.openclaw?.status === 'running' ? 'rgba(52, 211, 153, 0.08)' : 'rgba(248, 113, 113, 0.08)',
+                border: `1px solid ${gatewayStatus?.openclaw?.status === 'running' ? 'rgba(52, 211, 153, 0.35)' : 'rgba(248, 113, 113, 0.35)'}`,
+                borderRadius: 3,
+              }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+                    <Lamp status={gatewayStatus?.openclaw?.status || 'down'} />
+                    <span style={{ fontWeight: 700, fontSize: 10, color: '#f8fafc' }}>OPENCLAW</span>
+                  </div>
+                  <span style={{
+                    fontSize: 8.5,
+                    fontWeight: 800,
+                    color: gatewayStatus?.openclaw?.status === 'running' ? '#34d399' : '#f87171',
+                    letterSpacing: '0.12em',
+                  }}>
+                    {gatewayStatus?.openclaw?.status === 'running' ? 'RUNNING' : 'DOWN'}
+                  </span>
+                </div>
+                <div style={{ marginTop: 3, fontSize: 8.5, color: DIM, display: 'flex', justifyContent: 'space-between' }}>
+                  <span>PORT 18789 · WS</span>
+                  {gatewayStatus?.openclaw?.latencyMs !== undefined && (
+                    <span style={{ color: '#38bdf8', fontWeight: 600 }}>{gatewayStatus.openclaw.latencyMs}ms</span>
+                  )}
+                </div>
+              </div>
+
+              {/* Hermes Gateway */}
+              <div style={{
+                padding: '6px 8px',
+                background: gatewayStatus?.hermes?.status === 'running' ? 'rgba(52, 211, 153, 0.08)' : 'rgba(248, 113, 113, 0.08)',
+                border: `1px solid ${gatewayStatus?.hermes?.status === 'running' ? 'rgba(52, 211, 153, 0.35)' : 'rgba(248, 113, 113, 0.35)'}`,
+                borderRadius: 3,
+              }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+                    <Lamp status={gatewayStatus?.hermes?.status || 'down'} />
+                    <span style={{ fontWeight: 700, fontSize: 10, color: '#f8fafc' }}>HERMES</span>
+                  </div>
+                  <span style={{
+                    fontSize: 8.5,
+                    fontWeight: 800,
+                    color: gatewayStatus?.hermes?.status === 'running' ? '#34d399' : '#f87171',
+                    letterSpacing: '0.12em',
+                  }}>
+                    {gatewayStatus?.hermes?.status === 'running' ? 'RUNNING' : 'DOWN'}
+                  </span>
+                </div>
+                <div style={{ marginTop: 3, fontSize: 8.5, color: DIM, display: 'flex', justifyContent: 'space-between' }}>
+                  <span>PORT 18880 · HTTP</span>
+                  {gatewayStatus?.hermes?.latencyMs !== undefined && (
+                    <span style={{ color: '#38bdf8', fontWeight: 600 }}>{gatewayStatus.hermes.latencyMs}ms</span>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+
           {([
             { section: 'THE CREW', col: '#fbbf24', entries: [{ id: null, callSign: 'CREW COMMANDER', desc: 'Holds veto · Final GO/NO-GO', status: 'active' }] },
             { section: 'FLIGHT DIRECTOR', col: '#38bdf8', entries: [{ id: 'strategist', callSign: 'CORTEX CORE', desc: 'Owns console · Decides, never flies', status: 'idle' }] },
@@ -990,7 +1122,21 @@ export function CortexFoundryNav({ snap, onSelectAgent, selectedAgent, onOpenTow
               </div>
               {sec.entries.map((e) => {
                 const a = e.id ? agents.find((x) => x.id === e.id) : null;
-                const status = e.id ? (a?.status || 'offline') : e.status;
+                let status = e.id ? (a?.status || 'offline') : e.status;
+                let latencyText = '';
+                if (e.id === 'openclaw') {
+                  const gw = gatewayStatus?.openclaw;
+                  if (gw) {
+                    status = gw.status;
+                    latencyText = gw.status === 'running' ? ` · ${gw.latencyMs ?? 0}ms` : ' · OFFLINE';
+                  }
+                } else if (e.id === 'hermes') {
+                  const gw = gatewayStatus?.hermes;
+                  if (gw) {
+                    status = gw.status;
+                    latencyText = gw.status === 'running' ? ` · ${gw.latencyMs ?? 0}ms` : ' · OFFLINE';
+                  }
+                }
                 return (
                   <Row key={e.callSign + e.desc}>
                     <Lamp status={status} />
@@ -1003,12 +1149,12 @@ export function CortexFoundryNav({ snap, onSelectAgent, selectedAgent, onOpenTow
                         }}
                       >
                         <span style={{ color: sec.col, fontWeight: 700 }}>{e.callSign}</span>
-                        <span style={{ color: DIM, fontSize: 9 }}> — {e.desc} · {status.toUpperCase()}</span>
+                        <span style={{ color: DIM, fontSize: 9 }}> — {e.desc}{latencyText} · {status.toUpperCase()}</span>
                       </button>
                     ) : (
                       <span style={{ flex: 1, fontSize: 10.5, color: INK }}>
                         <span style={{ color: sec.col, fontWeight: 700 }}>{e.callSign}</span>
-                        <span style={{ color: DIM, fontSize: 9 }}> — {e.desc}</span>
+                        <span style={{ color: DIM, fontSize: 9 }}> — {e.desc}{latencyText} · {status.toUpperCase()}</span>
                       </span>
                     )}
                     {a && <span style={{ fontSize: 9, color: DIM }}>{a.tasksCompleted}✓</span>}
