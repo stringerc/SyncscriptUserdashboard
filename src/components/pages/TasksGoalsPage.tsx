@@ -2095,6 +2095,60 @@ function TaskManagementSection({
   const todayTaskCount = tasks.filter((t: any) => isToday(t.createdAt)).length;
   const previousTaskCount = tasks.length - todayTaskCount;
 
+  // ── Daypart grouping (research-backed: OpenTodo/DoEverything/Marvin all
+  // ship this; CHI guidance says keep it optional — chips already do that).
+  // Groups: chronological day → morning/afternoon/evening/night → time.
+  const DAYPART_RANK: Record<string, number> = { morning: 0, afternoon: 1, evening: 2, night: 3 };
+  const daypartRankOf = (t: any): number => {
+    const dp = taskDaypart((t as any)?.createdAt);
+    return dp ? DAYPART_RANK[dp] : 4; // undated/any-time last
+  };
+  const compareTasksByDaypart = (a: any, b: any): number => {
+    const ta = a?.createdAt ? new Date(a.createdAt).getTime() : NaN;
+    const tb = b?.createdAt ? new Date(b.createdAt).getTime() : NaN;
+    const aOk = !Number.isNaN(ta), bOk = !Number.isNaN(tb);
+    if (!aOk && !bOk) return 0;
+    if (!aOk) return 1;
+    if (!bOk) return -1;
+    const da = new Date(a.createdAt), db = new Date(b.createdAt);
+    const dayA = new Date(da.getFullYear(), da.getMonth(), da.getDate()).getTime();
+    const dayB = new Date(db.getFullYear(), db.getMonth(), db.getDate()).getTime();
+    if (dayA !== dayB) return dayA - dayB;
+    const r = daypartRankOf(a) - daypartRankOf(b);
+    return r !== 0 ? r : ta - tb;
+  };
+  // Group key: 'today' scope groups by daypart only; 'all' scope groups by
+  // calendar day AND daypart so history stays readable.
+  const taskGroupKey = (t: any): string => {
+    const dp = taskDaypart((t as any)?.createdAt) ?? 'anytime';
+    if (taskDateScope === 'today') return dp;
+    const iso = (t as any)?.createdAt;
+    const d = iso ? new Date(iso) : null;
+    const day = d && !Number.isNaN(d.getTime())
+      ? `${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()}` : 'undated';
+    return `${day}|${dp}`;
+  };
+  const renderDaypartHeader = (task: any, prevTask: any) => {
+    const key = taskGroupKey(task);
+    if (prevTask && taskGroupKey(prevTask) === key) return null;
+    const dp = taskDaypart((task as any)?.createdAt);
+    let label = dp ? dp[0].toUpperCase() + dp.slice(1) : 'Any time';
+    if (taskDateScope === 'all') {
+      const iso = (task as any)?.createdAt;
+      const d = iso ? new Date(iso) : null;
+      label = d && !Number.isNaN(d.getTime())
+        ? `${d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })} · ${label}`
+        : `Undated · ${label}`;
+    }
+    return (
+      <div className="flex items-center gap-2 pt-1 pb-1">
+        <span className="text-[10px] font-semibold uppercase tracking-[0.2em] text-cyan-300/70">{label}</span>
+        <div className="flex-1 h-px bg-gradient-to-r from-cyan-400/30 to-transparent" />
+      </div>
+    );
+  };
+  const sortByDayparts = (arr: any[]) => [...arr].sort(compareTasksByDaypart);
+
   const filteredTasks = tasks.filter(task => {
     const priorityMatch = activePriorityFilter === 'all' || task.priority === activePriorityFilter;
     const energyMatch = activeEnergyFilter === 'all' || task.energyLevel === activeEnergyFilter;
@@ -2369,7 +2423,7 @@ function TaskManagementSection({
               <span className="text-xs text-blue-200/80">{doingFilteredTasks.length}</span>
             </div>
             <div className="space-y-3">
-              {doingFilteredTasks.map((task) => {
+              {sortByDayparts(doingFilteredTasks).map((task, _ti, _tarr) => {
             // Get priority left accent styling (research-backed design)
             const priorityLeftAccent = getPriorityLeftAccent(task.priority);
             
@@ -2379,6 +2433,8 @@ function TaskManagementSection({
               : '';
             
                 return (
+              <div key={task.id} className="space-y-3">
+              {renderDaypartHeader(task, _tarr[_ti - 1])}
               <motion.div
                 key={task.id}
                 className={`bg-[#1e2128] border border-gray-800/60 rounded-xl p-5 hover:shadow-xl hover:shadow-teal-500/5 hover:border-teal-600/30 hover:bg-gray-900/30 transition-all duration-200 cursor-pointer ${
@@ -2919,6 +2975,7 @@ function TaskManagementSection({
                 </div>
               </div>
             </motion.div>
+              </div>
                 );
               })}
               {doingFilteredTasks.length === 0 && (
@@ -2933,7 +2990,7 @@ function TaskManagementSection({
               <span className="text-xs text-teal-200/80">{doFilteredTasks.length}</span>
             </div>
             <div className="space-y-3">
-              {doFilteredTasks.map((task) => {
+              {sortByDayparts(doFilteredTasks).map((task, _ti, _tarr) => {
                 // Get priority left accent styling (research-backed design)
                 const priorityLeftAccent = getPriorityLeftAccent(task.priority);
                 
@@ -2943,6 +3000,8 @@ function TaskManagementSection({
                   : '';
                 
                 return (
+                  <div key={task.id} className="space-y-3">
+                  {renderDaypartHeader(task, _tarr[_ti - 1])}
                   <motion.div
                     key={task.id}
                     className={`bg-[#1e2128] border border-gray-800/60 rounded-xl p-5 hover:shadow-xl hover:shadow-teal-500/5 hover:border-teal-600/30 hover:bg-gray-900/30 transition-all duration-200 cursor-pointer ${
@@ -3012,6 +3071,7 @@ function TaskManagementSection({
                     </div>
                   </div>
                 </motion.div>
+                  </div>
                 );
               })}
               {doFilteredTasks.length === 0 && (
@@ -3028,11 +3088,13 @@ function TaskManagementSection({
               <CheckCircle2 className="w-4 h-4 text-teal-400" />
               Completed Tasks ({filteredTasks.filter(t => t.completed).length})
             </h4>
-            {filteredTasks.filter(task => task.completed).map((task) => {
+            {sortByDayparts(filteredTasks.filter(task => task.completed)).map((task, _ti, _tarr) => {
               // Get priority left accent styling (research-backed design)
               const priorityLeftAccent = getPriorityLeftAccent(task.priority);
               
               return (
+                <div key={task.id} className="space-y-3">
+                {renderDaypartHeader(task, _tarr[_ti - 1])}
                 <motion.div
                   key={task.id}
                   className={`bg-[#1e2128] border border-gray-800 rounded-xl p-5 hover:shadow-lg hover:border-gray-700 transition-all cursor-pointer opacity-60 ${priorityLeftAccent} ${
@@ -3104,6 +3166,7 @@ function TaskManagementSection({
                     </div>
                   </div>
                 </motion.div>
+                </div>
               );
             })}
           </div>
