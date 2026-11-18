@@ -23,6 +23,7 @@ import { recordAgentOutcome } from './src/lib/cortex-agents/outcomes';
 import { archiveTask, readArchive } from './src/lib/cortex-agents/archive';
 import { listStrategyProposals, decideStrategyProposal, reconcileStrategyProposals, fileBudgetProposal, autoApproveSafeStrategyProposals, setOnProposalFiledHook } from './src/lib/cortex-agents/strategy-proposals';
 import { recordIncidentFailure, resolveIncidentsOnSuccess, listIncidents, escalateStaleIncidents, sweepIncidentTtl, dismissIncident, dismissAllIncidents, autoVerifyIncident } from './src/lib/cortex-agents/incidents';
+import { issueDirective, listDirectives, ackDirective, cancelDirective } from './src/lib/cortex-agents/directives';
 import { registerAgentWorkers, makeEphemeralWorker, expandTaskSpec } from './src/lib/cortex-agents/workers';
 import { enqueueDistributionItem, DISTRIBUTION_ITEM_TYPES } from './src/lib/cortex-agents/distribution';
 import {
@@ -11047,6 +11048,135 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
           res.writeHead(500);
           res.end(JSON.stringify({ ok: false, error: e?.message || 'incidents read failed' }));
         }
+      });
+
+      // ── Cortex→agent directive channel (/api/cortex/agents/directives*) ──
+      // Orders-of-the-day: durable, deduped, TTL'd, injected into the
+      // target agent's next LLM call. POST issues; GET lists; /ack and
+      // /cancel act on a single directive id.
+      server.middlewares.use('/api/cortex/agents/directives/ack', (req: any, res: any, next: any) => {
+        const origin = req.headers.origin;
+        const isAllowed = isAllowedOrigin(origin, req.headers.host);
+        if (req.method === 'OPTIONS') {
+          res.writeHead(204, { 'Access-Control-Allow-Origin': origin || '*', 'Access-Control-Allow-Methods': 'POST, OPTIONS', 'Access-Control-Allow-Headers': 'Content-Type' });
+          return res.end();
+        }
+        if (req.method !== 'POST' || !isAllowed) return next();
+        let body = '';
+        req.on('data', (c: Buffer) => { body += c.toString(); });
+        req.on('end', () => {
+          try {
+            const parsed = JSON.parse(body || '{}');
+            const ok = ackDirective(String(parsed.id || ''), parsed.note ? String(parsed.note) : undefined);
+            agentCors(req, res);
+            res.writeHead(ok ? 200 : 404);
+            res.end(JSON.stringify({ ok, id: parsed.id }));
+          } catch (e: any) {
+            agentCors(req, res);
+            res.writeHead(400);
+            res.end(JSON.stringify({ ok: false, error: e?.message || 'bad request' }));
+          }
+        });
+      });
+
+      server.middlewares.use('/api/cortex/agents/directives/cancel', (req: any, res: any, next: any) => {
+        const origin = req.headers.origin;
+        const isAllowed = isAllowedOrigin(origin, req.headers.host);
+        if (req.method === 'OPTIONS') {
+          res.writeHead(204, { 'Access-Control-Allow-Origin': origin || '*', 'Access-Control-Allow-Methods': 'POST, OPTIONS', 'Access-Control-Allow-Headers': 'Content-Type' });
+          return res.end();
+        }
+        if (req.method !== 'POST' || !isAllowed) return next();
+        let body = '';
+        req.on('data', (c: Buffer) => { body += c.toString(); });
+        req.on('end', () => {
+          try {
+            const parsed = JSON.parse(body || '{}');
+            const ok = cancelDirective(String(parsed.id || ''));
+            agentCors(req, res);
+            res.writeHead(ok ? 200 : 404);
+            res.end(JSON.stringify({ ok, id: parsed.id }));
+          } catch (e: any) {
+            agentCors(req, res);
+            res.writeHead(400);
+            res.end(JSON.stringify({ ok: false, error: e?.message || 'bad request' }));
+          }
+        });
+      });
+
+      server.middlewares.use('/api/cortex/agents/directives', (req: any, res: any, next: any) => {
+        const origin = req.headers.origin;
+        const isAllowed = isAllowedOrigin(origin, req.headers.host);
+        if (req.method === 'OPTIONS') {
+          res.writeHead(204, { 'Access-Control-Allow-Origin': origin || '*', 'Access-Control-Allow-Methods': 'GET, POST, OPTIONS', 'Access-Control-Allow-Headers': 'Content-Type' });
+          return res.end();
+        }
+        if (!isAllowed) return next();
+        if (req.method === 'GET') {
+          agentCors(req, res);
+          try {
+            const url = new URL(req.url || '/', 'http://localhost');
+            const agentId = url.searchParams.get('agentId') || undefined;
+            const status = url.searchParams.get('status') as any;
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ ok: true, directives: listDirectives({ agentId, status }) }));
+          } catch (e: any) {
+            res.writeHead(500);
+            res.end(JSON.stringify({ ok: false, error: e?.message || 'directives read failed' }));
+          }
+          return;
+        }
+        if (req.method !== 'POST') return next();
+        let body = '';
+        req.on('data', (c: Buffer) => { body += c.toString(); });
+        req.on('end', () => {
+          try {
+            const parsed = JSON.parse(body || '{}');
+            const to = String(parsed.to || parsed.agentId || '');
+            const message = String(parsed.message || parsed.directive || '');
+            if (!to || !message) {
+              agentCors(req, res);
+              res.writeHead(400);
+              res.end(JSON.stringify({ ok: false, error: 'to and message are required' }));
+              return;
+            }
+            // Reject directives to unknown/retired agents — honest failure
+            // beats a directive that silently expires undelivered.
+            const agent = agentRuntime.getAgent(to as any);
+            if (!agent || agent.status === 'retired') {
+              agentCors(req, res);
+              res.writeHead(404);
+              res.end(JSON.stringify({ ok: false, error: `unknown or retired agent: ${to}` }));
+              return;
+            }
+            const { directive, created } = issueDirective({
+              to,
+              from: String(parsed.from || 'cortex'),
+              channel: parsed.channel || 'directive',
+              message,
+              evidence: parsed.evidence ? String(parsed.evidence) : undefined,
+              dedupeKey: parsed.dedupeKey ? String(parsed.dedupeKey) : undefined,
+              ttlMs: parsed.ttlMs ? Number(parsed.ttlMs) : undefined,
+            });
+            if (created) {
+              agentRuntime.emit({
+                type: 'agent.comm',
+                from: (directive.from as any) || 'cortex',
+                to: to as any,
+                channel: directive.channel,
+                message: directive.message.slice(0, 300),
+                at: Date.now(),
+              });
+            }
+            agentCors(req, res);
+            res.writeHead(created ? 201 : 200);
+            res.end(JSON.stringify({ ok: true, created, directive }));
+          } catch (e: any) {
+            agentCors(req, res);
+            res.writeHead(400);
+            res.end(JSON.stringify({ ok: false, error: e?.message || 'bad request' }));
+          }
+        });
       });
 
       // ── Counsel deliberation layer (/api/cortex/counsel/*) ──

@@ -18,11 +18,14 @@ import type { AgentId, SpawnSpec, ToolScope } from './types';
 import { registerWardenWorker } from './warden';
 import { registerDistributorWorker } from './distribution';
 import { runForecastCycle, type RoutedForecast, type ProbeDeps } from './forecaster';
+import { issueDirective } from './directives';
 import { makePrepWorker } from './prep';
 import { makeBriefWorker } from './brief';
 import { makeDebriefWorker } from './debrief';
 import { makeRadarSweepWorker } from './radar';
 import { makeStrategistWorker } from './strategist';
+import { readArchive, type TaskArchiveRecord } from './archive';
+import { DETERMINISTIC_TASKS } from './lights';
 import { runCounselPosition } from './counsel-position';
 import { getCortexProactiveInitiative } from '../cortex-proactive-initiative';
 import { cortexObsidianMemory } from '../cortex-obsidian-memory';
@@ -594,6 +597,207 @@ async function repoScanWorker(ctx: AgentContext) {
   return { scanned: repos.length, picks: picks.length, proposalsFiled, note: '02 - Projects/repo-scan' };
 }
 
+// ── github_trend_scan: "on the rise" detector ─────────────────────
+// repo_scan sweeps established repos (45d window, sort=stars). This kind
+// hunts NEW repos gaining stars fast (14d window) — the adoption window
+// where a rising tool can still be integrated cheaply. Deterministic
+// pre-filter keeps the LLM honest: only repos matching Cortex domain
+// keywords reach the judgment call, and each repo is evaluated at most
+// once per ISO week (seen-set on disk).
+
+const TREND_QUERIES = [
+  'mcp server',
+  'ai agent framework',
+  'voice ai tts',
+  'browser automation agent',
+  'llm agent memory',
+  'local llm inference',
+  'agent observability',
+  'discord bot ai',
+];
+
+const TREND_KEYWORDS = [
+  'agent', 'llm', 'mcp', 'voice', 'tts', 'stt', 'speech', 'browser', 'automation',
+  'memory', 'rag', 'inference', 'ollama', 'obsidian', 'discord', 'calendar',
+  'schedul', 'crawl', 'scrap', 'webhook', 'realtime', 'websocket', 'orchestrat',
+  'multi-agent', 'a2a', 'tool-use', 'function-calling',
+];
+
+const TREND_STATE_DIR = process.env.CORTEX_AGENTS_STATE_DIR || path.join(process.cwd(), '.cortex-runtime');
+const TREND_SEEN_PATH = path.join(TREND_STATE_DIR, 'github-trend-seen.json');
+
+function isoWeekKey(d = new Date()): string {
+  const date = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
+  const day = date.getUTCDay() || 7;
+  date.setUTCDate(date.getUTCDate() + 4 - day);
+  const yearStart = new Date(Date.UTC(date.getUTCFullYear(), 0, 1));
+  const week = Math.ceil((((date.getTime() - yearStart.getTime()) / 86400000) + 1) / 7);
+  return `${date.getUTCFullYear()}-W${String(week).padStart(2, '0')}`;
+}
+
+function readTrendSeen(): Record<string, string[]> {
+  try {
+    if (!fs.existsSync(TREND_SEEN_PATH)) return {};
+    const data = JSON.parse(fs.readFileSync(TREND_SEEN_PATH, 'utf-8'));
+    return data && typeof data === 'object' ? data : {};
+  } catch { return {}; }
+}
+
+function writeTrendSeen(seen: Record<string, string[]>) {
+  try {
+    fs.mkdirSync(TREND_STATE_DIR, { recursive: true });
+    // Keep last 6 week-keys so dedupe memory stays bounded.
+    const keys = Object.keys(seen).sort().slice(-6);
+    const pruned: Record<string, string[]> = {};
+    for (const k of keys) pruned[k] = seen[k].slice(-500);
+    fs.writeFileSync(TREND_SEEN_PATH, JSON.stringify(pruned));
+  } catch { /* best-effort */ }
+}
+
+async function githubTrendScanWorker(ctx: AgentContext) {
+  ctx.progress(0.1);
+  const input = (ctx.task.input || {}) as any;
+  const queries: string[] = Array.isArray(input.queries) && input.queries.length
+    ? input.queries.map(String)
+    : TREND_QUERIES;
+  const sinceDays = Math.min(60, Math.max(3, Number(input.sinceDays) || 14));
+  const week = isoWeekKey();
+
+  const perQuery = await Promise.all(queries.map((q) => githubRepoSearch(q, sinceDays).catch(() => ({ items: [], status: 0 }))));
+  const apiErrors = perQuery.filter((r) => r.status !== 200).length;
+
+  const seenSet = readTrendSeen();
+  const alreadySeen = new Set(seenSet[week] || []);
+  const seen = new Set<string>();
+  const fresh: any[] = [];
+  let skippedSeen = 0;
+  for (const { items: list } of perQuery) {
+    for (const r of list) {
+      if (seen.has(r.full_name)) continue;
+      seen.add(r.full_name);
+      if (alreadySeen.has(r.full_name)) { skippedSeen++; continue; }
+      fresh.push({
+        name: r.full_name,
+        url: r.html_url,
+        description: String(r.description || '').slice(0, 200),
+        stars: r.stargazers_count || 0,
+        language: r.language || '',
+        topics: Array.isArray(r.topics) ? r.topics.slice(0, 6) : [],
+        createdAt: r.created_at || '',
+        pushedAt: r.pushed_at || '',
+      });
+    }
+  }
+  ctx.progress(0.35);
+
+  // Deterministic relevance pre-filter — only repos touching Cortex
+  // domains reach the LLM. Everything else is recorded as scanned noise.
+  const relevant = fresh.filter((r) => {
+    const hay = `${r.name} ${r.description} ${r.topics.join(' ')}`.toLowerCase();
+    return TREND_KEYWORDS.some((k) => hay.includes(k));
+  });
+  const droppedIrrelevant = fresh.length - relevant.length;
+
+  if (!relevant.length) {
+    // Still mark scanned repos as seen so we don't re-evaluate noise weekly.
+    seenSet[week] = [...(seenSet[week] || []), ...seen];
+    writeTrendSeen(seenSet);
+    return {
+      scanned: fresh.length + skippedSeen,
+      newRepos: fresh.length,
+      skippedSeen,
+      prefiltered: 0,
+      droppedIrrelevant,
+      apiErrors,
+      note: apiErrors === queries.length
+        ? `GitHub API unavailable (${apiErrors}/${queries.length} queries failed)`
+        : `No new Cortex-relevant repos this cycle (${droppedIrrelevant} irrelevant filtered)`,
+    };
+  }
+
+  const shortlist = relevant.sort((a, b) => b.stars - a.stars).slice(0, 15);
+  const raw = await ctx.llm({
+    tier: 'reason',
+    maxTokens: 1400,
+    messages: [
+      {
+        role: 'system',
+        content: [
+          'You are SCOUT\'s trend analyst for Cortex — a local-first cognitive OS with:',
+          'a governed agent runtime (budgets, spawn gates, approval inbox), voice agents (Pocket TTS/Kokoro),',
+          'browser automation via CDP, Obsidian memory + distilled rules, calendar/energy scheduling, distribution automation.',
+          'These are NEW repos (created <14d ago) gaining stars fast — the cheap-adoption window.',
+          'For each repo decide: does adopting or learning from it close a CONCRETE Cortex gap?',
+          'Output STRICT JSON: {"picks":[{"name","fit","why","action":"adopt|watch|ignore","gap"}]}.',
+          'Only repos worth attention (fit >= 0.5). "adopt" requires a specific gap it fills — generic "cool project" is watch at best.',
+          'Max 6 picks. No prose outside JSON.',
+        ].join(' ') + rulesBlock('github trending repos adoption agent tooling mcp voice', 'constraints learned from accepted agent outcomes — follow unless they conflict with the trend scan'),
+      },
+      {
+        role: 'user',
+        content: `TRENDING NEW REPOS (last ${sinceDays}d, by stars):\n${shortlist.map((r) =>
+          `- ${r.name} ★${r.stars} [${r.language}] created ${r.createdAt?.slice(0, 10)} ${r.description} topics:${r.topics.join(',')}`
+        ).join('\n')}`,
+      },
+    ],
+  });
+  ctx.progress(0.75);
+
+  let picks: any[] = [];
+  try {
+    const m = String(raw).match(/\{[\s\S]*\}/);
+    picks = m ? (JSON.parse(m[0])?.picks || []) : [];
+  } catch { picks = []; }
+
+  const adoptPicks = picks.filter((p: any) => p?.action === 'adopt' && Number(p?.fit) >= 0.6).slice(0, 3);
+  let proposalsFiled = 0;
+  if (adoptPicks.length) {
+    try {
+      const { fileStrategyProposals } = await import('./strategy-proposals');
+      const actions = adoptPicks.map((p: any) =>
+        `[research] Evaluate adopting trending repo ${p.name} — ${String(p.gap || p.why || '').slice(0, 200)} — evidence: ${p.name}, github trend fit ${p.fit}, week ${week}`);
+      const res = fileStrategyProposals({ planNote: `github-trend-${week}`, planTaskId: ctx.task.id, actions });
+      proposalsFiled = res.filed;
+    } catch { proposalsFiled = 0; }
+  }
+
+  // Mark everything evaluated this cycle as seen for the week.
+  seenSet[week] = [...new Set([...(seenSet[week] || []), ...seen])];
+  writeTrendSeen(seenSet);
+
+  const brief = [
+    `# GitHub Trend Scan — ${week}`,
+    `Scanned ${fresh.length + skippedSeen} repos across ${queries.length} queries (${sinceDays}d window).`,
+    `${skippedSeen} already evaluated this week · ${droppedIrrelevant} filtered as irrelevant · ${relevant.length} reached judgment.`,
+    '',
+    ...picks.map((p) => `- **${p.action?.toUpperCase()}** ${p.name} (fit ${p.fit}) — ${p.why}${p.gap ? ` [gap: ${p.gap}]` : ''}`),
+    picks.length ? '' : '_No trending repo cleared the adoption bar this cycle._',
+  ].join('\n');
+
+  try {
+    cortexObsidianMemory.ensureVaultInitialized();
+    cortexObsidianMemory.writeNote(
+      '02 - Projects',
+      `github-trend-${week}`,
+      brief,
+      { created: new Date().toISOString(), agent: 'SCOUT', kind: 'github-trend' },
+    );
+  } catch {}
+
+  ctx.progress(1);
+  return {
+    scanned: fresh.length + skippedSeen,
+    newRepos: fresh.length,
+    skippedSeen,
+    prefiltered: relevant.length,
+    droppedIrrelevant,
+    picks: picks.length,
+    proposalsFiled,
+    apiErrors,
+    note: `02 - Projects/github-trend-${week}`,
+  };
+}
+
 async function agentIdeasWorker(ctx: AgentContext) {
   ctx.progress(0.15);
   // Fleet digest — real telemetry only; ideation must be grounded in what
@@ -686,6 +890,7 @@ const radarSweep = makeRadarSweepWorker({
 const scoutWorker: WorkerHandler = async (ctx) => {
   const kind = ctx.task.kind || 'research';
   if (kind === 'repo_scan') return repoScanWorker(ctx);
+  if (kind === 'github_trend_scan') return githubTrendScanWorker(ctx);
   if (kind === 'agent_ideas') return agentIdeasWorker(ctx);
   if (kind === 'social_scan') return socialScanWorker(ctx);
   if (kind === 'radar_sweep') return radarSweep(ctx);
@@ -2155,6 +2360,182 @@ const openclawWorker: WorkerHandler = async (ctx) => {
   };
 };
 
+// ── TRAINER: offline A/B evaluator ────────────────────────────────
+// Samples the task archive for recurring failure clusters, asks for ONE
+// candidate distilled rule, then A/B-replays the failing instruction:
+// arm A = current distilled rules, arm B = rules + candidate. A
+// reason-tier judge picks the winner; only a judged-B win files a
+// [rule] strategy proposal → INBOX → Crew approval → LIBRARIAN writes
+// it into '04 - Rules'. No live traffic, no silent self-modification —
+// the fleet improves through the same governance gate as everything else.
+
+const TRAINER_WINDOW_MS = 7 * 24 * 3600_000;
+const TRAINER_MIN_CLUSTER = 2;
+
+interface FailureCluster {
+  key: string;
+  agentId: string;
+  kind: string;
+  failureClass: string;
+  count: number;
+  members: TaskArchiveRecord[];
+}
+
+function clusterFailures(records: TaskArchiveRecord[]): FailureCluster[] {
+  const since = Date.now() - TRAINER_WINDOW_MS;
+  const map = new Map<string, FailureCluster>();
+  for (const r of records) {
+    if (r.status !== 'failed') continue;
+    if (!r.finishedAt || r.finishedAt < since) continue;
+    if (DETERMINISTIC_TASKS[r.kind]) continue; // no LLM to improve
+    const cls = String((r.telemetry as any)?.failureClass || 'unclassified');
+    const key = `${r.agentId}|${r.kind}|${cls}`;
+    const c = map.get(key) || { key, agentId: r.agentId, kind: r.kind, failureClass: cls, count: 0, members: [] };
+    c.count++;
+    c.members.push(r);
+    map.set(key, c);
+  }
+  return [...map.values()].sort((a, b) => b.count - a.count);
+}
+
+async function trainerEvalWorker(ctx: AgentContext) {
+  ctx.progress(0.1);
+  const records = readArchive({ limit: 500 });
+  const clusters = clusterFailures(records).filter((c) => c.count >= TRAINER_MIN_CLUSTER);
+  if (!clusters.length) {
+    return { evaluated: 0, reason: `no recurring failure cluster (≥${TRAINER_MIN_CLUSTER} in 7d) across ${records.length} archived tasks` };
+  }
+  const cluster = clusters[0];
+  const rep = cluster.members[0]; // newest first — readArchive returns newest-first
+  const instruction = [
+    rep.title,
+    rep.input?.instruction ? String(rep.input.instruction) : '',
+    rep.input?.query ? String(rep.input.query) : '',
+  ].filter(Boolean).join(' — ').slice(0, 1200);
+  const errorSample = cluster.members.slice(0, 3).map((m) => String(m.error || '').slice(0, 140)).join(' | ');
+  ctx.progress(0.25);
+
+  // Step 1 — propose ONE candidate rule grounded in the failure cluster.
+  const ruleRaw = await ctx.llm({
+    tier: 'reason',
+    maxTokens: 500,
+    messages: [
+      {
+        role: 'system',
+        content: [
+          'You are TRAINER, Cortex\'s offline evaluator. A fleet failure cluster recurred this week.',
+          'Write ONE imperative distilled rule (max 220 chars) that would have prevented this failure CLASS —',
+          'specific enough to change behavior, general enough to apply beyond this one task.',
+          'Output STRICT JSON: {"rule":"...","rationale":"..."}. No prose outside JSON.',
+        ].join(' ') + rulesBlock(`agent failure ${cluster.kind} ${cluster.failureClass}`, 'constraints learned from accepted agent outcomes — avoid proposing rules that duplicate these'),
+      },
+      {
+        role: 'user',
+        content: `CLUSTER: ${cluster.agentId}/${cluster.kind} ×${cluster.count} failures (${cluster.failureClass}) in 7d\nERRORS: ${errorSample}\nREPRESENTATIVE TASK: ${rep.id} — ${instruction}`,
+      },
+    ],
+  });
+  let candidate: { rule?: string; rationale?: string } = {};
+  try {
+    const m = String(ruleRaw).match(/\{[\s\S]*\}/);
+    if (m) candidate = JSON.parse(m[0]);
+  } catch { candidate = {}; }
+  const rule = String(candidate.rule || '').trim().slice(0, 300);
+  if (!rule) {
+    return { evaluated: 1, cluster: cluster.key, count: cluster.count, reason: 'rule proposer returned no usable rule' };
+  }
+  ctx.progress(0.5);
+
+  // Step 2 — offline A/B replay of the failing instruction.
+  const baseSystem = `You are ${cluster.agentId.toUpperCase()}, an agent inside Cortex. Complete the task instruction directly and honestly — evidence over claims.`;
+  const controlRules = rulesBlock(instruction);
+  const t0a = { ...ctx.telemetry };
+  const armA = await ctx.llm({
+    tier: 'fast', maxTokens: 500,
+    messages: [
+      { role: 'system', content: `${baseSystem}${controlRules ? `\n\n${controlRules}` : ''}` },
+      { role: 'user', content: instruction },
+    ],
+  }).catch(() => '');
+  const tokensA = { in: ctx.telemetry.tokensIn - t0a.tokensIn, out: ctx.telemetry.tokensOut - t0a.tokensOut };
+
+  const t0b = { ...ctx.telemetry };
+  const armB = await ctx.llm({
+    tier: 'fast', maxTokens: 500,
+    messages: [
+      { role: 'system', content: `${baseSystem}${controlRules ? `\n\n${controlRules}` : ''}\n\nCANDIDATE RULE (under evaluation): ${rule}` },
+      { role: 'user', content: instruction },
+    ],
+  }).catch(() => '');
+  const tokensB = { in: ctx.telemetry.tokensIn - t0b.tokensIn, out: ctx.telemetry.tokensOut - t0b.tokensOut };
+  ctx.progress(0.8);
+
+  // Step 3 — judge: which arm better avoids the observed failure mode?
+  const judgeRaw = await ctx.llm({
+    tier: 'reason',
+    maxTokens: 400,
+    messages: [
+      {
+        role: 'system',
+        content: 'You are TRAINER\'s judge. Given a task that FAILED in production, two candidate responses (control vs treatment with an extra rule), decide which response better avoids the failure mode. Output STRICT JSON: {"winner":"A"|"B"|"tie","reason":"<=160 chars"}. Judge behavior quality only — no prose outside JSON.',
+      },
+      {
+        role: 'user',
+        content: [
+          `TASK: ${instruction}`,
+          `FAILURE MODE: ${cluster.failureClass} — ${errorSample}`,
+          `CANDIDATE RULE (arm B only): ${rule}`,
+          `ARM A (control):\n${String(armA).slice(0, 1200) || '(empty)'}`,
+          `ARM B (treatment):\n${String(armB).slice(0, 1200) || '(empty)'}`,
+        ].join('\n\n'),
+      },
+    ],
+  });
+  let verdict: { winner?: string; reason?: string } = {};
+  try {
+    const m = String(judgeRaw).match(/\{[\s\S]*\}/);
+    if (m) verdict = JSON.parse(m[0]);
+  } catch { verdict = {}; }
+  const winner = String(verdict.winner || 'tie').toUpperCase();
+  ctx.progress(0.9);
+
+  // Step 4 — only a judged treatment win earns a proposal. Ties and
+  // control wins are recorded honestly; nothing is filed.
+  let proposalsFiled = 0;
+  if (winner === 'B') {
+    try {
+      const { fileStrategyProposals } = await import('./strategy-proposals');
+      const week = isoWeekKey();
+      const clusterSlug = cluster.key.replace(/[^a-z0-9]+/gi, '-').slice(-40);
+      const res = fileStrategyProposals({
+        planNote: `trainer-eval-${week}-${clusterSlug}`,
+        planTaskId: ctx.task.id,
+        actions: [
+          `[rule] Distill rule for ${cluster.agentId}/${cluster.kind}: "${rule}" — evidence: offline A/B replay judge preferred treatment arm (${String(verdict.reason || '').slice(0, 120)}); failure cluster ${cluster.key} ×${cluster.count} in 7d; representative task ${rep.id}`,
+        ],
+      });
+      proposalsFiled = res.filed;
+    } catch { proposalsFiled = 0; }
+  }
+
+  ctx.progress(1);
+  return {
+    evaluated: 1,
+    cluster: cluster.key,
+    clusterCount: cluster.count,
+    rule,
+    rationale: String(candidate.rationale || '').slice(0, 200),
+    ab: {
+      winner,
+      reason: String(verdict.reason || '').slice(0, 200),
+      tokensA, tokensB,
+      armAChars: String(armA).length, armBChars: String(armB).length,
+    },
+    proposalsFiled,
+    clustersSeen: clusters.length,
+  };
+}
+
 // ── Registration ──────────────────────────────────────────────────
 
 export function registerAgentWorkers(runtime: AgentRuntime) {
@@ -2204,6 +2585,7 @@ export function registerAgentWorkers(runtime: AgentRuntime) {
     { agentId: 'scout', kind: 'radar_sweep', title: 'Scout: external radar sweep (60m)', everyMinutes: 60 },
     { agentId: 'librarian', kind: 'vault_sync', title: 'Librarian: memory vault sync (60m)', everyMinutes: 60 },
     { agentId: 'scout', kind: 'repo_scan', title: 'Scout: repo drift scan (120m)', everyMinutes: 120 },
+    { agentId: 'scout', kind: 'github_trend_scan', title: 'Scout: GitHub rising-repo scan (12h)', everyMinutes: 720 },
     { agentId: 'strategist', kind: 'cluster', title: 'Strategist: fleet state clustering (120m)', everyMinutes: 120 },
     { agentId: 'reviewer', kind: 'review', title: 'Reviewer: diff critic pass (180m)', everyMinutes: 180,
       input: { instruction: 'Review the most recent committed diff (git show HEAD) for correctness, honesty violations, and dead code. Report findings only — do not modify files.' } },
@@ -2215,6 +2597,10 @@ export function registerAgentWorkers(runtime: AgentRuntime) {
     { agentId: 'scout', kind: 'agent_ideas', title: 'Scout: agent improvement ideas (360m)', everyMinutes: 360 },
     { agentId: 'strategist', kind: 'propose_skill', title: 'Strategist: skill-gap proposals (720m)', everyMinutes: 720 },
     { agentId: 'strategist', kind: 'propose_agent', title: 'Strategist: spawn-candidate proposals (1440m)', everyMinutes: 1440 },
+    // TRAINER: offline A/B eval of recurring failure clusters → judge-gated
+    // distilled-rule proposals. Twice daily is plenty — evals are expensive
+    // and clusters need time to recur before they're worth judging.
+    { agentId: 'trainer', kind: 'eval_cycle', title: 'Trainer: failure-cluster A/B eval (720m)', everyMinutes: 720 },
   ];
   for (const r of COGNITION_ROUTINES) {
     runtime.addRoutine({ agentId: r.agentId, kind: r.kind, title: r.title, input: r.input, everyMinutes: r.everyMinutes, enabled: true });
@@ -2223,4 +2609,5 @@ export function registerAgentWorkers(runtime: AgentRuntime) {
   runtime.registerWorker('strategist', makeStrategistWorker(runtime));
   runtime.registerWorker('brief', makeBriefWorker());
   runtime.registerWorker('debrief', makeDebriefWorker());
+  runtime.registerWorker('trainer', trainerEvalWorker);
 }

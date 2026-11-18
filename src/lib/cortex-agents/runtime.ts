@@ -14,6 +14,7 @@ import path from 'node:path';
 import { ModelMatrix, type AgentPin } from './registry';
 import { ModelSentinel } from './sentinel';
 import { DETERMINISTIC_TASKS } from './lights';
+import { ackMentioned, directivesBlock, markDelivered } from './directives';
 import type {
   AgentEvent, AgentId, AgentRoutine, AgentState, AgentStatus, AgentTask, AgentsSnapshot, SpawnProposal, SpawnSpec, TaskFailureClass, TaskStatus, TaskTelemetry,
 } from './types';
@@ -195,6 +196,15 @@ export const AGENT_SPECS: AgentSpec[] = [
     dailyBudget: 24,
     modelPin: { tier: 'deep' },
     tier: 'enterprise',
+  },
+  {
+    id: 'trainer',
+    name: 'TRAINER',
+    role: 'Offline Evaluator',
+    blurb: 'A/B-replays recurring failure clusters against candidate distilled rules — judge-gated, proposal-only. The fleet improves through governance, never silently.',
+    concurrency: 1,
+    dailyBudget: 8, // ~4 LLM calls per eval cycle — twice-daily cadence max
+    modelPin: { tier: 'reason' },
   },
   {
     id: 'openclaw',
@@ -723,8 +733,20 @@ export class AgentRuntime {
         },
         llm: async (opts) => {
           if (!this.llmBridge) throw new Error('llm bridge not wired');
+          // Cortex→agent directive injection: pending orders-of-the-day are
+          // prepended as a system message on the first LLM call of a task,
+          // then marked delivered. Deterministic tasks never see directives
+          // (they don't reason) — they expire honestly instead.
+          const dirBlock = directivesBlock(agentId);
+          if (dirBlock) markDelivered(agentId, task.id);
           const llmT0 = Date.now();
-          const r = await this.llmBridge({ ...opts, agentId });
+          const r = await this.llmBridge({
+            ...opts,
+            agentId,
+            messages: dirBlock
+              ? [{ role: 'system', content: dirBlock }, ...opts.messages]
+              : opts.messages,
+          });
           telemetry.llmCalls++;
           telemetry.llmMs += Date.now() - llmT0;
           telemetry.tokensIn += r?.usage?.tokensIn ?? 0;
@@ -745,6 +767,9 @@ export class AgentRuntime {
       const run = DETERMINISTIC_TASKS[task.kind] ?? (() => handler(ctx));
       run(ctx)
         .then((result) => {
+          // Directive ack: if the result cites a delivered directive id,
+          // close the loop — Cortex sees the order was actioned.
+          try { ackMentioned(agentId, JSON.stringify(result ?? '')); } catch { /* best-effort */ }
           this.transition(task, 'completed', { result, progress: task.progress ?? 1 });
           this.setStatus(agentId, queue.length ? 'working' : 'idle');
         })
