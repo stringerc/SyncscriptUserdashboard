@@ -1,10 +1,14 @@
 /**
- * INSTAGRAM-STYLE MULTI-DAY CALENDAR VIEW
+ * INSTAGRAM-STYLE MULTI-DAY CALENDAR VIEW (INFINITE SCROLL)
  *
  * Designed to provide a sleek, mobile/feed-style vertical snap scroll experience
  * through calendar days, contained to the calendar tab height.
  *
- * ARCHITECTURE:
+ * ARCHITECTURE & CAPABILITIES:
+ * - Truly Infinite Scroll: Dynamically appends/prepends days on scroll so the user
+ *   can scroll indefinitely into 2048+ without ever reaching an end boundary.
+ * - Current Time Green Line: Glowing emerald horizontal line at the exact time
+ *   spot on today's calendar with a pulsing dot and live "NOW" badge.
  * - Each day is an "Instagram Card" sized to 100% of the viewport container (no 2940px overflow).
  * - Vertical snap-scroll: flick/scroll smoothly snaps from day to day (snap-y snap-mandatory).
  * - Full event list per day with interactive modals, empty states, and "+ Add Event" actions.
@@ -64,6 +68,38 @@ const MONTH_NAMES = [
   'July', 'August', 'September', 'October', 'November', 'December',
 ];
 
+/**
+ * Green horizontal line indicator marking the exact current time for today
+ */
+function CurrentTimeGreenLine({ now }: { now: Date }) {
+  const formattedTime = now.toLocaleTimeString([], {
+    hour: 'numeric',
+    minute: '2-digit',
+  });
+
+  return (
+    <div
+      data-testid="current-time-green-line"
+      className="relative w-full py-2.5 my-1.5 flex items-center gap-2 z-20 select-none group"
+    >
+      {/* Pulsing emerald indicator dot */}
+      <div className="relative flex items-center justify-center flex-shrink-0">
+        <div className="w-3.5 h-3.5 rounded-full bg-emerald-500 shadow-[0_0_12px_rgba(16,185,129,0.95)] animate-pulse" />
+        <div className="absolute w-1.5 h-1.5 rounded-full bg-white shadow-sm" />
+      </div>
+
+      {/* Glowing green line cutting across */}
+      <div className="flex-1 h-[2px] bg-gradient-to-r from-emerald-500 via-emerald-400 to-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.85)]" />
+
+      {/* Time badge */}
+      <div className="px-2.5 py-0.5 rounded-full bg-emerald-500 border border-emerald-300 shadow-md shadow-emerald-500/40 flex items-center gap-1.5 text-xs font-mono font-bold text-white flex-shrink-0">
+        <Clock className="w-3 h-3 text-emerald-100" />
+        <span>NOW · {formattedTime}</span>
+      </div>
+    </div>
+  );
+}
+
 export const SimpleMultiDayCalendar = forwardRef<SimpleMultiDayCalendarRef, SimpleMultiDayCalendarProps>((props, ref) => {
   const {
     centerDate,
@@ -77,11 +113,23 @@ export const SimpleMultiDayCalendar = forwardRef<SimpleMultiDayCalendarRef, Simp
   const [activeDateIndex, setActiveDateIndex] = useState<number>(14);
   const [showFloatingIndicator, setShowFloatingIndicator] = useState(false);
   const indicatorTimeoutRef = useRef<NodeJS.Timeout>();
+  const isExtendingRef = useRef(false);
 
-  // Generates 45 days centered around centerDate (-14 to +30 days)
+  // Live clock: updates every 10 seconds for real-time green line position
+  const [currentTime, setCurrentTime] = useState<Date>(() => getCurrentDate());
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      if (typeof document !== 'undefined' && document.hidden) return;
+      setCurrentTime(getCurrentDate());
+    }, 10_000);
+    return () => clearInterval(timer);
+  }, []);
+
+  // Infinite days array: initially starts with 60 days around centerDate (-15 to +45)
   const [daysToRender, setDaysToRender] = useState<Date[]>(() => {
     const list: Date[] = [];
-    for (let i = -14; i <= 30; i++) {
+    for (let i = -15; i <= 45; i++) {
       const d = new Date(centerDate);
       d.setDate(d.getDate() + i);
       list.push(d);
@@ -89,10 +137,10 @@ export const SimpleMultiDayCalendar = forwardRef<SimpleMultiDayCalendarRef, Simp
     return list;
   });
 
-  // Re-generate days when centerDate changes significantly
+  // Re-center if centerDate prop changes significantly (e.g. jumped to a different year)
   useEffect(() => {
     const list: Date[] = [];
-    for (let i = -14; i <= 30; i++) {
+    for (let i = -15; i <= 45; i++) {
       const d = new Date(centerDate);
       d.setDate(d.getDate() + i);
       list.push(d);
@@ -177,12 +225,14 @@ export const SimpleMultiDayCalendar = forwardRef<SimpleMultiDayCalendarRef, Simp
     },
   }), [jumpToToday, jumpToTodayInstant, jumpToDay]);
 
-  // Handle scroll events & active card tracking
+  // Handle scroll events & active card tracking + TRULY INFINITE SCROLL EXPANSION
   const handleScroll = () => {
     const container = scrollContainerRef.current;
     if (!container) return;
     const cardHeight = container.clientHeight || 1;
-    const currentIdx = Math.round(container.scrollTop / cardHeight);
+    const scrollTop = container.scrollTop;
+    const scrollHeight = container.scrollHeight;
+    const currentIdx = Math.round(scrollTop / cardHeight);
 
     if (currentIdx !== activeDateIndex && currentIdx >= 0 && currentIdx < daysToRender.length) {
       setActiveDateIndex(currentIdx);
@@ -195,6 +245,50 @@ export const SimpleMultiDayCalendar = forwardRef<SimpleMultiDayCalendarRef, Simp
     indicatorTimeoutRef.current = setTimeout(() => {
       setShowFloatingIndicator(false);
     }, 1400);
+
+    // TRULY INFINITE SCROLL: Automatically append more days as user scrolls down towards the future (all the way to 2048+)
+    if (!isExtendingRef.current && scrollTop + cardHeight > scrollHeight - cardHeight * 8) {
+      isExtendingRef.current = true;
+      const appendCount = 45;
+      setDaysToRender((prev) => {
+        const lastDate = prev[prev.length - 1];
+        const newDays: Date[] = [];
+        for (let i = 1; i <= appendCount; i++) {
+          const d = new Date(lastDate);
+          d.setDate(d.getDate() + i);
+          newDays.push(d);
+        }
+        return [...prev, ...newDays];
+      });
+      setTimeout(() => {
+        isExtendingRef.current = false;
+      }, 150);
+    }
+
+    // TRULY INFINITE SCROLL: Automatically prepend more days as user scrolls up towards the past
+    if (!isExtendingRef.current && scrollTop < cardHeight * 4 && daysToRender.length > 0) {
+      isExtendingRef.current = true;
+      const prependCount = 45;
+      setDaysToRender((prev) => {
+        const firstDate = prev[0];
+        const newDays: Date[] = [];
+        for (let i = prependCount; i >= 1; i--) {
+          const d = new Date(firstDate);
+          d.setDate(d.getDate() - i);
+          newDays.push(d);
+        }
+        // Adjust scroll position immediately so there is no visual jump
+        requestAnimationFrame(() => {
+          if (scrollContainerRef.current) {
+            scrollContainerRef.current.scrollTop += prependCount * cardHeight;
+          }
+        });
+        return [...newDays, ...prev];
+      });
+      setTimeout(() => {
+        isExtendingRef.current = false;
+      }, 150);
+    }
   };
 
   // Initial scroll to today on mount
@@ -289,7 +383,7 @@ export const SimpleMultiDayCalendar = forwardRef<SimpleMultiDayCalendarRef, Simp
         className="flex-1 w-full h-full min-h-0 overflow-y-auto snap-y snap-mandatory scroll-smooth hide-scrollbar relative"
         style={{ scrollSnapType: 'y mandatory' }}
       >
-        {daysToRender.map((date, idx) => {
+        {daysToRender.map((date) => {
           const dayEvents = getDayEvents(date);
           const isCurrentToday = isToday(date);
           const relativeLabel = getRelativeDayLabel(date);
@@ -366,75 +460,119 @@ export const SimpleMultiDayCalendar = forwardRef<SimpleMultiDayCalendarRef, Simp
                 </div>
 
                 {/* Card Body — Feed of Scheduled Events for this Day */}
-                <div className="flex-1 min-h-0 overflow-y-auto px-4 sm:px-6 py-4 space-y-3 hide-scrollbar">
+                <div className="flex-1 min-h-0 overflow-y-auto px-4 sm:px-6 py-3.5 space-y-2.5 hide-scrollbar">
+                  {/* GREEN LINE: If today has NO events, render the green line at the top */}
+                  {isCurrentToday && dayEvents.length === 0 && (
+                    <CurrentTimeGreenLine now={currentTime} />
+                  )}
+
                   {dayEvents.length > 0 ? (
-                    dayEvents.map((event) => {
-                      const dur = getEventDurationMinutes(event);
-                      const isCompleted = Boolean(event.completed);
+                    (() => {
+                      const nowMs = currentTime.getTime();
+                      let greenLineInserted = false;
 
                       return (
-                        <div
-                          key={event.id}
-                          onClick={() => onEventClick(event)}
-                          className={`group p-3.5 rounded-xl border transition-all duration-200 cursor-pointer shadow-md flex flex-col gap-2 relative overflow-hidden ${
-                            isCompleted
-                              ? 'bg-gray-900/40 border-gray-800/60 opacity-60'
-                              : 'bg-gray-900/80 border-gray-700/60 hover:border-teal-500/50 hover:bg-gray-800/90 hover:scale-[1.01]'
-                          }`}
-                        >
-                          {/* Accent line on left */}
-                          <div className={`absolute left-0 top-0 bottom-0 w-1 ${
-                            isCurrentToday ? 'bg-teal-400' : 'bg-cyan-500/60'
-                          }`} />
+                        <>
+                          {dayEvents.map((event, eventIdx) => {
+                            const startMs = event.startTime instanceof Date ? event.startTime.getTime() : new Date(event.startTime).getTime();
+                            const endMs = event.endTime instanceof Date ? event.endTime.getTime() : (event.endTime ? new Date(event.endTime).getTime() : startMs + 3600_000);
+                            const isCompleted = Boolean(event.completed) || (isCurrentToday && endMs < nowMs);
+                            const isCurrentEvent = isCurrentToday && startMs <= nowMs && endMs >= nowMs;
+                            const dur = getEventDurationMinutes(event);
 
-                          {/* Time & Duration Row */}
-                          <div className="flex items-center justify-between text-xs font-mono pl-1.5">
-                            <div className="flex items-center gap-1.5 text-teal-300 font-semibold">
-                              <Clock className="w-3.5 h-3.5 text-teal-400" />
-                              <span>{formatEventTime(event)}</span>
-                            </div>
-                            <span className="text-gray-400 text-[11px]">
-                              {dur >= 60 ? `${Math.floor(dur / 60)}h ${dur % 60 ? `${dur % 60}m` : ''}` : `${dur}m`}
-                            </span>
-                          </div>
+                            // Should we insert the green line BEFORE this event?
+                            const shouldInsertGreenLineBefore = isCurrentToday && !greenLineInserted && startMs > nowMs;
+                            if (shouldInsertGreenLineBefore) {
+                              greenLineInserted = true;
+                            }
 
-                          {/* Title & Description */}
-                          <div className="pl-1.5">
-                            <h4 className={`text-sm sm:text-base font-semibold leading-snug transition-colors ${
-                              isCompleted
-                                ? 'line-through text-gray-400'
-                                : 'text-gray-100 group-hover:text-teal-200'
-                            }`}>
-                              {event.title || '(Untitled Event)'}
-                            </h4>
-                            {event.description && (
-                              <p className="text-xs text-gray-400 mt-1 line-clamp-2 leading-relaxed">
-                                {event.description}
-                              </p>
-                            )}
-                          </div>
+                            return (
+                              <React.Fragment key={event.id || eventIdx}>
+                                {shouldInsertGreenLineBefore && (
+                                  <CurrentTimeGreenLine now={currentTime} />
+                                )}
 
-                          {/* Footer Meta Row: Team avatars / Tasks */}
-                          <div className="flex items-center justify-between pt-1 pl-1.5 text-xs text-gray-400 border-t border-gray-800/60">
-                            {event.teamMembers && event.teamMembers.length > 0 ? (
-                              <div className="flex items-center gap-1.5 text-[11px]">
-                                <Users className="w-3 h-3 text-cyan-400" />
-                                <span>{event.teamMembers.length} member{event.teamMembers.length > 1 ? 's' : ''}</span>
-                              </div>
-                            ) : (
-                              <span className="text-[11px] text-gray-400 font-mono">Personal block</span>
-                            )}
+                                <div
+                                  onClick={() => onEventClick(event)}
+                                  className={`group p-3.5 rounded-xl border transition-all duration-200 cursor-pointer shadow-md flex flex-col gap-2 relative overflow-hidden ${
+                                    isCurrentEvent
+                                      ? 'bg-emerald-950/30 border-emerald-500/70 shadow-emerald-950/40 ring-1 ring-emerald-500/40 hover:bg-emerald-950/40'
+                                      : isCompleted
+                                        ? 'bg-gray-900/40 border-gray-800/60 opacity-65'
+                                        : 'bg-gray-900/80 border-gray-700/60 hover:border-teal-500/50 hover:bg-gray-800/90 hover:scale-[1.01]'
+                                  }`}
+                                >
+                                  {/* Left accent line */}
+                                  <div className={`absolute left-0 top-0 bottom-0 w-1 ${
+                                    isCurrentEvent ? 'bg-emerald-400' : isCurrentToday ? 'bg-teal-400' : 'bg-cyan-500/60'
+                                  }`} />
 
-                            {event.tasks && event.tasks.length > 0 && (
-                              <div className="flex items-center gap-1 text-[11px] text-amber-400/90">
-                                <CheckCircle2 className="w-3 h-3" />
-                                <span>{event.tasks.filter((t) => t.completed).length}/{event.tasks.length} tasks</span>
-                              </div>
-                            )}
-                          </div>
-                        </div>
+                                  {/* Time & Duration Row */}
+                                  <div className="flex items-center justify-between text-xs font-mono pl-1.5">
+                                    <div className="flex items-center gap-1.5 text-teal-300 font-semibold">
+                                      <Clock className="w-3.5 h-3.5 text-teal-400" />
+                                      <span>{formatEventTime(event)}</span>
+                                    </div>
+                                    <div className="flex items-center gap-2">
+                                      {isCurrentEvent && (
+                                        <span className="text-[10px] font-bold text-emerald-300 bg-emerald-500/20 border border-emerald-500/40 px-2 py-0.5 rounded-full animate-pulse">
+                                          ● IN PROGRESS
+                                        </span>
+                                      )}
+                                      <span className="text-gray-400 text-[11px]">
+                                        {dur >= 60 ? `${Math.floor(dur / 60)}h ${dur % 60 ? `${dur % 60}m` : ''}` : `${dur}m`}
+                                      </span>
+                                    </div>
+                                  </div>
+
+                                  {/* Title & Description */}
+                                  <div className="pl-1.5">
+                                    <h4 className={`text-sm sm:text-base font-semibold leading-snug transition-colors ${
+                                      isCompleted && !isCurrentEvent
+                                        ? 'line-through text-gray-400'
+                                        : isCurrentEvent
+                                          ? 'text-emerald-100 group-hover:text-emerald-300'
+                                          : 'text-gray-100 group-hover:text-teal-200'
+                                    }`}>
+                                      {event.title || '(Untitled Event)'}
+                                    </h4>
+                                    {event.description && (
+                                      <p className="text-xs text-gray-400 mt-1 line-clamp-2 leading-relaxed">
+                                        {event.description}
+                                      </p>
+                                    )}
+                                  </div>
+
+                                  {/* Footer Meta Row: Team avatars / Tasks */}
+                                  <div className="flex items-center justify-between pt-1 pl-1.5 text-xs text-gray-400 border-t border-gray-800/60">
+                                    {event.teamMembers && event.teamMembers.length > 0 ? (
+                                      <div className="flex items-center gap-1.5 text-[11px]">
+                                        <Users className="w-3 h-3 text-cyan-400" />
+                                        <span>{event.teamMembers.length} member{event.teamMembers.length > 1 ? 's' : ''}</span>
+                                      </div>
+                                    ) : (
+                                      <span className="text-[11px] text-gray-400 font-mono">Personal block</span>
+                                    )}
+
+                                    {event.tasks && event.tasks.length > 0 && (
+                                      <div className="flex items-center gap-1 text-[11px] text-amber-400/90">
+                                        <CheckCircle2 className="w-3 h-3" />
+                                        <span>{event.tasks.filter((t) => t.completed).length}/{event.tasks.length} tasks</span>
+                                      </div>
+                                    )}
+                                  </div>
+                                </div>
+                              </React.Fragment>
+                            );
+                          })}
+
+                          {/* If all events were in the past today, place green line at the bottom */}
+                          {isCurrentToday && !greenLineInserted && (
+                            <CurrentTimeGreenLine now={currentTime} />
+                          )}
+                        </>
                       );
-                    })
+                    })()
                   ) : (
                     /* Instagram Empty State Card */
                     <div className="h-full min-h-[220px] flex flex-col items-center justify-center text-center p-6 bg-gray-900/30 rounded-2xl border border-dashed border-gray-800/80 my-auto">
@@ -469,7 +607,7 @@ export const SimpleMultiDayCalendar = forwardRef<SimpleMultiDayCalendarRef, Simp
                     <span>{dayEvents.length > 0 ? `${durationStr} planned` : '0h planned'}</span>
                   </div>
                   <div className="flex items-center gap-1 text-gray-400 text-[10px]">
-                    <span>↕ Scroll to swipe days</span>
+                    <span>↕ Scroll to swipe days (infinite)</span>
                   </div>
                 </div>
               </div>

@@ -8,7 +8,7 @@
  *   - MONTH: 7-column calendar grid matrix with day inspection
  */
 
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import {
   CalendarEventItem,
   getEventsForDay,
@@ -92,17 +92,57 @@ export function CortexFoundryCalendar({ events, loading }: Props) {
   // 2. Day Horizon Data
   const dayEvents = getEventsForDay(events, anchorDate);
 
-  // 2b. Multi-Day Horizon Data (Instagram-style strip)
-  const multiDays = (() => {
+  // 2b. Multi-Day Horizon Data (Truly infinite Instagram-style strip)
+  const [multiDays, setMultiDays] = useState<Date[]>(() => {
     const list: Date[] = [];
     const base = new Date(anchorDate);
-    for (let i = -7; i <= 14; i++) {
+    for (let i = -10; i <= 30; i++) {
       const cur = new Date(base);
       cur.setDate(base.getDate() + i);
       list.push(cur);
     }
     return list;
-  })();
+  });
+
+  const isMultiExtendingRef = useRef(false);
+  const handleMultiScroll = (e: React.UIEvent<HTMLDivElement>) => {
+    const el = e.currentTarget;
+    if (!el || isMultiExtendingRef.current) return;
+    const cardH = 372;
+    // Append future days towards 2048+
+    if (el.scrollTop + el.clientHeight > el.scrollHeight - cardH * 4) {
+      isMultiExtendingRef.current = true;
+      setMultiDays((prev) => {
+        const last = prev[prev.length - 1];
+        const next: Date[] = [];
+        for (let i = 1; i <= 20; i++) {
+          const d = new Date(last);
+          d.setDate(d.getDate() + i);
+          next.push(d);
+        }
+        return [...prev, ...next];
+      });
+      setTimeout(() => { isMultiExtendingRef.current = false; }, 150);
+    }
+    // Prepend past days
+    if (el.scrollTop < cardH * 2 && multiDays.length > 0) {
+      isMultiExtendingRef.current = true;
+      setMultiDays((prev) => {
+        const first = prev[0];
+        const next: Date[] = [];
+        for (let i = 20; i >= 1; i--) {
+          const d = new Date(first);
+          d.setDate(d.getDate() - i);
+          next.push(d);
+        }
+        requestAnimationFrame(() => {
+          if (el) el.scrollTop += 20 * cardH;
+        });
+        return [...next, ...prev];
+      });
+      setTimeout(() => { isMultiExtendingRef.current = false; }, 150);
+    }
+  };
 
   // 3. Week Horizon Data
   const weekEvents = getEventsForWeek(events, anchorDate);
@@ -320,21 +360,26 @@ export function CortexFoundryCalendar({ events, loading }: Props) {
         </div>
       )}
 
-      {/* ────────────────── VIEW 2b: MULTI-DAY INSTAGRAM FEED ────────────────── */}
+      {/* ────────────────── VIEW 2b: MULTI-DAY INSTAGRAM FEED (INFINITE SCROLL) ────────────────── */}
       {horizon === 'multi' && (
-        <div style={{
-          maxHeight: 460,
-          overflowY: 'auto',
-          scrollSnapType: 'y mandatory',
-          display: 'flex',
-          flexDirection: 'column',
-          gap: 12,
-          paddingRight: 4,
-        }}>
+        <div
+          onScroll={handleMultiScroll}
+          style={{
+            maxHeight: 460,
+            overflowY: 'auto',
+            scrollSnapType: 'y mandatory',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 12,
+            paddingRight: 4,
+          }}
+        >
           {multiDays.map((d) => {
             const isCurToday = isSameDay(d, new Date());
             const dEvents = getEventsForDay(events, d);
             const relLabel = getRelativeDayLabel(d);
+            const nowMs = Date.now();
+            let greenLineRendered = false;
 
             return (
               <div
@@ -404,34 +449,62 @@ export function CortexFoundryCalendar({ events, loading }: Props) {
                   flexDirection: 'column',
                   gap: 6,
                 }}>
+                  {/* Green line if today has NO events */}
+                  {isCurToday && dEvents.length === 0 && (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '4px 0' }}>
+                      <div style={{ width: 8, height: 8, borderRadius: '50%', background: '#10b981', boxShadow: '0 0 10px #10b981', flexShrink: 0 }} />
+                      <div style={{ flex: 1, height: 2, background: 'linear-gradient(90deg, #10b981, #34d399, #10b981)', boxShadow: '0 0 8px rgba(16,185,129,0.8)' }} />
+                      <span style={{ fontSize: 8, fontWeight: 800, color: '#10b981', background: 'rgba(16,185,129,0.15)', border: '1px solid rgba(16,185,129,0.4)', padding: '1px 5px', borderRadius: 2, fontFamily: MONO, flexShrink: 0 }}>
+                        NOW · {new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}
+                      </span>
+                    </div>
+                  )}
+
                   {dEvents.length > 0 ? (
-                    dEvents.map((e, eIdx) => (
-                      <div
-                        key={e.id || eIdx}
-                        style={{
-                          padding: '6px 8px',
-                          background: 'rgba(15,23,42,0.7)',
-                          borderLeft: `2px solid ${AMBER}`,
-                          border: '1px solid rgba(103,232,249,0.12)',
-                          borderRadius: 3,
-                          display: 'flex',
-                          flexDirection: 'column',
-                          gap: 2,
-                        }}
-                      >
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
-                          <span style={{ fontSize: 8.5, color: AMBER, fontWeight: 700 }}>
-                            {formatTimeRange(e.start, e.end)}
-                          </span>
-                          {e.attendees && e.attendees > 0 && (
-                            <span style={{ fontSize: 7.5, color: CYAN }}>{e.attendees} att</span>
+                    dEvents.map((e, eIdx) => {
+                      const eStart = Number(e.start || 0);
+                      const shouldInsertGreenLine = isCurToday && !greenLineRendered && eStart > nowMs;
+                      if (shouldInsertGreenLine) greenLineRendered = true;
+
+                      return (
+                        <React.Fragment key={e.id || eIdx}>
+                          {shouldInsertGreenLine && (
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '4px 0' }}>
+                              <div style={{ width: 8, height: 8, borderRadius: '50%', background: '#10b981', boxShadow: '0 0 10px #10b981', flexShrink: 0 }} />
+                              <div style={{ flex: 1, height: 2, background: 'linear-gradient(90deg, #10b981, #34d399, #10b981)', boxShadow: '0 0 8px rgba(16,185,129,0.8)' }} />
+                              <span style={{ fontSize: 8, fontWeight: 800, color: '#10b981', background: 'rgba(16,185,129,0.15)', border: '1px solid rgba(16,185,129,0.4)', padding: '1px 5px', borderRadius: 2, fontFamily: MONO, flexShrink: 0 }}>
+                                NOW · {new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}
+                              </span>
+                            </div>
                           )}
-                        </div>
-                        <div style={{ fontSize: 9.5, color: INK, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                          {e.title}
-                        </div>
-                      </div>
-                    ))
+
+                          <div
+                            style={{
+                              padding: '6px 8px',
+                              background: 'rgba(15,23,42,0.7)',
+                              borderLeft: `2px solid ${AMBER}`,
+                              border: '1px solid rgba(103,232,249,0.12)',
+                              borderRadius: 3,
+                              display: 'flex',
+                              flexDirection: 'column',
+                              gap: 2,
+                            }}
+                          >
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
+                              <span style={{ fontSize: 8.5, color: AMBER, fontWeight: 700 }}>
+                                {formatTimeRange(e.start, e.end)}
+                              </span>
+                              {e.attendees && e.attendees > 0 && (
+                                <span style={{ fontSize: 7.5, color: CYAN }}>{e.attendees} att</span>
+                              )}
+                            </div>
+                            <div style={{ fontSize: 9.5, color: INK, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                              {e.title}
+                            </div>
+                          </div>
+                        </React.Fragment>
+                      );
+                    })
                   ) : (
                     <div style={{
                       flex: 1,
@@ -448,6 +521,17 @@ export function CortexFoundryCalendar({ events, loading }: Props) {
                       <div style={{ fontSize: 8.5, color: DIM, marginTop: 2 }}>Open horizon for focus and mission work</div>
                     </div>
                   )}
+
+                  {/* Green line if all events today were in the past */}
+                  {isCurToday && dEvents.length > 0 && !greenLineRendered && (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '4px 0' }}>
+                      <div style={{ width: 8, height: 8, borderRadius: '50%', background: '#10b981', boxShadow: '0 0 10px #10b981', flexShrink: 0 }} />
+                      <div style={{ flex: 1, height: 2, background: 'linear-gradient(90deg, #10b981, #34d399, #10b981)', boxShadow: '0 0 8px rgba(16,185,129,0.8)' }} />
+                      <span style={{ fontSize: 8, fontWeight: 800, color: '#10b981', background: 'rgba(16,185,129,0.15)', border: '1px solid rgba(16,185,129,0.4)', padding: '1px 5px', borderRadius: 2, fontFamily: MONO, flexShrink: 0 }}>
+                        NOW · {new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}
+                      </span>
+                    </div>
+                  )}
                 </div>
 
                 {/* Card Snap Footer */}
@@ -462,7 +546,7 @@ export function CortexFoundryCalendar({ events, loading }: Props) {
                   color: DIM,
                 }}>
                   <span>{dEvents.length > 0 ? `${dEvents.length} items on schedule` : 'Free day'}</span>
-                  <span>↕ SNAP SCROLL</span>
+                  <span>↕ INFINITE SNAP SCROLL</span>
                 </div>
               </div>
             );
