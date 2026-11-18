@@ -100,7 +100,7 @@ function pushCalendarFeed(events: Event[]) {
   feedTimer = setTimeout(() => {
     try {
       const now = Date.now();
-      const horizon = now + 48 * 3600_000;
+      const horizon = now + 60 * 86400_000; // 60 days horizon for day, week, and month views
       const upcoming = (events || [])
         .filter((e) => {
           if ((e as any).archived || (e as any).completed) return false;
@@ -108,7 +108,7 @@ function pushCalendarFeed(events: Event[]) {
           const start = new Date((e as any).startTime).getTime();
           return Number.isFinite(start) && start > now - 3600_000 && start <= horizon;
         })
-        .slice(0, 50)
+        .slice(0, 150)
         .map((e) => ({
           id: String((e as any).id ?? ''),
           title: String((e as any).title ?? ''),

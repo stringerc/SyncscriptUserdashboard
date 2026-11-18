@@ -16,6 +16,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import type { AgentsSnapshotClient, AgentClient, AgentTaskClient } from '../../lib/cortex-agents-client';
 import { getCortexGoals, type LifeGoal } from '../../lib/cortex-goals';
 import { CortexTowerPanel } from './CortexTowerPanel';
+import { CortexFoundryCalendar } from './CortexFoundryCalendar';
 
 const MONO = "'IBM Plex Mono', monospace";
 const INK = '#e0f2fe';
@@ -108,10 +109,29 @@ export function CortexFoundryNav({ snap, onSelectAgent, selectedAgent, onOpenTow
   // Lazy-fetch section data when its view opens.
   useEffect(() => {
     if (view === 'calendar' && calendar === null) {
+      try {
+        const stored = typeof window !== 'undefined' ? localStorage.getItem('syncscript_calendar_events') : null;
+        if (stored) {
+          const parsed = JSON.parse(stored);
+          if (Array.isArray(parsed) && parsed.length) {
+            setCalendar(parsed.map((e: any) => ({
+              id: String(e.id || ''),
+              title: String(e.title || ''),
+              start: new Date(e.startTime).getTime(),
+              end: new Date(e.endTime).getTime() || undefined,
+              attendees: Array.isArray(e.teamMembers) ? e.teamMembers.length : 0,
+            })));
+          }
+        }
+      } catch {}
       fetch('/api/cortex/calendar/upcoming', { cache: 'no-store' })
         .then((r) => r.json())
-        .then((d) => setCalendar(Array.isArray(d?.events) ? d.events : []))
-        .catch(() => setCalendar([]));
+        .then((d) => {
+          if (Array.isArray(d?.events)) {
+            setCalendar(d.events);
+          }
+        })
+        .catch(() => setCalendar((c) => c || []));
     }
     if (view === 'incidents' && incidents === null) {
       fetch('/api/cortex/agents/incidents', { cache: 'no-store' })
@@ -505,14 +525,11 @@ export function CortexFoundryNav({ snap, onSelectAgent, selectedAgent, onOpenTow
       )}
 
       {view === 'calendar' && (
-        <Panel title="CALENDAR — NEXT 48H" right={calendar === null ? <span style={{ fontSize: 9.5, color: DIM }}>LOADING…</span> : undefined}>
-          {(calendar || []).slice(0, 20).map((e: any, i: number) => (
-            <Row key={e.id || i}>
-              <span style={{ color: '#fbbf24', minWidth: 78, fontSize: 8 }}>{e.start ? new Date(e.start).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : '—'}</span>
-              <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: INK }}>{e.title || '(untitled)'}</span>
-            </Row>
-          ))}
-          {calendar !== null && !calendar.length && <div style={{ padding: '12px 0', color: DIM }}>NO EVENTS IN WINDOW — CLIENT HASN'T PUSHED CALENDAR YET</div>}
+        <Panel
+          title="MISSION CALENDAR"
+          right={<span style={{ fontSize: 9.5, color: DIM }}>{calendar ? `${calendar.length} TOTAL` : 'LOADING…'}</span>}
+        >
+          <CortexFoundryCalendar events={calendar || []} loading={calendar === null} />
         </Panel>
       )}
 
