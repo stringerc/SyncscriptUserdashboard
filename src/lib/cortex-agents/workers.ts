@@ -2365,18 +2365,23 @@ const hermesWorker: WorkerHandler = async (ctx) => {
   const toolName = String(input.tool || ctx.task.kind || 'ping');
   const args = (input.arguments || input.args || {}) as Record<string, unknown>;
   const idempotencyKey = input.idempotency_key ? String(input.idempotency_key) : undefined;
+  const targetUrl = (input.targetUrl as string) || process.env.HERMES_BASE_URL_TARGET || process.env.HERMES_EXECUTOR_URL || 'http://127.0.0.1:18880';
 
   ctx.progress(0.2);
   if (toolName === 'hermes_ping' || toolName === 'ping') {
     ctx.progress(1);
-    return { ok: true, tool: toolName, status: 'alive', host: '127.0.0.1:18880', timestamp: Date.now() };
+    return { ok: true, tool: toolName, status: 'alive', host: targetUrl, timestamp: Date.now() };
   }
 
   ctx.progress(0.5);
   try {
     const { invokeHermesTool } = await import('../../utils/hermes-client');
     const token = process.env.HERMES_TOKEN || 'sovereign-local-token';
-    const res = await invokeHermesTool(token, { tool: toolName, arguments: args, idempotency_key: idempotencyKey });
+    const res = await invokeHermesTool(
+      token,
+      { tool: toolName, arguments: args, idempotency_key: idempotencyKey },
+      { targetUrl },
+    );
     ctx.progress(1);
     return res;
   } catch (err: any) {

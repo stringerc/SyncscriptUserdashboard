@@ -329,6 +329,77 @@ async function proposeAgentWorker(ctx: AgentContext, runtime: AgentRuntime) {
   return res.ok ? { proposal: res.proposal } : { error: res.reason };
 }
 
+// ── goal_plan: decompose mission goals into governed task proposals ──
+// Mission-loop stage 1 (CORTEX_MISSION_LOOP_SPEC.md §2.3). Reads canonical
+// goals from mission state, asks the LLM for a task breakdown, and files
+// each step as a strategy proposal — decomposition is a proposal, never
+// silent task injection. Deduped per goal via planNote.
+
+async function goalPlanWorker(ctx: AgentContext) {
+  const { loadMission } = await import('./mission');
+  const { listStrategyProposals } = await import('./strategy-proposals');
+  const state = loadMission();
+  const active = state.goals.filter((g) => g.status === 'active');
+  if (!active.length) return { decomposed: 0, reason: 'no active goals in mission state' };
+
+  // Skip goals that already have a pending/approved decomposition proposal.
+  const existing = new Set(
+    listStrategyProposals()
+      .filter((p: any) => ['pending', 'approved', 'executed'].includes(p.status))
+      .map((p: any) => p.planNote),
+  );
+  const todo = active.filter((g) => !existing.has(`goal-plan-${g.id}`)).slice(0, 3);
+  if (!todo.length) return { decomposed: 0, reason: 'all active goals already have proposals in flight', goalsSeen: active.length };
+
+  const opsDigest = state.opsItems.slice(0, 20).map((o) => `- ${o.done ? '[x]' : '[ ]'} ${o.label}`).join('\n');
+  let filedTotal = 0;
+  const results: any[] = [];
+
+  for (const goal of todo) {
+    const prompt = [
+      `You are STRATEGIST decomposing a goal into executable tasks for the Cortex agent fleet.`,
+      `GOAL: ${goal.title}${goal.description ? ` — ${goal.description}` : ''}`,
+      goal.targetDate ? `TARGET: ${goal.targetDate}` : '',
+      goal.horizon ? `HORIZON: ${goal.horizon}` : '',
+      `CURRENT OPS CHECKLIST:\n${opsDigest || '(empty)'}`,
+      `Available agent lanes: scout (research/web), builder (code/build), distributor (publishing/distribution), prep (calendar/life ops), librarian (memory/rules), reviewer (review), runner (exec), forecaster (prediction), warden (patrol/ops).`,
+      `Output JSON ONLY: {"tasks":[{"title":"imperative task title","agent":"agent-id","class":"process|code|web|eval|config","why":"one-line rationale tied to the goal"}]}`,
+      `Rules: 3-6 tasks max, smallest verifiable steps first, every task must map to an agent lane, no task may require secrets or irreversible external actions (those get class 'hard' and will wait for human approval anyway — prefer decomposing around them).`,
+    ].filter(Boolean).join('\n');
+
+    const text = await ctx.llm({
+      tier: 'reason', maxTokens: 1200,
+      messages: [
+        { role: 'system', content: 'You decompose goals into governed agent task proposals. JSON only.' },
+        { role: 'user', content: prompt },
+      ],
+    });
+    const m = text.match(/\{[\s\S]*\}/);
+    if (!m) { results.push({ goalId: goal.id, error: 'no JSON in LLM output' }); continue; }
+    let parsed: any;
+    try { parsed = JSON.parse(m[0]); } catch { results.push({ goalId: goal.id, error: 'unparseable JSON' }); continue; }
+    const tasks = Array.isArray(parsed.tasks) ? parsed.tasks.slice(0, 6) : [];
+    if (!tasks.length) { results.push({ goalId: goal.id, error: 'no tasks returned' }); continue; }
+
+    const actions = tasks.map((t: any, i: number) => {
+      const agent = String(t.agent || 'builder');
+      const cls = String(t.class || 'process');
+      const title = String(t.title || '').slice(0, 120);
+      const why = String(t.why || '').slice(0, 200);
+      return `[${cls}] ${title} — assign to ${agent}; why: ${why}; goal: ${goal.id} (${goal.title.slice(0, 60)})`;
+    });
+    const filed = fileStrategyProposals({
+      planNote: `goal-plan-${goal.id}`,
+      planTaskId: ctx.task.id,
+      actions,
+    });
+    filedTotal += filed.filed;
+    results.push({ goalId: goal.id, title: goal.title.slice(0, 60), tasks: tasks.length, filed: filed.filed, skipped: filed.skipped });
+  }
+
+  return { decomposed: results.length, proposalsFiled: filedTotal, results };
+}
+
 // ── Counsel workers (Go/No-Go deliberation layer) ─────────────────
 
 /** Convene a counsel session on a decision. Auto-builds the brief context
@@ -468,8 +539,9 @@ export function makeStrategistWorker(runtime: AgentRuntime): WorkerHandler {
       case 'propose_agent': return proposeAgentWorker(ctx, runtime);
       case 'counsel_convene': return counselConveneWorker(ctx);
       case 'counsel_synthesize': return counselSynthesizeWorker(ctx);
+      case 'goal_plan': return goalPlanWorker(ctx);
       default:
-        return { error: `unknown strategist kind '${ctx.task.kind}'`, kinds: ['cluster', 'plan', 'manifest', 'regress', 'propose_skill', 'propose_agent', 'counsel_convene', 'counsel_synthesize'] };
+        return { error: `unknown strategist kind '${ctx.task.kind}'`, kinds: ['cluster', 'plan', 'manifest', 'regress', 'propose_skill', 'propose_agent', 'counsel_convene', 'counsel_synthesize', 'goal_plan'] };
     }
   };
 }

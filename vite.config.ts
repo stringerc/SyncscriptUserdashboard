@@ -10296,6 +10296,22 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
         res.setHeader('Cache-Control', 'no-store');
       };
 
+      // Shared source assembly for mission verification — archive tail,
+      // distribution queue, calendar mirror. Defensive: missing files → empty.
+      const missionSourcesSafe = () => {
+        const now = Date.now();
+        const sf = path.join(process.cwd(), 'storefront');
+        const readJson = (p: string) => { try { return JSON.parse(fsSync.readFileSync(p, 'utf8')); } catch { return null; } };
+        const cal = readJson(path.join(process.cwd(), '.cortex-runtime', 'calendar-upcoming.json'));
+        const queue = readJson(path.join(sf, 'distribution-queue.json'));
+        return {
+          now,
+          archive: readArchive({ limit: 500, since: now - 7 * 86_400_000 }),
+          distributionItems: Array.isArray(queue?.items) ? queue.items : [],
+          calendarEvents: Array.isArray(cal?.events) ? cal.events : [],
+        };
+      };
+
       // GET /api/cortex/agents/state — full snapshot for the Agents tab.
       server.middlewares.use('/api/cortex/agents/state', (req: any, res: any, next: any) => {
         if (req.method === 'OPTIONS') {
@@ -10312,7 +10328,28 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
           const lines = fsSync.readFileSync(ledger, 'utf8').split('\n').filter(Boolean).slice(-40);
           forecasts = lines.map((l: string) => { try { return JSON.parse(l); } catch { return null; } }).filter(Boolean);
         } catch { }
-        res.end(JSON.stringify({ ok: true, ...agentRuntime.snapshot(), forecasts }));
+        // Mission-loop summary (CORTEX_MISSION_LOOP_SPEC.md) — goals progress,
+        // ops verification counts, running A/B experiments. Read-only here;
+        // mutations go through /api/cortex/mission POST actions.
+        let mission: unknown = null;
+        try {
+          const ms = loadMission();
+          const msrc = missionSourcesSafe();
+          verifyOps(ms, msrc);
+          const gp = goalProgress(ms, msrc.archive);
+          mission = {
+            goals: gp.filter((g) => g.status === 'active').map((g) => ({ id: g.goalId, title: g.title.slice(0, 80), progress: g.progress, orphaned: g.orphaned })),
+            ops: {
+              total: ms.opsItems.length,
+              done: ms.opsItems.filter((o) => o.done).length,
+              stale: ms.opsItems.filter((o) => o.lastStatus === 'stale').length,
+              pending: ms.opsItems.filter((o) => !o.done && o.lastStatus !== 'stale').length,
+            },
+            plannedBlocks: ms.blocks.filter((b) => b.status === 'planned').length,
+            experiments: ms.experiments.filter((e) => e.status === 'running').map((e) => ({ id: e.id, routineId: e.routineId, kind: e.kind, variantMin: e.variant.intervalMin })),
+          };
+        } catch { }
+        res.end(JSON.stringify({ ok: true, ...agentRuntime.snapshot(), forecasts, mission }));
       });
 
       // GET /api/cortex/distribution/status — live revenue-engine state for the
@@ -11271,19 +11308,7 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
           res.writeHead(code, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify(body));
         };
-        const missionSources = () => {
-          const now = Date.now();
-          const sf = path.join(process.cwd(), 'storefront');
-          const readJson = (p: string) => { try { return JSON.parse(fsSync.readFileSync(p, 'utf8')); } catch { return null; } };
-          const cal = readJson(path.join(process.cwd(), '.cortex-runtime', 'calendar-upcoming.json'));
-          const queue = readJson(path.join(sf, 'distribution-queue.json'));
-          return {
-            now,
-            archive: readArchive({ limit: 500, since: now - 7 * 86_400_000 }),
-            distributionItems: Array.isArray(queue?.items) ? queue.items : [],
-            calendarEvents: Array.isArray(cal?.events) ? cal.events : [],
-          };
-        };
+        const missionSources = missionSourcesSafe;
         const cadenceReport = (state: any, apply: boolean) => {
           const src = missionSources();
           const yields = routineYield(src.archive, src.now - 7 * 86_400_000);
@@ -11811,6 +11836,12 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
 
       // GET /api/cortex/self-model/capabilities — Dynamic capability reflection & self-model sync
       server.middlewares.use('/api/cortex/self-model/capabilities', async (req: any, res: any, next: any) => {
+        if (req.method === 'OPTIONS') {
+          agentCors(req, res);
+          res.statusCode = 204;
+          res.end();
+          return;
+        }
         if (req.method !== 'GET') return next();
         try {
           const capsPath = path.join(process.cwd(), '.cortex-runtime', 'dynamic-capabilities.json');

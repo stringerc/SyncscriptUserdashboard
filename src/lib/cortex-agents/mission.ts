@@ -73,6 +73,25 @@ export interface CadenceEntry {
   adjustments: { at: number; from: number; to: number; reason: string }[];
 }
 
+/** Before/after A/B experiment on a single routine's cadence (spec §3).
+ *  Baseline yield is measured over the trailing window at start; the variant
+ *  interval runs until enough post-change runs accrue, then a verdict is
+ *  computed. Honest interrupted time-series — provider drift is the known
+ *  confound, mitigated by requiring minimum sample sizes. */
+export interface AbExperiment {
+  id: string;
+  routineId: string;
+  agentId: string;
+  kind: string;
+  baseline: { intervalMin: number; runs: number; completions: number; windowDays: number };
+  variant: { intervalMin: number };
+  startedAt: number;
+  minVariantRuns: number;        // evidence floor before verdict
+  status: 'running' | 'concluded';
+  verdict?: 'keep' | 'revert' | 'inconclusive';
+  result?: { controlRate: number; variantRate: number; variantRuns: number };
+}
+
 export interface MissionPrefs {
   workStartMin: number;          // minutes past local midnight, default 480 (08:00)
   workEndMin: number;            // default 1320 (22:00)
@@ -84,6 +103,7 @@ export interface MissionState {
   opsItems: OpsItem[];
   blocks: ScheduleBlock[];
   cadence: CadenceEntry[];
+  experiments: AbExperiment[];
   prefs: MissionPrefs;
   updatedAt: number;
 }
@@ -92,7 +112,7 @@ export interface MissionState {
 
 function emptyState(): MissionState {
   return {
-    goals: [], opsItems: [], blocks: [], cadence: [],
+    goals: [], opsItems: [], blocks: [], cadence: [], experiments: [],
     prefs: { workStartMin: 480, workEndMin: 1320, slotMin: 30 },
     updatedAt: Date.now(),
   };
@@ -346,4 +366,79 @@ export function suggestCadence(
     };
   }
   return null;
+}
+
+// ------------------------------------------------------------- A/B experiments
+
+export const EXPERIMENT_MIN_VARIANT_RUNS = 8;
+
+/** Start a before/after cadence experiment on one routine. Baseline yield is
+ *  measured from the archive over the trailing 7d; the caller is responsible
+ *  for actually applying variant.intervalMin via runtime.updateRoutine. */
+export function startExperiment(
+  state: MissionState,
+  routine: { id: string; agentId: string; kind: string; everyMinutes: number },
+  variantMin: number,
+  archive: { input?: Record<string, unknown>; status: string; finishedAt?: number; createdAt: number }[],
+  now = Date.now(),
+): { ok: boolean; experiment?: AbExperiment; reason?: string } {
+  if (state.experiments.some((e) => e.routineId === routine.id && e.status === 'running'))
+    return { ok: false, reason: 'experiment already running for this routine' };
+  const since = now - 7 * 86_400_000;
+  const y = routineYield(archive, since).get(routine.id) ?? { runs: 0, completions: 0 };
+  if (y.runs < 6)
+    return { ok: false, reason: `insufficient baseline evidence (${y.runs} runs in 7d, need ≥6)` };
+  if (!Number.isFinite(variantMin) || variantMin < CADENCE_MIN_MIN || variantMin === routine.everyMinutes)
+    return { ok: false, reason: `variantMin must be ≥${CADENCE_MIN_MIN} and differ from current ${routine.everyMinutes}` };
+  const exp: AbExperiment = {
+    id: `ab-${now.toString(36)}-${Math.random().toString(36).slice(2, 6)}`,
+    routineId: routine.id, agentId: routine.agentId, kind: routine.kind,
+    baseline: { intervalMin: routine.everyMinutes, runs: y.runs, completions: y.completions, windowDays: 7 },
+    variant: { intervalMin: Math.floor(variantMin) },
+    startedAt: now,
+    minVariantRuns: EXPERIMENT_MIN_VARIANT_RUNS,
+    status: 'running',
+  };
+  state.experiments.push(exp);
+  return { ok: true, experiment: exp };
+}
+
+export interface ExperimentReport {
+  experiment: AbExperiment;
+  variantRuns: number;
+  variantRate: number | null;
+  controlRate: number;
+  ready: boolean;
+  verdict?: 'keep' | 'revert' | 'inconclusive';
+}
+
+/** Evaluate running experiments against post-change archive records.
+ *  Concludes (does not auto-revert) — the caller decides whether to apply
+ *  the verdict via updateRoutine; reverting is a separate explicit action. */
+export function reportExperiments(
+  state: MissionState,
+  archive: { input?: Record<string, unknown>; status: string; finishedAt?: number; createdAt: number }[],
+  now = Date.now(),
+): ExperimentReport[] {
+  const out: ExperimentReport[] = [];
+  for (const exp of state.experiments.filter((e) => e.status === 'running')) {
+    const post = archive.filter((r) => {
+      const rid = r.input?.routineId;
+      return rid === exp.routineId && (r.finishedAt ?? r.createdAt) >= exp.startedAt;
+    });
+    const runs = post.length;
+    const completions = post.filter((r) => r.status === 'completed').length;
+    const controlRate = exp.baseline.runs ? exp.baseline.completions / exp.baseline.runs : 0;
+    const variantRate = runs ? completions / runs : null;
+    const ready = runs >= exp.minVariantRuns;
+    let verdict: ExperimentReport['verdict'];
+    if (ready && variantRate != null) {
+      verdict = variantRate >= controlRate ? 'keep' : 'revert';
+      exp.status = 'concluded';
+      exp.verdict = verdict;
+      exp.result = { controlRate, variantRate, variantRuns: runs };
+    }
+    out.push({ experiment: exp, variantRuns: runs, variantRate, controlRate, ready, verdict });
+  }
+  return out;
 }
