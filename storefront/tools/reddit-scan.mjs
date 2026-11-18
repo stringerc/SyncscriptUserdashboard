@@ -1,7 +1,7 @@
 import { chromium } from 'playwright-core';
-import { cdpUrl } from './cdp-url.mjs';
+import { resolveCdpUrl } from './cdp-url.mjs';
 const subs = process.argv.slice(2);
-const browser = await chromium.connectOverCDP(cdpUrl());
+const browser = await chromium.connectOverCDP(await resolveCdpUrl());
 const ctx = browser.contexts()[0];
 // No reddit tab? Reuse any open page as the vehicle — goto() navigates it
 // anyway. Only open a new tab when the browser has zero pages (fresh VM

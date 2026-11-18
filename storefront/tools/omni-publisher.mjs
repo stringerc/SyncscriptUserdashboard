@@ -7,7 +7,7 @@ import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright-core';
-import { cdpUrl } from './cdp-url.mjs';
+import { resolveCdpUrl } from './cdp-url.mjs';
 import { pauseAndPrompt, checkCdpEndpoint, detectCaptchaOrChallenge } from './cdp-supervisor.mjs';
 import { isChromeRunning, publishPlatform } from './cortex-browser-bridge.mjs';
 
@@ -343,7 +343,7 @@ async function run() {
     console.log(`[CDP Supervisor] Chrome DevTools Protocol (127.0.0.1:9225): ${cdpReachable ? 'CONNECTED' : 'DISCONNECTED'}`);
     if (cdpReachable) {
       try {
-        browser = await chromium.connectOverCDP(cdpUrl());
+        browser = await chromium.connectOverCDP(await resolveCdpUrl());
         console.log('[CDP Supervisor] Active CDP session established with browser on port 9225.');
       } catch (e) {
         console.warn('[CDP Supervisor] Failed to attach over CDP:', e.message);

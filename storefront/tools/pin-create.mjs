@@ -1,9 +1,9 @@
 // Full pin creation: upload image, fill fields, publish to selected board.
 import { chromium } from 'playwright-core';
-import { cdpUrl } from './cdp-url.mjs';
+import { resolveCdpUrl } from './cdp-url.mjs';
 
 const [img, title, desc, link] = process.argv.slice(2);
-const browser = await chromium.connectOverCDP(cdpUrl());
+const browser = await chromium.connectOverCDP(await resolveCdpUrl());
 const ctx = browser.contexts()[0];
 const page = ctx.pages().find(p => p.url().includes('pinterest.com')) || ctx.pages()[0];
 

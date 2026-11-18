@@ -2,7 +2,7 @@
 // Usage: node gcal-create.mjs "<title>" "<startISO>" "<endISO>" "[description]" [--allday]
 // Dates: RFC3339 e.g. 2026-11-16T09:30:00-05:00. All-day uses YYYY-MM-DD.
 import { chromium } from 'playwright-core';
-import { cdpUrl } from './cdp-url.mjs';
+import { resolveCdpUrl } from './cdp-url.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -32,7 +32,7 @@ const params = new URLSearchParams({
 if (allday) params.set('details', (desc || '') + '\n\n(all-day)');
 
 const url = `https://calendar.google.com/calendar/render?${params.toString()}`;
-const browser = await chromium.connectOverCDP(cdpUrl());
+const browser = await chromium.connectOverCDP(await resolveCdpUrl());
 const ctx = browser.contexts()[0];
 const page = await ctx.newPage();
 await page.goto(url, { waitUntil: 'domcontentloaded' });

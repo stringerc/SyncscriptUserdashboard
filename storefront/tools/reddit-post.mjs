@@ -1,5 +1,5 @@
 import { chromium } from 'playwright-core';
-import { cdpUrl } from './cdp-url.mjs';
+import { resolveCdpUrl } from './cdp-url.mjs';
 import { readFileSync, writeFileSync, copyFileSync, existsSync, mkdirSync } from 'fs';
 import path from 'path';
 
@@ -48,7 +48,7 @@ const done = async (posted, reason) => {
 };
 
 try {
-  browser = await chromium.connectOverCDP(cdpUrl());
+  browser = await chromium.connectOverCDP(await resolveCdpUrl());
   const ctx = browser.contexts()[0];
   page = ctx.pages().find(p => p.url().includes('reddit.com')) || await ctx.newPage();
 
