@@ -116,8 +116,13 @@ export function fileStrategyProposals(opts: {
   for (let i = 0; i < Math.min(opts.actions.length, MAX_FILED_PER_PLAN); i++) {
     const raw = opts.actions[i];
     if (!raw) continue;
-    const dedupeId = `strat-${(opts.planNote || opts.planTaskId).replace(/[^a-z0-9]+/gi, '-').slice(-40)}-${i}`;
-    if (all.some((p) => p.id === dedupeId)) { skipped++; continue; }
+    const baseId = `strat-${(opts.planNote || opts.planTaskId).replace(/[^a-z0-9]+/gi, '-').slice(-40)}-${i}`;
+    // Failed proposals never executed — they must not bury the
+    // recommendation forever. Refile under a -rN suffix; pending,
+    // approved, executed and dismissed still block permanently.
+    const prior = all.filter((p) => p.id === baseId || p.id.startsWith(`${baseId}-r`));
+    if (prior.some((p) => p.status !== 'failed')) { skipped++; continue; }
+    const dedupeId = prior.length ? `${baseId}-r${prior.length}` : baseId;
     if (pending + filed >= MAX_PENDING) { skipped++; continue; }
     const clsMatch = raw.match(/\[([^\]]+)\]/);
     const actionClass = (clsMatch?.[1] || 'process').split('|')[0].trim().toLowerCase();
@@ -429,6 +434,14 @@ export async function autoApproveSafeStrategyProposals(
       p.decidedAt = Date.now();
       p.decisionNote = `[${by}] auto-approved budget ${p.action.agentId} → ${targetBudget}/day`;
       executed.push({ id: p.id, title: p.title, action: `budgetRaise:${p.action.agentId}:${targetBudget}` });
+      continue;
+    }
+
+    // Adoption follow-ups always require the Crew — installing a new
+    // capability is a decision, not maintenance. planNote prefix is the
+    // marker written by cortex-agents/adoption.ts.
+    if (p.planNote.startsWith('adoption-')) {
+      skipped++;
       continue;
     }
 

@@ -24,6 +24,7 @@ import { archiveTask, readArchive } from './src/lib/cortex-agents/archive';
 import { listStrategyProposals, decideStrategyProposal, reconcileStrategyProposals, fileBudgetProposal, autoApproveSafeStrategyProposals, setOnProposalFiledHook } from './src/lib/cortex-agents/strategy-proposals';
 import { recordIncidentFailure, resolveIncidentsOnSuccess, listIncidents, escalateStaleIncidents, sweepIncidentTtl, dismissIncident, dismissAllIncidents, autoVerifyIncident } from './src/lib/cortex-agents/incidents';
 import { issueDirective, listDirectives, ackDirective, cancelDirective } from './src/lib/cortex-agents/directives';
+import { maybeFileAdoptionFollowup } from './src/lib/cortex-agents/adoption';
 import { registerAgentWorkers, makeEphemeralWorker, expandTaskSpec } from './src/lib/cortex-agents/workers';
 import { enqueueDistributionItem, DISTRIBUTION_ITEM_TYPES } from './src/lib/cortex-agents/distribution';
 import {
@@ -1195,6 +1196,10 @@ function apiProxyPlugin(): Plugin {
             agentRuntime.submitTask('librarian', 'distill', 'distill agent learnings into rules');
           }
         } catch { /* learning edge is best-effort — never break the hook */ }
+        // Adoption follow-through: completed builder research tasks get a
+        // fast-tier verdict judge; adopt verdicts file INBOX proposals with
+        // executable install/eval instructions. Fire-and-forget, never throws.
+        try { void maybeFileAdoptionFollowup(task); } catch { }
       });
 
       // Provider lookup by candidate provider name → live credentials/endpoint.
