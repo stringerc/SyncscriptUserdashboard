@@ -115,6 +115,19 @@ const SAFE_AUTO_TOOLS = new Set([
   'cortex_goals',
   'cortex_metacognition',
   'cortex_accomplishments',
+  'cortex_search',
+  'read_file',
+  'cortex_memory',
+  'cortex_govtech',
+  'lights_status',
+  'cortex_journal',
+  'cortex_diagnostics',
+  'cortex_proposals',
+  'cortex_fleet_status',
+  'cortex_radar',
+  'cortex_analytics',
+  'cortex_brief',
+  'cortex_weather',
 ]);
 function isSafeAutoClient(tool: string, tier: number, requiresApproval: boolean): boolean {
   return tier <= 1 && !requiresApproval && SAFE_AUTO_TOOLS.has(tool);

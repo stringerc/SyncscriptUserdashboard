@@ -90,8 +90,8 @@ export const AGENT_SPECS: AgentSpec[] = [
     name: 'BUILDER',
     role: 'Engineering Operative',
     blurb: 'Code tasks through governed tools only — tier-2 actions become proposals, never silent execution.',
-    concurrency: 1,
-    dailyBudget: 16,
+    concurrency: 2,
+    dailyBudget: 64,
     modelPin: { tier: 'reason' },
   },
   {
@@ -108,8 +108,8 @@ export const AGENT_SPECS: AgentSpec[] = [
     name: 'RUNNER',
     role: 'Exec Operative',
     blurb: 'Runs commands and tests, returns distilled results — verbose output stays quarantined server-side.',
-    concurrency: 2,
-    dailyBudget: 48,
+    concurrency: 3,
+    dailyBudget: 96,
     modelPin: { tier: 'fast' },
   },
   {

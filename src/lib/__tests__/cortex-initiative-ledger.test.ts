@@ -108,8 +108,12 @@ describe('initiative ledger', () => {
 
   it('isSafeAutoProposal rejects tier-2 and non-whitelisted tools', () => {
     expect(ledger.isSafeAutoProposal({ autonomyTier: 1, requiresApproval: false, suggestedTool: 'cortex_metacognition' })).toBe(true);
+    expect(ledger.isSafeAutoProposal({ autonomyTier: 1, requiresApproval: false, suggestedTool: 'cortex_search' })).toBe(true);
+    expect(ledger.isSafeAutoProposal({ autonomyTier: 1, requiresApproval: false, suggestedTool: 'read_file' })).toBe(true);
+    expect(ledger.isSafeAutoProposal({ autonomyTier: 1, requiresApproval: false, suggestedTool: 'cortex_govtech' })).toBe(true);
     expect(ledger.isSafeAutoProposal({ autonomyTier: 2, requiresApproval: false, suggestedTool: 'cortex_goals' })).toBe(false);
     expect(ledger.isSafeAutoProposal({ autonomyTier: 1, requiresApproval: true, suggestedTool: 'cortex_goals' })).toBe(false);
     expect(ledger.isSafeAutoProposal({ autonomyTier: 1, requiresApproval: false, suggestedTool: 'gmail_send' })).toBe(false);
+    expect(ledger.isSafeAutoProposal({ autonomyTier: 1, requiresApproval: false, suggestedTool: 'run_command' })).toBe(false);
   });
 });

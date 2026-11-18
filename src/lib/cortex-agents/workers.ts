@@ -2155,6 +2155,7 @@ export function registerAgentWorkers(runtime: AgentRuntime) {
   registerDistributorWorker(runtime);
   runtime.registerWorker('forecaster', forecasterWorker(runtime));
   runtime.registerWorker('prep', makePrepWorker({
+    runtime,
     toolExecute: (name, args, timeoutMs, telemetry) => toolExecute(name, args, timeoutMs, telemetry),
     fetchInbox: async () => {
       try {
@@ -2172,8 +2173,8 @@ export function registerAgentWorkers(runtime: AgentRuntime) {
   runtime.addRoutine({
     agentId: 'prep',
     kind: 'initiative_drain',
-    title: 'Initiative Inbox Drain (15m)',
-    everyMinutes: 15,
+    title: 'Initiative Inbox Drain (1m)',
+    everyMinutes: 1,
     enabled: true,
   });
   registerWardenWorker(runtime);

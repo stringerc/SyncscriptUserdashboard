@@ -21,7 +21,7 @@ import { deriveSomaticState, type SomaticSample } from './src/lib/cortex-somatic
 import { getAgentRuntime } from './src/lib/cortex-agents/runtime';
 import { recordAgentOutcome } from './src/lib/cortex-agents/outcomes';
 import { archiveTask, readArchive } from './src/lib/cortex-agents/archive';
-import { listStrategyProposals, decideStrategyProposal, reconcileStrategyProposals, fileBudgetProposal } from './src/lib/cortex-agents/strategy-proposals';
+import { listStrategyProposals, decideStrategyProposal, reconcileStrategyProposals, fileBudgetProposal, autoApproveSafeStrategyProposals } from './src/lib/cortex-agents/strategy-proposals';
 import { recordIncidentFailure, resolveIncidentsOnSuccess, listIncidents, escalateStaleIncidents, sweepIncidentTtl } from './src/lib/cortex-agents/incidents';
 import { registerAgentWorkers, makeEphemeralWorker, expandTaskSpec } from './src/lib/cortex-agents/workers';
 import { enqueueDistributionItem, DISTRIBUTION_ITEM_TYPES } from './src/lib/cortex-agents/distribution';
@@ -9997,9 +9997,37 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
           return res.end();
         }
         if (req.method !== 'POST') return next();
-        ledgerPost(req, res, (body) => ({
-          body: { ok: true, ...ledgerSyncProposals(Array.isArray(body?.proposals) ? body.proposals : []) },
-        }));
+        ledgerPost(req, res, (body) => {
+          const syncRes = ledgerSyncProposals(Array.isArray(body?.proposals) ? body.proposals : []);
+          const drained = ledgerDrainSafe('server:fast-sync');
+          return {
+            body: { ok: true, ...syncRes, autoDrained: drained.approved.length },
+          };
+        });
+      });
+
+      // POST/GET /api/cortex/initiative/drain — fast drain for both proactive ledger and strategy proposals
+      server.middlewares.use('/api/cortex/initiative/drain', async (req: any, res: any, next: any) => {
+        if (req.method === 'OPTIONS') {
+          res.writeHead(204, { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Methods': 'GET, POST, OPTIONS', 'Access-Control-Allow-Headers': 'Content-Type' });
+          return res.end();
+        }
+        if (req.method !== 'POST' && req.method !== 'GET') return next();
+        try {
+          const ledgerDrain = ledgerDrainSafe('operator:fast-drain');
+          const stratDrain = await autoApproveSafeStrategyProposals(agentRuntime, 'operator:fast-drain');
+          res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+          res.end(JSON.stringify({
+            ok: true,
+            ledgerApproved: ledgerDrain.approved.map((p) => ({ id: p.id, title: p.title, tool: p.suggestedTool })),
+            strategyApproved: stratDrain.approved,
+            strategyExecuted: stratDrain.executed,
+            totalDrained: ledgerDrain.approved.length + stratDrain.approved.length + stratDrain.executed.length,
+          }));
+        } catch (e: any) {
+          res.writeHead(500, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+          res.end(JSON.stringify({ ok: false, error: e?.message || 'drain failed' }));
+        }
       });
 
       // GET /?status=&limit= — full ledger read.
@@ -10881,6 +10909,41 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
           return;
         }
         return next();
+      });
+
+      // POST /api/cortex/agents/proposals/batch-approve — batch approval for strategy proposals
+      server.middlewares.use('/api/cortex/agents/proposals/batch-approve', (req: any, res: any, next: any) => {
+        const origin = req.headers.origin;
+        if (req.method === 'OPTIONS') {
+          res.writeHead(204, { 'Access-Control-Allow-Origin': origin || '*', 'Access-Control-Allow-Methods': 'GET, POST, OPTIONS', 'Access-Control-Allow-Headers': 'Content-Type' });
+          return res.end();
+        }
+        if (!isAllowedOrigin(origin, req.headers.host)) return next();
+        agentCors(req, res);
+        if (req.method !== 'POST') return next();
+        let body = '';
+        req.on('data', (c: Buffer) => { body += c.toString(); });
+        req.on('end', async () => {
+          try {
+            const parsed = JSON.parse(body || '{}');
+            const allProps = listStrategyProposals('pending');
+            const targetIds: string[] = Array.isArray(parsed.ids) && parsed.ids.length > 0
+              ? parsed.ids
+              : parsed.all
+                ? allProps.map((p) => p.id)
+                : [];
+            const results: Array<{ id: string; ok: boolean; note?: string }> = [];
+            for (const id of targetIds) {
+              const r = await decideStrategyProposalWithDispatch(id, 'approved');
+              results.push({ id, ...r });
+            }
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ ok: true, count: results.length, approved: results.filter((r) => r.ok).length, results }));
+          } catch (e: any) {
+            res.writeHead(500);
+            res.end(JSON.stringify({ ok: false, error: e?.message || 'batch approve failed' }));
+          }
+        });
       });
 
       // GET /api/cortex/agents/incidents?status=open — incident ticket ledger.

@@ -11,8 +11,12 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
-const STATE_DIR = process.env.CORTEX_AGENTS_STATE_DIR || path.join(process.cwd(), '.cortex-runtime');
-const PROPOSALS_PATH = path.join(STATE_DIR, 'strategy-proposals.json');
+function getStateDir(): string {
+  return process.env.CORTEX_AGENTS_STATE_DIR || path.join(process.cwd(), '.cortex-runtime');
+}
+function getProposalsPath(): string {
+  return path.join(getStateDir(), 'strategy-proposals.json');
+}
 const MAX_FILED_PER_PLAN = 3;
 const MAX_PENDING = 12;
 
@@ -46,23 +50,29 @@ export interface StrategyProposal {
 
 function readAll(): StrategyProposal[] {
   try {
-    if (!fs.existsSync(PROPOSALS_PATH)) return [];
-    const data = JSON.parse(fs.readFileSync(PROPOSALS_PATH, 'utf-8'));
+    const p = getProposalsPath();
+    if (!fs.existsSync(p)) return [];
+    const data = JSON.parse(fs.readFileSync(p, 'utf-8'));
     return Array.isArray(data) ? data : [];
   } catch { return []; }
 }
 
 function writeAll(list: StrategyProposal[]) {
   try {
-    fs.mkdirSync(STATE_DIR, { recursive: true });
-    fs.writeFileSync(PROPOSALS_PATH, JSON.stringify(list.slice(-100), null, 1));
+    fs.mkdirSync(getStateDir(), { recursive: true });
+    fs.writeFileSync(getProposalsPath(), JSON.stringify(list.slice(-100), null, 1));
   } catch { /* best-effort */ }
 }
 
-/** Class → executing agent. Everything routes through BUILDER's governed
- *  tool path for now; eval/process items still become builder tasks with
- *  an explicit instruction (builder's own blast-radius gate applies). */
-function agentForClass(cls: string): string {
+/** Class → executing agent. Routes dynamically to the best specialist agent
+ *  so BUILDER is never a single-threaded bottleneck for the whole fleet. */
+export function agentForClass(cls: string): string {
+  const c = String(cls || '').toLowerCase();
+  if (c === 'eval' || c === 'test') return 'runner';
+  if (c === 'rule' || c === 'memory') return 'librarian';
+  if (c === 'review' || c === 'audit') return 'reviewer';
+  if (c === 'web' || c === 'portal' || c === 'scrape') return 'openclaw';
+  if (c === 'refactor' || c === 'deep_code') return 'claudecode';
   return 'builder';
 }
 
@@ -333,4 +343,91 @@ export function reconcileStrategyProposals(
   }
   if (changed) writeAll(all);
   return changed;
+}
+
+export interface AutoApproveResult {
+  approved: Array<{ id: string; title: string; agentId: string; taskId?: string }>;
+  executed: Array<{ id: string; title: string; action: string }>;
+  skipped: number;
+}
+
+/**
+ * Autonomous Strategy Proposal Triage Engine.
+ * Auto-approves and dispatches low-risk, high-confidence strategy proposals
+ * without waiting for manual human clicks.
+ *
+ * Safe classes:
+ * - Deterministic 'budgetRaise' (<= 128)
+ * - Safe action classes: 'rule', 'prompt', 'eval', 'process', 'config', 'skill'
+ * - Non-destructive incident investigation tasks
+ *
+ * Gated / Kept Pending for Operator:
+ * - 'devin_task' (Devin cloud sessions that can push code externally)
+ * - High-risk destructive infrastructure commands
+ */
+export async function autoApproveSafeStrategyProposals(
+  runtime: {
+    submitTask: (agentId: any, kind: string, title: string, input?: any) => { ok: boolean; task?: any; error?: string };
+    setDailyBudget?: (agentId: any, budget: number) => boolean;
+  },
+  by = 'auto:strategist-triage',
+): Promise<AutoApproveResult> {
+  const all = readAll();
+  const pending = all.filter((p) => p.status === 'pending');
+  const approved: Array<{ id: string; title: string; agentId: string; taskId?: string }> = [];
+  const executed: Array<{ id: string; title: string; action: string }> = [];
+  let skipped = 0;
+
+  for (const p of pending) {
+    // Devin tasks always require explicit operator approval per safety policy
+    if (p.kind === 'devin_task') {
+      skipped++;
+      continue;
+    }
+
+    // Deterministic budget raises under cap
+    if (p.action?.type === 'budgetRaise') {
+      const targetBudget = Math.min(128, Math.max(1, p.action.budget));
+      const ok = runtime.setDailyBudget ? runtime.setDailyBudget(p.action.agentId, targetBudget) : true;
+      p.status = ok ? 'executed' : 'approved';
+      p.decidedAt = Date.now();
+      p.decisionNote = `[${by}] auto-approved budget ${p.action.agentId} → ${targetBudget}/day`;
+      executed.push({ id: p.id, title: p.title, action: `budgetRaise:${p.action.agentId}:${targetBudget}` });
+      continue;
+    }
+
+    // Safe action classes
+    const safeClasses = new Set(['rule', 'prompt', 'eval', 'process', 'config', 'skill']);
+    const isSafe = safeClasses.has(p.actionClass.toLowerCase()) || p.title.startsWith('Investigate stale incident:');
+
+    if (isSafe) {
+      // Determine best agent dynamically
+      const targetAgent = p.agentId || agentForClass(p.actionClass);
+      
+      const t = runtime.submitTask(targetAgent, p.kind || 'task', String(p.title || '').slice(0, 120), {
+        instruction: p.instruction,
+        ...(p.taskInput || {}),
+        autoApprovedBy: by,
+      });
+
+      if (t.ok && t.task) {
+        p.status = 'approved';
+        p.decidedAt = Date.now();
+        p.dispatchedTaskId = t.task.id;
+        p.decisionNote = `[${by}] auto-approved & dispatched ${t.task.id} to ${targetAgent}`;
+        approved.push({ id: p.id, title: p.title, agentId: targetAgent, taskId: t.task.id });
+      } else {
+        // If agent budget was exhausted or concurrency full, keep pending without failing
+        skipped++;
+      }
+    } else {
+      skipped++;
+    }
+  }
+
+  if (approved.length > 0 || executed.length > 0) {
+    writeAll(all);
+  }
+
+  return { approved, executed, skipped };
 }

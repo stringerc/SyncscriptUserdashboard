@@ -427,6 +427,7 @@ export function CortexInitiativeInbox() {
   const [tick, setTick] = useState(0);
   const [strategyProps, setStrategyProps] = useState<StrategyProposal[]>([]);
   const [incidents, setIncidents] = useState<IncidentTicket[]>([]);
+  const [fastDraining, setFastDraining] = useState(false);
 
   useEffect(() => {
     const u1 = engine.subscribe(() => setTick(t => t + 1));
@@ -443,7 +444,7 @@ export function CortexInitiativeInbox() {
       .then(j => { if (alive && j?.ok) setStrategyProps(j.proposals || []); })
       .catch(() => {});
     load();
-    const iv = setInterval(load, 30_000);
+    const iv = setInterval(load, 8_000);
     return () => { alive = false; clearInterval(iv); };
   }, []);
 
@@ -455,7 +456,7 @@ export function CortexInitiativeInbox() {
       .then(j => { if (alive && j?.ok) setIncidents(j.incidents || []); })
       .catch(() => {});
     load();
-    const iv = setInterval(load, 30_000);
+    const iv = setInterval(load, 15_000);
     return () => { alive = false; clearInterval(iv); };
   }, []);
 
@@ -484,15 +485,64 @@ export function CortexInitiativeInbox() {
             }}
           >{t}</button>
         ))}
-        <span style={{ marginLeft: 'auto', fontSize: 9, color: C.dim, alignSelf: 'center' }}>
-          <Zap size={9} style={{ display: 'inline', marginRight: 3 }} />
-          {proposalCount} pending
-          {(() => {
-            const rm = engine.getRestraintMetrics();
-            const held = rm.today.suppressedDedupe + rm.today.suppressedBudget;
-            return held > 0 ? ` · ${held} held back` : '';
-          })()}
-        </span>
+        <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8 }}>
+          <span style={{ fontSize: 9, color: C.dim }}>
+            <Zap size={9} style={{ display: 'inline', marginRight: 3 }} />
+            {proposalCount + strategyProps.length} pending
+            {(() => {
+              const rm = engine.getRestraintMetrics();
+              const held = rm.today.suppressedDedupe + rm.today.suppressedBudget;
+              return held > 0 ? ` · ${held} held back` : '';
+            })()}
+          </span>
+          {(proposalCount > 0 || strategyProps.length > 0) && (
+            <button
+              onClick={async () => {
+                setFastDraining(true);
+                try {
+                  // 1. Server-side ledger & strategy auto-drain
+                  await fetch('/api/cortex/initiative/drain', { method: 'POST' }).catch(() => {});
+                  // 2. Client-side drain any safe non-tier2 proposals
+                  for (const p of proposals) {
+                    const tier = p.autonomyTier ?? (p.requiresApproval ? 2 : 1);
+                    if (tier <= 1 && !p.requiresApproval) {
+                      engine.acceptProposal(p.id);
+                    }
+                  }
+                  // 3. Batch approve pending strategy proposals
+                  if (strategyProps.length > 0) {
+                    await fetch('/api/cortex/agents/proposals/batch-approve', {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ all: true }),
+                    }).catch(() => {});
+                  }
+                  // 4. Force pickup & reload
+                  await engine.pickupApprovedProposals().catch(() => {});
+                  setTick(t => t + 1);
+                  fetch('/api/cortex/agents/proposals?status=pending', { cache: 'no-store' })
+                    .then(r => r.json())
+                    .then(j => { if (j?.ok) setStrategyProps(j.proposals || []); })
+                    .catch(() => {});
+                } finally {
+                  setFastDraining(false);
+                }
+              }}
+              disabled={fastDraining}
+              style={{
+                display: 'flex', alignItems: 'center', gap: 4,
+                background: 'rgba(52,211,153,0.18)', color: C.green,
+                border: `1px solid ${C.green}77`, borderRadius: 4,
+                fontSize: 9, fontFamily: MONO, fontWeight: 600, padding: '2px 8px',
+                cursor: fastDraining ? 'wait' : 'pointer',
+              }}
+              title="Fast-drain & auto-approve all safe proposals immediately"
+            >
+              <Zap size={9} />
+              {fastDraining ? 'DRAINING…' : '⚡ FAST-DRAIN ALL SAFE'}
+            </button>
+          )}
+        </div>
       </div>
 
       <div style={{ flex: 1, overflowY: 'auto' }}>

@@ -283,8 +283,8 @@ describe('AgentRuntime', () => {
 
   it('enforces daily budget', async () => {
     rt.registerWorker('builder', okWorker);
-    // builder budget = 16; submit 16 fast tasks then expect rejection.
-    for (let i = 0; i < 16; i++) rt.submitTask('builder', 'code_patch', `task ${i}`);
+    const budget = rt.getAgent('builder')?.dailyBudget ?? 16;
+    for (let i = 0; i < budget; i++) rt.submitTask('builder', 'code_patch', `task ${i}`);
     const over = rt.submitTask('builder', 'code_patch', 'one too many');
     expect(over.ok).toBe(false);
     expect(over.error).toContain('budget');

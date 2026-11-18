@@ -33,7 +33,7 @@ export interface InitiativeSensorHandle {
 }
 
 const DEFAULT_ENDPOINT = '/api/cortex/initiative/sense';
-const DEFAULT_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
+const DEFAULT_INTERVAL_MS = 30 * 1000; // 30 seconds (fast responsive initiative polling)
 const FETCH_TIMEOUT_MS = 15_000;
 
 export function fetchInitiativeSense(

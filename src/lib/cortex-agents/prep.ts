@@ -16,6 +16,7 @@ import path from 'node:path';
 import type { WorkerHandler } from './runtime';
 import { rulesBlock } from './rules';
 import { drainSafePending, listProposals, isSafeAutoProposal } from '../cortex-initiative-ledger';
+import { autoApproveSafeStrategyProposals } from './strategy-proposals';
 
 const RUNTIME_DIR = process.env.CORTEX_AGENTS_STATE_DIR || path.join(process.cwd(), '.cortex-runtime');
 const BRIEFS_DIR = path.join(RUNTIME_DIR, 'prep-briefs');
@@ -183,6 +184,7 @@ export function writeBriefFile(brief: PrepBrief): string {
 export function makePrepWorker(deps: {
   toolExecute: (name: string, args: Record<string, unknown>, timeoutMs?: number, telemetry?: any) => Promise<{ ok: boolean; [k: string]: unknown }>;
   fetchInbox: () => Promise<{ threads?: any[] } | null>;
+  runtime?: any;
 }): WorkerHandler {
   const searchMem = (q: string, telemetry?: any) =>
     deps.toolExecute('cortex_memory', { action: 'search', query: q, limit: 6 }, 20_000, telemetry);
@@ -478,12 +480,20 @@ export function makePrepWorker(deps: {
       // proposals so the client picks them up on its next poll. Tier-2 and
       // non-whitelisted tools stay pending for the Crew — never auto-approved.
       const drain = drainSafePending('agent:prep');
+      let stratDrain: { approved: any[]; executed: any[]; skipped: number } = { approved: [], executed: [], skipped: 0 };
+      if (deps.runtime) {
+        try {
+          stratDrain = await autoApproveSafeStrategyProposals(deps.runtime, 'agent:prep');
+        } catch { /* best effort */ }
+      }
       const pending = listProposals({ status: 'pending' });
       const awaitingCrew = pending.filter((p) => !isSafeAutoProposal(p));
       return {
         ok: true,
         approved: drain.approved.map((p) => ({ id: p.id, title: p.title, tool: p.suggestedTool })),
         approvedCount: drain.approved.length,
+        strategyApproved: stratDrain.approved,
+        strategyExecuted: stratDrain.executed,
         awaitingCrew: awaitingCrew.slice(0, 20).map((p) => ({
           id: p.id, title: p.title, tool: p.suggestedTool, tier: p.autonomyTier,
         })),
