@@ -267,7 +267,7 @@ const AgentGlyph: React.FC<{ enterprise?: boolean; color: string }> = ({ enterpr
     </svg>
   );
 
-function eventLine(e: { type: string; at: number; [k: string]: unknown }): string {
+function eventLine(e: { type: string; at: number;[k: string]: unknown }): string {
   const t = new Date(e.at).toLocaleTimeString('en-US', { hour12: false });
   switch (e.type) {
     case 'agent.status': return `${t}  ${String(e.agentId).toUpperCase()} → ${String(e.status).toUpperCase()}`;
@@ -678,7 +678,7 @@ const OmniSyndicationPanel: React.FC<{
     fetch('/api/cortex/distribution/status', { cache: 'no-store' })
       .then((r) => r.json())
       .then((j) => { if (j?.ok) setData(j); })
-      .catch(() => {});
+      .catch(() => { });
   };
 
   useEffect(() => {
@@ -723,44 +723,44 @@ const OmniSyndicationPanel: React.FC<{
       style={
         dockLeft
           ? {
-              position: 'absolute',
-              left: 216,
-              top: '50%',
-              transform: 'translateY(-50%)',
-              zIndex: 7,
-              width: 540,
-              maxWidth: 'calc(100vw - 240px)',
-              maxHeight: '78vh',
-              display: 'flex',
-              flexDirection: 'column',
-              background: 'linear-gradient(165deg, rgba(8,14,24,0.96), rgba(5,8,15,0.92))',
-              border: `1px solid ${hexA(col, 0.4)}`,
-              borderLeft: `3px solid ${col}`,
-              borderRadius: 3,
-              padding: '14px 18px',
-              backdropFilter: 'blur(16px)',
-              boxShadow: `0 0 40px ${hexA(col, 0.18)}`,
-              overflow: 'hidden',
-            }
+            position: 'absolute',
+            left: 216,
+            top: '50%',
+            transform: 'translateY(-50%)',
+            zIndex: 7,
+            width: 540,
+            maxWidth: 'calc(100vw - 240px)',
+            maxHeight: '78vh',
+            display: 'flex',
+            flexDirection: 'column',
+            background: 'linear-gradient(165deg, rgba(8,14,24,0.96), rgba(5,8,15,0.92))',
+            border: `1px solid ${hexA(col, 0.4)}`,
+            borderLeft: `3px solid ${col}`,
+            borderRadius: 3,
+            padding: '14px 18px',
+            backdropFilter: 'blur(16px)',
+            boxShadow: `0 0 40px ${hexA(col, 0.18)}`,
+            overflow: 'hidden',
+          }
           : {
-              position: 'absolute',
-              bottom: 18,
-              left: '50%',
-              transform: 'translateX(-50%)',
-              zIndex: 7,
-              width: 560,
-              maxWidth: '92vw',
-              maxHeight: '68vh',
-              display: 'flex',
-              flexDirection: 'column',
-              background: 'linear-gradient(165deg, rgba(8,14,24,0.96), rgba(5,8,15,0.92))',
-              border: `1px solid ${hexA(col, 0.4)}`,
-              borderRadius: 3,
-              padding: '14px 18px',
-              backdropFilter: 'blur(16px)',
-              boxShadow: `0 0 40px ${hexA(col, 0.18)}`,
-              overflow: 'hidden',
-            }
+            position: 'absolute',
+            bottom: 18,
+            left: '50%',
+            transform: 'translateX(-50%)',
+            zIndex: 7,
+            width: 560,
+            maxWidth: '92vw',
+            maxHeight: '68vh',
+            display: 'flex',
+            flexDirection: 'column',
+            background: 'linear-gradient(165deg, rgba(8,14,24,0.96), rgba(5,8,15,0.92))',
+            border: `1px solid ${hexA(col, 0.4)}`,
+            borderRadius: 3,
+            padding: '14px 18px',
+            backdropFilter: 'blur(16px)',
+            boxShadow: `0 0 40px ${hexA(col, 0.18)}`,
+            overflow: 'hidden',
+          }
       }
     >
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', flexShrink: 0 }}>
@@ -982,7 +982,7 @@ export const CortexAgentsScene: React.FC = () => {
           }
           standupStatus.current = map;
         })
-        .catch(() => {});
+        .catch(() => { });
     };
     pollStandup();
     const iv = setInterval(pollStandup, 30_000);
@@ -1793,8 +1793,8 @@ export const CortexAgentsScene: React.FC = () => {
         const statusLabel = isStandupDegraded
           ? `${tierPrefix}DEGRADED`
           : isStandupOffline
-          ? `${tierPrefix}OFFLINE`
-          : `${tierPrefix}${a.status.toUpperCase()}`;
+            ? `${tierPrefix}OFFLINE`
+            : `${tierPrefix}${a.status.toUpperCase()}`;
         ctx.fillText(statusLabel, ax, ay + vr * 1.15 + 27);
 
         // Standup status dot indicator
@@ -1927,23 +1927,13 @@ export const CortexAgentsScene: React.FC = () => {
       <canvas ref={canvasRef} style={{ position: 'absolute', inset: 0 }} />
 
       {/* Top Header Deck — streamlined, deconflicted from parent HUD */}
-      <div style={{ position: 'absolute', top: 22, left: '50%', transform: 'translateX(-50%)', zIndex: 12, textAlign: 'center' }}>
+      <div style={{ position: 'absolute', top: 22, left: '50%', transform: 'translateX(-50%)', zIndex: 12, textAlign: 'center', pointerEvents: 'none' }}>
         <div style={{ fontSize: 13, letterSpacing: '0.55em', fontWeight: 700, color: 'rgba(224,242,254,0.95)', fontFamily: MONO, textShadow: '0 0 18px rgba(103,232,249,0.5)' }}>
           NEXUS FOUNDRY
         </div>
         <div style={{ fontSize: 8.5, letterSpacing: '0.28em', color: 'rgba(165,243,252,0.65)', fontFamily: MONO, marginTop: 4 }}>
           {workingCount} AGENTS ACTIVE · {healthyModels}/{(snap.models || []).length} MODELS VERIFIED · {(snap.tasks || []).filter(t => t.status === 'running').length} TASKS IN FLIGHT
         </div>
-        <button
-          onClick={() => setTowerOpen(o => !o)}
-          style={{
-            marginTop: 8, background: towerOpen ? 'rgba(251,191,36,0.14)' : 'rgba(103,232,249,0.08)',
-            border: `1px solid ${towerOpen ? 'rgba(251,191,36,0.6)' : 'rgba(103,232,249,0.35)'}`,
-            color: towerOpen ? '#fbbf24' : 'rgba(165,243,252,0.9)',
-            fontFamily: MONO, fontSize: 8.5, letterSpacing: '0.25em', padding: '3px 14px',
-            borderRadius: 3, cursor: 'pointer', transition: 'all 0.2s',
-          }}
-        >{towerOpen ? '◈ TOWER OPEN' : '◇ TOWER'}</button>
       </div>
 
       {/* Right rail: merged foundry telemetry — sentinel rotation, model
