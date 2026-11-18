@@ -17,6 +17,7 @@ import type { WorkerHandler } from './runtime';
 import type { AgentEvent } from './types';
 import { rulesBlock } from './rules';
 import { listIncidents, recordIncidentFailure, resolveIncidentsOnSuccess } from './incidents';
+import { readArchive } from './archive';
 import { runCounselPosition } from './counsel-position';
 
 const PORT = process.env.PORT ? parseInt(process.env.PORT) : 5173;
@@ -474,6 +475,35 @@ export async function runPatrolChecks(deps: PatrolDeps = {}): Promise<PatrolRepo
     const r = deps.fileProbe();
     if (r.truncated.length || r.missing.length) throw new Error(r.detail);
     return r.detail;
+  }));
+
+  // ── Fleet context pressure (ECC strategic-compact adaptation) ──
+  // p95 tokensIn per agent over recent archived tasks — ECC watches one
+  // session's transcript; Cortex watches every agent's real token burn.
+  // Warning-level: pressure is a compaction/nudge signal, never silent
+  // context discarding.
+  checks.push(await timed('fleet.context_pressure', false, 5000, async () => {
+    const records = readArchive({ limit: 300 });
+    const byAgent = new Map<string, number[]>();
+    for (const r of records) {
+      const t = (r.telemetry as any)?.tokensIn;
+      if (typeof t === 'number' && t > 0 && r.agentId) {
+        if (!byAgent.has(r.agentId)) byAgent.set(r.agentId, []);
+        byAgent.get(r.agentId)!.push(t);
+      }
+    }
+    const pressured: string[] = [];
+    let total = 0;
+    for (const [agent, arr] of byAgent) {
+      total += arr.length;
+      arr.sort((a, b) => a - b);
+      const p95 = arr[Math.min(arr.length - 1, Math.floor(arr.length * 0.95))];
+      const avg = arr.reduce((a, b) => a + b, 0) / arr.length;
+      if (p95 > 9000 || avg > 6000) pressured.push(`${agent} p95=${p95}tok avg=${Math.round(avg)}tok (n=${arr.length})`);
+    }
+    if (!total) return 'no token telemetry yet';
+    if (pressured.length) throw new Error(`context pressure: ${pressured.join('; ')} — review prompt sizes / enable compaction`);
+    return `${total} tasks measured, all agents within context budget`;
   }));
 
   const anomalies = checks.filter((c) => !c.ok && c.critical).map((c) => `${c.name}: ${c.detail || 'failed'}`);

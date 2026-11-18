@@ -13,6 +13,7 @@
  */
 
 import fs from 'node:fs';
+import { registerRegressionEvalFromIncident } from './evals';
 import path from 'node:path';
 import { fileIncidentProposal } from './strategy-proposals';
 import { readArchive } from './archive';
@@ -122,6 +123,9 @@ export function resolveIncidentsOnSuccess(agentId: string, kind: string, taskId:
         inc.resolvedAt = Date.now();
         inc.resolutionNote = note;
         changed++;
+        // Eval harness: every verified heal registers a regression eval so
+        // the failure mode stays covered forever (ECC eval-harness P4).
+        try { registerRegressionEvalFromIncident(inc); } catch { }
       }
     }
     if (changed) writeAll(all);

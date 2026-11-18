@@ -26,7 +26,7 @@ export interface AgentContext {
   /** Report 0-1 progress; emits task.progress events. */
   progress(p: number): void;
   /** Matrix-routed LLM completion (calls the /api/cortex/agents/llm endpoint). */
-  llm(opts: { tier?: 'fast' | 'reason' | 'deep'; model?: string; messages: { role: string; content: string }[]; maxTokens?: number }): Promise<string>;
+  llm(opts: { tier?: 'fast' | 'reason' | 'deep'; model?: string; messages: { role: string; content: string }[]; maxTokens?: number; ventureId?: string }): Promise<string>;
   /** Emit a custom event onto the bus (e.g. worker-specific telemetry). */
   emit(e: AgentEvent): void;
   signal: AbortSignal;
@@ -302,7 +302,7 @@ export class AgentRuntime {
   private sentinel: ModelSentinel | null = null;
   private sweeper: ReturnType<typeof setInterval> | null = null;
   private startedAt = Date.now();
-  private llmBridge: ((opts: { tier?: 'fast' | 'reason' | 'deep'; agentId?: AgentId; model?: string; messages: { role: string; content: string }[]; maxTokens?: number }) => Promise<{ content: string; model?: string; usage?: { tokensIn?: number; tokensOut?: number } }>) | null = null;
+  private llmBridge: ((opts: { tier?: 'fast' | 'reason' | 'deep'; agentId?: AgentId; model?: string; messages: { role: string; content: string }[]; maxTokens?: number; ventureId?: string }) => Promise<{ content: string; model?: string; usage?: { tokensIn?: number; tokensOut?: number } }>) | null = null;
   private spawnWorkerFactory: ((spec: SpawnSpec) => WorkerHandler) | null = null;
   private onTaskCompleted: ((task: AgentTask, agent: AgentState) => void) | null = null;
   private onTaskFinished: ((task: AgentTask, agent: AgentState | undefined) => void) | null = null;
@@ -340,7 +340,7 @@ export class AgentRuntime {
   }
 
   /** vite.config wires the actual LLM endpoint here once middleware mounts. */
-  setLLMBridge(fn: (opts: { tier?: 'fast' | 'reason' | 'deep'; agentId?: AgentId; model?: string; messages: { role: string; content: string }[]; maxTokens?: number }) => Promise<{ content: string; model?: string; usage?: { tokensIn?: number; tokensOut?: number } }>) { this.llmBridge = fn; }
+  setLLMBridge(fn: (opts: { tier?: 'fast' | 'reason' | 'deep'; agentId?: AgentId; model?: string; messages: { role: string; content: string }[]; maxTokens?: number; ventureId?: string }) => Promise<{ content: string; model?: string; usage?: { tokensIn?: number; tokensOut?: number } }>) { this.llmBridge = fn; }
 
   /** vite.config wires the ephemeral worker factory (workers.ts). */
   setSpawnWorkerFactory(fn: (spec: SpawnSpec) => WorkerHandler) {
@@ -835,6 +835,7 @@ export class AgentRuntime {
           const r = await this.llmBridge({
             ...opts,
             agentId,
+            ventureId: (task.input as any)?.ventureId || opts.ventureId,
             messages: injected
               ? [{ role: 'system', content: injected }, ...opts.messages]
               : opts.messages,

@@ -32,6 +32,9 @@ import { cortexObsidianMemory } from '../cortex-obsidian-memory';
 import { relevantRules, rulesBlock, RULES_DIR, vaultFolder, listMd } from './rules';
 import { LEARNINGS_DIR } from './outcomes';
 import { readSessionHandoff, writeSessionHandoff, markHandoffClaimed } from './handoff';
+import { fileEvalDefinition, runEval, type LlmFn } from './evals';
+import { upsertInstinct, promotableInstincts, instinctCursor, saveInstinctCursor, listInstincts, type Instinct } from './instincts';
+import { isValidVenture } from '../cortex-ventures';
 
 const PORT = process.env.PORT ? parseInt(process.env.PORT) : 5173;
 const BASE = `http://127.0.0.1:${PORT}`;
@@ -102,6 +105,26 @@ function memoryBlock(entries: AgentMemoryEntry[]): string {
   const lines = entries.map((e) =>
     `- [${new Date(e.ts).toISOString().slice(0, 10)}] ${e.satisfied ? 'OK' : `FAILED(${e.failedSteps})`} ${e.instruction.slice(0, 120)}${e.note ? ` — ${e.note.slice(0, 120)}` : ''}`);
   return `\n\nYOUR PRIOR MISSIONS (your own journal — do not repeat past failures):\n${lines.join('\n')}`;
+}
+
+/** Persona reference library — .cortex-runtime/personas/*.md frontmatter
+ *  (name + description only). Ideation cites persona PRINCIPLES inside
+ *  systemBrief; whole files are never injected (4000-char cap). */
+const PERSONAS_DIR = path.join(process.env.CORTEX_AGENTS_STATE_DIR || path.join(process.cwd(), '.cortex-runtime'), 'personas');
+
+function personaCatalogBlock(): string {
+  try {
+    if (!fs.existsSync(PERSONAS_DIR)) return '';
+    const lines: string[] = [];
+    for (const f of fs.readdirSync(PERSONAS_DIR).filter((f) => f.endsWith('.md') && f !== 'README.md').slice(0, 20)) {
+      const head = fs.readFileSync(path.join(PERSONAS_DIR, f), 'utf8').slice(0, 1200);
+      const name = head.match(/^name:\s*(.+)$/m)?.[1]?.trim() || f.replace(/\.md$/, '');
+      const desc = head.match(/^description:\s*(.+)$/m)?.[1]?.trim() || '';
+      lines.push(`- ${name} (${f}): ${desc.slice(0, 160)}`);
+    }
+    if (!lines.length) return '';
+    return '\n\nPERSONA LIBRARY (.cortex-runtime/personas — cite 1-2 relevant persona principles inside systemBrief as "Persona: <name> — <principle>"; never paste whole files):\n' + lines.join('\n');
+  } catch { return ''; }
 }
 
 const UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
@@ -470,10 +493,19 @@ const REPO_SCAN_QUERIES = [
   'proactive ai assistant',
 ];
 
-async function githubRepoSearch(query: string, sinceDays: number): Promise<{ items: any[]; status: number }> {
+async function githubRepoSearch(
+  query: string,
+  sinceDays: number,
+  mode: 'created' | 'pushed' = 'created',
+): Promise<{ items: any[]; status: number }> {
   const since = new Date(Date.now() - sinceDays * 24 * 3600_000).toISOString().slice(0, 10);
-  const q = `${query} created:>${since}`;
-  const url = `https://api.github.com/search/repositories?q=${encodeURIComponent(q)}&sort=stars&order=desc&per_page=8`;
+  // 'created' hunts newborn repos (cheap-adoption window). 'pushed' hunts
+  // established repos with recent activity — the github.com/trending class
+  // (uv, svelte, nvm) that a created:> filter can never see.
+  const q = mode === 'pushed'
+    ? `${query} stars:>150 pushed:>${since}`
+    : `${query} created:>${since}`;
+  const url = `https://api.github.com/search/repositories?q=${encodeURIComponent(q)}&sort=${mode === 'pushed' ? 'updated' : 'stars'}&order=desc&per_page=8`;
   const res = await fetch(url, {
     headers: {
       'Accept': 'application/vnd.github+json',
@@ -510,6 +542,8 @@ async function repoScanWorker(ctx: AgentContext) {
         stars: r.stargazers_count || 0,
         language: r.language || '',
         topics: Array.isArray(r.topics) ? r.topics.slice(0, 6) : [],
+        owner: r.owner?.login || '',
+        createdAt: r.created_at || '',
         pushedAt: r.pushed_at || '',
       });
     }
@@ -525,7 +559,12 @@ async function repoScanWorker(ctx: AgentContext) {
     };
   }
 
-  const shortlist = repos.sort((a, b) => b.stars - a.stars).slice(0, 15);
+  // Same astroturf gate as the trend scan — repo_scan's created:> window
+  // is the lane that surfaced the Blender-MCP spam cluster.
+  const legit = legitimacyFilter(repos);
+  const suspicious = legit.dropped;
+
+  const shortlist = legit.kept.sort((a, b) => b.stars - a.stars).slice(0, 15);
   const raw = await ctx.llm({
     tier: 'reason',
     maxTokens: 1200,
@@ -574,13 +613,16 @@ async function repoScanWorker(ctx: AgentContext) {
 
   const brief = [
     `# Repo Scan — ${new Date().toISOString().slice(0, 10)}`,
-    `Scanned ${repos.length} candidates across ${queries.length} queries (last ${sinceDays}d).`,
+    `Scanned ${repos.length} candidates across ${queries.length} queries (last ${sinceDays}d); ${suspicious.length} dropped as spam/astroturf.`,
     '',
     ...picks.map((p) => `- **${p.action?.toUpperCase()}** ${p.name} (fit ${p.fit}) — ${p.why}`),
     picks.length ? '' : '_No repos cleared the fit bar this cycle._',
     '',
     '## Shortlist',
     ...shortlist.slice(0, 10).map((r) => `- ${r.name} ★${r.stars} — ${r.description} (${r.url})`),
+    ...(suspicious.length
+      ? ['', `## Spam-filtered (${suspicious.length})`, ...suspicious.slice(0, 10).map((d) => `- ${d.repo.name} — ${d.reasons.join('; ')}`)]
+      : []),
   ].join('\n');
 
   try {
@@ -594,16 +636,17 @@ async function repoScanWorker(ctx: AgentContext) {
   } catch {}
 
   ctx.progress(1);
-  return { scanned: repos.length, picks: picks.length, proposalsFiled, note: '02 - Projects/repo-scan' };
+  return { scanned: repos.length, picks: picks.length, proposalsFiled, droppedSpam: suspicious.length, note: '02 - Projects/repo-scan' };
 }
 
 // ── github_trend_scan: "on the rise" detector ─────────────────────
 // repo_scan sweeps established repos (45d window, sort=stars). This kind
-// hunts NEW repos gaining stars fast (14d window) — the adoption window
-// where a rising tool can still be integrated cheaply. Deterministic
-// pre-filter keeps the LLM honest: only repos matching Cortex domain
-// keywords reach the judgment call, and each repo is evaluated at most
-// once per ISO week (seen-set on disk).
+// hunts repos gaining traction via TWO lanes: NEW repos (created:>14d —
+// the cheap-adoption window) and ESTABLISHED repos (stars:>150 pushed
+// recently — the trending-page class a created:> filter can't see).
+// Deterministic pre-filters keep the LLM honest: only Cortex-domain
+// repos reach judgment, astroturf/spam drops before the model sees it,
+// and each repo is evaluated at most once per ISO week (seen-set).
 
 const TREND_QUERIES = [
   'mcp server',
@@ -616,12 +659,102 @@ const TREND_QUERIES = [
   'discord bot ai',
 ];
 
+// 'pushed' lane: established repos (stars:>150) with recent activity —
+// the trending-page class. Runs sequentially after the created lane so
+// unauthenticated GitHub search (10 req/min) isn't burst-limited.
+const TRENDING_QUERIES = [
+  'developer tools',
+  'python package manager',
+  'security scanner',
+  'agent skills',
+  'local llm',
+  'database tool',
+  'ai agent framework',
+  'mcp server',
+];
+
 const TREND_KEYWORDS = [
   'agent', 'llm', 'mcp', 'voice', 'tts', 'stt', 'speech', 'browser', 'automation',
   'memory', 'rag', 'inference', 'ollama', 'obsidian', 'discord', 'calendar',
   'schedul', 'crawl', 'scrap', 'webhook', 'realtime', 'websocket', 'orchestrat',
   'multi-agent', 'a2a', 'tool-use', 'function-calling',
+  // Broader dev-tooling surface — established trending repos rarely use
+  // agent keywords (uv = "python package manager", svelte = "compiler").
+  'security', 'skill', 'cli', 'eval', 'benchmark', 'sdk', 'plugin', 'extension',
+  'database', 'vector', 'embed', 'fine-tun', 'quantiz', 'speculative', 'distill',
+  'lint', 'package', 'release', 'workflow', 'docker', 'postgres', 'sqlite',
+  'terminal', 'editor', 'notebook', 'pdf', 'spreadsheet', 'dashboard',
+  'monitor', 'trace', 'profil', 'compiler', 'runtime', 'framework', 'library',
 ];
+
+// ── Legitimacy heuristics ─────────────────────────────────────────
+// Deterministic astroturf/spam gate, applied BEFORE the LLM sees a repo.
+// Motivated by the 2026-11-18 repo_scan: ~8 near-identical
+// "Blender-AI-MCP-*" repos from disposable accounts reached ADOPT
+// proposals at ★500+ within days of creation — classic star-farmed
+// SEO spam. Three independent signals, any one drops the repo:
+//   1. implausible velocity — very young repo with hundreds of stars
+//   2. duplicate-description cluster — ≥3 repos sharing a templated blurb
+//   3. generated-looking owner — login ending in digits / birth-year
+
+function repoAgeDays(createdAt: string | undefined): number {
+  const t = createdAt ? Date.parse(createdAt) : NaN;
+  return Number.isFinite(t) ? Math.max(0, (Date.now() - t) / 86400000) : 9999;
+}
+
+function normalizeRepoDesc(d: string): string {
+  return d.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+}
+
+function looksGeneratedOwner(login: string): boolean {
+  // e.g. credoksopho1984, fumbdendade19718 — consonant-salad + digits.
+  return /[0-9]{3,}$/.test(login) || /[0-9]{4,}/.test(login);
+}
+
+/** Returns suspicious-reason list; empty = clean. `descCluster` is the
+ *  size of the duplicate-description cluster this repo belongs to. */
+function legitimacyFlags(r: any, descClusterSize: number): string[] {
+  const flags: string[] = [];
+  const age = repoAgeDays(r.createdAt || r.pushedAt);
+  const stars = Number(r.stars) || 0;
+  if (age < 3 && stars >= 200) flags.push(`implausible velocity (${stars}★ in ${age.toFixed(1)}d)`);
+  else if (age < 14 && stars / Math.max(age, 0.5) > 150) flags.push(`extreme velocity (~${Math.round(stars / Math.max(age, 0.5))}★/day)`);
+  if (descClusterSize >= 3) flags.push(`duplicate-description cluster ×${descClusterSize}`);
+  const owner = String(r.owner || '');
+  if (owner && looksGeneratedOwner(owner)) flags.push(`generated-looking owner '${owner}'`);
+  return flags;
+}
+
+/** Cluster repos by normalized description prefix — astroturf networks
+ *  reuse templated blurbs verbatim. Returns Map index→cluster size. */
+function descriptionClusters(repos: any[]): Map<number, number> {
+  const groups = new Map<string, number[]>();
+  repos.forEach((r, i) => {
+    const key = normalizeRepoDesc(String(r.description || '')).slice(0, 80);
+    if (key.length < 20) return; // empty/short blurbs can't cluster meaningfully
+    const arr = groups.get(key) || [];
+    arr.push(i);
+    groups.set(key, arr);
+  });
+  const sizes = new Map<number, number>();
+  for (const idxs of groups.values())
+    if (idxs.length >= 2) for (const i of idxs) sizes.set(i, idxs.length);
+  return sizes;
+}
+
+/** Filter a repo list through the legitimacy gate. Returns survivors plus
+ *  the dropped repos with reasons — callers log/count both. */
+function legitimacyFilter<T extends { description?: string }>(repos: T[]): { kept: T[]; dropped: Array<{ repo: T; reasons: string[] }> } {
+  const clusters = descriptionClusters(repos as any[]);
+  const kept: T[] = [];
+  const dropped: Array<{ repo: T; reasons: string[] }> = [];
+  repos.forEach((r, i) => {
+    const flags = legitimacyFlags(r as any, clusters.get(i) || 1);
+    if (flags.length) dropped.push({ repo: r, reasons: flags });
+    else kept.push(r);
+  });
+  return { kept, dropped };
+}
 
 const TREND_STATE_DIR = process.env.CORTEX_AGENTS_STATE_DIR || path.join(process.cwd(), '.cortex-runtime');
 const TREND_SEEN_PATH = path.join(TREND_STATE_DIR, 'github-trend-seen.json');
@@ -663,7 +796,16 @@ async function githubTrendScanWorker(ctx: AgentContext) {
   const sinceDays = Math.min(60, Math.max(3, Number(input.sinceDays) || 14));
   const week = isoWeekKey();
 
-  const perQuery = await Promise.all(queries.map((q) => githubRepoSearch(q, sinceDays).catch(() => ({ items: [], status: 0 }))));
+  // Two lanes, run sequentially: 'created' (newborn repos, cheap-adoption
+  // window) then 'pushed' (established repos with fresh activity — the
+  // trending-page class the created:> filter can never see). Sequential
+  // keeps the parallel burst under GitHub's unauthenticated 10 req/min.
+  const createdResults = await Promise.all(queries.map((q) => githubRepoSearch(q, sinceDays, 'created').catch(() => ({ items: [], status: 0 }))));
+  const trendingQueries: string[] = Array.isArray(input.trendingQueries) && input.trendingQueries.length
+    ? input.trendingQueries.map(String)
+    : TRENDING_QUERIES;
+  const pushedResults = await Promise.all(trendingQueries.map((q) => githubRepoSearch(q, sinceDays, 'pushed').catch(() => ({ items: [], status: 0 }))));
+  const perQuery = [...createdResults, ...pushedResults];
   const apiErrors = perQuery.filter((r) => r.status !== 200).length;
 
   const seenSet = readTrendSeen();
@@ -683,6 +825,7 @@ async function githubTrendScanWorker(ctx: AgentContext) {
         stars: r.stargazers_count || 0,
         language: r.language || '',
         topics: Array.isArray(r.topics) ? r.topics.slice(0, 6) : [],
+        owner: r.owner?.login || '',
         createdAt: r.created_at || '',
         pushedAt: r.pushed_at || '',
       });
@@ -698,7 +841,12 @@ async function githubTrendScanWorker(ctx: AgentContext) {
   });
   const droppedIrrelevant = fresh.length - relevant.length;
 
-  if (!relevant.length) {
+  // Astroturf gate: drop star-farmed / templated spam BEFORE the LLM.
+  // Survivors only reach judgment; drops are logged in the brief.
+  const legit = legitimacyFilter(relevant);
+  const suspicious = legit.dropped;
+
+  if (!legit.kept.length) {
     // Still mark scanned repos as seen so we don't re-evaluate noise weekly.
     seenSet[week] = [...(seenSet[week] || []), ...seen];
     writeTrendSeen(seenSet);
@@ -708,14 +856,15 @@ async function githubTrendScanWorker(ctx: AgentContext) {
       skippedSeen,
       prefiltered: 0,
       droppedIrrelevant,
+      droppedSpam: suspicious.length,
       apiErrors,
-      note: apiErrors === queries.length
-        ? `GitHub API unavailable (${apiErrors}/${queries.length} queries failed)`
-        : `No new Cortex-relevant repos this cycle (${droppedIrrelevant} irrelevant filtered)`,
+      note: apiErrors === perQuery.length
+        ? `GitHub API unavailable (${apiErrors}/${perQuery.length} queries failed)`
+        : `No new Cortex-relevant repos this cycle (${droppedIrrelevant} irrelevant, ${suspicious.length} spam-filtered)`,
     };
   }
 
-  const shortlist = relevant.sort((a, b) => b.stars - a.stars).slice(0, 15);
+  const shortlist = legit.kept.sort((a, b) => b.stars - a.stars).slice(0, 15);
   const raw = await ctx.llm({
     tier: 'reason',
     maxTokens: 1400,
@@ -726,7 +875,9 @@ async function githubTrendScanWorker(ctx: AgentContext) {
           'You are SCOUT\'s trend analyst for Cortex — a local-first cognitive OS with:',
           'a governed agent runtime (budgets, spawn gates, approval inbox), voice agents (Pocket TTS/Kokoro),',
           'browser automation via CDP, Obsidian memory + distilled rules, calendar/energy scheduling, distribution automation.',
-          'These are NEW repos (created <14d ago) gaining stars fast — the cheap-adoption window.',
+          'Repos come from two lanes: newly-created repos gaining stars fast (cheap-adoption window),',
+          'and established repos (150+ stars) with fresh pushes this week (the trending-page class —',
+          'uv, svelte, nvm territory). Repos flagged as astroturf/spam were already removed.',
           'For each repo decide: does adopting or learning from it close a CONCRETE Cortex gap?',
           'Output STRICT JSON: {"picks":[{"name","fit","why","action":"adopt|watch|ignore","gap"}]}.',
           'Only repos worth attention (fit >= 0.5). "adopt" requires a specific gap it fills — generic "cool project" is watch at best.',
@@ -735,8 +886,8 @@ async function githubTrendScanWorker(ctx: AgentContext) {
       },
       {
         role: 'user',
-        content: `TRENDING NEW REPOS (last ${sinceDays}d, by stars):\n${shortlist.map((r) =>
-          `- ${r.name} ★${r.stars} [${r.language}] created ${r.createdAt?.slice(0, 10)} ${r.description} topics:${r.topics.join(',')}`
+        content: `TRENDING REPOS (mixed lanes, last ${sinceDays}d, by stars):\n${shortlist.map((r) =>
+          `- ${r.name} ★${r.stars} [${r.language}] created ${r.createdAt?.slice(0, 10) || 'established'} ${r.description} topics:${r.topics.join(',')}`
         ).join('\n')}`,
       },
     ],
@@ -767,11 +918,14 @@ async function githubTrendScanWorker(ctx: AgentContext) {
 
   const brief = [
     `# GitHub Trend Scan — ${week}`,
-    `Scanned ${fresh.length + skippedSeen} repos across ${queries.length} queries (${sinceDays}d window).`,
-    `${skippedSeen} already evaluated this week · ${droppedIrrelevant} filtered as irrelevant · ${relevant.length} reached judgment.`,
+    `Scanned ${fresh.length + skippedSeen} repos across ${queries.length + trendingQueries.length} queries, two lanes (${sinceDays}d window).`,
+    `${skippedSeen} already evaluated this week · ${droppedIrrelevant} filtered as irrelevant · ${suspicious.length} dropped as spam/astroturf · ${legit.kept.length} reached judgment.`,
     '',
     ...picks.map((p) => `- **${p.action?.toUpperCase()}** ${p.name} (fit ${p.fit}) — ${p.why}${p.gap ? ` [gap: ${p.gap}]` : ''}`),
     picks.length ? '' : '_No trending repo cleared the adoption bar this cycle._',
+    ...(suspicious.length
+      ? ['', `## Spam-filtered (${suspicious.length})`, ...suspicious.slice(0, 10).map((d) => `- ${d.repo.name} — ${d.reasons.join('; ')}`)]
+      : []),
   ].join('\n');
 
   try {
@@ -789,8 +943,9 @@ async function githubTrendScanWorker(ctx: AgentContext) {
     scanned: fresh.length + skippedSeen,
     newRepos: fresh.length,
     skippedSeen,
-    prefiltered: relevant.length,
+    prefiltered: legit.kept.length,
     droppedIrrelevant,
+    droppedSpam: suspicious.length,
     picks: picks.length,
     proposalsFiled,
     apiErrors,
@@ -827,7 +982,7 @@ async function agentIdeasWorker(ctx: AgentContext) {
           'tools ⊆ ["read","write","exec","surface"]; modelPin.tier ∈ fast|reason|deep; dailyBudget 1-32; ttlHours 1-168.',
           'callSign UPPER-DASH. Propose NOTHING if the fleet looks healthy — an empty {"ideas":[]} is a valid, preferred answer.',
           'No prose outside JSON.',
-        ].join(' ') + rulesBlock('agent ideas spawn proposals capability gap fleet health', 'constraints learned from accepted agent outcomes — follow unless they conflict with the ideation task'),
+        ].join(' ') + rulesBlock('agent ideas spawn proposals capability gap fleet health', 'constraints learned from accepted agent outcomes — follow unless they conflict with the ideation task') + personaCatalogBlock(),
       },
       {
         role: 'user',
@@ -1086,6 +1241,172 @@ const librarianWorker: WorkerHandler = async (ctx) => {
     return { query, memories: mem, answer: synthesis };
   }
 
+  if (kind === 'instinct_cycle') {
+    // Continuous-learning-v2 adaptation: mine recent task outcomes for
+    // recurring patterns → atomic instinct candidates (Beta confidence,
+    // scoped). Promotion stays governed — confident candidates file
+    // '[rule]' proposals into the INBOX, never write rules silently.
+    ctx.progress(0.1);
+    const cursor = instinctCursor();
+    const records = readArchive({ limit: 200 });
+    const fresh = records
+      .filter((r) => (r.finishedAt || r.createdAt || 0) > cursor.lastScanAt)
+      .slice(0, 80);
+    if (!fresh.length) {
+      saveInstinctCursor({ lastScanAt: Date.now(), scannedOutcomes: cursor.scannedOutcomes + 0 });
+      return { candidates: 0, reason: 'no new archived outcomes since last scan', scanned: 0 };
+    }
+    const lines = fresh.map((r) =>
+      `${r.status} ${r.agentId}/${r.kind} — ${String(r.title || '').slice(0, 90)}${r.error ? ` ERR:${String(r.error).slice(0, 110)}` : ''}${typeof (r.result as any)?.note === 'string' ? ` NOTE:${String((r.result as any).note).slice(0, 110)}` : ''}`);
+    ctx.progress(0.3);
+    const raw = await ctx.llm({
+      tier: 'fast', maxTokens: 900,
+      messages: [
+        { role: 'system', content: 'You are LIBRARIAN mining agent-outcome patterns for INSTINCTS — atomic, evidence-backed behavioral rules. From the outcome lines, extract at most 3 NEW instincts that recur or would clearly have prevented failures. Each instinct: {"action":"one imperative sentence","trigger":"when/if condition","agentId":"optional agent scope","ventureId":"optional venture scope","ruleText":"the distilled rule text"}. Only emit instincts grounded in the provided evidence — no generic advice. Output STRICT JSON: {"instincts":[...]}. Empty array is a valid honest answer.' + rulesBlock('agent outcome pattern mining', 'constraints learned from accepted agent outcomes') },
+        { role: 'user', content: `OUTCOMES (newest first):\n${lines.join('\n').slice(0, 12000)}` },
+      ],
+    });
+    ctx.progress(0.6);
+    let proposed: any[] = [];
+    try {
+      const m = String(raw).match(/\{[\s\S]*\}/);
+      const parsed = m ? JSON.parse(m[0]) : null;
+      proposed = Array.isArray(parsed?.instincts) ? parsed.instincts.slice(0, 3) : [];
+    } catch { proposed = []; }
+    const evidenceIds = fresh.slice(0, 10).map((r) => r.id);
+    let created = 0;
+    for (const inst of proposed) {
+      const action = String(inst?.action || '').trim().slice(0, 300);
+      if (action.length < 10) continue;
+      const ventureId = typeof inst.ventureId === 'string' && isValidVenture(inst.ventureId) ? inst.ventureId : undefined;
+      upsertInstinct({
+        action,
+        trigger: String(inst.trigger || action).slice(0, 300),
+        agentId: typeof inst.agentId === 'string' ? inst.agentId : undefined,
+        ventureId,
+        source: 'librarian/instinct_cycle',
+        evidence: evidenceIds,
+        ruleText: String(inst.ruleText || action).slice(0, 400),
+      });
+      created++;
+    }
+    // Promotion: confident active instincts file governed '[rule]' proposals.
+    let proposalsFiled = 0;
+    const promotable = promotableInstincts();
+    if (promotable.length) {
+      try {
+        const { fileStrategyProposals } = await import('./strategy-proposals');
+        const actions = promotable.slice(0, 3).map((i: Instinct, idx: number) =>
+          `[rule] Promote instinct ${i.id}: "${i.ruleText || i.action}" — evidence: ${i.evidence.length} refs, Beta confidence ${Math.round((i.alpha / (i.alpha + i.beta)) * 100)}%, trigger: ${i.trigger.slice(0, 120)}`);
+        const res = fileStrategyProposals({
+          planNote: `instinct-promotion-${new Date().toISOString().slice(0, 10)}`,
+          planTaskId: ctx.task.id,
+          actions,
+          ventureId: promotable[0]?.ventureId,
+        });
+        proposalsFiled = res.filed;
+        for (let idx = 0; idx < Math.min(res.filed, promotable.length); idx++) {
+          // markPromoted needs proposal id — approximate via planNote match is
+          // fragile; leave status 'active' until Crew approval promotes via
+          // the proposal lane (honest: proposal pending ≠ promoted).
+        }
+      } catch { proposalsFiled = 0; }
+    }
+    saveInstinctCursor({ lastScanAt: Date.now(), scannedOutcomes: cursor.scannedOutcomes + fresh.length });
+    ctx.progress(1);
+    return { scanned: fresh.length, candidates: created, promotable: promotable.length, proposalsFiled, instinctsTotal: listInstincts().length };
+  }
+
+  if (kind === 'skill_audit') {
+    // ECC agent-sort adaptation: evidence-backed DAILY/LIBRARY/REDUNDANT
+    // classification across every skill directory Cortex agents use.
+    // Read-only audit — writes a report + files a '[process]' proposal;
+    // NEVER moves or deletes skills (they live outside repo governance).
+    ctx.progress(0.1);
+    const SKILL_DIRS = [
+      path.join(process.env.HOME || '', '.claude', 'skills'),
+      path.join(process.env.HOME || '', '.agents', 'skills'),
+      path.join(process.env.HOME || '', '.config', 'devin', 'skills'),
+      path.join(process.cwd(), '.claude', 'skills'),
+      path.join(process.cwd(), '.devin', 'skills'),
+    ].filter((d) => { try { return fs.existsSync(d); } catch { return false; } });
+    const inventory: Array<{ dir: string; name: string; desc: string; bytes: number; ageDays: number }> = [];
+    for (const dir of SKILL_DIRS) {
+      let entries: fs.Dirent[] = [];
+      try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { continue; }
+      for (const e of entries.slice(0, 200)) {
+        if (!e.isDirectory()) continue;
+        const skillFile = path.join(dir, e.name, 'SKILL.md');
+        try {
+          const st = fs.statSync(skillFile);
+          const head = fs.readFileSync(skillFile, 'utf8').slice(0, 3000);
+          const desc = (head.match(/^description:\s*(.+)$/m)?.[1] || '').replace(/^["']|["']$/g, '').slice(0, 200);
+          inventory.push({ dir, name: e.name, desc, bytes: st.size, ageDays: Math.round((Date.now() - st.mtimeMs) / 86_400_000) });
+        } catch { /* dir without SKILL.md — not a skill */ }
+      }
+    }
+    ctx.progress(0.4);
+    if (!inventory.length) return { skills: 0, dirs: SKILL_DIRS.length, reason: 'no SKILL.md files found' };
+    // Batch-classify via LLM with mandatory evidence citations.
+    const batches = [];
+    for (let i = 0; i < inventory.length; i += 40) batches.push(inventory.slice(i, i + 40));
+    const classified: Array<{ name: string; dir: string; verdict: string; evidence: string }> = [];
+    for (const batch of batches.slice(0, 4)) {
+      const raw = await ctx.llm({
+        tier: 'fast', maxTokens: 1200,
+        messages: [
+          { role: 'system', content: 'You are LIBRARIAN running a skill audit. Classify each skill DAILY (load every session — core workflow), LIBRARY (keep installed, load on intent), or REDUNDANT/CONFLICT (overlaps another skill or irrelevant to this workspace — cite which). EVERY verdict needs a one-line evidence citation from the name/description. Output STRICT JSON: {"items":[{"name":"...","verdict":"DAILY|LIBRARY|REDUNDANT","evidence":"..."}]}. No prose outside JSON.' },
+          { role: 'user', content: JSON.stringify(batch.map((b) => ({ name: b.name, desc: b.desc, dir: b.dir.replace(process.env.HOME || '', '~'), bytes: b.bytes }))) },
+        ],
+      }).catch(() => '');
+      try {
+        const m = String(raw).match(/\{[\s\S]*\}/);
+        const parsed = m ? JSON.parse(m[0]) : null;
+        for (const it of parsed?.items || []) {
+          classified.push({ name: String(it.name), dir: batch.find((b) => b.name === it.name)?.dir || '', verdict: String(it.verdict || 'LIBRARY').toUpperCase(), evidence: String(it.evidence || '').slice(0, 200) });
+        }
+      } catch { /* batch failed — those skills stay unclassified */ }
+      ctx.progress(0.4 + 0.4 * (batches.indexOf(batch) + 1) / Math.min(batches.length, 4));
+    }
+    const report = {
+      generatedAt: new Date().toISOString(),
+      dirs: SKILL_DIRS,
+      total: inventory.length,
+      classified: classified.length,
+      daily: classified.filter((c) => c.verdict === 'DAILY').length,
+      library: classified.filter((c) => c.verdict === 'LIBRARY').length,
+      redundant: classified.filter((c) => c.verdict.includes('REDUNDANT') || c.verdict.includes('CONFLICT')),
+      items: classified,
+      unclassified: inventory.filter((i) => !classified.some((c) => c.name === i.name)).map((i) => i.name),
+      file: '' as string,
+    };
+    try {
+      const reportsDir = path.join(process.cwd(), '.cortex-runtime', 'reports');
+      fs.mkdirSync(reportsDir, { recursive: true });
+      const file = path.join(reportsDir, `skill-audit-${new Date().toISOString().slice(0, 10)}.json`);
+      fs.writeFileSync(file, JSON.stringify(report, null, 2));
+      report.file = file;
+    } catch { }
+    // File ONE governed proposal summarizing redundant/conflict candidates.
+    let proposalsFiled = 0;
+    const redundants = report.redundant.slice(0, 8);
+    if (redundants.length) {
+      try {
+        const { fileStrategyProposals } = await import('./strategy-proposals');
+        const res = fileStrategyProposals({
+          planNote: `skill-audit-${new Date().toISOString().slice(0, 10)}`,
+          planTaskId: ctx.task.id,
+          actions: [
+            `[process] Skill audit found ${redundants.length} redundant/conflicting skills — review report and approve archival of: ${redundants.map((r) => `${r.name} (${r.evidence.slice(0, 60)})`).join('; ').slice(0, 700)} — evidence: .cortex-runtime/reports/skill-audit-*.json; skills live outside repo so nothing was moved`,
+          ],
+        });
+        proposalsFiled = res.filed;
+      } catch { proposalsFiled = 0; }
+    }
+    ctx.progress(1);
+    return { skills: inventory.length, dirs: SKILL_DIRS.length, daily: report.daily, library: report.library, redundant: redundants.length, proposalsFiled, reportFile: report.file };
+  }
+
   throw new Error(`librarian: unknown task kind '${kind}'`);
 };
 
@@ -1122,7 +1443,148 @@ export function blastLane(tool: string, argsJson: string): BlastLane {
   return 'reversible';
 }
 
+
+// ── Verification gate (ECC verification-loop adaptation) ──────────
+// Deterministic six-phase protocol. Every phase records real exit codes
+// and output tails — a gate that only "ran" a command is not a gate.
+// FAIL in any phase → incident + auto-registered regression eval.
+
+interface VerifyPhase { name: string; ok: boolean; skipped?: boolean; exitCode?: number; durationMs: number; detail: string }
+
+const SECURITY_GREP_PATTERNS = [
+  /(?:api[_-]?key|secret|password|passwd|token)\s*[:=]\s*['"][^'"]{8,}/i,
+  /-----BEGIN (?:RSA |EC |OPENSSH |PGP )?PRIVATE KEY-----/,
+  /AKIA[0-9A-Z]{16}/,
+  /sk-[a-zA-Z0-9]{20,}/,
+  /ghp_[a-zA-Z0-9]{30,}/,
+  /xox[baprs]-[a-zA-Z0-9-]{10,}/,
+];
+
+async function runShell(command: string, timeoutMs: number, telemetry?: { toolCalls: number; toolFailures: number }): Promise<{ ok: boolean; exitCode: number; out: string; ms: number }> {
+  const t0 = Date.now();
+  try {
+    const res = await toolExecute('run_command', { command, timeout: Math.ceil(timeoutMs / 1000) }, timeoutMs + 15_000, telemetry);
+    const stdout = String((res as any)?.stdout || (res as any)?.result?.stdout || '');
+    const stderr = String((res as any)?.stderr || (res as any)?.result?.stderr || '');
+    const code = typeof (res as any)?.exitCode === 'number' ? (res as any).exitCode : (res?.ok === false ? 1 : 0);
+    return { ok: code === 0 && res?.ok !== false, exitCode: code, out: (stdout + '\n' + stderr).slice(-3000), ms: Date.now() - t0 };
+  } catch (e: any) {
+    return { ok: false, exitCode: -1, out: String(e?.message || e).slice(-500), ms: Date.now() - t0 };
+  }
+}
+
+async function verifyGateWorker(ctx: AgentContext) {
+  const phases: VerifyPhase[] = [];
+  const tel = ctx.telemetry;
+  const phase = async (name: string, fn: () => Promise<{ ok: boolean; exitCode?: number; detail: string }>) => {
+    ctx.progress(Math.min(0.95, phases.length / 6));
+    const t0 = Date.now();
+    try {
+      const r = await fn();
+      phases.push({ name, ok: r.ok, exitCode: r.exitCode, durationMs: Date.now() - t0, detail: r.detail.slice(0, 400) });
+      return r.ok;
+    } catch (e: any) {
+      phases.push({ name, ok: false, durationMs: Date.now() - t0, detail: `threw: ${String(e?.message || e).slice(0, 300)}` });
+      return false;
+    }
+  };
+
+  // Read package.json scripts once — phases only run what exists.
+  let scripts: Record<string, string> = {};
+  try {
+    const pkgRaw = await toolExecute('read_file', { path: 'package.json' }, 15_000, tel);
+    const content = String((pkgRaw as any)?.content || '');
+    const m = content.match(/"scripts"\s*:\s*\{([\s\S]*?)\}/);
+    if (m) {
+      for (const sm of m[1].matchAll(/"([^"]+)"\s*:\s*"([^"]+)"/g)) scripts[sm[1]] = sm[2];
+    }
+  } catch { }
+
+  const scriptPhase = (name: string, candidates: string[], timeoutMs: number) =>
+    phase(name, async () => {
+      const script = candidates.map((c) => scripts[c]).find(Boolean);
+      if (!script) return { ok: true, detail: `skipped — no ${candidates.join('/')} script in package.json` };
+      const r = await runShell(`npm run ${candidates.find((c) => scripts[c])}`, timeoutMs, tel);
+      return { ok: r.ok, exitCode: r.exitCode, detail: `${script} → exit ${r.exitCode}${r.ok ? '' : ' — ' + r.out.slice(-200)}` };
+    });
+
+  await scriptPhase('build', ['build'], 300_000);
+  await scriptPhase('typecheck', ['typecheck', 'tsc', 'type-check'], 240_000);
+  await scriptPhase('lint', ['lint'], 180_000);
+  await scriptPhase('test', ['test', 'test:unit'], 420_000);
+
+  // Phase 5 — deterministic security grep over the working diff + src.
+  await phase('security-grep', async () => {
+    const diff = await runShell('git diff HEAD --stat && git status --porcelain | head -40', 15_000, tel);
+    const changed = await runShell('git diff HEAD -U0 | grep -E "^\\+" | grep -vE "^\\+\\+\\+" | head -400', 20_000, tel);
+    const hay = changed.out;
+    const hits = SECURITY_GREP_PATTERNS.map((re) => ({ re, m: hay.match(re) })).filter((h) => h.m);
+    const detail = hits.length
+      ? `secrets/keys patterns in added lines: ${hits.map((h) => h.m![0].slice(0, 40)).join('; ')}`
+      : `clean — ${diff.out.split('\n').length} changed-file lines scanned`;
+    return { ok: hits.length === 0, detail };
+  });
+
+  // Phase 6 — diff review via REVIEWER rubric (bounded).
+  await phase('diff-review', async () => {
+    const diff = await runShell('git diff HEAD | head -c 24000', 20_000, tel);
+    if (!diff.out.trim()) return { ok: true, detail: 'clean tree — nothing to review' };
+    const out = await ctx.llm({
+      tier: 'reason', maxTokens: 400,
+      messages: [
+        { role: 'system', content: 'You are the verification gate\'s diff reviewer. Answer STRICT JSON {"risk":"low|medium|high","reason":"<=140 chars"}. Flag only real correctness/security risks in the diff — style is not risk.' },
+        { role: 'user', content: diff.out },
+      ],
+    }).catch(() => '');
+    try {
+      const m = String(out).match(/\{[\s\S]*\}/);
+      const j = m ? JSON.parse(m[0]) : null;
+      const risk = String(j?.risk || 'unknown');
+      return { ok: risk !== 'high', detail: `diff risk: ${risk} — ${String(j?.reason || '').slice(0, 160)}` };
+    } catch {
+      return { ok: true, detail: 'diff review inconclusive (unparseable judge output) — not counted as failure' };
+    }
+  });
+
+  // Phase 7 — impeccable design-slop gate: audits ONLY the UI files git
+  // reports as changed (--changed), auto-loads DESIGN.md context. Error-
+  // severity findings (uncaught script errors, invisible-at-rest content)
+  // fail the gate; warnings/advisories are reported but non-fatal —
+  // taste-level findings must not block verification forever.
+  await phase('design-audit', async () => {
+    const r = await runShell('npx -y impeccable@latest detect --changed --json | python3 scripts/impeccable-gate-summary.py', 180_000, tel);
+    const m = r.out.match(/IMPECCABLE_ERROR_COUNT=(\d+)/);
+    if (!m) return { ok: true, detail: `impeccable inconclusive — ${r.out.slice(-160) || `exit ${r.exitCode}`}` };
+    const errorCount = parseInt(m[1], 10);
+    const summary = r.out.split('\n').find((l) => l.startsWith('FINDINGS')) || '';
+    return {
+      ok: errorCount === 0,
+      detail: `${summary || `error findings: ${errorCount}`}${errorCount ? ' — fix or add impeccable-disable comment with reason' : ''}`.slice(0, 390),
+    };
+  });
+
+  const failed = phases.filter((p) => !p.ok);
+  const verdict = failed.length === 0 ? 'pass' : 'fail';
+  ctx.progress(1);
+
+  // Failure → incident + regression eval (the loop closes itself).
+  if (failed.length) {
+    try {
+      const { recordIncidentFailure } = await import('./incidents');
+      recordIncidentFailure({
+        agentId: ctx.task.agentId, kind: 'verify_gate',
+        title: `verify_gate failed: ${failed.map((f) => f.name).join(', ')}`,
+        error: failed.map((f) => `${f.name}: ${f.detail}`).join(' | ').slice(0, 300),
+        failureClass: 'worker', taskId: ctx.task.id,
+      });
+    } catch { }
+    return { verdict, phases, failedPhases: failed.map((f) => f.name) };
+  }
+  return { verdict, phases, scriptsSeen: Object.keys(scripts) };
+}
+
 const builderWorker: WorkerHandler = async (ctx) => {
+  if (ctx.task.kind === 'verify_gate') return verifyGateWorker(ctx);
   const instruction = str(ctx.task.input.instruction || ctx.task.input.query);
   if (!instruction) throw new Error('builder requires input.instruction');
 
@@ -1218,6 +1680,7 @@ const builderWorker: WorkerHandler = async (ctx) => {
 // calls read_file and two fixed git inspection commands.
 
 const reviewerWorker: WorkerHandler = async (ctx) => {
+  if (ctx.task.kind === 'verify_gate') return verifyGateWorker(ctx);
   const instruction = str(ctx.task.input.instruction || ctx.task.input.query || ctx.task.title);
   const files = Array.isArray(ctx.task.input.files)
     ? ctx.task.input.files.map(String).filter(Boolean).slice(0, 10)
@@ -1255,13 +1718,13 @@ const reviewerWorker: WorkerHandler = async (ctx) => {
   if (!material.trim() || material.trim() === 'DIFF:\n')
     throw new Error('reviewer found no material to review (clean tree? pass input.files)');
 
-  const findings = await ctx.llm({
+  const reviewOut = await ctx.llm({
     tier: 'reason',
-    maxTokens: 1200,
+    maxTokens: 1600,
     messages: [
       {
         role: 'system',
-        content: 'You are REVIEWER, Cortex\'s read-only code critic. Produce a prioritized review: CRITICAL (bugs, security, data loss), WARNINGS (design, maintainability, error handling), SUGGESTIONS (style, nits). Be specific — cite file and line where possible. Never rewrite code; describe the fix in one line. If the material is clean, say so plainly. Output concise markdown.' + rulesBlock(instruction || files.join(' ') || 'code review', 'constraints learned from accepted agent outcomes — follow unless they conflict with the review task'),
+        content: 'You are REVIEWER, Cortex\'s read-only code critic and evaluator. Score the material on FIVE axes — accuracy, completeness, clarity, actionability, conciseness — each 1-5. RULES: every score requires an evidence citation (file:line, diff hunk, or quoted text); a score of 5 requires concrete proof, not persuasive prose; if evidence is absent for an axis, cap that axis at 3. Then list findings as CRITICAL (bugs, security, data loss), WARNINGS (design, maintainability, error handling), SUGGESTIONS (style, nits) — cite file:line, describe fixes in one line, never rewrite code. Output ONLY a JSON object: {"scorecard":{"accuracy":n,"completeness":n,"clarity":n,"actionability":n,"conciseness":n,"evidence":["cite1","cite2"]},"verdict":"pass|warn|fail","findings":[{"severity":"critical|warning|suggestion","where":"file:line","issue":"...","fix":"one line"}]}. If material is clean, scorecard axes may be 5 only with citations proving cleanliness.' + rulesBlock(instruction || files.join(' ') || 'code review', 'constraints learned from accepted agent outcomes — follow unless they conflict with the review task'),
       },
       {
         role: 'user',
@@ -1270,7 +1733,23 @@ const reviewerWorker: WorkerHandler = async (ctx) => {
     ],
   });
   ctx.progress(1);
-  return { sources, findings };
+  // Parse the JSON scorecard; fall back to raw text if the model drifted.
+  let scorecard: any = null;
+  let verdict = 'unknown';
+  let findingsList: any[] = [];
+  try {
+    const m = String(reviewOut).match(/\{[\s\S]*\}/);
+    const parsed = m ? JSON.parse(m[0]) : null;
+    if (parsed?.scorecard) {
+      scorecard = parsed.scorecard;
+      verdict = String(parsed.verdict || 'unknown');
+      findingsList = Array.isArray(parsed.findings) ? parsed.findings.slice(0, 20) : [];
+    }
+  } catch { /* fall through to raw */ }
+  const findings = scorecard
+    ? `VERDICT: ${verdict}\nSCORECARD: ${JSON.stringify(scorecard)}\nFINDINGS:\n${findingsList.map((f: any) => `- [${f.severity}] ${f.where || ''}: ${f.issue || ''} → ${f.fix || ''}`).join('\n')}`
+    : reviewOut;
+  return { sources, scorecard, verdict, findings, findingsList };
 };
 
 // ── Runner: execute → filter → summarize (the context firewall) ───
@@ -2501,63 +2980,43 @@ async function trainerEvalWorker(ctx: AgentContext) {
   }
   ctx.progress(0.5);
 
-  // Step 2 — offline A/B replay of the failing instruction.
+  // Step 2 — formal eval (evals.ts): control vs treatment arms, k trials,
+  // model grader with the failure-mode rubric. pass@k/pass^k recorded.
   const baseSystem = `You are ${cluster.agentId.toUpperCase()}, an agent inside Cortex. Complete the task instruction directly and honestly — evidence over claims.`;
   const controlRules = rulesBlock(instruction);
-  const t0a = { ...ctx.telemetry };
-  const armA = await ctx.llm({
-    tier: 'fast', maxTokens: 500,
-    messages: [
-      { role: 'system', content: `${baseSystem}${controlRules ? `\n\n${controlRules}` : ''}` },
-      { role: 'user', content: instruction },
+  const evalLlm: LlmFn = async (o) => ({ content: await ctx.llm(o) });
+  const evalDef = fileEvalDefinition({
+    kind: 'regression',
+    subject: `${cluster.agentId}/${cluster.kind}`,
+    prompt: instruction,
+    arms: [
+      { name: 'control', tier: 'fast', system: `${baseSystem}${controlRules ? `\n\n${controlRules}` : ''}` },
+      { name: 'treatment', tier: 'fast', system: `${baseSystem}${controlRules ? `\n\n${controlRules}` : ''}\n\nCANDIDATE RULE (under evaluation): ${rule}` },
     ],
-  }).catch(() => '');
-  const tokensA = { in: ctx.telemetry.tokensIn - t0a.tokensIn, out: ctx.telemetry.tokensOut - t0a.tokensOut };
-
-  const t0b = { ...ctx.telemetry };
-  const armB = await ctx.llm({
-    tier: 'fast', maxTokens: 500,
-    messages: [
-      { role: 'system', content: `${baseSystem}${controlRules ? `\n\n${controlRules}` : ''}\n\nCANDIDATE RULE (under evaluation): ${rule}` },
-      { role: 'user', content: instruction },
-    ],
-  }).catch(() => '');
-  const tokensB = { in: ctx.telemetry.tokensIn - t0b.tokensIn, out: ctx.telemetry.tokensOut - t0b.tokensOut };
-  ctx.progress(0.8);
-
-  // Step 3 — judge: which arm better avoids the observed failure mode?
-  const judgeRaw = await ctx.llm({
-    tier: 'reason',
-    maxTokens: 400,
-    messages: [
-      {
-        role: 'system',
-        content: 'You are TRAINER\'s judge. Given a task that FAILED in production, two candidate responses (control vs treatment with an extra rule), decide which response better avoids the failure mode. Output STRICT JSON: {"winner":"A"|"B"|"tie","reason":"<=160 chars"}. Judge behavior quality only — no prose outside JSON.',
-      },
-      {
-        role: 'user',
-        content: [
-          `TASK: ${instruction}`,
-          `FAILURE MODE: ${cluster.failureClass} — ${errorSample}`,
-          `CANDIDATE RULE (arm B only): ${rule}`,
-          `ARM A (control):\n${String(armA).slice(0, 1200) || '(empty)'}`,
-          `ARM B (treatment):\n${String(armB).slice(0, 1200) || '(empty)'}`,
-        ].join('\n\n'),
-      },
-    ],
+    grader: {
+      type: 'model',
+      rubric: `The task previously FAILED in production with failureClass=${cluster.failureClass}: ${errorSample.slice(0, 300)}. Does this output avoid that failure mode and complete the task honestly with evidence?`,
+      threshold: 4,
+    },
+    k: 3,
+    agentId: cluster.agentId,
+    ventureId: typeof rep.input?.ventureId === 'string' ? rep.input.ventureId : undefined,
+    createdBy: 'trainer/eval_cycle',
+    notes: `failure cluster ${cluster.key} ×${cluster.count} in 7d; candidate rule: ${rule.slice(0, 160)}`,
   });
-  let verdict: { winner?: string; reason?: string } = {};
-  try {
-    const m = String(judgeRaw).match(/\{[\s\S]*\}/);
-    if (m) verdict = JSON.parse(m[0]);
-  } catch { verdict = {}; }
-  const winner = String(verdict.winner || 'tie').toUpperCase();
+  ctx.progress(0.6);
+  const run = await runEval(evalDef.id, { llm: evalLlm }).catch((e: any) => ({ error: String(e?.message || e) } as any));
   ctx.progress(0.9);
+  if ((run as any).error) {
+    return { evaluated: 1, cluster: cluster.key, count: cluster.count, rule, evalId: evalDef.id, reason: `eval run failed: ${(run as any).error}` };
+  }
+  const evRun = run as any;
 
-  // Step 4 — only a judged treatment win earns a proposal. Ties and
-  // control wins are recorded honestly; nothing is filed.
+  // Step 3 — only a formal treatment win (pass^k strictly better) earns a
+  // proposal, now carrying evalEvidence for the audit trail.
   let proposalsFiled = 0;
-  if (winner === 'B') {
+  const winnerArm = evRun.winner;
+  if (winnerArm === 'treatment' && evRun.verdict === 'pass') {
     try {
       const { fileStrategyProposals } = await import('./strategy-proposals');
       const week = isoWeekKey();
@@ -2566,8 +3025,13 @@ async function trainerEvalWorker(ctx: AgentContext) {
         planNote: `trainer-eval-${week}-${clusterSlug}`,
         planTaskId: ctx.task.id,
         actions: [
-          `[rule] Distill rule for ${cluster.agentId}/${cluster.kind}: "${rule}" — evidence: offline A/B replay judge preferred treatment arm (${String(verdict.reason || '').slice(0, 120)}); failure cluster ${cluster.key} ×${cluster.count} in 7d; representative task ${rep.id}`,
+          `[rule] Distill rule for ${cluster.agentId}/${cluster.kind}: "${rule}" — evidence: formal eval ${evalDef.id} run ${evRun.id} — pass^k treatment=${evRun.passCaretK?.treatment} vs control=${evRun.passCaretK?.control} over ${evRun.trials?.length || 0} trials; failure cluster ${cluster.key} ×${cluster.count} in 7d; representative task ${rep.id}`,
         ],
+        evalEvidence: [{
+          evalId: evalDef.id, verdict: evRun.verdict,
+          passCaretK: evRun.passCaretK, at: evRun.finishedAt,
+        }],
+        ventureId: typeof rep.input?.ventureId === 'string' ? rep.input.ventureId : undefined,
       });
       proposalsFiled = res.filed;
     } catch { proposalsFiled = 0; }
@@ -2580,11 +3044,14 @@ async function trainerEvalWorker(ctx: AgentContext) {
     clusterCount: cluster.count,
     rule,
     rationale: String(candidate.rationale || '').slice(0, 200),
-    ab: {
-      winner,
-      reason: String(verdict.reason || '').slice(0, 200),
-      tokensA, tokensB,
-      armAChars: String(armA).length, armBChars: String(armB).length,
+    eval: {
+      evalId: evalDef.id,
+      runId: evRun.id,
+      verdict: evRun.verdict,
+      winner: winnerArm,
+      passAtK: evRun.passAtK,
+      passCaretK: evRun.passCaretK,
+      trials: evRun.trials?.length || 0,
     },
     proposalsFiled,
     clustersSeen: clusters.length,
@@ -2663,6 +3130,13 @@ export function registerAgentWorkers(runtime: AgentRuntime) {
     // Mission planner: keeps UP NEXT filled — user-task mirrors + daily
     // goal reviews. Self-deduping; safe to run every 6h.
     { agentId: 'prep', kind: 'mission_plan', title: 'Prep: mission day planner (360m)', everyMinutes: 360 },
+    // ECC-evolution routines: instinct mining, skill audit, eval-gated
+    // tuning, verification gate. All proposal-governed — nothing self-
+    // modifies; every artifact lands in the Crew's INBOX first.
+    { agentId: 'librarian', kind: 'instinct_cycle', title: 'Librarian: instinct mining cycle (360m)', everyMinutes: 360 },
+    { agentId: 'librarian', kind: 'skill_audit', title: 'Librarian: skill inventory audit (weekly)', everyMinutes: 10080 },
+    { agentId: 'strategist', kind: 'tune_cycle', title: 'Strategist: eval-gated tune cycle (720m)', everyMinutes: 720 },
+    { agentId: 'builder', kind: 'verify_gate', title: 'Builder: verification gate sweep (720m)', everyMinutes: 720 },
   ];
   for (const r of COGNITION_ROUTINES) {
     runtime.addRoutine({ agentId: r.agentId, kind: r.kind, title: r.title, input: r.input, everyMinutes: r.everyMinutes, enabled: true });

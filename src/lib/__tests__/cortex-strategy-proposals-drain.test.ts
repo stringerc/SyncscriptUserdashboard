@@ -130,6 +130,8 @@ describe('Initiative Acceleration & Strategy Proposal Auto-Drain', () => {
       planNote: 'note-2',
       planTaskId: 'task-2',
       actions: ['1. [prompt] Refine query template — evidence: ev-1 — why speed'],
+      // [prompt] is a self-mod class — the P4 eval gate requires evidence.
+      evalEvidence: [{ evalId: 'eval-drain-test', verdict: 'pass', passCaretK: { baseline: 0.5, candidate: 1 }, at: Date.now() }],
     });
 
     let mockSubmitted = false;

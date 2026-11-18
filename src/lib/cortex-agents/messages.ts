@@ -17,6 +17,7 @@
  */
 
 import fs from 'node:fs';
+import { wrapUntrusted, screenUntrusted } from './prompt-defense';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { fileStrategyProposals } from './strategy-proposals';
@@ -205,8 +206,15 @@ export function pendingMessages(agentId: string): AgentMessage[] {
 export function messagesBlock(agentId: string): string {
   const pending = pendingMessages(agentId);
   if (!pending.length) return '';
-  const lines = pending.map((m, i) =>
-    `${i + 1}. [${m.id}] ${m.priority === 'urgent' ? 'URGENT ' : ''}${m.ventureId ? `[${m.ventureId}] ` : ''}${m.type} from ${m.from}: ${m.payload}${m.correlationId ? ` (corr: ${m.correlationId})` : ''}`);
+  const lines = pending.map((m, i) => {
+    // Peer payloads are UNTRUSTED DATA — agents can carry injected content
+    // (web text, tool output). Screen + wrap; flagged messages stay visible
+    // (evidence is never silently dropped) but are marked suspicious.
+    const screen = screenUntrusted(m.payload);
+    const flag = screen.clean ? '' : ' [INJECTION-FLAGGED]';
+    const wrapped = wrapUntrusted(`agent-message:${m.from}`, m.payload);
+    return `${i + 1}. [${m.id}]${flag} ${m.priority === 'urgent' ? 'URGENT ' : ''}${m.ventureId ? `[${m.ventureId}] ` : ''}${m.type} from ${m.from}:\n${wrapped}${m.correlationId ? ` (corr: ${m.correlationId})` : ''}`;
+  });
   return [
     '## AGENT MESSAGES (typed peer traffic — address in your work; cite message ids in your result to consume them)',
     ...lines,

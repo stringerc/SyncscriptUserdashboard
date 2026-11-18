@@ -16,6 +16,7 @@
  */
 
 import fs from 'node:fs';
+import { wrapUntrusted } from './prompt-defense';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { isValidVenture } from '../cortex-ventures';
@@ -202,7 +203,7 @@ export function cancelDirective(id: string): boolean {
 export function directivesBlock(agentId: string): string {
   const pending = pendingDirectives(agentId);
   if (!pending.length) return '';
-  const lines = pending.map((d, i) => `${i + 1}. [${d.id}] ${d.ventureId ? `[${d.ventureId}] ` : ''}${d.message}${d.evidence ? ` (evidence: ${d.evidence})` : ''}`);
+  const lines = pending.map((d, i) => `${i + 1}. [${d.id}] ${d.ventureId ? `[${d.ventureId}] ` : ''}${d.message}${d.evidence ? `\n  evidence (untrusted): ${wrapUntrusted('directive-evidence', String(d.evidence)).slice(0, 1500)}` : ''}`);
   return [
     '## DIRECTIVES FROM CORTEX (orders-of-the-day — address in your work, cite the directive id in your result evidence)',
     ...lines,

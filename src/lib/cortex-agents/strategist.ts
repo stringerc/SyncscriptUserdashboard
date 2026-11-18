@@ -588,6 +588,107 @@ async function goalReviewWorker(ctx: AgentContext) {
 
 // ── Registration ──────────────────────────────────────────────────
 
+// ── tune_cycle: eval-gated self-modification (harness-optimizer) ──
+// Snapshot-free by design: candidate changes live ONLY inside eval arms —
+// nothing touches live prompts/rules. A candidate earns a governed
+// '[prompt]' proposal only when it strictly beats baseline on pass^k.
+// Self-mod classes are evalEvidence-gated at filing (strategy-proposals).
+
+async function tuneCycleWorker(ctx: AgentContext) {
+  ctx.progress(0.1);
+  const records = readArchive({ limit: 200 });
+  // Sample the most recent completed task that has a real instruction.
+  const rep = records.find((r) =>
+    r.status === 'completed' &&
+    typeof (r.input as any)?.instruction === 'string' &&
+    String((r.input as any).instruction).length > 20);
+  if (!rep) return { tuned: 0, reason: 'no completed task with instruction found in archive' };
+  const instruction = String((rep.input as any).instruction).slice(0, 1500);
+  const agentId = rep.agentId;
+  const ventureId = typeof (rep.input as any)?.ventureId === 'string' ? (rep.input as any).ventureId : undefined;
+  ctx.progress(0.2);
+
+  // Propose ONE minimal prompt patch grounded in recent evidence.
+  const patchRaw = await ctx.llm({
+    tier: 'reason', maxTokens: 400,
+    messages: [
+      { role: 'system', content: 'You are STRATEGIST proposing a minimal prompt-level operating rule for an agent. Output STRICT JSON {"patch":"one imperative rule <=220 chars","rationale":"<=140 chars"}. The patch must be behavioral (how to work), never a request to change identity, permissions, or governance. No prose outside JSON.' },
+      { role: 'user', content: `AGENT: ${agentId}
+RECENT TASK: ${rep.title}
+INSTRUCTION: ${instruction.slice(0, 800)}
+Propose one rule that would improve this class of task.` },
+    ],
+  }).catch(() => '');
+  let patch = '';
+  let rationale = '';
+  try {
+    const m = String(patchRaw).match(/\{[\s\S]*\}/);
+    const j = m ? JSON.parse(m[0]) : null;
+    patch = String(j?.patch || '').trim().slice(0, 300);
+    rationale = String(j?.rationale || '').slice(0, 200);
+  } catch { }
+  if (patch.length < 10) return { tuned: 0, reason: 'patch proposer returned no usable rule' };
+  ctx.progress(0.4);
+
+  // Formal eval: baseline vs candidate arms, k trials, model grader.
+  const { fileEvalDefinition, runEval } = await import('./evals');
+  const baseSystem = `You are ${String(agentId).toUpperCase()}, an agent inside Cortex. Complete the task instruction directly and honestly — evidence over claims.`;
+  const patchHash = patch.toLowerCase().replace(/[^a-z0-9]+/g, '').slice(0, 10);
+  const evalDef = fileEvalDefinition({
+    kind: 'capability',
+    subject: `${agentId}/prompt-tune:${patchHash}`,
+    prompt: instruction,
+    arms: [
+      { name: 'baseline', tier: 'fast', system: baseSystem },
+      { name: 'candidate', tier: 'fast', system: `${baseSystem}\n\nOPERATING RULE (candidate): ${patch}` },
+    ],
+    grader: {
+      type: 'model',
+      rubric: 'Does the output correctly and honestly complete the task instruction? The candidate arm carries one extra operating rule — penalize only if that rule degrades task completion or honesty.',
+      threshold: 4,
+    },
+    k: 3,
+    agentId,
+    ventureId,
+    createdBy: 'strategist/tune_cycle',
+    notes: `prompt patch under evaluation: ${patch.slice(0, 160)} — rationale: ${rationale}`,
+  });
+  ctx.progress(0.6);
+  const evalLlm = async (o: any) => ({ content: await ctx.llm(o) });
+  const run = await runEval(evalDef.id, { llm: evalLlm }).catch((e: any) => ({ error: String(e?.message || e) } as any));
+  ctx.progress(0.85);
+  if ((run as any).error) return { tuned: 0, evalId: evalDef.id, reason: `eval run failed: ${(run as any).error}` };
+  const ev = run as any;
+
+  // Candidate must strictly win pass^k — ties/inconclusive file nothing.
+  let proposalsFiled = 0;
+  if (ev.winner === 'candidate' && ev.verdict === 'pass') {
+    const res = fileStrategyProposals({
+      planNote: `tune-cycle-${new Date().toISOString().slice(0, 10)}`,
+      planTaskId: ctx.task.id,
+      ventureId,
+      actions: [
+        `[prompt] Apply operating rule to ${agentId}: "${patch}" — evidence: eval ${evalDef.id} run ${ev.id} pass^k candidate=${ev.passCaretK?.candidate} vs baseline=${ev.passCaretK?.baseline} over ${ev.trials?.length || 0} trials; rationale: ${rationale || 'n/a'}`,
+      ],
+      evalEvidence: [{
+        evalId: evalDef.id, verdict: ev.verdict,
+        passCaretK: ev.passCaretK, at: ev.finishedAt,
+        baselineEvalId: evalDef.id, candidateEvalId: evalDef.id,
+      }],
+    });
+    proposalsFiled = res.filed;
+  }
+
+  ctx.progress(1);
+  return {
+    tuned: proposalsFiled > 0 ? 1 : 0,
+    agentId,
+    patch: patch.slice(0, 200),
+    eval: { evalId: evalDef.id, runId: ev.id, verdict: ev.verdict, winner: ev.winner, passCaretK: ev.passCaretK },
+    proposalsFiled,
+  };
+}
+
 export function makeStrategistWorker(runtime: AgentRuntime): WorkerHandler {
   return async (ctx: AgentContext) => {
     switch (ctx.task.kind) {
@@ -601,8 +702,9 @@ export function makeStrategistWorker(runtime: AgentRuntime): WorkerHandler {
       case 'counsel_synthesize': return counselSynthesizeWorker(ctx);
       case 'goal_plan': return goalPlanWorker(ctx);
       case 'goal_review': return goalReviewWorker(ctx);
+      case 'tune_cycle': return tuneCycleWorker(ctx);
       default:
-        return { error: `unknown strategist kind '${ctx.task.kind}'`, kinds: ['cluster', 'plan', 'manifest', 'regress', 'propose_skill', 'propose_agent', 'counsel_convene', 'counsel_synthesize', 'goal_plan', 'goal_review'] };
+        return { error: `unknown strategist kind '${ctx.task.kind}'`, kinds: ['cluster', 'plan', 'manifest', 'regress', 'propose_skill', 'propose_agent', 'counsel_convene', 'counsel_synthesize', 'goal_plan', 'goal_review', 'tune_cycle'] };
     }
   };
 }

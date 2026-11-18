@@ -1,6 +1,12 @@
 # CORTEX EVOLUTION SPEC — Instinct & Eval Mesh
 
-Status: SPEC — awaiting Crew approval before implementation.
+Status: IMPLEMENTED (phases P1–P6a) — evals.ts, instincts.ts,
+prompt-defense.ts live; verify_gate + reviewer rubric + tune_cycle +
+instinct_cycle + skill_audit + context_pressure patrol shipped; incident→
+regression auto-registration + evalEvidence proposal gate enforced.
+Verified: 58 vitest cases green, live eval run + instinct cycle + llm
+endpoint smoke-tested. Deferred: interactive-session suggest-compact
+(ECC hook bundle dependency), Foundry eval/instinct UI surfaces.
 Origin: adaptation study of ECC (affaan-m/ECC, MIT) — eight proven patterns
 re-implemented inside Cortex's governed architecture rather than imported.
 

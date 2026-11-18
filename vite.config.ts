@@ -34,8 +34,11 @@ import {
   COUNSEL_CONSOLES, conveneCounsel, filePosition, openRebuttal, closeRebuttal,
   recordSynthesis, decideCounsel, cancelCounsel, pollBoard,
   getCounselSession, listCounselSessions, markCounselDiscordNotified,
-  autoClearCounselPolls, pollBoard,
+  autoClearCounselPolls,
 } from './src/lib/cortex-counsel';
+import { defenseSystemPrefix } from './src/lib/cortex-agents/prompt-defense';
+import { instinctsBlock } from './src/lib/cortex-agents/instincts';
+import { listEvals, getEval, fileEvalDefinition, runEval, readRuns, evalScorecard, evalComparison, type GraderSpec, type EvalArm } from './src/lib/cortex-agents/evals';
 import { computeCounselScorecard } from './src/lib/cortex-agents/counsel-scorecard';
 import type { RouteTier } from './src/lib/cortex-agents/types';
 import { normalizeForSpeech } from './src/lib/tts-speech-normalize';
@@ -11735,6 +11738,44 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
         }
       });
 
+      // ── Mission log (/api/cortex/missions) ──
+      // Read-only feed of deep-work missions the client-side
+      // CortexMissionEngine persists to .cortex/missions/*.json via the
+      // write_file host tool. Powers the MISSION LOG panel in
+      // CortexFoundryNav — the drawer on /cortex/chat only auto-opens,
+      // this makes the log reachable from the Foundry menu.
+      server.middlewares.use('/api/cortex/missions', (req: any, res: any, next: any) => {
+        if (req.method !== 'GET') return next();
+        agentCors(req, res);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        try {
+          const dir = path.join(process.cwd(), '.cortex', 'missions');
+          const files = fsSync.readdirSync(dir).filter((f: string) => f.endsWith('.json'));
+          const missions = files
+            .map((f: string) => {
+              try {
+                const m = JSON.parse(fsSync.readFileSync(path.join(dir, f), 'utf8'));
+                return {
+                  id: m.id, title: m.title, objective: m.objective,
+                  status: m.status, overallProgress: m.overallProgress,
+                  riskClass: m.riskClass,
+                  createdAt: m.createdAt, updatedAt: m.updatedAt,
+                  milestones: Array.isArray(m.milestones) ? m.milestones.length : 0,
+                  steps: Array.isArray(m.executionTrace) ? m.executionTrace.length : 0,
+                  resultSummary: m.resultSummary || '',
+                  reportPath: m.reportPath || '',
+                };
+              } catch { return null; }
+            })
+            .filter(Boolean)
+            .sort((a: any, b: any) => (b.updatedAt || 0) - (a.updatedAt || 0))
+            .slice(0, 50);
+          res.end(JSON.stringify({ ok: true, missions }));
+        } catch (e: any) {
+          res.end(JSON.stringify({ ok: true, missions: [], error: String(e?.message || e) }));
+        }
+      });
+
       // ── Mission loop (/api/cortex/mission/*) ──
       // Goals → tasks → calendar → agents → evidence. See CORTEX_MISSION_LOOP_SPEC.md.
       // GET  ?action=state|cadence  → verified state / cadence report
@@ -13178,7 +13219,18 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
           }
           const maxTokens = Math.min(Number(parsed.maxTokens) || 800, 4096);
           const sysMsg = parsed.system ? [{ role: 'system', content: String(parsed.system) }] : [];
-          const chatMessages = [...sysMsg, ...messages.map((m: any) => ({ role: m.role === 'assistant' ? 'assistant' : 'user', content: String(m.content || '') }))];
+          const mappedMessages = messages.map((m: any) => ({ role: m.role === 'assistant' ? 'assistant' : 'user', content: String(m.content || '') }));
+          // Prompt-defense baseline + scoped instincts — injected server-side
+          // for EVERY worker LLM call (ECC Prompt Defense Baseline + instincts
+          // adaptation). ventureId/agentId come from the task context.
+          const firstUserText = mappedMessages.find((m: any) => m.role === 'user')?.content || '';
+          const scopedInstincts = instinctsBlock({
+            agentId: typeof parsed.agentId === 'string' ? parsed.agentId : undefined,
+            ventureId: typeof parsed.ventureId === 'string' ? parsed.ventureId : undefined,
+            instruction: firstUserText.slice(0, 500),
+          });
+          const defenseMsg = { role: 'system' as const, content: defenseSystemPrefix(scopedInstincts || undefined) };
+          const chatMessages = [defenseMsg, ...sysMsg, ...mappedMessages];
 
           let lastErr = 'no provider succeeded';
           // Reasoning models (NIM nemotron/step) can spend the whole token
@@ -13265,6 +13317,143 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
           agentCors(req, res); res.writeHead(502);
           res.end(JSON.stringify({ ok: false, error: lastErr }));
         });
+      });
+
+      // ── Eval harness API (ECC eval-harness adaptation) ──────────
+      // GET  /api/cortex/evals            → definitions (+ optional ?kind=&status=&ventureId=&agentId=)
+      // GET  /api/cortex/evals/runs?evalId= → run receipts
+      // GET  /api/cortex/evals/scorecard?agentId= → per-agent pass rates
+      // POST /api/cortex/evals            → file a definition {kind,subject,prompt,arms,grader,k,ventureId?,agentId?,notes?}
+      // POST /api/cortex/evals/run        → execute {evalId} (model/code graders only; human → pending-human)
+      server.middlewares.use('/api/cortex/evals', async (req: any, res: any, next: any) => {
+        const origin = req.headers.origin;
+        if (req.method === 'OPTIONS') {
+          res.writeHead(204, { 'Access-Control-Allow-Origin': origin || '*', 'Access-Control-Allow-Methods': 'GET, POST, OPTIONS', 'Access-Control-Allow-Headers': 'Content-Type' });
+          return res.end();
+        }
+        const url = new URL(req.url || '/', `http://127.0.0.1`);
+        const pathTail = url.pathname.replace('/api/cortex/evals', '') || '/';
+        try {
+          if (req.method === 'GET' && (pathTail === '/' || pathTail === '')) {
+            const kind = url.searchParams.get('kind') as any;
+            const status = url.searchParams.get('status') as any;
+            const ventureId = url.searchParams.get('ventureId') || undefined;
+            const agentId = url.searchParams.get('agentId') || undefined;
+            const defs = listEvals({
+              kind: ['capability', 'regression'].includes(kind) ? kind : undefined,
+              status: ['active', 'retired'].includes(status) ? status : undefined,
+              ventureId, agentId,
+            });
+            agentCors(req, res); res.writeHead(200, { 'Content-Type': 'application/json' });
+            return res.end(JSON.stringify({ ok: true, evals: defs, count: defs.length }));
+          }
+          if (req.method === 'GET' && pathTail === '/runs') {
+            const evalId = url.searchParams.get('evalId') || undefined;
+            const limit = Math.min(Number(url.searchParams.get('limit')) || 50, 200);
+            const runs = readRuns(evalId, limit);
+            agentCors(req, res); res.writeHead(200, { 'Content-Type': 'application/json' });
+            return res.end(JSON.stringify({ ok: true, runs }));
+          }
+          if (req.method === 'GET' && pathTail === '/scorecard') {
+            const agentId = url.searchParams.get('agentId') || undefined;
+            agentCors(req, res); res.writeHead(200, { 'Content-Type': 'application/json' });
+            return res.end(JSON.stringify({ ok: true, scorecard: evalScorecard(agentId) }));
+          }
+          if (req.method === 'GET' && pathTail === '/compare') {
+            const b = url.searchParams.get('baseline');
+            const c = url.searchParams.get('candidate');
+            if (!b || !c) { agentCors(req, res); res.writeHead(400); return res.end(JSON.stringify({ ok: false, error: 'baseline & candidate evalIds required' })); }
+            agentCors(req, res); res.writeHead(200, { 'Content-Type': 'application/json' });
+            return res.end(JSON.stringify({ ok: true, comparison: evalComparison(b, c) }));
+          }
+          if (req.method === 'POST') {
+            let body = '';
+            req.on('data', (c: Buffer) => { body += c.toString(); });
+            req.on('end', async () => {
+              let parsed: any = {};
+              try { parsed = JSON.parse(body || '{}'); } catch { }
+              if (pathTail === '/run') {
+                const evalId = String(parsed.evalId || '');
+                const def = evalId ? getEval(evalId) : null;
+                if (!def) { agentCors(req, res); res.writeHead(404); return res.end(JSON.stringify({ ok: false, error: 'eval not found' })); }
+                if (def.grader.type === 'human') {
+                  agentCors(req, res); res.writeHead(200, { 'Content-Type': 'application/json' });
+                  return res.end(JSON.stringify({ ok: true, note: 'human-graded evals never auto-run — file for Crew review', evalId: def.id }));
+                }
+                // Run through the same matrix bridge workers use.
+                const llmFn = async (o: any) => {
+                  const r = await fetch(`http://127.0.0.1:${process.env.PORT ? parseInt(process.env.PORT) : 5173}/api/cortex/agents/llm`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ ...o, agentId: def.agentId || 'evals' }),
+                    signal: AbortSignal.timeout(90_000),
+                  });
+                  const j: any = await r.json();
+                  if (!j?.ok) throw new Error(j?.error || `llm http ${r.status}`);
+                  return { content: String(j.content || '') };
+                };
+                try {
+                  const run = await runEval(def.id, { llm: llmFn });
+                  agentCors(req, res); res.writeHead(200, { 'Content-Type': 'application/json' });
+                  return res.end(JSON.stringify({ ok: true, run }));
+                } catch (e: any) {
+                  agentCors(req, res); res.writeHead(500);
+                  return res.end(JSON.stringify({ ok: false, error: String(e?.message || e) }));
+                }
+              }
+              // POST /api/cortex/evals — file a definition.
+              const { kind, subject, prompt, arms, grader, k, ventureId, agentId, notes } = parsed || {};
+              if (!subject || !prompt || !Array.isArray(arms) || !arms.length || !grader?.type) {
+                agentCors(req, res); res.writeHead(400);
+                return res.end(JSON.stringify({ ok: false, error: 'subject, prompt, arms[], grader{type} required' }));
+              }
+              if (!['capability', 'regression'].includes(kind)) {
+                agentCors(req, res); res.writeHead(400);
+                return res.end(JSON.stringify({ ok: false, error: 'kind must be capability|regression' }));
+              }
+              if (!['code', 'model', 'human'].includes(grader.type)) {
+                agentCors(req, res); res.writeHead(400);
+                return res.end(JSON.stringify({ ok: false, error: 'grader.type must be code|model|human' }));
+              }
+              if (ventureId && !isValidVenture(ventureId)) {
+                agentCors(req, res); res.writeHead(400);
+                return res.end(JSON.stringify({ ok: false, error: `unknown venture: ${ventureId}` }));
+              }
+              if (grader.type === 'code' && (!Array.isArray(grader.assertions) || !grader.assertions.length)) {
+                agentCors(req, res); res.writeHead(400);
+                return res.end(JSON.stringify({ ok: false, error: 'code grader requires assertions[]' }));
+              }
+              const cleanArms: EvalArm[] = arms.slice(0, 6).map((a: any) => ({
+                name: String(a.name || 'arm').slice(0, 40),
+                system: typeof a.system === 'string' ? a.system.slice(0, 4000) : undefined,
+                suffix: typeof a.suffix === 'string' ? a.suffix.slice(0, 2000) : undefined,
+                model: typeof a.model === 'string' ? a.model.slice(0, 120) : undefined,
+                tier: ['fast', 'reason', 'deep'].includes(a.tier) ? a.tier : undefined,
+              }));
+              const cleanGrader: GraderSpec = {
+                type: grader.type,
+                assertions: Array.isArray(grader.assertions) ? grader.assertions.slice(0, 20) : undefined,
+                rubric: typeof grader.rubric === 'string' ? grader.rubric.slice(0, 2000) : undefined,
+                threshold: typeof grader.threshold === 'number' ? grader.threshold : undefined,
+                instructions: typeof grader.instructions === 'string' ? grader.instructions.slice(0, 1000) : undefined,
+              };
+              const def = fileEvalDefinition({
+                kind, subject: String(subject).slice(0, 200), prompt: String(prompt).slice(0, 8000),
+                arms: cleanArms, grader: cleanGrader,
+                k: Math.max(1, Math.min(10, Number(k) || 1)),
+                ventureId, agentId: typeof agentId === 'string' ? agentId.slice(0, 60) : undefined,
+                createdBy: 'api', notes: typeof notes === 'string' ? notes.slice(0, 500) : undefined,
+              });
+              agentCors(req, res); res.writeHead(200, { 'Content-Type': 'application/json' });
+              return res.end(JSON.stringify({ ok: true, eval: def }));
+            });
+            return;
+          }
+          next();
+        } catch (e: any) {
+          agentCors(req, res); res.writeHead(500);
+          res.end(JSON.stringify({ ok: false, error: String(e?.message || e) }));
+        }
       });
 
       // In-memory stack of recently closed tabs for instant non-destructive undo/restore

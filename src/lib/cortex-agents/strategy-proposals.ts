@@ -50,6 +50,9 @@ export interface StrategyProposal {
   /** Venture scope (enterprise spec) — tagged proposals aggregate per venture
    *  in the attention strip; also stamped into taskInput for dispatch. */
   ventureId?: string;
+  /** Eval-harness evidence (P4): baseline-vs-candidate EvalRun summaries.
+   *  REQUIRED for self-modifying classes — enforced at filing time. */
+  evalEvidence?: Array<{ evalId: string; verdict: string; passCaretK?: Record<string, number>; at?: number; baselineEvalId?: string; candidateEvalId?: string }>;
 }
 
 function readAll(): StrategyProposal[] {
@@ -108,16 +111,22 @@ export function agentForClass(cls: string): string {
  * Action lines look like: `1. [eval | process] Title — evidence: ... — why ...`
  * Dedupe: same planNote + actionIndex never files twice.
  */
+/** Classes that mutate agent behavior/config — require evalEvidence (P4). */
+export const SELF_MOD_CLASSES = new Set(['prompt', 'code', 'skill', 'tune', 'prompt_patch', 'patch', 'config-self']);
+
 export function fileStrategyProposals(opts: {
   planNote: string | null;
   planTaskId: string;
   actions: string[];
   ventureId?: string;
-}): { filed: number; skipped: number } {
+  /** Baseline-vs-candidate eval run evidence — mandatory for SELF_MOD_CLASSES. */
+  evalEvidence?: StrategyProposal['evalEvidence'];
+}): { filed: number; skipped: number; rejected?: string[] } {
   const all = readAll();
   const pending = all.filter((p) => p.status === 'pending').length;
   let filed = 0, skipped = 0;
   const newlyFiled: StrategyProposal[] = [];
+  const rejected: string[] = [];
   for (let i = 0; i < Math.min(opts.actions.length, MAX_FILED_PER_PLAN); i++) {
     const raw = opts.actions[i];
     if (!raw) continue;
@@ -131,6 +140,13 @@ export function fileStrategyProposals(opts: {
     if (pending + filed >= MAX_PENDING) { skipped++; continue; }
     const clsMatch = raw.match(/\[([^\]]+)\]/);
     const actionClass = (clsMatch?.[1] || 'process').split('|')[0].trim().toLowerCase();
+    // P4 eval-gate: self-modifying proposals without baseline-vs-candidate
+    // eval evidence are rejected at filing — no silent self-tuning path.
+    if (SELF_MOD_CLASSES.has(actionClass) && !opts.evalEvidence?.length) {
+      skipped++;
+      rejected.push(`${actionClass}: ${raw.slice(0, 80)}`);
+      continue;
+    }
     const title = raw.replace(/\[[^\]]+\]/, '').split('—')[0].split('–')[0].trim().slice(0, 140) || `Strategy action ${i + 1}`;
     const evidence = (raw.match(/evidence:\s*([^—]+)/i)?.[1] || '').split(',').map((s) => s.trim()).filter(Boolean).slice(0, 6);
     const proposal: StrategyProposal = {
@@ -148,6 +164,7 @@ export function fileStrategyProposals(opts: {
       createdAt: Date.now(),
       ventureId: opts.ventureId || undefined,
       ...(opts.ventureId ? { taskInput: { ventureId: opts.ventureId } } : {}),
+      ...(opts.evalEvidence?.length ? { evalEvidence: opts.evalEvidence } : {}),
     };
     all.push(proposal);
     newlyFiled.push(proposal);
@@ -157,7 +174,7 @@ export function fileStrategyProposals(opts: {
     writeAll(all);
     for (const p of newlyFiled) notifyProposalFiled(p);
   }
-  return { filed, skipped };
+  return { filed, skipped, rejected: rejected.length ? rejected : undefined };
 }
 
 /**
