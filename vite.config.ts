@@ -889,6 +889,22 @@ function apiProxyPlugin(): Plugin {
   let cartesiaApiKey = '';
   let firecrawlApiKey = '';
 
+  // Neural TTS response cache — Cortex repeats short ack/filler phrases
+  // constantly; a hit returns audio in ~0ms instead of a fresh synthesis.
+  // Keyed by engine+voice+speed+text, RIFF-validated on store, FIFO-bounded.
+  const ttsResponseCache = new Map<string, Buffer>();
+  const TTS_CACHE_MAX = 200;
+  const ttsCacheKey = (engine: string, voice: string, speed: unknown, text: string) =>
+    `${engine}|${voice || ''}|${typeof speed === 'number' ? speed.toFixed(2) : '1.00'}|${text}`;
+  const ttsCacheGet = (key: string): Buffer | null => ttsResponseCache.get(key) || null;
+  const ttsCacheSet = (key: string, buf: Buffer) => {
+    if (ttsResponseCache.size >= TTS_CACHE_MAX) {
+      const firstKey = ttsResponseCache.keys().next().value;
+      if (firstKey) ttsResponseCache.delete(firstKey);
+    }
+    ttsResponseCache.set(key, buf);
+  };
+
   // ── Airgap Connection Audit Ring Buffer (Wi-Fi-off Drill verification) ──
   interface ConnectionAuditRecord {
     timestamp: number;
@@ -8405,20 +8421,37 @@ function triggerQuickAction() {
                 : cortanaPocketUrl;
 
             if (cortanaPocketTarget && isCortanaVoiceRequested && !isCortanaRenderRequested) {
+              const cpCacheKey = ttsCacheKey(`pocket:${cortanaPocketTarget}`, voice || 'cortana', speed, text);
+              const cpCached = ttsCacheGet(cpCacheKey);
+              if (cpCached) {
+                res.writeHead(200, {
+                  'Content-Type': 'audio/wav',
+                  'Content-Length': cpCached.byteLength.toString(),
+                  'Cache-Control': 'no-store',
+                  'X-TTS-Cache': 'hit',
+                });
+                return res.end(cpCached);
+              }
               try {
                 recordConnectionAudit(`${cortanaPocketTarget}/tts`, '/api/cortex/tts');
                 const cfd = new FormData();
                 cfd.append('text', String(text || '').slice(0, 2000));
+                // Length-scaled fail-fast: short phrases can't hold the line
+                // for 30s — fall back to Kokoro sooner; long responses still
+                // get room to finish on the correct Cortana voice.
+                const cpTimeout = Math.min(30000, 6000 + String(text || '').length * 5);
                 const cpRes = await fetch(`${cortanaPocketTarget}/tts`, {
-                  method: 'POST', body: cfd, signal: AbortSignal.timeout(30000),
+                  method: 'POST', body: cfd, signal: AbortSignal.timeout(cpTimeout),
                 });
                 if (cpRes.ok) {
                   const buf = Buffer.from(await cpRes.arrayBuffer());
                   if (buf.length > 200 && buf.slice(0, 4).toString('ascii') === 'RIFF') {
+                    ttsCacheSet(cpCacheKey, buf);
                     res.writeHead(200, {
                       'Content-Type': 'audio/wav',
                       'Content-Length': buf.byteLength.toString(),
                       'Cache-Control': 'no-store',
+                      'X-TTS-Cache': 'miss',
                     });
                     return res.end(buf);
                   }
@@ -8472,6 +8505,18 @@ function triggerQuickAction() {
                 const resolvedVoice = PRESETS[voice] || voice || 'cortana';
                 const isRealKokoroVoice = /^[a-z]{2}_[a-z]+$/.test(resolvedVoice);
 
+                const kokoroCacheKey = ttsCacheKey('kokoro', resolvedVoice, speed, text);
+                const kokoroCached = ttsCacheGet(kokoroCacheKey);
+                if (kokoroCached) {
+                  res.writeHead(200, {
+                    'Content-Type': 'audio/wav',
+                    'Content-Length': kokoroCached.byteLength.toString(),
+                    'Cache-Control': 'no-store',
+                    'X-TTS-Cache': 'hit',
+                  });
+                  return res.end(kokoroCached);
+                }
+
                 recordConnectionAudit(`${kokoroTtsUrl}/v1/audio/speech`, '/api/cortex/tts');
                 const upstream = await fetch(`${kokoroTtsUrl}/v1/audio/speech`, {
                   method: 'POST',
@@ -8482,14 +8527,19 @@ function triggerQuickAction() {
                     voice: resolvedVoice,
                     speed: typeof speed === 'number' ? Math.max(0.5, Math.min(speed, 2.0)) : 1.0,
                   }),
+                  // Kokoro warm is ~0.8s; 8s covers cold model load without
+                  // letting a hung upstream stall the whole voice turn.
+                  signal: AbortSignal.timeout(8000),
                 });
 
                 if (upstream.ok) {
                   const buf = Buffer.from(await upstream.arrayBuffer());
+                  if (buf.length > 200 && buf.slice(0, 4).toString('ascii') === 'RIFF') ttsCacheSet(kokoroCacheKey, buf);
                   res.writeHead(200, {
                     'Content-Type': upstream.headers.get('content-type') || 'audio/wav',
                     'Content-Length': buf.byteLength.toString(),
                     'Cache-Control': 'no-store',
+                    'X-TTS-Cache': 'miss',
                   });
                   return res.end(buf);
                 }
@@ -8503,6 +8553,17 @@ function triggerQuickAction() {
             // override with POCKET_TTS_VOICE. Runs on Oracle :8890.
             if (pocketTtsUrl) {
               try {
+                const pfCacheKey = ttsCacheKey('pocket-fallback', pocketTtsVoice, speed, text);
+                const pfCached = ttsCacheGet(pfCacheKey);
+                if (pfCached) {
+                  res.writeHead(200, {
+                    'Content-Type': 'audio/wav',
+                    'Content-Length': pfCached.byteLength.toString(),
+                    'Cache-Control': 'no-store',
+                    'X-TTS-Cache': 'hit',
+                  });
+                  return res.end(pfCached);
+                }
                 recordConnectionAudit(`${pocketTtsUrl}/tts`, '/api/cortex/tts');
                 const fd = new FormData();
                 fd.append('text', String(text || '').slice(0, 2000));
@@ -8513,10 +8574,12 @@ function triggerQuickAction() {
                 if (pRes.ok) {
                   const buf = Buffer.from(await pRes.arrayBuffer());
                   if (buf.length > 200 && buf.slice(0, 4).toString('ascii') === 'RIFF') {
+                    ttsCacheSet(pfCacheKey, buf);
                     res.writeHead(200, {
                       'Content-Type': 'audio/wav',
                       'Content-Length': buf.byteLength.toString(),
                       'Cache-Control': 'no-store',
+                      'X-TTS-Cache': 'miss',
                     });
                     return res.end(buf);
                   }
@@ -8529,6 +8592,17 @@ function triggerQuickAction() {
             // Local fallback to VoiceStudio if Kokoro and Pocket both failed
             if (voiceStudioUrl && !isVoiceStudioRequested) {
               try {
+                const vsCacheKey = ttsCacheKey('voicestudio', 'jarvis', 1.0, text);
+                const vsCached = ttsCacheGet(vsCacheKey);
+                if (vsCached) {
+                  res.writeHead(200, {
+                    'Content-Type': 'audio/wav',
+                    'Content-Length': vsCached.byteLength.toString(),
+                    'Cache-Control': 'no-store',
+                    'X-TTS-Cache': 'hit',
+                  });
+                  return res.end(vsCached);
+                }
                 recordConnectionAudit(`${voiceStudioUrl}/v1/audio/speech`, '/api/cortex/tts');
                 const vsFallback = await fetch(`${voiceStudioUrl}/v1/audio/speech`, {
                   method: 'POST',
@@ -8543,10 +8617,12 @@ function triggerQuickAction() {
                 });
                 if (vsFallback.ok) {
                   const buf = Buffer.from(await vsFallback.arrayBuffer());
+                  if (buf.length > 200 && buf.slice(0, 4).toString('ascii') === 'RIFF') ttsCacheSet(vsCacheKey, buf);
                   res.writeHead(200, {
                     'Content-Type': vsFallback.headers.get('content-type') || 'audio/wav',
                     'Content-Length': buf.byteLength.toString(),
                     'Cache-Control': 'no-store',
+                    'X-TTS-Cache': 'miss',
                   });
                   return res.end(buf);
                 }
