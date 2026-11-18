@@ -51,7 +51,7 @@ describe('cortex-distribution-pipeline', () => {
       llm: async () => '',
       emit: () => {},
       signal: new AbortController().signal,
-      telemetry: { toolCalls: 0, toolFailures: 0 },
+      telemetry: { toolCalls: 0, toolFailures: 0, llmCalls: 0, tokensIn: 0, tokensOut: 0, llmMs: 0 },
     };
 
     const res: any = await runOmniPublish(mockCtx, { platform: 'all', dryRun: true });

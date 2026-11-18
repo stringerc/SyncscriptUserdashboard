@@ -38,13 +38,20 @@ import { getVetoLedger } from './veto-ledger';
 /** Cortana's three operating modes */
 export type CortexMode = 'silent' | 'advisory' | 'guardian';
 
-/** The four nudge types — Cortana's four voices */
-export type NudgeType = 'confidence_warning' | 'drift_alert' | 'strategy_suggestion' | 'identity_update';
+/** The nudge types — Cortana's voices */
+export type NudgeType = 'confidence_warning' | 'drift_alert' | 'strategy_suggestion' | 'identity_update' | 'calibration_drift';
 
 /** A nudge — Cortana speaking Cortex's thoughts */
 export interface CortexNudge {
   id: string;
   type: NudgeType;
+  title?: string;
+  actionTaken?: boolean;
+  dismissed?: boolean;
+  source?: string;
+  actionLabel?: string;
+  actionTool?: string;
+  actionArgs?: Record<string, any>;
 
   /** The message Cortana speaks — always first-person, always in her voice */
   message: string;
@@ -116,6 +123,7 @@ export class CortexNudgeEngine {
     drift_alert: 0,
     strategy_suggestion: 0,
     identity_update: 0,
+    calibration_drift: 0,
   };
   private lastIdentityStatement = '';
 
@@ -125,6 +133,7 @@ export class CortexNudgeEngine {
     drift_alert: 60_000,          // 1 minute
     strategy_suggestion: 300_000, // 5 minutes
     identity_update: 3_600_000,   // 1 hour
+    calibration_drift: 60_000,    // 1 minute
   };
 
   // Listeners for UI updates (Cortana reflects nudges in her orb)
@@ -587,6 +596,32 @@ export class CortexNudgeEngine {
 
   getNudgeHistory(): CortexNudge[] {
     return [...this.nudges];
+  }
+
+  getHistory(): CortexNudge[] {
+    return this.getNudgeHistory();
+  }
+
+  emitNudge(nudge: Partial<CortexNudge> & { type: NudgeType; message: string }): CortexNudge {
+    const fullNudge: CortexNudge = {
+      id: nudge.id || `nudge-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      type: nudge.type,
+      message: nudge.message,
+      shortMessage: nudge.shortMessage || nudge.message.slice(0, 80),
+      urgency: nudge.urgency || 'low',
+      trigger: nudge.trigger || {},
+      actions: nudge.actions || [],
+      blocksInGuardian: nudge.blocksInGuardian ?? false,
+      timestamp: nudge.timestamp || Date.now(),
+      title: nudge.title,
+      actionTaken: nudge.actionTaken,
+      dismissed: nudge.dismissed,
+      source: nudge.source,
+      actionLabel: nudge.actionLabel,
+      actionTool: nudge.actionTool,
+      actionArgs: nudge.actionArgs,
+    };
+    return this.emit(fullNudge);
   }
 
   getRepairLog(): SelfRepairLog[] {

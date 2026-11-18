@@ -442,7 +442,7 @@ function renderTemplate(template: string, data: any): string {
       return arr.map((item: any, idx: number) => 
         content.replace(/\{\{@key\}\}/g, item.key || idx)
                .replace(/\{\{jsonType\}\}/g, jsonSchemaToTsType(item))
-               .replace(/\{\{(\w+)\}\}/g, (_, k) => item[k] ?? '')
+               .replace(/\{\{(\w+)\}\}/g, (_: string, k: string) => item[k] ?? '')
       ).join('');
     });
 }
@@ -507,7 +507,7 @@ interface ToolSpec {
 }`;
 
     try {
-      const result = await engine.process(prompt, {
+      const result = await (engine as any).process(prompt, {
         mode: 'structured',
         temperature: 0.2,
       });
@@ -610,7 +610,7 @@ test('${spec.name} example ${i + 1}: ${ex.description}', async () => {
 
     const schemaTests = `
 test('${spec.name} validates required inputs', async () => {
-  ${spec.inputSchema.required?.map(r => `await expect(${spec.name}({})).rejects.toThrow('Missing required parameter: ${r}');`).join('\n  ') || 'expect(true).toBe(true);'}
+  ${spec.inputSchema.required?.map((r: string) => `await expect(${spec.name}({})).rejects.toThrow('Missing required parameter: ${r}');`).join('\n  ') || 'expect(true).toBe(true);'}
 });`;
 
     return `/**
@@ -711,7 +711,7 @@ Return JSON:
 }`;
 
     try {
-      const result = await engine.process(validationPrompt, {
+      const result = await (engine as any).process(validationPrompt, {
         mode: 'structured',
         temperature: 0.1,
       });
@@ -749,7 +749,9 @@ Return JSON:
    * Runs tool in isolated sandbox with resource limits.
    */
   public async sandboxTest(tool: GeneratedTool): Promise<SandboxResult> {
-    const { execAsync } = await import('./util');
+    const { exec } = await import('node:child_process');
+    const { promisify } = await import('node:util');
+    const execAsync = promisify(exec);
     const tmpDir = await import('node:fs/promises').then(fs => fs.mkdtemp('/tmp/cortex-tool-'));
     const toolFile = `${tmpDir}/${tool.spec.name}.ts`;
     const testFile = `${tmpDir}/${tool.spec.name}.test.ts`;
@@ -761,7 +763,7 @@ Return JSON:
 
       // Run vitest with strict limits
       const startTime = Date.now();
-      const { stdout, stderr, exitCode } = await execAsync(
+      const res: any = await execAsync(
         `cd ${tmpDir} && npx vitest run --reporter=json ${tool.spec.name}.test.ts 2>&1`,
         {
           timeout: 30000,
@@ -769,6 +771,9 @@ Return JSON:
           env: { ...process.env, NODE_OPTIONS: '--max-old-space-size=512' },
         }
       );
+      const stdout = res.stdout || '';
+      const stderr = res.stderr || '';
+      const exitCode = res.exitCode ?? 0;
 
       const durationMs = Date.now() - startTime;
       

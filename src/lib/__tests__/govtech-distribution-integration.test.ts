@@ -6,11 +6,20 @@ import path from 'node:path';
 
 describe('Nexus Foundry Distributor Worker - SAM.gov GovTech Capture', () => {
   const dummyCtx: AgentContext = {
-    agentId: 'distributor',
-    task: { id: 'task-test-govtech', kind: 'sam_gov_capture', input: {} },
+    task: {
+      id: 'task-test-govtech',
+      agentId: 'distributor',
+      kind: 'sam_gov_capture',
+      title: 'SAM.gov capture test',
+      status: 'running',
+      progress: 0,
+      createdAt: Date.now(),
+      input: {},
+    },
     signal: new AbortController().signal,
     progress: () => {},
-    telemetry: () => {},
+    emit: () => {},
+    telemetry: { toolCalls: 0, toolFailures: 0, llmCalls: 0, tokensIn: 0, tokensOut: 0, llmMs: 0 },
     llm: async () => 'test',
   };
 

@@ -31,6 +31,7 @@ export interface MemorySnapshot {
 }
 
 export interface MemorySection {
+  id?: string;
   title: string;
   level: number;
   content: string;

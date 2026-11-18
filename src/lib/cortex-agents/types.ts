@@ -14,6 +14,8 @@
 // The literals remain the built-ins; `(string & {})` keeps autocomplete for them.
 export type AgentId = 'antigravity' | 'sentinel' | 'scout' | 'librarian' | 'builder' | 'devin' | 'claudecode' | 'openclaw' | 'reviewer' | 'runner' | 'distributor' | 'warden' | 'prep' | 'forecaster' | 'strategist' | 'brief' | 'debrief' | (string & {});
 
+export type { AgentContext, WorkerHandler } from './runtime';
+
 export type AgentStatus =
   | 'offline'   // never heartbeated or heartbeat stale
   | 'idle'      // alive, no active task

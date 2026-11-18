@@ -212,7 +212,7 @@ class CortexStressTest {
 
   private async warmup(): Promise<void> {
     this.log('🔥 Warmup phase...');
-    for (const actionType of ['compile', 'test', 'search', 'write_file']) {
+    for (const actionType of ['compile', 'test', 'search', 'write_file'] as ActionType[]) {
       const input = this.createValidationInput(actionType);
       const result = this.actionGate.evaluate(input);
       
@@ -316,7 +316,7 @@ class CortexStressTest {
 
     // 4. Determine outcome (simulate environmental feedback)
     const success = Math.random() > this.config.failureRate;
-    const outcomeType = success ? 'success' : (Math.random() > 0.5 ? 'failure' : 'partial');
+    const outcomeType: 'success' | 'failure' | 'partial' | 'timeout' = success ? 'success' : (Math.random() > 0.5 ? 'failure' : 'partial');
     const actualConfidence = success ? 0.8 + Math.random() * 0.2 : 0.2 + Math.random() * 0.3;
 
     // 5. Receive outcome in sensorimotor loop
@@ -335,7 +335,7 @@ class CortexStressTest {
       this.results.totalPredictionError += outcomeRecord.freeEnergyContributed;
       this.results.avgPredictionError = this.results.totalPredictionError / this.results.outcomesRecorded;
 
-      switch (outcomeType) {
+      switch (outcomeType as string) {
         case 'success': this.results.outcomesSuccess++; break;
         case 'failure': this.results.outcomesFailure++; break;
         case 'partial': this.results.outcomesPartial++; break;

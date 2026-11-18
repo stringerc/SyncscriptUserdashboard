@@ -13,7 +13,7 @@
  */
 
 import { persistentStore } from './persistent-store';
-import { getCortexMetacognitionCalibration } from './cortex-metacognition-calibration';
+import { getCortexMetacognitionCalibration, type CalibrationDomain } from './cortex-metacognition-calibration';
 import { getCortexNudgeEngine } from './cortex-nudge-engine';
 import { getCortexProactiveInitiative } from './cortex-proactive-initiative';
 import { getCortexEngine } from './cortex-engine';
@@ -198,7 +198,7 @@ export class CortexMetacognitionSkill {
     ];
 
     for (const domain of allDomains) {
-      const metrics = snapshot.domains[domain as any];
+      const metrics = snapshot.domains[domain as CalibrationDomain];
       const autoContextLoaded = this.contextCache.has(domain);
       let status: DomainHealthReport['status'] = 'untested';
 
@@ -390,7 +390,7 @@ export class CortexMetacognitionSkill {
     if (status.weakDomains.length > 0) {
       lines.push('## ⚠️ Weak Domains Requiring Attention');
       for (const d of status.weakDomains) {
-        const m = snapshot.domains[d as any];
+        const m = snapshot.domains[d as CalibrationDomain];
         lines.push(`- **${d}**: Acc=${(m.empiricalAccuracy * 100).toFixed(1)}%, ECE=${m.expectedCalibrationError.toFixed(3)}, Vigilance=${m.recommendedVigilance}`);
       }
       lines.push('');
@@ -439,7 +439,7 @@ export class CortexMetacognitionSkill {
     const snapshot = calEngine.getSnapshot();
 
     return snapshot.weakDomains.map(domain => {
-      const m = snapshot.domains[domain as any];
+      const m = snapshot.domains[domain as CalibrationDomain];
       return {
         domain,
         ece: m.expectedCalibrationError,

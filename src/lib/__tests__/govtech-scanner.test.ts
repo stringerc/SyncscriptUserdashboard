@@ -55,9 +55,9 @@ describe('SAM.gov Ingestion Scanner Tool', () => {
       satOnly: false,
     });
 
-    const disqualified = result.allEvaluations.filter((e) => !e.viable);
+    const disqualified = result.allEvaluations.filter((e: any) => !e.viable);
     expect(disqualified.length).toBeGreaterThan(0);
-    expect(disqualified.some((d) => d.pWin.riskPenalty >= 50 || d.pWin.pWinScore < 80)).toBe(true);
+    expect(disqualified.some((d: any) => d.pWin.riskPenalty >= 50 || d.pWin.pWinScore < 80)).toBe(true);
   });
 
   it('enqueues qualified opportunities into distribution-queue.json adhering to QueueFile schema with status pending and createdAt', async () => {

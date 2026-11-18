@@ -18,6 +18,7 @@ import { getCortexMetacognitionCalibration } from './cortex-metacognition-calibr
 import { getCortexEpisodicContinuity } from './cortex-episodic-continuity';
 import { getCortexProactiveInitiative } from './cortex-proactive-initiative';
 import { getCortexNudgeEngine } from './cortex-nudge-engine';
+import type { CalibrationState } from './cortex-metacognition-calibration';
 
 // ── Types ──────────────────────────────────────────────────────────
 
@@ -50,6 +51,7 @@ export interface PatternCluster {
   confidence: number;
   supportingTrials: string[];
   actionableInsight: string;
+  urgency?: 'high' | 'medium' | 'low';
 }
 
 export interface BacktestResult {
@@ -58,7 +60,7 @@ export interface BacktestResult {
   actualAccuracy: number;
   brierScore: number;
   calibrationGap: number;
-  verdict: 'well_calibrated' | 'overconfident' | 'underconfident' | 'insufficient_data';
+  verdict: CalibrationState | 'insufficient_data';
   sampleCount: number;
 }
 
@@ -388,7 +390,7 @@ export class CortexDreamStateEngine {
           semanticGist: `Nudge: ${nudge.type} - ${nudge.title}. ${nudge.actionTaken ? 'Acted upon' : nudge.dismissed ? 'Dismissed' : 'Ignored'}. Urgency: ${nudge.urgency}.`,
           emotionalValence: nudge.actionTaken ? 0.3 : nudge.dismissed ? -0.2 : 0,
           importance: nudge.urgency === 'high' ? 0.7 : 0.4,
-          timestamp: nudge.timestamp,
+          timestamp: nudge.timestamp || Date.now(),
           relatedLoopIds: [],
         });
       }
