@@ -75,14 +75,23 @@ describe('Operational Mind Phase 2 — Hermes Collapse Gate', () => {
 
     await new Promise<void>((resolve, reject) => {
       hermesMockServer.listen(18880, '127.0.0.1', () => resolve());
-      hermesMockServer.on('error', reject);
+      hermesMockServer.on('error', (err: any) => {
+        if (err.code === 'EADDRINUSE') {
+          // Port 18880 already running Hermes mock/executor — reuse existing server
+          resolve();
+        } else {
+          reject(err);
+        }
+      });
     });
   });
 
   afterAll(async () => {
-    await new Promise<void>((resolve) => {
-      hermesMockServer.close(() => resolve());
-    });
+    if (hermesMockServer && hermesMockServer.listening) {
+      await new Promise<void>((resolve) => {
+        hermesMockServer.close(() => resolve());
+      });
+    }
   });
 
   beforeEach(() => {

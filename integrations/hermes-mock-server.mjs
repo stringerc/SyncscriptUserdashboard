@@ -50,7 +50,7 @@ const server = http.createServer((req, res) => {
         ok: true,
         tool: parsed.tool,
         run_id,
-        result: { executed: true },
+        result: { executed: true, calendarHoldId: 'hold-123' },
         trace,
         deduped: isDeduped ? true : undefined
       }));

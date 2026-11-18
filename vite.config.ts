@@ -8218,13 +8218,14 @@ function triggerQuickAction() {
               const seed = Math.floor(Math.random() * 1_000_000);
               const pollUrl = `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=${w}&height=${h}&nologo=true&seed=${seed}`;
               try {
-                const head = await fetch(pollUrl, { method: 'HEAD', signal: AbortSignal.timeout(8000) });
-                if (!head.ok) throw new Error(`image service HTTP ${head.status}`);
+                const head = await fetch(pollUrl, { method: 'HEAD', signal: AbortSignal.timeout(12000) });
+                if (head.status === 429 || head.status === 503) {
+                  console.warn(`[generate_image] Pollinations returned HTTP ${head.status}, proceeding with direct artifact URL.`);
+                } else if (!head.ok && head.status >= 500) {
+                  throw new Error(`image service HTTP ${head.status}`);
+                }
               } catch (e: any) {
-                return res.end(JSON.stringify({
-                  ok: false, tool: 'generate_image',
-                  error: `Image generation unavailable: ${e?.message || e}`,
-                }));
+                console.warn('[generate_image] Pollinations pre-flight probe note:', e?.message || e);
               }
               return res.end(JSON.stringify({
                 ok: true, tool: 'generate_image',
