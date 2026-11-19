@@ -14,7 +14,7 @@ import { agentsClient } from '../../lib/cortex-agents-client';
 import { cortexSpeak } from '../../lib/cortex-speech';
 import { getGlobeEmbedUrl, configureGlobeBase, GLOBE_MODE_EVENT, setGlobeAvailable } from '../../lib/cortex-globe';
 import { neuroAudio } from '../../lib/cortex-neuro-audio';
-import { cortexWebcamParallax } from '../../lib/cortex-webcam-parallax';
+import { cortexWebcamParallax, type HandPinchState } from '../../lib/cortex-webcam-parallax';
 import { CORTEX_COLORS, CORTEX_STATE_THEME, CORTEX_TYPOGRAPHY, CORTEX_ANIMATION } from '../../lib/cortex-design-tokens';
 
 export type ActiveScene = 'core' | 'agents' | VisualizerFace;
@@ -212,6 +212,7 @@ export default function CortexVisualizerPage() {
   const [chronoPlaying, setChronoPlaying] = useState(true);
   const [holoCamActive, setHoloCamActive] = useState(false);
   const [headParallax, setHeadParallax] = useState<{ x: number; y: number } | null>(null);
+  const [handPinch, setHandPinch] = useState<HandPinchState | null>(null);
   const [hoveredPacket, setHoveredPacket] = useState<{
     agentId: string;
     agentName: string;
@@ -489,6 +490,14 @@ export default function CortexVisualizerPage() {
       unsub();
       cortexWebcamParallax.stop();
     };
+  }, []);
+
+  // Spatial hand pinch gesture tracking listener
+  useEffect(() => {
+    const unsub = cortexWebcamParallax.subscribeHand((hand) => {
+      setHandPinch(hand.detected ? hand : null);
+    });
+    return () => unsub();
   }, []);
 
   // Tier-1 forecast markers: poll the agent snapshot's forecast ledger and
@@ -2185,6 +2194,67 @@ export default function CortexVisualizerPage() {
           <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 7, color: 'rgba(148,233,255,0.5)', borderTop: '1px solid rgba(148,233,255,0.1)', paddingTop: 4 }}>
             <span>LATENCY: 0.12ms</span>
             <span>HASH-CHAIN SIGNED</span>
+          </div>
+        </div>
+      )}
+
+      {/* Holographic Hand Cursor & Pinch Reticle */}
+      {handPinch && handPinch.detected && (
+        <div
+          style={{
+            position: 'fixed',
+            left: handPinch.x,
+            top: handPinch.y,
+            transform: 'translate(-50%, -50%)',
+            pointerEvents: 'none',
+            zIndex: 60,
+            transition: 'transform 0.05s ease-out',
+          }}
+        >
+          <div
+            style={{
+              width: handPinch.pinching ? 30 : 46,
+              height: handPinch.pinching ? 30 : 46,
+              borderRadius: '50%',
+              border: `2px solid ${handPinch.pinching ? '#34d399' : 'rgba(56,189,248,0.7)'}`,
+              background: handPinch.pinching ? 'rgba(52,211,153,0.25)' : 'rgba(56,189,248,0.08)',
+              boxShadow: handPinch.pinching ? '0 0 24px #34d399, inset 0 0 12px #34d399' : '0 0 14px rgba(56,189,248,0.4)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              transition: 'all 0.15s cubic-bezier(0.16,1,0.3,1)',
+            }}
+          >
+            <div
+              style={{
+                width: 6,
+                height: 6,
+                borderRadius: '50%',
+                background: handPinch.pinching ? '#34d399' : '#38bdf8',
+                boxShadow: `0 0 8px ${handPinch.pinching ? '#34d399' : '#38bdf8'}`,
+              }}
+            />
+          </div>
+          <div
+            style={{
+              position: 'absolute',
+              top: '100%',
+              left: '50%',
+              transform: 'translateX(-50%)',
+              marginTop: 6,
+              fontSize: 8,
+              fontFamily: "'IBM Plex Mono', monospace",
+              letterSpacing: '0.14em',
+              fontWeight: 700,
+              color: handPinch.pinching ? '#34d399' : 'rgba(148,233,255,0.7)',
+              background: 'rgba(4,8,16,0.88)',
+              padding: '2px 6px',
+              borderRadius: 2,
+              border: `1px solid ${handPinch.pinching ? '#34d399' : 'rgba(56,189,248,0.3)'}`,
+              whiteSpace: 'nowrap',
+            }}
+          >
+            {handPinch.pinching ? '◉ PINCH GRABBED' : '◌ PINCH TO GRAB'}
           </div>
         </div>
       )}

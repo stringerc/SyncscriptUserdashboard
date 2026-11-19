@@ -18,6 +18,8 @@ import { cortexSignalBus } from './CortexVisualizer';
 import { CortexInitiativeInbox } from './CortexInitiativeInbox';
 import type { CortexArtifact } from '../../lib/cortex-artifacts';
 import { setGlobeMode } from '../../lib/cortex-globe';
+import { neuroAudio } from '../../lib/cortex-neuro-audio';
+import type { HandPinchState } from '../../lib/cortex-webcam-parallax';
 import {
   buildEmailPayload, buildDocumentPayload,
   type EmailPayload, type DocumentPayload, type EmailAttachment,
@@ -1921,6 +1923,70 @@ export function CortexSurfaceLayer({ drawerOpen = false }: { drawerOpen?: boolea
       window.removeEventListener('cortex-pin-artifact', pin);
     };
   }, []);
+
+  // ── Spatial Hand Gesture Pinch-to-Grab & Direct Manipulation ──
+  useEffect(() => {
+    let grabbedId: string | null = null;
+    let grabOffset = { x: 0, y: 0 };
+
+    const onHand = (e: Event) => {
+      const d = (e as CustomEvent<HandPinchState>).detail;
+      if (!d || !d.detected) {
+        if (grabbedId) {
+          grabbedId = null;
+        }
+        return;
+      }
+
+      const ws = workspaceRect(drawerOpen);
+
+      if (d.pinching) {
+        if (!grabbedId) {
+          // Pinch started! Hit-test panels: check panels under hand
+          const hit = panels.find((p) => {
+            const r = rectsRef.current[p.zone];
+            if (!r) return false;
+            const w = p.customSize?.w || r.w;
+            const h = p.customSize?.h || r.h;
+            const currentX = p.free ? ws.x + p.free.x * Math.max(1, ws.w - w) : r.x;
+            const currentY = p.free ? ws.y + p.free.y * Math.max(1, ws.h - h) : r.y;
+            return (
+              d.x >= currentX - 35 &&
+              d.x <= currentX + w + 35 &&
+              d.y >= currentY - 35 &&
+              d.y <= currentY + h + 35
+            );
+          });
+
+          if (hit) {
+            grabbedId = hit.id;
+            setRaisedId(hit.id);
+            const r = rectsRef.current[hit.zone] || { w: 500, h: 400 };
+            const w = hit.customSize?.w || r.w;
+            const h = hit.customSize?.h || r.h;
+            const currentNormX = hit.free ? hit.free.x : Math.max(0, (r.x - ws.x) / Math.max(1, ws.w - w));
+            const currentNormY = hit.free ? hit.free.y : Math.max(0, (r.y - ws.y) / Math.max(1, ws.h - h));
+            grabOffset = { x: d.normX - currentNormX, y: d.normY - currentNormY };
+            neuroAudio.playPacketChime(hit.clusterColor || '#34d399');
+          }
+        } else {
+          // Dragging grabbed panel in real-time
+          const newX = Math.max(0, Math.min(0.95, d.normX - grabOffset.x));
+          const newY = Math.max(0, Math.min(0.95, d.normY - grabOffset.y));
+          movePanelFree(grabbedId, newX, newY);
+        }
+      } else {
+        // Pinch released
+        if (grabbedId) {
+          grabbedId = null;
+          neuroAudio.playCoreImpact();
+        }
+      }
+    };
+
+    window.addEventListener('cortex-hand-pinch', onHand);
+    return () => window.removeEventListener('cortex-hand-pinch', onHand);
+  }, [panels, drawerOpen]);
 
   if (!panels.length && !focusMode) return null;
 
