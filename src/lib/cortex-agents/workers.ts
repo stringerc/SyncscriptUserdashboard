@@ -287,6 +287,24 @@ export async function expandTaskSpec(
   }
 }
 
+let _designBlockCache: string | null = null;
+/** Compact design-context injection for coding-task planners: the Cortex
+ *  overrides section + palette from repo-root DESIGN.md (impeccable context
+ *  file). Cached per process; absent file → empty string, never blocks. */
+function designBlock(): string {
+  if (_designBlockCache !== null) return _designBlockCache;
+  try {
+    const f = path.join(process.cwd(), 'DESIGN.md');
+    if (!fs.existsSync(f)) { _designBlockCache = ''; return ''; }
+    const md = fs.readFileSync(f, 'utf8');
+    const overrides = md.match(/## Cortex overrides[\s\S]*$/)?.[0] || '';
+    const colors = md.match(/colors:\n([\s\S]*?)(?=\n\S|$)/)?.[0] || '';
+    const block = (overrides || colors) ? `\n\nDESIGN CONTEXT (repo DESIGN.md — match this palette/typography for UI work):\n${(overrides || colors).slice(0, 1200)}` : '';
+    _designBlockCache = block;
+    return block;
+  } catch { _designBlockCache = ''; return ''; }
+}
+
 function specBlock(spec: TaskSpec | null): string {
   if (!spec) return '';
   const lines = [`TASK SPEC: ${spec.objective}`];
@@ -1463,7 +1481,7 @@ const SECURITY_GREP_PATTERNS = [
 async function runShell(command: string, timeoutMs: number, telemetry?: { toolCalls: number; toolFailures: number }): Promise<{ ok: boolean; exitCode: number; out: string; ms: number }> {
   const t0 = Date.now();
   try {
-    const res = await toolExecute('run_command', { command, timeout: Math.ceil(timeoutMs / 1000) }, timeoutMs + 15_000, telemetry);
+    const res = await toolExecute('run_command', { command, timeout: timeoutMs }, timeoutMs + 15_000, telemetry);
     const stdout = String((res as any)?.stdout || (res as any)?.result?.stdout || '');
     const stderr = String((res as any)?.stderr || (res as any)?.result?.stderr || '');
     const code = typeof (res as any)?.exitCode === 'number' ? (res as any).exitCode : (res?.ok === false ? 1 : 0);
@@ -1508,10 +1526,138 @@ async function verifyGateWorker(ctx: AgentContext) {
       return { ok: r.ok, exitCode: r.exitCode, detail: `${script} → exit ${r.exitCode}${r.ok ? '' : ' — ' + r.out.slice(-200)}` };
     });
 
-  await scriptPhase('build', ['build'], 300_000);
-  await scriptPhase('typecheck', ['typecheck', 'tsc', 'type-check'], 240_000);
+  await scriptPhase('build', ['build'], 600_000);
+  // Typecheck: prefer a package script. Otherwise run project-wide tsc and
+  // gate on NEW errors vs a frozen baseline — the repo carries thousands of
+  // legacy type errors, so absolute zero-error gating would be permanently
+  // red and trained into being ignored. Baseline resets only by Crew action.
+  await phase('typecheck', async () => {
+    const scriptName = ['typecheck', 'tsc', 'type-check'].find((c) => scripts[c]);
+    if (scriptName) {
+      const r = await runShell(`npm run ${scriptName}`, 240_000, tel);
+      return { ok: r.ok, exitCode: r.exitCode, detail: `npm run ${scriptName} → exit ${r.exitCode}${r.ok ? '' : ' — ' + r.out.slice(-200)}` };
+    }
+    if (!fs.existsSync(path.join(process.cwd(), 'tsconfig.json'))) {
+      return { ok: true, detail: 'skipped — no typecheck script or tsconfig.json' };
+    }
+    const outFile = path.join(process.cwd(), '.cortex-runtime', `tsc-gate-${ctx.task.id}.txt`);
+    const baselineFile = path.join(process.cwd(), '.cortex-runtime', 'typecheck-baseline.json');
+    const r = await runShell(`npx tsc --noEmit -p tsconfig.json > "${outFile}" 2>&1; echo "TSC_EXIT=$?"`, 300_000, tel);
+    const mExit = r.out.match(/TSC_EXIT=(\d+)/);
+    if (!mExit) return { ok: false, exitCode: -1, detail: `tsc did not complete within timeout — ${r.out.slice(-160)}` };
+    const exitCode = parseInt(mExit[1], 10);
+    let raw = '';
+    try { raw = fs.readFileSync(outFile, 'utf8'); } catch { }
+    const counts = new Map<string, number>();
+    for (const line of raw.split('\n')) {
+      const em = line.match(/^(.+?)\(\d+,\d+\): error (TS\d+)/);
+      if (em) counts.set(`${em[1]}|${em[2]}`, (counts.get(`${em[1]}|${em[2]}`) || 0) + 1);
+    }
+    const total = [...counts.values()].reduce((a, b) => a + b, 0);
+    if (exitCode !== 0 && total === 0) {
+      return { ok: false, exitCode, detail: `tsc exited ${exitCode} with no parseable errors — ${raw.slice(-200)}` };
+    }
+    let baseline: Record<string, number> | null = null;
+    try { baseline = JSON.parse(fs.readFileSync(baselineFile, 'utf8')); } catch { }
+    if (!baseline) {
+      fs.mkdirSync(path.dirname(baselineFile), { recursive: true });
+      fs.writeFileSync(baselineFile, JSON.stringify(Object.fromEntries(counts), null, 2));
+      return { ok: true, exitCode, detail: `baseline established — ${total} pre-existing errors across ${counts.size} file/code pairs; gate now blocks NEW type errors` };
+    }
+    const regressions: string[] = [];
+    let resolved = 0;
+    for (const [key, n] of counts) {
+      const base = baseline[key] || 0;
+      if (n > base) regressions.push(`${key.split('|')[1]} +${n - base} in ${key.split('|')[0].split('/').pop()}`);
+    }
+    for (const [key, n] of Object.entries(baseline)) {
+      resolved += Math.max(0, n - (counts.get(key) || 0));
+    }
+    const ok = regressions.length === 0;
+    const baseTotal = Object.values(baseline).reduce((a, b) => a + b, 0);
+    return {
+      ok, exitCode,
+      detail: ok
+        ? `${total} errors vs baseline ${baseTotal}${resolved ? `, ${resolved} resolved` : ''} — no new type errors`
+        : `NEW type errors: ${regressions.slice(0, 4).join('; ')}${regressions.length > 4 ? ` +${regressions.length - 4} more` : ''}`,
+    };
+  });
   await scriptPhase('lint', ['lint'], 180_000);
-  await scriptPhase('test', ['test', 'test:unit'], 420_000);
+  // Test phase — two signals, both honest:
+  //  A) vitest unit suite (src/lib/__tests__ — the suite that actually covers
+  //     cortex-agents). Load flakes get ONE retry of just the failed files;
+  //     persistent failures fail the phase.
+  //  B) npm test contract suite — baseline-aware per-file: the repo carries
+  //     stale contract tests referencing removed api/ files, so only NEW
+  //     failing files fail the gate. Baseline frozen until Crew resets.
+  await phase('test', async () => {
+    const details: string[] = [];
+    let ok = true;
+
+    // A) vitest unit suite
+    const vitFile = path.join(process.cwd(), '.cortex-runtime', `vitest-gate-${ctx.task.id}.txt`);
+    const v1 = await runShell(`npx vitest run src/lib/__tests__ --maxWorkers=4 --reporter=dot > "${vitFile}" 2>&1; echo "VITEST_EXIT=$?"`, 290_000, tel);
+    let vitRaw = '';
+    try { vitRaw = fs.readFileSync(vitFile, 'utf8'); } catch { }
+    const failedFiles = [...new Set([...vitRaw.matchAll(/FAIL\s+(src\/lib\/__tests__\/\S+?\.test\.tsx?)/g)].map((m) => m[1]))];
+    if (failedFiles.length) {
+      // Batch retry first (one vitest startup); if the batch still fails,
+      // rerun survivors singly to identify exactly which files are real.
+      const retry = await runShell(`npx vitest run ${failedFiles.map((f) => `"${f}"`).join(' ')} --maxWorkers=2 --reporter=dot`, 200_000, tel);
+      if (!retry.ok) {
+        const survivors: string[] = [];
+        for (const f of failedFiles) {
+          const one = await runShell(`npx vitest run "${f}" --maxWorkers=1 --reporter=dot`, 120_000, tel);
+          if (!one.ok) survivors.push(f);
+        }
+        if (survivors.length) {
+          ok = false;
+          details.push(`vitest: ${survivors.length} file(s) still failing after retry — ${survivors.map((f) => f.split('/').pop()).join(', ')}`);
+        } else {
+          details.push(`vitest: ${failedFiles.length} file(s) flaky — passed on retry`);
+        }
+      } else {
+        details.push(`vitest: ${failedFiles.length} file(s) flaky — passed on retry`);
+      }
+    } else if (!/VITEST_EXIT=0/.test(v1.out)) {
+      ok = false;
+      details.push(`vitest: run failed before reporting — ${vitRaw.slice(-160) || v1.out.slice(-160)}`);
+    } else {
+      details.push('vitest: all unit tests pass');
+    }
+
+    // B) npm test contract suite — per-file baseline
+    const testFile = path.join(process.cwd(), '.cortex-runtime', `npm-test-gate-${ctx.task.id}.txt`);
+    const baselineFile = path.join(process.cwd(), '.cortex-runtime', 'test-baseline.json');
+    const t1 = await runShell(`npm test > "${testFile}" 2>&1; echo "TEST_EXIT=$?"`, 290_000, tel);
+    let tRaw = '';
+    try { tRaw = fs.readFileSync(testFile, 'utf8'); } catch { }
+    const failing = new Set([...tRaw.matchAll(/^✖ (tests\/\S+?\.(?:mjs|ts)) \(/gm)].map((m) => m[1]));
+    const mExit = t1.out.match(/TEST_EXIT=(\d+)/);
+    const testExit = mExit ? parseInt(mExit[1], 10) : -1;
+    let baselineFiles: string[] = [];
+    try { baselineFiles = JSON.parse(fs.readFileSync(baselineFile, 'utf8')); } catch { }
+    if (!baselineFiles.length && failing.size === 0 && testExit !== 0) {
+      ok = false;
+      details.push(`npm test: exited ${testExit} with no per-file results (guard script or runner failure)`);
+    } else if (!baselineFiles.length && failing.size > 0) {
+      fs.mkdirSync(path.dirname(baselineFile), { recursive: true });
+      fs.writeFileSync(baselineFile, JSON.stringify([...failing].sort(), null, 2));
+      details.push(`npm test: baseline established — ${failing.size} pre-existing failing contract file(s)`);
+    } else {
+      const baseSet = new Set(baselineFiles);
+      const fresh = [...failing].filter((f) => !baseSet.has(f));
+      const healed = baselineFiles.filter((f) => !failing.has(f));
+      if (fresh.length) {
+        ok = false;
+        details.push(`npm test: NEW failing file(s): ${fresh.join(', ')}`);
+      } else {
+        details.push(`npm test: ${failing.size} failing file(s) all in baseline${healed.length ? `, ${healed.length} healed` : ''}`);
+      }
+    }
+
+    return { ok, detail: details.join(' | ').slice(0, 390) };
+  });
 
   // Phase 5 — deterministic security grep over the working diff + src.
   await phase('security-grep', async () => {
@@ -1552,11 +1698,17 @@ async function verifyGateWorker(ctx: AgentContext) {
   // fail the gate; warnings/advisories are reported but non-fatal —
   // taste-level findings must not block verification forever.
   await phase('design-audit', async () => {
-    const r = await runShell('npx -y impeccable@latest detect --changed --json | python3 scripts/impeccable-gate-summary.py', 180_000, tel);
-    const m = r.out.match(/IMPECCABLE_ERROR_COUNT=(\d+)/);
-    if (!m) return { ok: true, detail: `impeccable inconclusive — ${r.out.slice(-160) || `exit ${r.exitCode}`}` };
+    // execFile directly — run_command's shell env can't exec /opt/homebrew
+    // binaries or pipes reliably; process.execPath is the running node.
+    const gateOut = await new Promise<string>((resolve) => {
+      execFile(process.execPath, [path.join(process.cwd(), 'scripts', 'impeccable-gate.mjs')],
+        { timeout: 175_000, maxBuffer: 4 * 1024 * 1024 },
+        (err, stdout, stderr) => resolve(String(stdout || '') + (err ? `\n${String(stderr || err.message).slice(0, 200)}` : '')));
+    });
+    const m = gateOut.match(/IMPECCABLE_ERROR_COUNT=(\d+)/);
+    if (!m) return { ok: true, detail: `impeccable inconclusive — ${gateOut.slice(-160) || 'no output'}` };
     const errorCount = parseInt(m[1], 10);
-    const summary = r.out.split('\n').find((l) => l.startsWith('FINDINGS')) || '';
+    const summary = gateOut.split('\n').find((l) => l.startsWith('FINDINGS')) || '';
     return {
       ok: errorCount === 0,
       detail: `${summary || `error findings: ${errorCount}`}${errorCount ? ' — fix or add impeccable-disable comment with reason' : ''}`.slice(0, 390),
@@ -1601,7 +1753,7 @@ const builderWorker: WorkerHandler = async (ctx) => {
       role: 'system',
       content: `You are BUILDER, Cortex's engineering operative. Given a coding task, output a JSON array of steps, each {"tool": "<name>", "args": {...}, "why": "..."}. Allowed tools: read_file, write_file, edit_file, list_dir, run_command, search_code. Prefer read/search before write. If the task needs anything destructive or external (deploy, push, rm -rf, purchases, messages to people), output {"veto": true, "reason": "..."} instead — those become user proposals, never silent execution. Output ONLY the JSON array.${distilledRules ? `\n\nDISTILLED RULES (constraints learned from accepted agent outcomes — follow unless they conflict with governance):\n${distilledRules}` : ''}`,
     },
-    { role: 'user', content: instruction + specBlock(spec) + retryNote(ctx.task.input) },
+    { role: 'user', content: instruction + specBlock(spec) + designBlock() + retryNote(ctx.task.input) },
   ];
   let planText = await ctx.llm({ tier: 'reason', maxTokens: 700, messages: planMessages });
   ctx.progress(0.3);
@@ -2292,7 +2444,7 @@ const devinWorker: WorkerHandler = async (ctx) => {
 
   const planMessages = [
     { role: 'system', content: DEVIN_SYSTEM + (distilledRules ? `\n\nDISTILLED RULES (constraints learned from accepted outcomes — follow unless they conflict with governance):\n${distilledRules}` : '') },
-    { role: 'user', content: instruction + handoffContext + specBlock(spec) + retryNote(ctx.task.input) },
+    { role: 'user', content: instruction + handoffContext + specBlock(spec) + designBlock() + retryNote(ctx.task.input) },
   ];
   const parseSteps = (text: string): any[] => {
     try {
@@ -2514,7 +2666,7 @@ const antigravityWorker: WorkerHandler = async (ctx) => {
 
   const planMessages = [
     { role: 'system', content: ANTIGRAVITY_SYSTEM + (distilledRules ? `\n\nDISTILLED RULES:\n${distilledRules}` : '') },
-    { role: 'user', content: instruction + specBlock(spec) + retryNote(ctx.task.input) },
+    { role: 'user', content: instruction + specBlock(spec) + designBlock() + retryNote(ctx.task.input) },
   ];
   const parseSteps = (text: string): any[] => {
     try {

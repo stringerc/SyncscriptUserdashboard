@@ -22,7 +22,7 @@ const MONO = "'IBM Plex Mono', monospace";
 const INK = '#e0f2fe';
 const DIM = 'rgba(148,163,184,0.55)';
 
-type FoundryView = 'dashboard' | 'tasks' | 'goals' | 'calendar' | 'agents' | 'counsel' | 'inbox' | 'incidents' | 'pipeline' | 'standup' | 'messages' | 'ventures' | 'voice';
+type FoundryView = 'dashboard' | 'tasks' | 'goals' | 'calendar' | 'agents' | 'missions' | 'counsel' | 'inbox' | 'incidents' | 'pipeline' | 'standup' | 'messages' | 'ventures' | 'evolution' | 'voice';
 
 const NAV_ITEMS: { id: FoundryView; glyph: string; label: string; hint: string }[] = [
   { id: 'dashboard', glyph: '◈', label: 'DASHBOARD', hint: 'Mission Control tower board' },
@@ -30,6 +30,7 @@ const NAV_ITEMS: { id: FoundryView; glyph: string; label: string; hint: string }
   { id: 'goals', glyph: '◎', label: 'GOALS', hint: 'Life-goal model & drift' },
   { id: 'calendar', glyph: '▦', label: 'CALENDAR', hint: 'Upcoming events (48h)' },
   { id: 'agents', glyph: '✦', label: 'AGENTS', hint: 'Mission Control roster' },
+  { id: 'missions', glyph: '▶', label: 'MISSIONS', hint: 'Deep-work mission log' },
   { id: 'standup', glyph: '⚡', label: 'STANDUP', hint: 'Fleet roll call & daily bids' },
   { id: 'counsel', glyph: '⚖', label: 'COUNSEL', hint: 'Go/No-Go deliberation polls' },
   { id: 'inbox', glyph: '✉', label: 'INBOX', hint: 'Proposals awaiting your decision' },
@@ -38,6 +39,7 @@ const NAV_ITEMS: { id: FoundryView; glyph: string; label: string; hint: string }
   { id: 'messages', glyph: '⇄', label: 'COMMS', hint: 'Agent message bus traffic' },
   { id: 'voice', glyph: '♪', label: 'VOICE', hint: 'Cortex voice engines — live test' },
   { id: 'ventures', glyph: '◈', label: 'VENTURES', hint: 'Enterprise scope — OMNI / GOVTECH / CORTEX' },
+  { id: 'evolution', glyph: '◉', label: 'EVOLUTION', hint: 'Evals, instincts & governed self-improvement' },
 ];
 
 const HEALTH_COLOR: Record<string, string> = { nominal: '#34d399', degraded: '#fbbf24', critical: '#f87171', 'no-data': '#64748b' };
@@ -107,6 +109,7 @@ export function CortexFoundryNav({ snap, onSelectAgent, selectedAgent, onOpenTow
   const [view, setView] = useState<FoundryView | null>(null);
   const [calendar, setCalendar] = useState<any[] | null>(null);
   const [incidents, setIncidents] = useState<any[] | null>(null);
+  const [missions, setMissions] = useState<any[] | null>(null);
   const [pipeline, setPipeline] = useState<any | null>(null);
   const [counsel, setCounsel] = useState<{ sessions: any[]; consoles: any[]; scorecard?: any[] } | null>(null);
   const [inbox, setInbox] = useState<any[] | null>(null);
@@ -124,6 +127,9 @@ export function CortexFoundryNav({ snap, onSelectAgent, selectedAgent, onOpenTow
   const [standupNote, setStandupNote] = useState('');
   const [ventures, setVentures] = useState<{ ventures?: any[]; unregisteredYield?: string[] } | null>(null);
   const [ventureFilter, setVentureFilter] = useState<string>('all');
+  const [evoEvals, setEvoEvals] = useState<any[] | null>(null);
+  const [evoRuns, setEvoRuns] = useState<any[] | null>(null);
+  const [evoInstincts, setEvoInstincts] = useState<{ instincts?: any[]; promotable?: number } | null>(null);
   const [newTaskVenture, setNewTaskVenture] = useState<string>('');
   const [, setGoalsTick] = useState(0);
   const goals = getCortexGoals();
@@ -239,6 +245,12 @@ export function CortexFoundryNav({ snap, onSelectAgent, selectedAgent, onOpenTow
         .then((d) => setIncidents(Array.isArray(d?.incidents) ? d.incidents : []))
         .catch(() => setIncidents([]));
     }
+    if (view === 'missions' && missions === null) {
+      fetch('/api/cortex/missions', { cache: 'no-store' })
+        .then((r) => r.json())
+        .then((d) => setMissions(Array.isArray(d?.missions) ? d.missions : []))
+        .catch(() => setMissions([]));
+    }
     if (view === 'pipeline' && pipeline === null) {
       fetch('/api/cortex/distribution/status', { cache: 'no-store' })
         .then((r) => r.json())
@@ -271,6 +283,19 @@ export function CortexFoundryNav({ snap, onSelectAgent, selectedAgent, onOpenTow
       .catch(() => setVentures({ ventures: [] }));
     loadV();
     const iv = setInterval(loadV, 30_000);
+    return () => clearInterval(iv);
+  }, [view]);
+
+  // Evolution surface poll — evals + instincts while EVOLUTION is open.
+  useEffect(() => {
+    if (view !== 'evolution') return;
+    const load = () => {
+      fetch('/api/cortex/evals', { cache: 'no-store' }).then((r) => r.json()).then((d) => setEvoEvals(d?.evals || [])).catch(() => setEvoEvals([]));
+      fetch('/api/cortex/evals/runs?limit=100', { cache: 'no-store' }).then((r) => r.json()).then((d) => setEvoRuns(d?.runs || [])).catch(() => setEvoRuns([]));
+      fetch('/api/cortex/instincts', { cache: 'no-store' }).then((r) => r.json()).then(setEvoInstincts).catch(() => setEvoInstincts({ instincts: [] }));
+    };
+    load();
+    const iv = setInterval(load, 30_000);
     return () => clearInterval(iv);
   }, [view]);
 
@@ -1448,6 +1473,65 @@ export function CortexFoundryNav({ snap, onSelectAgent, selectedAgent, onOpenTow
         </Panel>
       )}
 
+      {view === 'missions' && (() => {
+        const MISSION_LAMP: Record<string, string> = {
+          running: 'running', queued: 'queued', waiting_approval: 'queued',
+          paused: 'degraded', completed: 'completed', failed: 'failed', aborted: 'cancelled',
+        };
+        const missionAge = (ts: number | undefined) => {
+          if (!ts) return '';
+          const m = Math.max(0, Math.floor((Date.now() - ts) / 60000));
+          if (m < 60) return `${m}m ago`;
+          const h = Math.floor(m / 60);
+          if (h < 48) return `${h}h ago`;
+          return `${Math.floor(h / 24)}d ago`;
+        };
+        const list = missions || [];
+        const active = list.filter((m: any) => m.status === 'running' || m.status === 'queued' || m.status === 'paused' || m.status === 'waiting_approval');
+        return (
+          <Panel
+            title="MISSION LOG"
+            onClose={() => setView(null)}
+            right={missions === null
+              ? <span style={{ fontSize: 9.5, color: DIM }}>LOADING…</span>
+              : <span style={{ fontSize: 9.5, color: DIM }}>{active.length} ACTIVE · {list.length} TOTAL</span>}
+          >
+            {missions === null && <div style={{ padding: '12px 0', color: DIM }}>LOADING…</div>}
+            {missions !== null && !list.length && (
+              <div style={{ padding: '12px 0', color: DIM }}>NO MISSIONS ON RECORD — deep-work missions forked from /cortex/chat land here</div>
+            )}
+            {list.map((m: any) => (
+              <div key={m.id} style={{ padding: '7px 0', borderBottom: '1px solid rgba(148,163,184,0.08)' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <Lamp status={MISSION_LAMP[m.status] || 'idle'} />
+                  <span style={{ flex: 1, minWidth: 0, color: INK, fontSize: 10.5, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {m.title || m.id}
+                  </span>
+                  <span style={{ fontSize: 9, color: DIM, flexShrink: 0 }}>{m.overallProgress ?? 0}%</span>
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 4, paddingLeft: 12 }}>
+                  <div style={{ flex: 1, height: 3, background: 'rgba(148,163,184,0.12)', borderRadius: 2, overflow: 'hidden' }}>
+                    <div style={{
+                      width: `${Math.min(100, Math.max(0, Number(m.overallProgress) || 0))}%`,
+                      height: '100%',
+                      background: m.status === 'failed' ? '#f87171' : m.status === 'completed' ? '#34d399' : '#38bdf8',
+                    }} />
+                  </div>
+                  <span style={{ fontSize: 8.5, color: DIM, flexShrink: 0, letterSpacing: '0.06em' }}>
+                    {String(m.status || '').toUpperCase()} · {m.steps ?? 0} steps · {missionAge(m.updatedAt)}
+                  </span>
+                </div>
+                {m.resultSummary && (
+                  <div style={{ fontSize: 9, color: 'rgba(148,163,184,0.6)', marginTop: 3, paddingLeft: 12, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {m.resultSummary}
+                  </div>
+                )}
+              </div>
+            ))}
+          </Panel>
+        );
+      })()}
+
       {view === 'pipeline' && (() => {
         const q = pipeline?.queue;
         const counts = q?.counts || {};
@@ -1754,7 +1838,7 @@ export function CortexFoundryNav({ snap, onSelectAgent, selectedAgent, onOpenTow
                             marginTop: 6,
                             padding: '5px 7px',
                             background: 'rgba(56,189,248,0.05)',
-                            borderLeft: '2px solid #38bdf8',
+                            border: '1px solid rgba(56,189,248,0.35)',
                             borderRadius: 2,
                           }}
                         >
@@ -1823,6 +1907,63 @@ export function CortexFoundryNav({ snap, onSelectAgent, selectedAgent, onOpenTow
           })()}
         </Panel>
       )}
+
+      {view === 'evolution' && (() => {
+        const VERDICT_COLOR: Record<string, string> = { pass: '#34d399', fail: '#f87171', inconclusive: '#fbbf24', 'pending-human': '#64748b' };
+        const INST_STATUS_COLOR: Record<string, string> = { candidate: '#fbbf24', active: '#34d399', promoted: '#67e8f9', retired: '#64748b', contradicted: '#f87171' };
+        const latestRunFor = (evalId: string) => (evoRuns || []).filter((r: any) => r.evalId === evalId).sort((a: any, b: any) => b.finishedAt - a.finishedAt)[0];
+        const instincts = evoInstincts?.instincts || [];
+        const byStatus = (st: string) => instincts.filter((i: any) => i.status === st);
+        const conf = (i: any) => Math.round(((i.alpha || 1) / ((i.alpha || 1) + (i.beta || 1))) * 100);
+        return (
+          <Panel title="EVOLUTION — EVALS & INSTINCTS" onClose={() => setView(null)} right={
+            evoEvals === null ? <span style={{ fontSize: 9.5, color: DIM }}>LOADING…</span> : <span style={{ fontSize: 9.5, color: DIM }}>{evoEvals.length} EVALS · {instincts.length} INSTINCTS{evoInstincts?.promotable ? ` · ${evoInstincts.promotable} PROMOTABLE` : ''}</span>
+          }>
+            <div style={{ fontSize: 9.5, color: DIM, letterSpacing: '0.12em', margin: '10px 0 4px' }}>EVALUATIONS — FORMAL CAPABILITY & REGRESSION EVIDENCE</div>
+            {(evoEvals || []).slice(0, 15).map((e: any) => {
+              const run = latestRunFor(e.id);
+              return (
+                <Row key={e.id}>
+                  <Lamp status={e.status === 'active' ? 'completed' : 'idle'} />
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ color: INK, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{e.subject}</div>
+                    <div style={{ fontSize: 9, color: DIM }}>
+                      {e.kind?.toUpperCase()} · {e.grader?.type} grader · k={e.k || 1}{e.agentId ? ` · @${e.agentId}` : ''}{e.ventureId ? ` · ${e.ventureId.toUpperCase()}` : ''}
+                      {run ? <> · <span style={{ color: VERDICT_COLOR[run.verdict] || DIM }}>{run.verdict?.toUpperCase()}</span>{run.winner ? ` → ${run.winner}` : ''}</> : ' · NEVER RUN'}
+                    </div>
+                  </div>
+                </Row>
+              );
+            })}
+            {evoEvals !== null && !evoEvals.length && <div style={{ padding: '10px 0', color: DIM }}>NO EVALS FILED — incidents and tune_cycle file regression evals automatically</div>}
+
+            <div style={{ fontSize: 9.5, color: DIM, letterSpacing: '0.12em', margin: '14px 0 4px' }}>INSTINCTS — MINED BEHAVIORS (BETA CONFIDENCE)</div>
+            {(['active', 'candidate', 'promoted', 'contradicted', 'retired'] as const).map((st) => {
+              const group = byStatus(st);
+              if (!group.length) return null;
+              return (
+                <div key={st}>
+                  <div style={{ fontSize: 9, color: INST_STATUS_COLOR[st], letterSpacing: '0.1em', margin: '8px 0 2px' }}>{st.toUpperCase()} ×{group.length}</div>
+                  {group.slice(0, 8).map((i: any) => (
+                    <Row key={i.id}>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ color: INK, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{i.action || i.ruleText}</div>
+                        <div style={{ fontSize: 9, color: DIM }}>
+                          {conf(i)}% conf · {i.evidence?.length || 0} evidence{i.ventureId ? ` · ${i.ventureId.toUpperCase()}` : ''}{i.agentId ? ` · @${i.agentId}` : ' · GLOBAL'}
+                        </div>
+                      </div>
+                    </Row>
+                  ))}
+                </div>
+              );
+            })}
+            {evoInstincts !== null && !instincts.length && <div style={{ padding: '10px 0', color: DIM }}>NO INSTINCTS YET — librarian instinct_cycle mines outcomes every 6h</div>}
+            <div style={{ fontSize: 9, color: DIM, marginTop: 12, lineHeight: 1.5 }}>
+              PROMOTION IS GOVERNED — confident instincts file '[rule]' proposals into INBOX; nothing self-applies. Evals gate every tune/prompt proposal.
+            </div>
+          </Panel>
+        );
+      })()}
 
       {view === 'ventures' && (
         <Panel title="VENTURES — ENTERPRISE SCOPE" onClose={() => setView(null)} right={

@@ -53,12 +53,25 @@ function ensureDir() {
   if (!fs.existsSync(RUNTIME_DIR)) fs.mkdirSync(RUNTIME_DIR, { recursive: true });
 }
 
+/** Scope ids must be plain slugs — LLM-mined values like "builder/task-9"
+ *  are malformed and would render nowhere / match nothing. */
+function sanitizeScopeId(raw: unknown): string | undefined {
+  if (typeof raw !== 'string') return undefined;
+  const slug = raw.split('/')[0].trim().toLowerCase();
+  return /^[a-z0-9][a-z0-9_-]{0,40}$/.test(slug) ? slug : undefined;
+}
+
 function readAll(): Instinct[] {
   try {
     ensureDir();
     if (!fs.existsSync(FILE)) return [];
     const parsed = JSON.parse(fs.readFileSync(FILE, 'utf8'));
-    return Array.isArray(parsed) ? parsed : [];
+    if (!Array.isArray(parsed)) return [];
+    return parsed.map((i: any) => ({
+      ...i,
+      ventureId: sanitizeScopeId(i.ventureId),
+      agentId: sanitizeScopeId(i.agentId),
+    }));
   } catch { return []; }
 }
 
@@ -111,8 +124,8 @@ export function upsertInstinct(input: {
     id: `inst-${now.toString(36)}-${Math.random().toString(36).slice(2, 6)}`,
     action: input.action.trim().slice(0, 300),
     trigger: input.trigger.trim().slice(0, 300),
-    ventureId: input.ventureId || undefined,
-    agentId: input.agentId || undefined,
+    ventureId: sanitizeScopeId(input.ventureId),
+    agentId: sanitizeScopeId(input.agentId),
     alpha: 1, beta: 1,
     evidence: (input.evidence || []).slice(0, 20),
     source: input.source,

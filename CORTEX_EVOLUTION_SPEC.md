@@ -1,12 +1,16 @@
 # CORTEX EVOLUTION SPEC — Instinct & Eval Mesh
 
-Status: IMPLEMENTED (phases P1–P6a) — evals.ts, instincts.ts,
-prompt-defense.ts live; verify_gate + reviewer rubric + tune_cycle +
-instinct_cycle + skill_audit + context_pressure patrol shipped; incident→
-regression auto-registration + evalEvidence proposal gate enforced.
-Verified: 58 vitest cases green, live eval run + instinct cycle + llm
-endpoint smoke-tested. Deferred: interactive-session suggest-compact
-(ECC hook bundle dependency), Foundry eval/instinct UI surfaces.
+Status: IMPLEMENTED & VERIFIED (phases P1–P6 + gap closure) —
+evals.ts, instincts.ts, prompt-defense.ts live; verify_gate (now with
+baseline-aware typecheck + composite test phase), reviewer rubric,
+tune_cycle, instinct_cycle, skill_audit, context_pressure patrol shipped;
+incident→regression auto-registration + evalEvidence proposal gate
+enforced; Foundry EVOLUTION panel + /api/cortex/instincts live;
+scripts/suggest-compact.mjs shipped self-contained.
+Verified: focused vitest green, project tsc clean on touched files,
+live eval run + instinct cycle + llm endpoint + instincts API smoke-tested,
+baselines frozen (.cortex-runtime/typecheck-baseline.json 2387 errors,
+test-baseline.json 9 stale contract files).
 Origin: adaptation study of ECC (affaan-m/ECC, MIT) — eight proven patterns
 re-implemented inside Cortex's governed architecture rather than imported.
 

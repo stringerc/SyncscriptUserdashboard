@@ -37,7 +37,7 @@ import {
   autoClearCounselPolls,
 } from './src/lib/cortex-counsel';
 import { defenseSystemPrefix } from './src/lib/cortex-agents/prompt-defense';
-import { instinctsBlock } from './src/lib/cortex-agents/instincts';
+import { instinctsBlock, listInstincts, promotableInstincts } from './src/lib/cortex-agents/instincts';
 import { listEvals, getEval, fileEvalDefinition, runEval, readRuns, evalScorecard, evalComparison, type GraderSpec, type EvalArm } from './src/lib/cortex-agents/evals';
 import { computeCounselScorecard } from './src/lib/cortex-agents/counsel-scorecard';
 import type { RouteTier } from './src/lib/cortex-agents/types';
@@ -2793,17 +2793,17 @@ function apiProxyPlugin(): Plugin {
         run_command: z.object({
           command: z.string().min(1, 'command cannot be empty'),
           cwd: z.string().optional(),
-          timeout: z.number().positive().max(120000).optional(),
+          timeout: z.number().positive().max(600000).optional(),
         }),
         exec: z.object({
           command: z.string().min(1, 'command cannot be empty'),
           cwd: z.string().optional(),
-          timeout: z.number().positive().max(120000).optional(),
+          timeout: z.number().positive().max(600000).optional(),
         }),
         execute_command: z.object({
           command: z.string().min(1, 'command cannot be empty'),
           cwd: z.string().optional(),
-          timeout: z.number().positive().max(120000).optional(),
+          timeout: z.number().positive().max(600000).optional(),
         }),
         read_file: z.object({
           path: z.string().min(1, 'path cannot be empty'),
@@ -3153,7 +3153,7 @@ function apiProxyPlugin(): Plugin {
 
               const requestedCwd = args?.cwd ? resolvePath(String(args.cwd)) : workspaceRoot;
               const targetCwd = (args?.cwd && fsSync.existsSync(requestedCwd)) ? requestedCwd : workspaceRoot;
-              const timeout = typeof args?.timeout === 'number' ? Math.min(args.timeout, 120000) : 45000;
+              const timeout = typeof args?.timeout === 'number' ? Math.min(args.timeout, 600000) : 45000;
 
               try {
                 const { stdout, stderr } = await execAsync(command, {
@@ -13450,6 +13450,33 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
             return;
           }
           next();
+        } catch (e: any) {
+          agentCors(req, res); res.writeHead(500);
+          res.end(JSON.stringify({ ok: false, error: String(e?.message || e) }));
+        }
+      });
+
+      // GET /api/cortex/instincts?status=&ventureId=&agentId= — learned-behavior
+      // candidates/actives with Beta confidence. Read-only surface for the
+      // Foundry EVOLUTION panel; promotion stays behind strategy proposals.
+      server.middlewares.use('/api/cortex/instincts', async (req: any, res: any, next: any) => {
+        const origin = req.headers.origin;
+        if (req.method === 'OPTIONS') {
+          res.writeHead(204, { 'Access-Control-Allow-Origin': origin || '*', 'Access-Control-Allow-Methods': 'GET, OPTIONS', 'Access-Control-Allow-Headers': 'Content-Type' });
+          return res.end();
+        }
+        if (req.method !== 'GET') return next();
+        try {
+          const url = new URL(req.url || '/', `http://127.0.0.1`);
+          const status = url.searchParams.get('status') as any;
+          const ventureId = url.searchParams.get('ventureId') || undefined;
+          const agentId = url.searchParams.get('agentId') || undefined;
+          const instincts = listInstincts({
+            status: ['candidate', 'active', 'promoted', 'retired', 'contradicted'].includes(status) ? status : undefined,
+            ventureId, agentId,
+          });
+          agentCors(req, res); res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ ok: true, instincts, promotable: promotableInstincts().length, count: instincts.length }));
         } catch (e: any) {
           agentCors(req, res); res.writeHead(500);
           res.end(JSON.stringify({ ok: false, error: String(e?.message || e) }));

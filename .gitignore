@@ -96,6 +96,7 @@ test-*.js
 scripts/*
 !scripts/engram-public-supabase-url.mjs
 !scripts/bringup-hermes-tunnel-supabase.sh
+!scripts/suggest-compact.mjs
 !scripts/verify-hermes-edge-live.mjs
 !scripts/verify-engram-edge-live.mjs
 !scripts/verify-prod-build.mjs
@@ -300,3 +301,5 @@ public/screenshots/latest-*.png
 storefront/browser/latest.*
 storefront/distribution-queue.json
 storefront/distribution-dashboard.html
+# Playwright CLI output (may contain credentials)
+.playwright-cli/
