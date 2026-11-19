@@ -163,6 +163,33 @@ function tripProvider(name: string, status?: number) {
   providerCooldown.set(name, Date.now() + ms);
 }
 
+// ── LLM call trace tap (read-only observability) ─────────────────────
+// One JSONL record per outbound provider completion call, surfaced by
+// GET /api/cortex/traces. Fire-and-forget: everything is wrapped in
+// try/catch so tracing can NEVER break a request.
+const LLM_TRACES_FILE = () => path.join(
+  process.env.CORTEX_AGENTS_STATE_DIR || path.join(process.cwd(), '.cortex-runtime'),
+  'llm-traces.jsonl',
+);
+function recordLLMTrace(rec: {
+  provider?: string; model?: string; tier?: string; agentId?: string;
+  sessionId?: string; kind?: string; status?: number | string;
+  latencyMs?: number; tokensIn?: number; tokensOut?: number; error?: string;
+}) {
+  try {
+    const file = LLM_TRACES_FILE();
+    fsSync.mkdirSync(path.dirname(file), { recursive: true });
+    // Bound the file: past ~4MB keep only the newest ~4000 records.
+    try {
+      if (fsSync.statSync(file).size > 4 * 1024 * 1024) {
+        const kept = fsSync.readFileSync(file, 'utf8').split('\n').filter(Boolean).slice(-4000);
+        fsSync.writeFileSync(file, kept.join('\n') + '\n', 'utf8');
+      }
+    } catch { }
+    fsSync.appendFileSync(file, JSON.stringify({ ts: Date.now(), ...rec }) + '\n', 'utf8');
+  } catch { /* tracing is best-effort — never break the request */ }
+}
+
 const CORTEX_TOOLS = [
   {
     type: 'function',
@@ -1040,8 +1067,8 @@ function apiProxyPlugin(): Plugin {
         try {
           const home = process.env.HOME || '/Users/Apple';
           const openclawEnvPath = path.join(home, '.openclaw', '.env');
-          if (fs.existsSync(openclawEnvPath)) {
-            const content = fs.readFileSync(openclawEnvPath, 'utf8');
+          if (fsSync.existsSync(openclawEnvPath)) {
+            const content = fsSync.readFileSync(openclawEnvPath, 'utf8');
             for (const k of aliases) {
               const match = content.match(new RegExp(`^${k}=["']?([^"'\\r\\n]+)["']?`, 'm'));
               if (match && match[1]) addCandidate(match[1]);
@@ -1051,8 +1078,8 @@ function apiProxyPlugin(): Plugin {
 
         try {
           const fccEnvPath = '/Users/Apple/src/free-claude-code/.env';
-          if (fs.existsSync(fccEnvPath)) {
-            const content = fs.readFileSync(fccEnvPath, 'utf8');
+          if (fsSync.existsSync(fccEnvPath)) {
+            const content = fsSync.readFileSync(fccEnvPath, 'utf8');
             for (const k of aliases) {
               const match = content.match(new RegExp(`^${k}=["']?([^"'\\r\\n]+)["']?`, 'm'));
               if (match && match[1]) addCandidate(match[1]);
@@ -1318,7 +1345,7 @@ function apiProxyPlugin(): Plugin {
         // Walk the same key pool the call paths use — a dead primary key
         // must not mark a healthy model 'down' in the routing matrix.
         const keyPool = prov.keys && prov.keys.length > 0 ? prov.keys : (prov.backupKey ? [prov.key, prov.backupKey] : [prov.key]);
-        let lastStatus = 0;
+        let lastStatus: number | string = 0;
         for (let keyIdx = 0; keyIdx < keyPool.length; keyIdx++) {
           const currentKey = keyPool[keyIdx];
           const headers: Record<string, string> = prov.protocol === 'anthropic'
@@ -1327,7 +1354,19 @@ function apiProxyPlugin(): Plugin {
           const body = prov.protocol === 'anthropic'
             ? JSON.stringify({ model, system: 'Reply with one word.', messages: [{ role: 'user', content: 'ok' }], max_tokens: 4 })
             : JSON.stringify({ model, messages: [{ role: 'user', content: 'Reply with one word: ok' }], max_tokens: 4, temperature: 0, stream: false });
-          const r = await fetch(prov.url, { method: 'POST', headers, body, signal: AbortSignal.timeout(8000) });
+          let r: Response;
+          try {
+            r = await fetch(prov.url, { method: 'POST', headers, body, signal: AbortSignal.timeout(8000) });
+          } catch (e) {
+            // A thrown fetch (timeout/reset) on one pooled key must not abort
+            // the walk — later keys may still answer (e.g. step-5-preview
+            // 403s on the primary key but serves 200 on backups).
+            recordLLMTrace({ provider: prov.name, model, kind: 'probe', status: 'error', latencyMs: Date.now() - started, error: String((e as Error)?.message || e).slice(0, 200) });
+            lastStatus = 'error';
+            if (keyIdx >= keyPool.length - 1) break;
+            continue;
+          }
+          recordLLMTrace({ provider: prov.name, model, kind: 'probe', status: r.status, latencyMs: Date.now() - started });
           if (r.ok) return Date.now() - started;
           lastStatus = r.status;
           if (![401, 402, 403, 429].includes(r.status) || keyIdx >= keyPool.length - 1) break;
@@ -1585,6 +1624,7 @@ function apiProxyPlugin(): Plugin {
         let res: any = null;
         for (let keyIdx = 0; keyIdx < keyPool.length; keyIdx++) {
           const currentKey = keyPool[keyIdx];
+          const ambientT0 = Date.now();
           try {
             res = await fetch(provider.url, {
               method: 'POST',
@@ -1602,12 +1642,14 @@ function apiProxyPlugin(): Plugin {
               }),
               signal: AbortSignal.timeout(30000),
             });
+            recordLLMTrace({ provider: provider.name, model: provider.model, kind: 'ambient-observe', status: res?.status ?? 'error', latencyMs: Date.now() - ambientT0 });
             if (res && res.ok) break;
             if (res && !res.ok && (res.status === 401 || res.status === 402 || res.status === 403 || res.status === 429) && keyIdx < keyPool.length - 1) {
               continue;
             }
             break;
-          } catch {
+          } catch (e: any) {
+            recordLLMTrace({ provider: provider.name, model: provider.model, kind: 'ambient-observe', status: 'error', latencyMs: Date.now() - ambientT0, error: String(e?.message || e).slice(0, 200) });
             if (keyIdx < keyPool.length - 1) continue;
             break;
           }
@@ -1960,6 +2002,7 @@ function apiProxyPlugin(): Plugin {
         const keyPool = provider.keys && provider.keys.length > 0 ? provider.keys : (provider.backupKey ? [provider.key, provider.backupKey] : [provider.key]);
         for (let keyIdx = 0; keyIdx < keyPool.length; keyIdx++) {
           const currentKey = keyPool[keyIdx];
+          const llmT0 = Date.now();
           try {
             const res = await fetch(provider.url, {
               method: 'POST',
@@ -1972,15 +2015,24 @@ function apiProxyPlugin(): Plugin {
             });
             if (res && res.ok) {
               const data: any = await res.json();
+              const lu: any = data?.usage || {};
+              recordLLMTrace({
+                provider: provider.name, model: provider.model, kind: 'ambient-complete',
+                status: res.status, latencyMs: Date.now() - llmT0,
+                tokensIn: Number(lu.prompt_tokens ?? lu.input_tokens) || undefined,
+                tokensOut: Number(lu.completion_tokens ?? lu.output_tokens) || undefined,
+              });
               const msg = data?.choices?.[0]?.message || {};
               const content = String(msg.content || '').trim();
               return content || null;
             }
+            recordLLMTrace({ provider: provider.name, model: provider.model, kind: 'ambient-complete', status: res?.status ?? 'error', latencyMs: Date.now() - llmT0 });
             if (res && !res.ok && (res.status === 401 || res.status === 402 || res.status === 403 || res.status === 429) && keyIdx < keyPool.length - 1) {
               continue;
             }
             return null;
-          } catch {
+          } catch (e: any) {
+            recordLLMTrace({ provider: provider.name, model: provider.model, kind: 'ambient-complete', status: 'error', latencyMs: Date.now() - llmT0, error: String(e?.message || e).slice(0, 200) });
             if (keyIdx < keyPool.length - 1) continue;
             return null;
           }
@@ -3087,6 +3139,12 @@ function apiProxyPlugin(): Plugin {
           name: z.string().optional(),
           target: z.string().optional(),
         }),
+        render_video: z.object({
+          composition: z.string().optional(),
+          outputName: z.string().optional(),
+          durationSeconds: z.number().positive().max(600).optional(),
+          props: z.record(z.unknown()).optional(),
+        }).passthrough(),
       };
 
       const cortexToolsHandler = (req: any, res: any, next: any) => {
@@ -3153,6 +3211,7 @@ function apiProxyPlugin(): Plugin {
             { name: 'cortex_memory', description: 'Obsidian vault memory actions (vault_status, vault_query, vault_write_note, vault_daily_log, read_hot, search, append, read_episodic, save_episodic, learn, recall)', parameters: { action: 'string', query: 'string?', title: 'string?', folder: 'string?', filename: 'string?', content: 'string?', tags: 'string?', role: 'string?', limit: 'number?' } },
             { name: 'fetch_url', description: 'Fetch a web page as clean markdown (keyless reader)', parameters: { url: 'string' } },
             { name: 'create_document', description: 'Create real document files (md/html always; pdf via Chrome; docx via textutil; csv)', parameters: { format: 'string?', title: 'string?', content: 'string?' } },
+            { name: 'render_video', description: 'Render a video composition via the governed Remotion pipeline (tools/remotion). Writes an .mp4 under .cortex-runtime/renders/ and returns the verified output path.', parameters: { composition: 'string? (default CortexPromo)', outputName: 'string? (.mp4, sanitized)', durationSeconds: 'number? (<=600)', props: 'object? (e.g. {title, subtitle})' } },
           ];
           res.writeHead(200, {
             'Content-Type': 'application/json',
@@ -8493,6 +8552,112 @@ function triggerQuickAction() {
               }));
             }
 
+            // 30. render_video — governed Remotion render via the verified
+            // tools/remotion spike. Writes an .mp4 under
+            // .cortex-runtime/renders/, streams the CLI log to disk, and only
+            // reports ok after the MP4 is verified on disk (ftyp box + ffprobe).
+            if (tool === 'render_video') {
+              const remotionDir = path.resolve(workspaceRoot, 'tools', 'remotion');
+              const rendersDir = path.resolve(workspaceRoot, '.cortex-runtime', 'renders');
+              const composition = String(args?.composition || 'CortexPromo').trim() || 'CortexPromo';
+              if (composition !== 'CortexPromo') {
+                res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+                return res.end(JSON.stringify({
+                  ok: false,
+                  tool: 'render_video',
+                  error: `Unknown composition '${composition}' — v1 supports only 'CortexPromo' (tools/remotion).`,
+                  durationMs: Date.now() - startMs,
+                }));
+              }
+              const base = String(args?.outputName || `cortex-promo-${Date.now().toString(36)}`)
+                .replace(/[^a-zA-Z0-9._-]+/g, '-')
+                .replace(/\.mp4$/i, '')
+                .replace(/^-+|-+$/g, '')
+                .slice(0, 80) || `render-${Date.now().toString(36)}`;
+              const outputPath = path.join(rendersDir, `${base}.mp4`);
+              const logPath = path.join(rendersDir, `${base}.log`);
+              if (!fsSync.existsSync(path.join(remotionDir, 'node_modules', '@remotion', 'cli'))) {
+                res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+                return res.end(JSON.stringify({
+                  ok: false,
+                  tool: 'render_video',
+                  error: `Remotion toolchain missing at ${remotionDir} — run npm install in tools/remotion first.`,
+                  durationMs: Date.now() - startMs,
+                }));
+              }
+              await fs.mkdir(rendersDir, { recursive: true });
+              const cliArgs = ['remotion', 'render', 'src/index.ts', composition, outputPath, '--overwrite'];
+              if (args?.durationSeconds != null) cliArgs.push('--duration', String(Number(args.durationSeconds)));
+              if (args?.props && typeof args.props === 'object') cliArgs.push('--props', JSON.stringify(args.props));
+              const logStream = fsSync.createWriteStream(logPath);
+              const renderStart = Date.now();
+              const renderTimeoutMs = 600_000; // ~10min — Remotion renders run ~1min cold
+              const exitCode = await new Promise<number>((resolve) => {
+                const child = cp.spawn('npx', cliArgs, {
+                  cwd: remotionDir,
+                  env: { ...process.env, CI: '1', npm_config_yes: 'true' },
+                  stdio: ['ignore', 'pipe', 'pipe'],
+                });
+                child.stdout.on('data', (d: Buffer) => logStream.write(d));
+                child.stderr.on('data', (d: Buffer) => logStream.write(d));
+                const killer = setTimeout(() => {
+                  logStream.write(`\n[render_video] TIMEOUT after ${renderTimeoutMs}ms — SIGKILL\n`);
+                  try { child.kill('SIGKILL'); } catch { }
+                }, renderTimeoutMs);
+                child.on('error', (e: any) => {
+                  clearTimeout(killer);
+                  logStream.write(`\n[render_video] spawn error: ${e?.message || e}\n`);
+                  resolve(-1);
+                });
+                child.on('close', (code: number | null) => {
+                  clearTimeout(killer);
+                  resolve(code ?? -1);
+                });
+              });
+              await new Promise<void>((r) => logStream.end(() => r()));
+              // Verify the artifact before claiming success: exists, non-empty,
+              // carries an MP4 ftyp box, and is ffprobe-able when available.
+              let verified = false;
+              let probe: any = null;
+              let sizeBytes = 0;
+              try {
+                sizeBytes = fsSync.statSync(outputPath).size;
+                if (sizeBytes > 0) {
+                  const head = Buffer.alloc(16);
+                  const fd = fsSync.openSync(outputPath, 'r');
+                  fsSync.readSync(fd, head, 0, 16, 0);
+                  fsSync.closeSync(fd);
+                  verified = head.slice(4, 8).toString('latin1') === 'ftyp';
+                  if (verified) {
+                    try {
+                      const probeRaw = cp.execSync(
+                        `ffprobe -v error -show_entries format=duration,size -of json "${outputPath}"`,
+                        { timeout: 15000, encoding: 'utf8' },
+                      );
+                      probe = JSON.parse(probeRaw);
+                    } catch { /* ffprobe optional — ftyp check already passed */ }
+                  }
+                }
+              } catch { }
+              const renderMs = Date.now() - renderStart;
+              res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+              return res.end(JSON.stringify({
+                ok: verified && exitCode === 0,
+                tool: 'render_video',
+                composition,
+                outputPath: verified ? outputPath : null,
+                durationSec: probe?.format ? Number(probe.format.duration) : null,
+                sizeBytes,
+                logPath,
+                exitCode,
+                renderMs,
+                message: verified && exitCode === 0
+                  ? `Rendered ${composition} → ${path.basename(outputPath)} (${renderMs}ms).`
+                  : `Render failed or produced no valid MP4 (exit ${exitCode}) — see ${logPath}`,
+                durationMs: Date.now() - startMs,
+              }));
+            }
+
             if (!res.headersSent && !res.writableEnded) {
               res.writeHead(400, { 'Content-Type': 'application/json' });
               res.end(JSON.stringify({ error: `Unknown tool: ${tool}` }));
@@ -9089,6 +9254,21 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
                 }
               }
 
+              // Trace tap: one JSONL record per provider HTTP attempt (see
+              // recordLLMTrace). Correlates via agentId/sessionId when the
+              // chat request carries them.
+              const traceChatCall = (prov: AIProviderCandidate, status: number | string, latencyMs: number, error?: string) => {
+                recordLLMTrace({
+                  provider: prov.name, model: prov.model,
+                  tier: typeof parsed.tier === 'string' ? parsed.tier : undefined,
+                  agentId: typeof parsed.agentId === 'string' ? parsed.agentId : undefined,
+                  sessionId: typeof parsed.sessionId === 'string' ? parsed.sessionId : (typeof parsed.taskId === 'string' ? parsed.taskId : undefined),
+                  kind: 'nexus-guest',
+                  status, latencyMs,
+                  error: error ? String(error).slice(0, 200) : undefined,
+                });
+              };
+
               // Mid-flight failover: a provider that accepts the stream then
               // dies before emitting ANY token gets skipped for the next
               // candidate. Once real tokens flow we commit — they can't be
@@ -9107,6 +9287,7 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
                   // response headers arrive.
                   const provAbort = new AbortController();
                   const provTimer = setTimeout(() => provAbort.abort(), 10000);
+                  const provStart = Date.now();
                   try {
                     let candidateRes: any = null;
                     if (prov.protocol === 'anthropic') {
@@ -9140,6 +9321,7 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
                         }),
                         signal: provAbort.signal,
                       });
+                      traceChatCall(prov, candidateRes?.status ?? 'error', Date.now() - provStart);
                     } else {
                       const headers: Record<string, string> = {
                         'Content-Type': 'application/json',
@@ -9158,6 +9340,7 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
                         if (keyIdx > 0) {
                           console.warn(`[dev-proxy] Provider ${prov.name} (${prov.model}) failing over to backup key ${keyIdx + 1}/${keyPool.length}...`);
                         }
+                        const keyStart = Date.now();
                         try {
                           candidateRes = await fetch(prov.url, {
                             method: 'POST',
@@ -9178,6 +9361,7 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
                             }),
                             signal: provAbort.signal,
                           });
+                          traceChatCall(prov, candidateRes?.status ?? 'error', Date.now() - keyStart);
                           if (candidateRes && candidateRes.ok && candidateRes.body) {
                             if (keyIdx > 0) {
                               console.info(`[dev-proxy] Provider ${prov.name} successfully recovered using backup key ${keyIdx + 1}/${keyPool.length} (HTTP 200)`);
@@ -9190,6 +9374,7 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
                           }
                           break;
                         } catch (keyErr: any) {
+                          traceChatCall(prov, 'error', Date.now() - keyStart, keyErr?.message || keyErr);
                           if (keyIdx < keyPool.length - 1) {
                             console.warn(`[dev-proxy] Provider ${prov.name} key ${keyIdx + 1} attempt error: ${keyErr?.message || keyErr}. Retrying with next key...`);
                             continue;
@@ -9214,6 +9399,11 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
                   } catch (provErr: any) {
                     clearTimeout(provTimer);
                     tripProvider(prov.name);
+                    // OpenAI-protocol key errors were already traced per-attempt
+                    // in the key-pool catch; anthropic throws land here only.
+                    if (prov.protocol === 'anthropic') {
+                      traceChatCall(prov, 'error', Date.now() - provStart, provErr?.message || provErr);
+                    }
                     console.warn(`[dev-proxy] Provider ${prov.name} (${prov.model}) request error: ${provErr?.message || provErr}. Failing over to next provider...`);
                   }
                 }
@@ -10672,6 +10862,113 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
         res.end(JSON.stringify({ ok: true, ...agentRuntime.snapshot(), forecasts, mission }));
       });
 
+      // GET /api/cortex/traces — LLM call trace tail (read-only observability).
+      // One record per outbound provider completion attempt; ?sessionId=
+      // filters on the correlation id stamped by the call sites.
+      server.middlewares.use('/api/cortex/traces', (req: any, res: any, next: any) => {
+        if (req.method === 'OPTIONS') {
+          res.writeHead(204, { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Methods': 'GET, OPTIONS', 'Access-Control-Allow-Headers': 'Content-Type' });
+          return res.end();
+        }
+        if (req.method !== 'GET') return next();
+        agentCors(req, res);
+        try {
+          const url = new URL(req.url || '/', 'http://127.0.0.1');
+          const sessionId = url.searchParams.get('sessionId') || undefined;
+          const file = LLM_TRACES_FILE();
+          let traces: any[] = [];
+          if (fsSync.existsSync(file)) {
+            const lines = fsSync.readFileSync(file, 'utf8').split('\n').filter(Boolean).slice(-400);
+            for (const l of lines) { try { traces.push(JSON.parse(l)); } catch { } }
+            traces.reverse(); // newest first
+          }
+          const filtered = sessionId ? traces.filter((t) => t.sessionId === sessionId) : traces;
+          res.end(JSON.stringify({ ok: true, traces: filtered.slice(0, 200), count: filtered.length }));
+        } catch (e: any) {
+          res.writeHead(500);
+          res.end(JSON.stringify({ ok: false, error: String(e?.message || e) }));
+        }
+      });
+
+      // GET /api/cortex/replay?since=<ms>&limit=<n> — normalized event-log
+      // tail for debugging/replay. Read-only; limit defaults to 200, capped
+      // at 500. `since` is a millisecond timestamp compared against each
+      // event's `at` field. Missing log dir → { ok: true, events: [] }.
+      server.middlewares.use('/api/cortex/replay', (req: any, res: any, next: any) => {
+        if (req.method === 'OPTIONS') {
+          res.writeHead(204, { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Methods': 'GET, OPTIONS', 'Access-Control-Allow-Headers': 'Content-Type' });
+          return res.end();
+        }
+        if (req.method !== 'GET') return next();
+        agentCors(req, res);
+        try {
+          const url = new URL(req.url || '/', 'http://127.0.0.1');
+          const sinceRaw = Number(url.searchParams.get('since'));
+          const sinceMs = Number.isFinite(sinceRaw) && sinceRaw > 0 ? sinceRaw : undefined;
+          const limit = Math.min(Math.max(1, Number(url.searchParams.get('limit')) || 200), 500);
+          const normalizeEvent = (ev: any) => ({
+            seq: typeof ev.seq === 'number' ? ev.seq : undefined,
+            ts: typeof ev.at === 'number' ? ev.at : undefined,
+            type: String(ev.type || 'unknown'),
+            agentId: ev.agentId || ev.task?.agentId || ev.from || undefined,
+            taskId: ev.taskId || ev.task?.id || undefined,
+            summary: (() => {
+              try {
+                const t = ev.task || {};
+                const m = ev.model || {};
+                const head = String(t.title || m.id || ev.message || ev.reason || ev.status || ev.type || 'event');
+                const tail = [t.status && `task:${t.status}`, m.status && `model:${m.status}`, ev.from && ev.to ? `${ev.from}>${ev.to}` : '']
+                  .filter(Boolean).join(' ');
+                return `${head}${tail ? ` — ${tail}` : ''}`.slice(0, 200);
+              } catch { return String(ev?.type || 'event'); }
+            })(),
+          });
+          // Tail-read the newest log file(s) backwards so a `since` cutoff or
+          // the limit cap never forces a full 50MB+ scan per request.
+          const events: any[] = [];
+          const logDir = path.join(process.env.CORTEX_AGENTS_STATE_DIR || path.join(process.cwd(), '.cortex-runtime'), 'eventlog');
+          if (fsSync.existsSync(logDir)) {
+            const files = fsSync.readdirSync(logDir)
+              .filter((f: string) => f.startsWith('events-') && f.endsWith('.jsonl'))
+              .sort()
+              .reverse();
+            const MAX_TAIL_BYTES = 4 * 1024 * 1024;
+            for (const file of files) {
+              if (events.length >= limit) break;
+              const full = path.join(logDir, file);
+              let lines: string[] = [];
+              try {
+                const size = fsSync.statSync(full).size;
+                if (size <= MAX_TAIL_BYTES) {
+                  lines = fsSync.readFileSync(full, 'utf8').split('\n');
+                } else {
+                  const fd = fsSync.openSync(full, 'r');
+                  try {
+                    const buf = Buffer.alloc(MAX_TAIL_BYTES);
+                    fsSync.readSync(fd, buf, 0, MAX_TAIL_BYTES, size - MAX_TAIL_BYTES);
+                    lines = buf.toString('utf8').split('\n').slice(1); // drop partial first line
+                  } finally { fsSync.closeSync(fd); }
+                }
+              } catch { continue; }
+              for (let i = lines.length - 1; i >= 0; i--) {
+                const l = lines[i];
+                if (!l || !l.trim()) continue;
+                let ev: any = null;
+                try { ev = JSON.parse(l); } catch { continue; }
+                if (sinceMs && typeof ev.at === 'number' && ev.at < sinceMs) break; // files are chronological
+                events.push(normalizeEvent(ev));
+                if (events.length >= limit) break;
+              }
+            }
+            events.reverse(); // chronological order for replay
+          }
+          res.end(JSON.stringify({ ok: true, events, count: events.length, since: sinceMs, limit }));
+        } catch (e: any) {
+          res.writeHead(500);
+          res.end(JSON.stringify({ ok: false, error: String(e?.message || e) }));
+        }
+      });
+
       // GET /api/cortex/distribution/status — live revenue-engine state for the
       // pinned dashboard panel: queue depth, recent distributor tasks, launch
       // log tail, and browser-shot freshness.
@@ -11231,11 +11528,18 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
           }
           try {
             const port = process.env.PORT ? parseInt(process.env.PORT) : 5173;
+            // Auditors may pin the SUT: 'provider:model' selects an override
+            // candidate, a bare tier name ('fast'|'reason'|'deep') selects the
+            // lane. Default stays the reason tier — the real governed brain.
+            const reqModel = typeof parsed.model === 'string' ? parsed.model : '';
+            const tierPick = ['fast', 'reason', 'deep'].includes(reqModel) ? reqModel : 'reason';
+            const modelOverride = reqModel.includes(':') ? reqModel : undefined;
             const r = await fetch(`http://127.0.0.1:${port}/api/cortex/agents/llm`, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({
-                tier: 'reason',
+                tier: tierPick,
+                ...(modelOverride ? { model: modelOverride } : {}),
                 messages: chatMessages.slice(-12),
                 maxTokens: Math.min(Number(parsed.max_tokens) || Number(parsed.maxTokens) || 1200, 4096),
                 // The audited brain operates under the Cortex Governance
@@ -13891,12 +14195,31 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
             }
             return { httpStatus: lastStatus || 0, j: null };
           };
+          // Trace tap: one JSONL record per candidate attempt (initial call,
+          // reasoning-starvation retry, and thrown errors). Tokens come from
+          // the response usage block when the provider returns one.
+          const traceLLMOutcome = (cand: any, out: any, ms: number, err?: unknown) => {
+            const u: any = out?.j?.usage || {};
+            recordLLMTrace({
+              provider: cand.provider, model: cand.model,
+              tier: effectiveTier,
+              agentId: typeof parsed.agentId === 'string' ? parsed.agentId : undefined,
+              sessionId: typeof parsed.sessionId === 'string' ? parsed.sessionId : (typeof parsed.taskId === 'string' ? parsed.taskId : undefined),
+              kind: 'agents/llm',
+              status: err ? 'error' : (out?.httpStatus || 'error'),
+              latencyMs: ms,
+              tokensIn: Number(u.prompt_tokens ?? u.input_tokens) || undefined,
+              tokensOut: Number(u.completion_tokens ?? u.output_tokens) || undefined,
+              error: err ? String((err as any)?.message || err).slice(0, 200) : undefined,
+            });
+          };
           for (const cand of candidates.slice(0, 6)) {
             const prov = providerFor(cand.provider);
             if (!prov) { agentRuntime.matrix.recordProbe(cand.provider, cand.model, false); continue; }
             const started = Date.now();
             try {
               let out = await callProvider(cand, prov, maxTokens);
+              traceLLMOutcome(cand, out, Date.now() - started);
               if (out.httpStatus !== 200) {
                 lastErr = `${cand.provider} http ${out.httpStatus}`;
                 const permanent = [401, 402, 403].includes(out.httpStatus);
@@ -13909,7 +14232,9 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
               // reason → it likely hit the token cap mid-thought.
               if (!content && out.reasoning && maxTokens < 4096) {
                 const retryTokens = Math.min(4096, Math.max(maxTokens * 3, 2048));
+                const retryStart = Date.now();
                 const retry = await callProvider(cand, prov, retryTokens);
+                traceLLMOutcome(cand, retry, Date.now() - retryStart);
                 if (retry.httpStatus === 200) { out = retry; content = retry.content || ''; j = retry.j; }
               }
               if (!content) { lastErr = `${cand.provider} empty content`; agentRuntime.matrix.recordProbe(cand.provider, cand.model, false); continue; }
@@ -13923,6 +14248,7 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
               return res.end(JSON.stringify({ ok: true, content, model: cand.model, provider: cand.provider, tier: effectiveTier, requestedTier: effectiveTier === tier ? undefined : tier, usage: tokensIn || tokensOut ? { tokensIn, tokensOut } : undefined }));
             } catch (e: any) {
               lastErr = `${cand.provider}: ${e?.message || e}`;
+              traceLLMOutcome(cand, null, Date.now() - started, e);
               agentRuntime.matrix.recordProbe(cand.provider, cand.model, false);
             }
           }

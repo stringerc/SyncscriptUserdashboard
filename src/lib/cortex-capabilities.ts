@@ -388,6 +388,21 @@ export const CORTEX_CAPABILITIES_MANIFEST: CortexToolDefinition[] = [
     category: 'comms',
   },
   {
+    name: 'render_video',
+    description: 'Render a video composition through the governed Remotion pipeline (tools/remotion). Produces a verified .mp4 under .cortex-runtime/renders/ with a captured render log. Use when the user asks for a video, promo, or rendered clip.',
+    parameters: {
+      type: 'object',
+      properties: {
+        composition: { type: 'string', description: 'Remotion composition id (v1: CortexPromo only)' },
+        outputName: { type: 'string', description: 'Output file base name — sanitized, .mp4 appended automatically' },
+        durationSeconds: { type: 'number', description: 'Optional duration override in seconds (max 600)' },
+        props: { type: 'object', description: 'Composition props, e.g. {"title":"CORTEX","subtitle":"SOVEREIGN AGENT FLEET"}' },
+      },
+    },
+    surfaces: ['both'],
+    category: 'canvas',
+  },
+  {
     name: 'fetch_url',
     description: 'Fetch and extract clean markdown content from any web page.',
     parameters: {

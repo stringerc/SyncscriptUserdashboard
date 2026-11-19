@@ -1457,6 +1457,9 @@ const CONTAINED_TOOLS = new Set([
 ]);
 const REVERSIBLE_TOOLS = new Set([
   'write_file', 'edit_file', 'patch_file', 'run_command', 'exec', 'execute_command',
+  // render_video writes a single .mp4 under .cortex-runtime/renders/ —
+  // repo-local, auditable, trivially deletable: reversible lane, not hard.
+  'render_video',
 ]);
 
 export function blastLane(tool: string, argsJson: string): BlastLane {

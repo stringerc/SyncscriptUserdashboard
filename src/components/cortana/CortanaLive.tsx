@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Canvas } from '@react-three/fiber';
 import { CortanaOrb } from './CortanaOrb';
+import { CortanaOrbGpu } from './CortanaOrbGpu';
 import { useCortanaMood } from './CortanaMoodContext';
 import { bridgeFetch } from './bridge-client';
 
@@ -78,6 +79,8 @@ const CortanaLive: React.FC = () => {
     uptime: '—',
   });
   const [bridgeOnline, setBridgeOnline] = useState(false);
+  // WebGPU/TSL spike: try the node-material orb first, fall back to R3F/WebGL.
+  const [useGpuOrb, setUseGpuOrb] = useState(true);
 
   useEffect(() => {
     let cancelled = false;
@@ -155,14 +158,18 @@ const CortanaLive: React.FC = () => {
         background: 'radial-gradient(ellipse at 50% 50%, #000a14 0%, #000408 50%, #000000 100%)',
       }}
     >
-      <Canvas
-        camera={{ position: [0, 0, 5], fov: 45 }}
-        dpr={[1, 2]}
-        gl={{ antialias: true, alpha: true, powerPreference: 'high-performance' }}
-        style={{ position: 'absolute', inset: 0 }}
-      >
-        <CortanaOrb mood={mood} />
-      </Canvas>
+      {useGpuOrb ? (
+        <CortanaOrbGpu mood={mood} onUnsupported={() => setUseGpuOrb(false)} />
+      ) : (
+        <Canvas
+          camera={{ position: [0, 0, 5], fov: 45 }}
+          dpr={[1, 2]}
+          gl={{ antialias: true, alpha: true, powerPreference: 'high-performance' }}
+          style={{ position: 'absolute', inset: 0 }}
+        >
+          <CortanaOrb mood={mood} />
+        </Canvas>
+      )}
 
       <DashboardOverlay systemStatus={systemStatus} mood={mood} />
 

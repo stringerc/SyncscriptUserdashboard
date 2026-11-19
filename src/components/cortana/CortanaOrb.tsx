@@ -15,7 +15,7 @@ const RING_RADIUS = 1.4;
 const TUBE_RADIUS = 0.45;
 
 // ── Mood → orb state mapping ───────────────────────────────────────
-const MOOD_STATES: Record<string, {
+export const MOOD_STATES: Record<string, {
   color1: string; color2: string; expand: number; spread: number;
   noiseAmp: number; speed: number; brightness: number; opacity: number;
 }> = {
