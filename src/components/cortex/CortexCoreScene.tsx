@@ -32,6 +32,7 @@ import {
   type CortexVoiceState,
 } from './CortexVisualizer';
 import { agentsClient, type AgentClient, type ModelClient } from '../../lib/cortex-agents-client';
+import { neuroAudio } from '../../lib/cortex-neuro-audio';
 
 // ── Shared GLSL ──────────────────────────────────────────────────────────
 
@@ -558,6 +559,10 @@ function OrbitRing({ spec, live, index }: { spec: RingSpec; live: React.MutableR
  *  read by the DOM inspect card so it rides the agent's orbit. */
 export const agentScreenAnchors: Record<string, { x: number; y: number; behind: boolean }> = {};
 
+/** 3D World space positions for agent motes — written every frame by Satellites,
+ *  used by CameraRig to smoothly lock on and chase active agents in orbit. */
+export const agentWorldPositions: Record<string, THREE.Vector3> = {};
+
 const SAT_COUNT = 24;
 export const SAT_AGENT_COLORS: Record<string, string> = {
   antigravity: '#c084fc', devin: '#38bdf8', claudecode: '#f97316', openclaw: '#06b6d4', hermes: '#ef4444', curator: '#8b5cf6', sentinel: '#67e8f9', scout: '#e879f9', librarian: '#fbbf24', builder: '#34d399', reviewer: '#fb7185', runner: '#a3e635', distributor: '#fb923c', warden: '#818cf8', prep: '#f472b6', forecaster: '#2dd4bf', strategist: '#e879f9',
@@ -679,6 +684,8 @@ function Satellites({ live }: { live: React.MutableRefObject<LiveSignal> }) {
   const satEnterpriseGroupRefs = useRef<(THREE.Group | null)[]>([]);
   const satRing3MatRefs = useRef<(THREE.MeshStandardMaterial | null)[]>([]);
   const satCoronaRefs = useRef<(THREE.Sprite | null)[]>([]);
+  const satMitosisRefs = useRef<(THREE.Mesh | null)[]>([]);
+  const satMitosisMatRefs = useRef<(THREE.MeshStandardMaterial | null)[]>([]);
   const tmpW = useMemo(() => new THREE.Vector3(), []);
   const tmpT = useMemo(() => new THREE.Vector3(), []);
   const basisMat = useMemo(() => new THREE.Matrix4(), []);
@@ -756,14 +763,20 @@ function Satellites({ live }: { live: React.MutableRefObject<LiveSignal> }) {
       const py = Math.sin(a * 0.7 + s.incl) * rad * 0.45;
       const pz = Math.sin(a) * rad;
 
-      // Screen anchor — the DOM inspect card rides this point.
+      // Screen anchor & 3D world position — the DOM inspect card & camera chase ride this point.
       if (agent && groupRef.current) {
         seenAnchors.add(agent.id);
-        tmpV.set(px, py, pz).applyMatrix4(groupRef.current.matrixWorld).project(cam);
+        const wp = tmpV.set(px, py, pz).applyMatrix4(groupRef.current.matrixWorld);
+        if (!agentWorldPositions[agent.id]) {
+          agentWorldPositions[agent.id] = new THREE.Vector3();
+        }
+        agentWorldPositions[agent.id].copy(wp);
+
+        const proj = tmpV.clone().project(cam);
         agentScreenAnchors[agent.id] = {
-          x: (tmpV.x * 0.5 + 0.5) * vw,
-          y: (0.5 - tmpV.y * 0.5) * vh,
-          behind: tmpV.z > 1,
+          x: (proj.x * 0.5 + 0.5) * vw,
+          y: (0.5 - proj.y * 0.5) * vh,
+          behind: proj.z > 1,
         };
       }
 
@@ -780,6 +793,11 @@ function Satellites({ live }: { live: React.MutableRefObject<LiveSignal> }) {
         // The core feels the arrival: energy flinch tinted to this agent.
         sig.ingest = Math.min(1, sig.ingest + 0.55);
         sig.ingestColor.copy(col!);
+        // Neuro-acoustic spatial feedback: crystal chime + sub-bass impact
+        if (typeof window !== 'undefined') {
+          neuroAudio.playPacketChime(SAT_AGENT_COLORS[agent.id] || '#38bdf8');
+          neuroAudio.playCoreImpact();
+        }
       }
       progRef.current[i] = prog;
       const eased = prog < 0.5 ? 4 * prog * prog * prog : 1 - Math.pow(-2 * prog + 2, 3) / 2;
@@ -961,6 +979,29 @@ function Satellites({ live }: { live: React.MutableRefObject<LiveSignal> }) {
           // Vessel scale: apex singularities get +38% presence, enterprise get +28%
           const baseScale = (apex ? 0.36 : ent ? 0.32 : 0.26) * (wrk && !dim ? 1 + 0.08 * Math.sin(t * 5.2 + i * 1.7) : 1);
           hull.scale.setScalar(baseScale);
+
+          // ── Mitotic Daughter Singularity (Cellular Morphogenesis & Division) ──
+          const mito = satMitosisRefs.current[i];
+          const mitoMat = satMitosisMatRefs.current[i];
+          if (mito && mitoMat) {
+            if (wrk && !dim) {
+              mito.visible = true;
+              const mitoAngle = t * 4.2 + i * 1.6;
+              const mitoR = 0.22 + 0.04 * Math.sin(t * 6.5);
+              mito.position.set(
+                Math.cos(mitoAngle) * mitoR,
+                Math.sin(mitoAngle * 1.5) * 0.08,
+                Math.sin(mitoAngle) * mitoR
+              );
+              mito.rotation.y += delta * 4.8;
+              mito.rotation.x += delta * 3.2;
+              mitoMat.color.copy(col);
+              mitoMat.emissive.copy(err ? COLOR_CRIMSON : col);
+              mitoMat.emissiveIntensity = 1.6 + 0.6 * Math.sin(t * 8.0);
+            } else {
+              mito.visible = false;
+            }
+          }
         }
       }
 
@@ -1082,9 +1123,12 @@ function Satellites({ live }: { live: React.MutableRefObject<LiveSignal> }) {
         }
       }
     });
-    // Prune anchors for agents that left the visible fleet.
+    // Prune anchors and world vectors for agents that left the visible fleet.
     for (const k of Object.keys(agentScreenAnchors)) {
-      if (!seenAnchors.has(k)) delete agentScreenAnchors[k];
+      if (!seenAnchors.has(k)) {
+        delete agentScreenAnchors[k];
+        delete agentWorldPositions[k];
+      }
     }
   });
 
@@ -1269,6 +1313,22 @@ function Satellites({ live }: { live: React.MutableRefObject<LiveSignal> }) {
                 blending={THREE.AdditiveBlending}
               />
             </sprite>
+
+            {/* ── 7. Mitotic Daughter Spark (Cellular Morphogenesis & Division) ── */}
+            <mesh
+              ref={(el) => { satMitosisRefs.current[i] = el; }}
+              visible={false}
+            >
+              <octahedronGeometry args={[0.024, 0]} />
+              <meshStandardMaterial
+                ref={(el) => { satMitosisMatRefs.current[i] = el; }}
+                color="#ffffff"
+                emissive="#67e8f9"
+                emissiveIntensity={1.8}
+                roughness={0.06}
+                metalness={0.92}
+              />
+            </mesh>
           </group>
           {/* Ember current — the stream body: motes flowing agent → core
               along a living curve. No geometry, pure additive light. */}
@@ -1897,10 +1957,45 @@ function ThoughtSwarm({ live }: { live: React.MutableRefObject<LiveSignal> }) {
   return <points geometry={material.geo} material={material.mat} frustumCulled={false} />;
 }
 
-// ── Camera rig: intro dolly + parallax + level shake ────────────────────
+// ── Camera rig: intro dolly + parallax + level shake + orbit chase ───────
 
-function CameraRig({ live }: { live: React.MutableRefObject<LiveSignal> }) {
+function CameraRig({
+  live,
+  selectedAgentId: selectedProp,
+}: {
+  live: React.MutableRefObject<LiveSignal>;
+  selectedAgentId?: string | null;
+}) {
+  const [selectedAgentId, setSelectedAgentId] = React.useState<string | null>(selectedProp ?? null);
+  const targetLookAt = useRef(new THREE.Vector3(0, 0, 0));
+  const targetCamPos = useRef(new THREE.Vector3(0, 0.3, 5.6));
   const intro = useRef(0);
+
+  React.useEffect(() => {
+    if (selectedProp !== undefined) {
+      setSelectedAgentId(selectedProp);
+    }
+  }, [selectedProp]);
+
+  React.useEffect(() => {
+    const onSelect = (e: Event) => {
+      const ce = e as CustomEvent<string | null>;
+      setSelectedAgentId(ce.detail ?? null);
+    };
+    window.addEventListener('cortex-agent-select', onSelect);
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setSelectedAgentId(null);
+        window.dispatchEvent(new CustomEvent('cortex-agent-select', { detail: null }));
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => {
+      window.removeEventListener('cortex-agent-select', onSelect);
+      window.removeEventListener('keydown', onKey);
+    };
+  }, []);
+
   useFrame((state, delta) => {
     const sig = live.current;
     const { camera, pointer } = state;
@@ -1910,50 +2005,81 @@ function CameraRig({ live }: { live: React.MutableRefObject<LiveSignal> }) {
     const e = 1 - Math.pow(1 - intro.current, 3); // ease-out
 
     const baseZ = THREE.MathUtils.lerp(8.2, 5.6, e);
-    const tx = pointer.x * 0.6;
-    const ty = 0.3 + pointer.y * 0.4 + Math.sin(t * 0.35) * 0.06;
-    const tz = baseZ - sig.level * 0.22 - sig.energy * 0.15;
-
-    // micro-shake proportional to level energy
     const shake = sig.level * 0.012 + sig.energy * 0.004;
     const sx = (Math.sin(t * 41.3) + Math.sin(t * 23.7) * 0.5) * shake * 0.5;
     const sy = (Math.cos(t * 37.1) + Math.sin(t * 29.3) * 0.5) * shake * 0.5;
 
-    camera.position.x += (tx + sx - camera.position.x) * Math.min(1, delta * 2.2);
-    camera.position.y += (ty + sy - camera.position.y) * Math.min(1, delta * 2.2);
-    camera.position.z += (tz - camera.position.z) * Math.min(1, delta * 2.0);
-    camera.lookAt(0, 0, 0);
+    const agentWorldPos = selectedAgentId ? agentWorldPositions[selectedAgentId] : null;
+
+    if (agentWorldPos) {
+      // ── ORBIT CHASE MODE ──────────────────────────────────────────────────
+      // Smoothly track look-at toward the active agent's 3D coordinates
+      targetLookAt.current.lerp(agentWorldPos, Math.min(1, delta * 3.8));
+
+      // Chase position: orbit along with the agent, standing radially outwards
+      // elevated +0.65 in Y with subtle organic breathing drift
+      const radial = agentWorldPos.clone().normalize();
+      if (radial.lengthSq() < 0.001) radial.set(0, 0, 1);
+      const chasePos = agentWorldPos.clone().add(radial.multiplyScalar(2.6));
+      chasePos.y += 0.65 + Math.sin(t * 1.5) * 0.04;
+      targetCamPos.current.lerp(chasePos, Math.min(1, delta * 3.2));
+    } else {
+      // ── SOVEREIGN MACRO OVERVIEW ──────────────────────────────────────────
+      targetLookAt.current.lerp(new THREE.Vector3(0, 0, 0), Math.min(1, delta * 2.4));
+      const tx = pointer.x * 0.6;
+      const ty = 0.3 + pointer.y * 0.4 + Math.sin(t * 0.35) * 0.06;
+      const tz = baseZ - sig.level * 0.22 - sig.energy * 0.15;
+      targetCamPos.current.set(tx + sx, ty + sy, tz);
+    }
+
+    camera.position.lerp(targetCamPos.current, Math.min(1, delta * 3.2));
+    camera.lookAt(targetLookAt.current);
   });
+
   return null;
 }
 
-// ── Post FX with level-reactive params ──────────────────────────────────
+// ── Post FX with level-reactive params & relativistic IIT-Φ warping ────
 
 function PostFX({ live }: { live: React.MutableRefObject<LiveSignal> }) {
   const [bucket, setBucket] = React.useState(0);
   const smooth = useRef(0);
+  const smoothPhi = useRef(0);
+  const smoothThink = useRef(0);
 
   useFrame((state, delta) => {
-    // decay displayed level for post params
+    // Decay displayed level and smooth IIT-Phi and cognitive load
     smooth.current += (live.current.rawLevel - smooth.current) * Math.min(1, delta * 6);
+    smoothPhi.current += ((live.current.phiS ?? 0) - smoothPhi.current) * Math.min(1, delta * 3.5);
+    smoothThink.current += ((live.current.think ?? 0) - smoothThink.current) * Math.min(1, delta * 4.0);
     const b = Math.round(smooth.current * 4);
     setBucket((prev) => (prev === b ? prev : b));
   });
 
   const lvl = bucket / 4;
+  // Relativistic spacetime warping: chromatic aberration & Einstein-radius contraction
+  const phiDisp = smoothPhi.current * 0.0016 + smoothThink.current * 0.0012;
+  const vigDarkness = 0.52 + lvl * 0.16 + smoothThink.current * 0.14;
+  const vigOffset = Math.max(0.12, 0.28 - phiDisp * 15);
+
   return (
     <EffectComposer multisampling={0}>
       <Bloom
         mipmapBlur
-        intensity={0.80 + lvl * 0.55}
-        luminanceThreshold={0.42}
+        intensity={0.80 + lvl * 0.55 + smoothPhi.current * 0.45}
+        luminanceThreshold={Math.max(0.2, 0.42 - smoothPhi.current * 0.08)}
         luminanceSmoothing={0.25}
-        radius={0.70}
+        radius={0.70 + smoothThink.current * 0.15}
       />
       <ChromaticAberration
-        offset={[0.00035 + lvl * 0.0008, 0.00035 + lvl * 0.0008]}
+        offset={[0.00035 + lvl * 0.0008 + phiDisp, 0.00035 + lvl * 0.0008 + phiDisp]}
         radialModulation
-        modulationOffset={0.35}
+        modulationOffset={Math.max(0.1, 0.35 - smoothPhi.current * 0.12)}
+      />
+      <Vignette
+        eskil={false}
+        offset={vigOffset}
+        darkness={Math.min(0.88, vigDarkness)}
       />
     </EffectComposer>
   );
@@ -1987,7 +2113,13 @@ function Ignition({ fx }: { fx: React.MutableRefObject<{ shocks: Shock[] }> }) {
   return null;
 }
 
-function CortexCoreInner({ fx }: { fx: React.MutableRefObject<{ shocks: Shock[] }> }) {
+function CortexCoreInner({
+  fx,
+  selectedAgentId,
+}: {
+  fx: React.MutableRefObject<{ shocks: Shock[] }>;
+  selectedAgentId?: string | null;
+}) {
   const live = useRef<LiveSignal>(makeLive());
 
   React.useEffect(() => {
@@ -2036,13 +2168,19 @@ function CortexCoreInner({ fx }: { fx: React.MutableRefObject<{ shocks: Shock[] 
       <ThoughtSwarm live={live} />
       <Shockwaves fx={fx} />
 
-      <CameraRig live={live} />
+      <CameraRig live={live} selectedAgentId={selectedAgentId} />
       <PostFX live={live} />
     </>
   );
 }
 
-function SceneWithInput() {
+function SceneWithInput({
+  selectedAgentId,
+  onSelectAgent,
+}: {
+  selectedAgentId?: string | null;
+  onSelectAgent?: (id: string | null) => void;
+}) {
   const fx = useRef<{ shocks: Shock[] }>({ shocks: [] });
   const { gl, clock } = useThree();
 
@@ -2058,7 +2196,7 @@ function SceneWithInput() {
     return () => el.removeEventListener('pointerdown', onDown);
   }, [gl, clock]);
 
-  return <CortexCoreInner fx={fx} />;
+  return <CortexCoreInner fx={fx} selectedAgentId={selectedAgentId} />;
 }
 
 // Under prefers-reduced-motion the Canvas renders on demand: ambient
@@ -2073,7 +2211,15 @@ const InvalidateBridge: React.FC = () => {
   return null;
 };
 
-export const CortexCoreScene: React.FC = () => {
+export interface CortexCoreSceneProps {
+  selectedAgentId?: string | null;
+  onSelectAgent?: (id: string | null) => void;
+}
+
+export const CortexCoreScene: React.FC<CortexCoreSceneProps> = ({
+  selectedAgentId,
+  onSelectAgent,
+}) => {
   const [reduced, setReduced] = React.useState(() =>
     typeof window !== 'undefined' && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
   const [dpr, setDpr] = React.useState<number | [number, number]>(() => (reduced ? 1 : [1, 1.25]));
@@ -2132,7 +2278,7 @@ export const CortexCoreScene: React.FC = () => {
             }}
           />
         )}
-        <SceneWithInput />
+        <SceneWithInput selectedAgentId={selectedAgentId} onSelectAgent={onSelectAgent} />
         {reduced && <InvalidateBridge />}
       </Canvas>
       {contextLost && (

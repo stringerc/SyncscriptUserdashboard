@@ -2941,7 +2941,7 @@ FORMATTING: clean structured markdown, bold subheadings, concise bullets; avoid 
                     padding: '6px 10px',
                     borderRadius: 6,
                     background: step.status === 'completed' ? 'rgba(34, 197, 94, 0.08)' : step.status === 'vetoed' ? 'rgba(234, 179, 8, 0.1)' : 'rgba(239, 68, 68, 0.1)',
-                    borderLeft: `3px solid ${step.status === 'completed' ? '#22c55e' : step.status === 'vetoed' ? '#eab308' : '#ef4444'}`,
+                    border: `1px solid ${step.status === 'completed' ? '#22c55e55' : step.status === 'vetoed' ? '#eab30855' : '#ef444455'}`,
                     fontSize: 11,
                   }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -4874,7 +4874,7 @@ FORMATTING: clean structured markdown, bold subheadings, concise bullets; avoid 
         @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
         @keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: 0; } }
         @keyframes shimmer { 0% { background-position: -200% 0; } 100% { background-position: 200% 0; } }
-        @keyframes waveBounce { 0%, 100% { transform: scaleY(0.4); opacity: 0.4; } 50% { transform: scaleY(1.2); opacity: 1; } }
+        @keyframes wavePulse { 0%, 100% { transform: scaleY(0.4); opacity: 0.4; } 50% { transform: scaleY(1.2); opacity: 1; } }
       `}</style>
     </div>
   );

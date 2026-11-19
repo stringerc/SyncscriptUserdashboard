@@ -13,6 +13,7 @@ import { getCortexProactiveInitiative } from '../../lib/cortex-proactive-initiat
 import { agentsClient } from '../../lib/cortex-agents-client';
 import { cortexSpeak } from '../../lib/cortex-speech';
 import { getGlobeEmbedUrl, configureGlobeBase, GLOBE_MODE_EVENT, setGlobeAvailable } from '../../lib/cortex-globe';
+import { neuroAudio } from '../../lib/cortex-neuro-audio';
 import { CORTEX_COLORS, CORTEX_STATE_THEME, CORTEX_TYPOGRAPHY, CORTEX_ANIMATION } from '../../lib/cortex-design-tokens';
 
 export type ActiveScene = 'core' | 'agents' | VisualizerFace;
@@ -69,7 +70,7 @@ const HUD_CSS = `
     from { transform: translateX(0); }
     to   { transform: translateX(-50%); }
   }
-  @keyframes cx-think-bounce {
+  @keyframes cx-think-pulse {
     0%, 80%, 100% { transform: translateY(0); opacity: 0.35; }
     40%           { transform: translateY(-4px); opacity: 1; }
   }
@@ -77,7 +78,7 @@ const HUD_CSS = `
     display: inline-block;
     width: 4px; height: 4px; border-radius: 50%;
     background: currentColor;
-    animation: cx-think-bounce 1.2s ease-in-out infinite;
+    animation: cx-think-pulse 1.2s ease-in-out infinite;
   }
   @keyframes cx-shimmer {
     from { background-position: 0% 50%; }
@@ -204,6 +205,7 @@ export default function CortexVisualizerPage() {
   });
   const [micLive, setMicLive] = useState(false);
   const [chatOpen, setChatOpen] = useState(true);
+  const [audioEnabled, setAudioEnabled] = useState(() => neuroAudio.isEnabled());
   const [faceMode, setFaceMode] = useState<ActiveScene>(() => {
     if (typeof window === 'undefined') return 'core';
     const param = new URLSearchParams(window.location.search).get('face')?.toLowerCase();
@@ -833,7 +835,7 @@ export default function CortexVisualizerPage() {
         </>
       ) : faceMode === 'core' ? (
         <div key="face-core" className="cx-face-transition" style={{ position: 'absolute', inset: 0, zIndex: 4 }}>
-          <CortexCoreScene />
+          <CortexCoreScene selectedAgentId={selectedAgentId} onSelectAgent={setSelectedAgentId} />
         </div>
       ) : faceMode === 'agents' ? (
         <div key="face-agents" className="cx-face-transition" style={{ position: 'absolute', inset: 0, zIndex: 4 }}>
@@ -1431,9 +1433,12 @@ export default function CortexVisualizerPage() {
           }} className="cx-hud-in">
             <div style={{ position: 'absolute', top: -1, left: -1, width: 8, height: 8, borderTop: `1px solid ${col}`, borderLeft: `1px solid ${col}` }} />
             <div style={{ position: 'absolute', bottom: -1, right: -1, width: 8, height: 8, borderBottom: `1px solid ${col}`, borderRight: `1px solid ${col}` }} />
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
-              <span style={{ fontSize: 11, letterSpacing: '0.3em', color: col, fontWeight: 700 }}>{a.name}</span>
-              <button onClick={() => setSelectedAgentId(null)} style={{ background: 'none', border: 'none', color: 'rgba(148,163,184,0.6)', fontSize: 12, cursor: 'pointer', fontFamily: 'inherit' }}>✕</button>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 8 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <span style={{ fontSize: 11, letterSpacing: '0.3em', color: col, fontWeight: 700 }}>{a.name}</span>
+                <span style={{ fontSize: 7, letterSpacing: '0.14em', color: col, border: `1px solid ${col}55`, padding: '1px 5px', borderRadius: 2, background: `${col}15` }}>ORBIT CHASE</span>
+              </div>
+              <button onClick={() => { setSelectedAgentId(null); window.dispatchEvent(new CustomEvent('cortex-agent-select', { detail: null })); }} style={{ background: 'none', border: 'none', color: 'rgba(148,163,184,0.6)', fontSize: 12, cursor: 'pointer', fontFamily: 'inherit' }}>✕</button>
             </div>
             <div style={{ fontSize: 8, color: 'rgba(148,163,184,0.55)', letterSpacing: '0.14em', margin: '2px 0 6px' }}>{(a.role || '').toUpperCase()}</div>
             <div style={{ fontSize: 9, color: 'rgba(203,213,225,0.65)', marginBottom: 8, lineHeight: 1.5 }}>{a.blurb}</div>
@@ -1535,6 +1540,24 @@ export default function CortexVisualizerPage() {
           }}
         >
           {faceMode === 'agents' ? '◉ FOUNDRY' : '◈ AGENTS'}
+        </button>
+        <button
+          onClick={() => {
+            const next = neuroAudio.toggle();
+            setAudioEnabled(next);
+            cortexSpeak(next ? 'Neuro sonics enabled.' : 'Sonics muted.');
+          }}
+          title="Procedural Neuro-Acoustic Sonification — harmonic chimes & sub-bass telemetry"
+          style={{
+            textDecoration: 'none', padding: narrow ? '7px 12px' : '9px 18px', cursor: 'pointer',
+            border: `1px solid ${audioEnabled ? '#a78bfa' : 'rgba(148,233,255,0.18)'}`, borderRadius: 2,
+            color: audioEnabled ? '#c084fc' : 'rgba(148,233,255,0.6)', fontSize: narrow ? 9 : 11, fontWeight: 600, letterSpacing: narrow ? '0.18em' : '0.24em',
+            fontFamily: "'IBM Plex Mono', monospace",
+            background: audioEnabled ? 'rgba(167,139,250,0.14)' : 'rgba(4,8,14,0.4)', backdropFilter: 'blur(10px)',
+            transition: 'all 0.25s',
+          }}
+        >
+          {audioEnabled ? '🔊 SONICS ON' : '🔇 SONICS OFF'}
         </button>
         <button
           onClick={() => {

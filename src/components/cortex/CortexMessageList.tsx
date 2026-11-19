@@ -215,9 +215,9 @@ export function CortexMessageList({
                     }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: 3, height: 18 }}>
-                          <span style={{ width: 3, height: 14, background: '#c084fc', borderRadius: 2, animation: 'waveBounce 1s ease-in-out infinite' }} />
-                          <span style={{ width: 3, height: 18, background: '#38bdf8', borderRadius: 2, animation: 'waveBounce 1s ease-in-out 0.2s infinite' }} />
-                          <span style={{ width: 3, height: 10, background: '#a78bfa', borderRadius: 2, animation: 'waveBounce 1s ease-in-out 0.4s infinite' }} />
+                          <span style={{ width: 3, height: 14, background: '#c084fc', borderRadius: 2, animation: 'wavePulse 1s ease-in-out infinite' }} />
+                          <span style={{ width: 3, height: 18, background: '#38bdf8', borderRadius: 2, animation: 'wavePulse 1s ease-in-out 0.2s infinite' }} />
+                          <span style={{ width: 3, height: 10, background: '#a78bfa', borderRadius: 2, animation: 'wavePulse 1s ease-in-out 0.4s infinite' }} />
                         </div>
                         <span style={{
                           fontSize: 12,
@@ -600,7 +600,7 @@ export function CortexMessageList({
                   : msg.content.startsWith('⚠') ? 'rgba(245,158,11,0.06)'
                   : msg.content.startsWith('🛡') ? 'rgba(124,58,237,0.06)'
                   : 'rgba(103,232,249,0.06)',
-                borderLeft: `2px solid ${
+                border: `1px solid ${
                   msg.content.startsWith('⛔') ? C.red
                     : msg.content.startsWith('⚠') ? C.amber
                     : msg.content.startsWith('🛡') ? C.purple
