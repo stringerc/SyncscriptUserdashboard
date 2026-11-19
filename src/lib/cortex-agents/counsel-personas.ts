@@ -21,6 +21,12 @@
  * prompt: assume the decision shipped and failed; reconstruct why. This
  * is the "which video will do great" use-case — run it on a launch asset
  * before distribution spend.
+ *
+ * TIER BOUNDARY (vs cortex-simulation.ts arena):
+ *   Persona panels here are the TIER-2 governed path — generated personas,
+ *   rebuttal rounds, synthesis, human GO/NO-GO. The simulation arena is the
+ *   TIER-1 quick dial for fast what-if intuition. Same idea, different
+ *   weight class — do not merge them.
  */
 
 import type { AgentContext, AgentRuntime } from './runtime';

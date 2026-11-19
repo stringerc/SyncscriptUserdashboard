@@ -10,6 +10,15 @@
  *
  * Findings are retained into Hindsight under domain 'venture_intel' (#f59e0b),
  * populating the 3D Sovereign Core visualizer with live engram nodes.
+ *
+ * TIER BOUNDARY (vs reverse-engineer-marketing — skill at
+ * ~/.agents/skills/reverse-engineer-marketing, binary at
+ * ~/.cortex/tools/reverse-engineer-marketing):
+ *   This module is the TIER-1 continuous radar sensor — lightweight in-process
+ *   probes feeding Hindsight/visualizer engrams. For evidence-grade deep
+ *   teardowns (ad libraries, Wayback history, funnel architecture,
+ *   evidence.json + report.md artifacts), run the REM CLI — it is the
+ *   TIER-2 analyst. Do NOT grow this file into a second evidence pipeline.
  */
 
 import { retainCortexMemory } from './cortex-memory';

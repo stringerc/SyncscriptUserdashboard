@@ -12,6 +12,14 @@
  *
  * Output feeds the Bayesian Consensus Dial and automatically retains
  * simulation findings into Hindsight's knowledge bank.
+ *
+ * TIER BOUNDARY (vs counsel persona panels — see cortex-agents/counsel-personas.ts):
+ *   This arena is the TIER-1 quick advisory dial — fixed archetypes, one-shot
+ *   Monte Carlo, advisory only, no verdict authority. For decisions that need
+ *   governed deliberation (evidence-or-silence positions, rebuttal rounds,
+ *   human GO/NO-GO), convene a counsel session with mode/personas instead.
+ *   Do NOT extend this file into a second deliberation system — persona
+ *   generation, premortem framing, and poll governance live in counsel.
  */
 
 import { retainCortexMemory } from './cortex-memory';

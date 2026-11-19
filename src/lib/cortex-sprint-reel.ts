@@ -10,6 +10,13 @@
  *   2. SHOT 2 (3.5s - 7.0s): Kinetic Telemetry Roll (vitest passes, memory nodes)
  *   3. SHOT 3 (7.0s - 11.5s): Synaptic Inflow & Competitor Recon Radar Reveal
  *   4. SHOT 4 (11.5s - 15.0s): Keynote Closing Lockup & Audio Transient Drop
+ *
+ * TIER BOUNDARY (vs video-shotcraft skill at ~/.agents/skills/video-shotcraft):
+ *   This module is the TIER-1 planning artifact — it compiles telemetry into a
+ *   structured shot-by-shot storyboard manifest. Actual frame rendering
+ *   (Remotion, beat sync, sound design, MP4 output) is the shotcraft skill's
+ *   job — feed this manifest's shot cards into it rather than growing a
+ *   renderer here.
  */
 
 export interface SprintReelShot {
