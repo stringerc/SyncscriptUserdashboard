@@ -25,8 +25,19 @@ import {
   Noise,
   Vignette,
 } from '@react-three/postprocessing';
-import { Effect, BlendFunction } from 'postprocessing';
+import CameraControls from 'camera-controls';
+import { N8AOPass } from 'n8ao';
+import {
+  Effect,
+  BlendFunction,
+  GodRaysEffect,
+  DepthOfFieldEffect,
+  SMAAEffect,
+} from 'postprocessing';
 import * as THREE from 'three';
+
+// camera-controls v2 is dependency-injected — it never imports three itself.
+CameraControls.install({ THREE: THREE });
 import {
   cortexSignalBus,
   type CortexSignalBusPayload,
@@ -572,6 +583,10 @@ export const memoryScreenAnchors: Record<string, { x: number; y: number; behind:
  *  used by CameraRig to smoothly lock on and chase memory engrams in orbit. */
 export const memoryWorldPositions: Record<string, THREE.Vector3> = {};
 
+/** World-space point the camera is currently attending — written every frame by
+ *  CameraRig, read by PostFX so depth-of-field auto-focus tracks orbit/chase/chrono. */
+export const cameraFocusPoint = new THREE.Vector3(0, 0, 0);
+
 export type MemoryDomain = 'runtime' | 'system' | 'venture' | 'working' | 'learning';
 
 export const MEMORY_DOMAIN_COLORS: Record<MemoryDomain, string> = {
@@ -621,6 +636,63 @@ export interface ReplayTrackEvent { seq: number; at: number; type: string; agent
 /** Live pointer to the event currently under the chrono replay cursor —
  *  written every frame by CameraRig, polled by the DOM HUD. */
 export const chronoNow: { seq: number; type: string; agentId: string | null } = { seq: 0, type: '', agentId: null };
+
+/** Row shape returned by GET /api/cortex/replay (normalized event-log tail). */
+interface CortexReplayApiEvent {
+  seq?: number;
+  ts?: number;
+  type?: string;
+  agentId?: string | null;
+  taskId?: string;
+  summary?: string;
+}
+
+/**
+ * Chrono-DVR data source: while chrono mode is active, tail the persisted
+ * runtime event log via GET /api/cortex/replay and reduce each row to a
+ * ReplayTrackEvent for the CameraRig kinematics. Refreshes lightly while
+ * active so the tail stays fresh across loop wraps. Returns null when the
+ * endpoint is unavailable (older dev servers 404) or empty — callers then
+ * fall back to the prop-supplied track / scripted reel.
+ */
+function useChronoReplayTrack(
+  chronoActive: boolean,
+  fallback?: ReplayTrackEvent[] | null,
+): ReplayTrackEvent[] | null {
+  const [track, setTrack] = React.useState<ReplayTrackEvent[] | null>(null);
+
+  React.useEffect(() => {
+    if (!chronoActive) { setTrack(null); return; }
+    let dead = false;
+    const load = () => {
+      // No `since` cutoff: the endpoint tail-reads the newest `limit` events
+      // and returns them in chronological order — exactly what replay wants.
+      fetch('/api/cortex/replay?limit=500')
+        .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`))))
+        .then((d) => {
+          if (dead) return;
+          const raw: CortexReplayApiEvent[] = Array.isArray(d?.events) ? d.events : [];
+          const evs = raw
+            .map((e): ReplayTrackEvent => ({
+              seq: typeof e.seq === 'number' ? e.seq : 0,
+              at: typeof e.ts === 'number' ? e.ts : 0,
+              type: String(e.type || 'unknown'),
+              agentId: e.agentId ?? null,
+            }))
+            .filter((e) => e.seq > 0 || e.at > 0)
+            .sort((a, b) => (a.seq - b.seq) || (a.at - b.at));
+          // Keep the previous tail if a poll transiently returns nothing.
+          if (evs.length > 0) setTrack(evs);
+        })
+        .catch(() => { /* endpoint absent or offline — fallback path stays live */ });
+    };
+    load();
+    const id = setInterval(load, 20000);
+    return () => { dead = true; clearInterval(id); };
+  }, [chronoActive]);
+
+  return track ?? fallback ?? null;
+}
 
 const SAT_COUNT = 24;
 export const SAT_AGENT_COLORS: Record<string, string> = {
@@ -1497,6 +1569,7 @@ function Satellites({ live }: { live: React.MutableRefObject<LiveSignal> }) {
               renderOrder={6}
               onPointerOver={(e) => {
                 e.stopPropagation();
+                const agent = agentsRef.current[i];
                 if (agent && typeof window !== 'undefined') {
                   const recent = (agentsClient.snapshot.tasks || []).find(
                     (t) => t.agentId === agent.id && (t.status === 'running' || t.status === 'queued')
@@ -2498,9 +2571,149 @@ function ThoughtSwarm({ live }: { live: React.MutableRefObject<LiveSignal> }) {
   return <points geometry={material.geo} material={material.mat} frustumCulled={false} />;
 }
 
+// ── Kinetic mote field — GPU-side physics: scatter, damped oscillation, snap-back ──
+// ~1400 motes on eccentric shells. Position is fully analytic in the vertex
+// shader: a slow differential orbit plus a damped-harmonic impulse response
+// injected by fx.shocks (clicks, state transitions, agent deliveries). No CPU
+// particle state — closed-form "physics", so 60fps costs nothing.
+
+const kineticCount = 1400;
+
+const kineticVertex = /* glsl */ `
+  attribute float aSeed;
+  uniform float uTime;
+  uniform float uPixelRatio;
+  uniform float uImpulseAge;   // seconds since last shock; <0 = idle
+  uniform float uImpulseAmp;
+  varying float vGlow;
+  varying float vHit;
+
+  float khash(float n) { return fract(sin(n) * 43758.5453); }
+
+  void main() {
+    float seed = aSeed;
+    // base orbit: eccentric shell, differential rotation, gentle vertical bob
+    float rad = 2.35 + khash(seed * 7.13) * 2.9;
+    float incl = (khash(seed * 3.71) - 0.5) * 1.9;
+    float speed = (0.05 + khash(seed * 9.31) * 0.16) * (khash(seed * 5.77) > 0.5 ? 1.0 : -1.0);
+    float ang = seed * 6.2831 * 2.0 + uTime * speed;
+    vec3 base = vec3(
+      cos(ang) * rad,
+      sin(ang * 0.63 + incl * 3.0) * rad * 0.42 + sin(uTime * 0.4 + seed * 40.0) * 0.12,
+      sin(ang) * rad * (0.75 + khash(seed * 11.3) * 0.3)
+    );
+
+    // impulse response: damped harmonic scatter along a per-particle axis,
+    // biased outward from the core, plus a tangential swirl component
+    vec3 offset = vec3(0.0);
+    float hit = 0.0;
+    if (uImpulseAge >= 0.0 && uImpulseAge < 3.0) {
+      float age = uImpulseAge;
+      vec3 radial = normalize(base + vec3(0.0001));
+      vec3 dir = normalize(vec3(
+        khash(seed * 13.1) - 0.5,
+        (khash(seed * 17.3) - 0.5) * 0.8,
+        khash(seed * 19.7) - 0.5
+      ) + radial * 0.9);
+      vec3 swirl = normalize(cross(dir, vec3(0.0, 1.0, 0.0)) + vec3(0.001));
+      float omega = 5.0 + khash(seed * 23.9) * 6.0;
+      float phase = khash(seed * 29.3) * 6.2831;
+      float env = exp(-age * 2.1) * sin(age * omega + phase);
+      float amp = uImpulseAmp * (0.5 + khash(seed * 31.1) * 0.9);
+      offset = dir * env * amp + swirl * env * amp * 0.45;
+      hit = exp(-age * 2.6) * (0.6 + 0.4 * sin(age * omega + phase));
+    }
+
+    vec3 pos = base + offset;
+    vec4 mv = modelViewMatrix * vec4(pos, 1.0);
+    gl_Position = projectionMatrix * mv;
+    float size = (0.9 + khash(seed * 37.7) * 1.8) * (1.0 + max(hit, 0.0) * 1.6);
+    gl_PointSize = size * uPixelRatio * (52.0 / -mv.z);
+    vGlow = 0.35 + 0.65 * khash(seed * 41.9);
+    vHit = hit;
+  }
+`;
+
+const kineticFragment = /* glsl */ `
+  uniform vec3 uColor;
+  varying float vGlow;
+  varying float vHit;
+  void main() {
+    vec2 uv = gl_PointCoord - 0.5;
+    float d = length(uv);
+    float hit = max(vHit, 0.0);
+    float a = smoothstep(0.5, 0.05, d) * vGlow * (0.28 + hit * 0.95);
+    vec3 col = mix(uColor, vec3(1.0), clamp(hit * 0.7, 0.0, 1.0));
+    gl_FragColor = vec4(col * a * 1.6, a);
+  }
+`;
+
+function KineticMotes({
+  live,
+  fx,
+  count = 400,
+}: {
+  live: React.MutableRefObject<LiveSignal>;
+  fx: React.MutableRefObject<{ shocks: Shock[] }>;
+  count?: number;
+}) {
+  const material = useMemo(() => {
+    const seeds = new Float32Array(count);
+    for (let i = 0; i < count; i++) seeds[i] = Math.random();
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(count * 3), 3));
+    geo.setAttribute('aSeed', new THREE.BufferAttribute(seeds, 1));
+    return {
+      geo,
+      mat: new THREE.ShaderMaterial({
+        transparent: true,
+        depthWrite: false,
+        blending: THREE.AdditiveBlending,
+        uniforms: {
+          uTime: { value: 0 },
+          uPixelRatio: { value: Math.min(window.devicePixelRatio, 2) },
+          uImpulseAge: { value: -1 },
+          uImpulseAmp: { value: 0 },
+          uColor: { value: c('#67e8f9') },
+        },
+        vertexShader: kineticVertex,
+        fragmentShader: kineticFragment,
+      }),
+    };
+  }, [count]);
+
+  const lastShockT = useRef(-1);
+
+  useFrame((state, delta) => {
+    const sig = live.current;
+    const u = material.mat.uniforms;
+    u.uTime.value += delta;
+    u.uPixelRatio.value = state.viewport.dpr;
+    u.uColor.value.copy(sig.colorRim).lerp(c('#ffffff'), 0.2);
+
+    // Fire the GPU impulse whenever a new shockwave is registered — clicks,
+    // state transitions, wake events and agent packet landings all funnel here.
+    let newest = -1;
+    for (const s of fx.current.shocks) {
+      if (s && s.t0 > newest) newest = s.t0;
+    }
+    if (newest > lastShockT.current) {
+      lastShockT.current = newest;
+      u.uImpulseAge.value = 0;
+      u.uImpulseAmp.value = 0.8 + sig.energy * 0.7 + sig.level * 0.4;
+    }
+    if (u.uImpulseAge.value >= 0 && u.uImpulseAge.value < 4) {
+      u.uImpulseAge.value += delta;
+    }
+  });
+
+  return <points geometry={material.geo} material={material.mat} frustumCulled={false} />;
+}
+
 // ── Camera rig: intro dolly + parallax + level shake + orbit chase + chrono-dvr ───────
 
 const CHRONO_SEG = 1.4; // seconds each replayed event holds the camera
+const GOAL_EPS = 0.015; // min goal delta before pushing a new setLookAt transition
 
 function CameraRig({
   live,
@@ -2519,7 +2732,7 @@ function CameraRig({
   holoParallax?: boolean;
   headParallax?: { x: number; y: number } | null;
 }) {
-  const { gl } = useThree();
+  const { gl, camera } = useThree();
   const [selectedAgentId, setSelectedAgentId] = React.useState<string | null>(selectedProp ?? null);
   const [selectedMemoryId, setSelectedMemoryId] = React.useState<string | null>(selectedMemoryProp ?? null);
   const targetLookAt = useRef(new THREE.Vector3(0, 0, 0));
@@ -2541,6 +2754,32 @@ function CameraRig({
     curRadius: 5.6,
     targetRadius: 5.6,
   });
+  const tmpV = useMemo(() => new THREE.Vector3(), []);
+  const lastGoal = useRef({ px: Infinity, py: Infinity, pz: Infinity, lx: Infinity, ly: Infinity, lz: Infinity });
+
+  // camera-controls supplies the cinematic damping layer (SmoothDamp inertia,
+  // polar/distance clamps). Built-in pointer/touch input is disabled — the rig's
+  // own orbit drag, wheel zoom, chase and chrono logic remain the goal generator;
+  // every frame we feed the resolved target through setLookAt + update().
+  const controls = React.useMemo(() => {
+    const cc = new CameraControls(camera, gl.domElement);
+    cc.mouseButtons.left = CameraControls.ACTION.NONE;
+    cc.mouseButtons.middle = CameraControls.ACTION.NONE;
+    cc.mouseButtons.right = CameraControls.ACTION.NONE;
+    cc.mouseButtons.wheel = CameraControls.ACTION.NONE;
+    cc.touches.one = CameraControls.ACTION.NONE;
+    cc.touches.two = CameraControls.ACTION.NONE;
+    cc.touches.three = CameraControls.ACTION.NONE;
+    cc.minDistance = 1.4;
+    cc.maxDistance = 18;
+    cc.minPolarAngle = 0.1;
+    cc.maxPolarAngle = Math.PI - 0.1;
+    cc.smoothTime = 0.24;
+    cc.draggingSmoothTime = 0.08;
+    return cc;
+  }, [camera, gl]);
+
+  React.useEffect(() => () => controls.dispose(), [controls]);
 
   React.useEffect(() => {
     if (selectedProp !== undefined) {
@@ -2687,6 +2926,32 @@ function CameraRig({
     const sx = (Math.sin(t * 41.3) + Math.sin(t * 23.7) * 0.5) * shake * 0.5;
     const sy = (Math.cos(t * 37.1) + Math.sin(t * 29.3) * 0.5) * shake * 0.5;
 
+    // Resolve the smoothed goal through camera-controls. setLookAt(..., true)
+    // keeps the goal in _end state so update() applies real SmoothDamp inertia
+    // (velocity-aware, cinematic ease). Each call registers a 'rest' listener,
+    // so we only push a new goal when it moved meaningfully — idle sway stays
+    // under epsilon and 'rest' drains the pending resolvers.
+    const apply = () => {
+      const px = targetCamPos.current.x;
+      const py = targetCamPos.current.y;
+      const pz = targetCamPos.current.z;
+      const lx = targetLookAt.current.x;
+      const ly = targetLookAt.current.y;
+      const lz = targetLookAt.current.z;
+      const g = lastGoal.current;
+      if (
+        Math.abs(px - g.px) > GOAL_EPS || Math.abs(py - g.py) > GOAL_EPS ||
+        Math.abs(pz - g.pz) > GOAL_EPS || Math.abs(lx - g.lx) > GOAL_EPS ||
+        Math.abs(ly - g.ly) > GOAL_EPS || Math.abs(lz - g.lz) > GOAL_EPS
+      ) {
+        controls.setLookAt(px, py, pz, lx, ly, lz, true);
+        g.px = px; g.py = py; g.pz = pz;
+        g.lx = lx; g.ly = ly; g.lz = lz;
+      }
+      controls.update(delta);
+      cameraFocusPoint.copy(targetLookAt.current);
+    };
+
     // ── 1. 4D CHRONO-DVR REPLAY KINEMATICS ─────────────────────────────────
     // Event-sourced replay: when a persisted-event track is supplied, the
     // cursor walks REAL runtime events and the camera attends each event's
@@ -2709,8 +2974,7 @@ function CameraRig({
           targetLookAt.current.lerp(tmpV.set(0, 0, 0), Math.min(1, delta * 2.4));
           targetCamPos.current.lerp(tmpV.set(0, 0.3, 5.6), Math.min(1, delta * 2.6));
         }
-        camera.position.lerp(targetCamPos.current, Math.min(1, delta * 4.2));
-        camera.lookAt(targetLookAt.current);
+        apply();
         return;
       }
       chronoNow.seq = 0; chronoNow.type = ''; chronoNow.agentId = null;
@@ -2743,8 +3007,7 @@ function CameraRig({
         targetCamPos.current.set(4.2 + ep * 0.6, 1.6 + ep * 0.4, 3.8 + ep * 0.6);
         targetLookAt.current.set(0, 0, 0);
       }
-      camera.position.lerp(targetCamPos.current, Math.min(1, delta * 4.5));
-      camera.lookAt(targetLookAt.current);
+      apply();
       return;
     }
 
@@ -2795,13 +3058,13 @@ function CameraRig({
       );
     }
 
-    camera.position.lerp(targetCamPos.current, Math.min(1, delta * 4.2));
-    camera.lookAt(targetLookAt.current);
+    apply();
 
-    // Subtle holographic perspective banking
+    // Subtle holographic perspective banking — rotateZ around the view axis
+    // after camera-controls has resolved orientation (re-applied each frame).
     if (!targetWorldPos && (holoParallax || (headParallax && !orb.isDragging))) {
       const inputX = headParallax ? headParallax.x : pointer.x;
-      camera.rotation.z += -inputX * (headParallax ? 0.055 : 0.035);
+      camera.rotateZ(-inputX * (headParallax ? 0.055 : 0.035));
     }
   });
 
@@ -2872,13 +3135,96 @@ class LensingEffect extends Effect {
 }
 
 
-function PostFX({ live }: { live: React.MutableRefObject<LiveSignal> }) {
+function PostFX({
+  live,
+  qualityMode = 'smooth',
+}: {
+  live: React.MutableRefObject<LiveSignal>;
+  qualityMode?: 'smooth' | 'cinematic';
+}) {
   const [bucket, setBucket] = React.useState(0);
   const smooth = useRef(0);
   const smoothPhi = useRef(0);
   const smoothThink = useRef(0);
   const lensing = React.useMemo(() => new LensingEffect(), []);
   const lensCenter = useRef(new THREE.Vector3());
+  const scene = useThree((s) => s.scene);
+  const camera = useThree((s) => s.camera);
+
+  // N8AO — only enabled in cinematic mode to save GPU bandwidth
+  const ao = React.useMemo(() => {
+    if (qualityMode !== 'cinematic') return null;
+    const pass = new N8AOPass(scene, camera, 512, 512);
+    pass.configuration.halfRes = true;
+    pass.configuration.aoRadius = 2.2;
+    pass.configuration.distanceFalloff = 1.0;
+    pass.configuration.intensity = 2.4;
+    pass.configuration.denoiseSamples = 8;
+    pass.configuration.denoiseRadius = 12;
+    return pass;
+  }, [scene, camera, qualityMode]);
+
+  // God rays — small impostor mesh (cinematic only)
+  const sun = React.useMemo(() => {
+    if (qualityMode !== 'cinematic') return null;
+    const mesh = new THREE.Mesh(
+      new THREE.SphereGeometry(0.32, 24, 24),
+      new THREE.MeshBasicMaterial({
+        color: new THREE.Color(1.35, 1.3, 1.05),
+        transparent: true,
+        opacity: 0.95,
+        depthWrite: false,
+        fog: false,
+      })
+    );
+    mesh.position.set(-5.4, 3.8, -7.2);
+    mesh.renderOrder = 50;
+    scene.add(mesh);
+    return mesh;
+  }, [scene, qualityMode]);
+
+  React.useEffect(() => {
+    if (!sun) return;
+    return () => {
+      scene.remove(sun);
+      sun.geometry.dispose();
+      (sun.material as THREE.Material).dispose();
+    };
+  }, [scene, sun]);
+
+  const godRays = React.useMemo(() => {
+    if (qualityMode !== 'cinematic' || !sun) return null;
+    return new GodRaysEffect(camera, sun, {
+      samples: 36,
+      density: 0.94,
+      decay: 0.9,
+      weight: 0.32,
+      exposure: 0.55,
+      clampMax: 1.0,
+      resolutionScale: 0.5,
+      blur: true,
+    });
+  }, [camera, sun, qualityMode]);
+
+  // Depth of field — cinematic focus pull (cinematic only)
+  const dof = React.useMemo(() => {
+    if (qualityMode !== 'cinematic') return null;
+    return new DepthOfFieldEffect(camera, {
+      focusDistance: 5.6,
+      focusRange: 2.5,
+      bokehScale: 1.4,
+      resolutionScale: 0.5,
+    });
+  }, [camera, qualityMode]);
+
+  React.useEffect(() => {
+    if (dof) dof.target = cameraFocusPoint;
+  }, [dof]);
+
+  const smaa = React.useMemo(() => {
+    if (qualityMode !== 'cinematic') return null;
+    return new SMAAEffect();
+  }, [qualityMode]);
 
   useFrame((state, delta) => {
     // Decay displayed level and smooth IIT-Phi and cognitive load
@@ -2904,8 +3250,36 @@ function PostFX({ live }: { live: React.MutableRefObject<LiveSignal> }) {
   const vigDarkness = 0.52 + lvl * 0.16 + smoothThink.current * 0.14;
   const vigOffset = Math.max(0.12, 0.28 - phiDisp * 15);
 
+  if (qualityMode === 'smooth') {
+    return (
+      <EffectComposer multisampling={0}>
+        <Bloom
+          mipmapBlur
+          intensity={0.80 + lvl * 0.55 + smoothPhi.current * 0.45}
+          luminanceThreshold={Math.max(0.2, 0.42 - smoothPhi.current * 0.08)}
+          luminanceSmoothing={0.25}
+          radius={0.70 + smoothThink.current * 0.15}
+        />
+        <ChromaticAberration
+          offset={new THREE.Vector2(0.00035 + lvl * 0.0008 + phiDisp, 0.00035 + lvl * 0.0008 + phiDisp)}
+          radialModulation
+          modulationOffset={Math.max(0.1, 0.35 - smoothPhi.current * 0.12)}
+        />
+        <primitive object={lensing} />
+        <Vignette
+          eskil={false}
+          offset={vigOffset}
+          darkness={Math.min(0.88, vigDarkness)}
+        />
+      </EffectComposer>
+    );
+  }
+
   return (
     <EffectComposer multisampling={0}>
+      {ao && <primitive object={ao} />}
+      {godRays && <primitive object={godRays} />}
+      {dof && <primitive object={dof} />}
       <Bloom
         mipmapBlur
         intensity={0.80 + lvl * 0.55 + smoothPhi.current * 0.45}
@@ -2914,7 +3288,7 @@ function PostFX({ live }: { live: React.MutableRefObject<LiveSignal> }) {
         radius={0.70 + smoothThink.current * 0.15}
       />
       <ChromaticAberration
-        offset={[0.00035 + lvl * 0.0008 + phiDisp, 0.00035 + lvl * 0.0008 + phiDisp]}
+        offset={new THREE.Vector2(0.00035 + lvl * 0.0008 + phiDisp, 0.00035 + lvl * 0.0008 + phiDisp)}
         radialModulation
         modulationOffset={Math.max(0.1, 0.35 - smoothPhi.current * 0.12)}
       />
@@ -2924,6 +3298,7 @@ function PostFX({ live }: { live: React.MutableRefObject<LiveSignal> }) {
         offset={vigOffset}
         darkness={Math.min(0.88, vigDarkness)}
       />
+      {smaa && <primitive object={smaa} />}
     </EffectComposer>
   );
 }
@@ -2965,6 +3340,7 @@ function CortexCoreInner({
   replayTrack,
   holoParallax,
   headParallax,
+  qualityMode = 'smooth',
 }: {
   fx: React.MutableRefObject<{ shocks: Shock[] }>;
   selectedAgentId?: string | null;
@@ -2974,6 +3350,7 @@ function CortexCoreInner({
   replayTrack?: ReplayTrackEvent[] | null;
   holoParallax?: boolean;
   headParallax?: { x: number; y: number } | null;
+  qualityMode?: 'smooth' | 'cinematic';
 }) {
   const live = useRef<LiveSignal>(makeLive());
 
@@ -3005,8 +3382,8 @@ function CortexCoreInner({
       <Ignition fx={fx} />
       <color attach="background" args={['#03040a']} />
       <Nebula live={live} />
-      <StarLayer live={live} count={1400} rMin={14} rMax={30} sMin={0.7} sMax={1.8} rotSpeed={0.008} twinkle={0.8} />
-      <StarLayer live={live} count={500} rMin={9} rMax={18} sMin={1.2} sMax={2.6} rotSpeed={-0.02} twinkle={1.0} />
+      <StarLayer live={live} count={qualityMode === 'smooth' ? 800 : 1400} rMin={14} rMax={30} sMin={0.7} sMax={1.8} rotSpeed={0.008} twinkle={0.8} />
+      <StarLayer live={live} count={qualityMode === 'smooth' ? 300 : 500} rMin={9} rMax={18} sMin={1.2} sMax={2.6} rotSpeed={-0.02} twinkle={1.0} />
 
       <group scale={0.75}>
         <Core live={live} />
@@ -3021,6 +3398,7 @@ function CortexCoreInner({
       <AccretionDisk live={live} />
       <NeuralWeb live={live} />
       <ThoughtSwarm live={live} />
+      <KineticMotes live={live} fx={fx} count={qualityMode === 'smooth' ? 400 : 1400} />
       <Shockwaves fx={fx} />
 
       <CameraRig
@@ -3032,7 +3410,7 @@ function CortexCoreInner({
         holoParallax={holoParallax}
         headParallax={headParallax}
       />
-      <PostFX live={live} />
+      <PostFX live={live} qualityMode={qualityMode} />
     </>
   );
 }
@@ -3047,6 +3425,7 @@ function SceneWithInput({
   replayTrack,
   holoParallax,
   headParallax,
+  qualityMode = 'smooth',
 }: {
   selectedAgentId?: string | null;
   onSelectAgent?: (id: string | null) => void;
@@ -3057,6 +3436,7 @@ function SceneWithInput({
   replayTrack?: ReplayTrackEvent[] | null;
   holoParallax?: boolean;
   headParallax?: { x: number; y: number } | null;
+  qualityMode?: 'smooth' | 'cinematic';
 }) {
   const fx = useRef<{ shocks: Shock[] }>({ shocks: [] });
   const { gl, clock } = useThree();
@@ -3083,6 +3463,7 @@ function SceneWithInput({
       replayTrack={replayTrack}
       holoParallax={holoParallax}
       headParallax={headParallax}
+      qualityMode={qualityMode}
     />
   );
 }
@@ -3109,6 +3490,8 @@ export interface CortexCoreSceneProps {
   replayTrack?: ReplayTrackEvent[] | null;
   holoParallax?: boolean;
   headParallax?: { x: number; y: number } | null;
+  perfMode?: 'smooth' | 'cinematic';
+  onTogglePerfMode?: (mode: 'smooth' | 'cinematic') => void;
 }
 
 export const CortexCoreScene: React.FC<CortexCoreSceneProps> = ({
@@ -3121,18 +3504,51 @@ export const CortexCoreScene: React.FC<CortexCoreSceneProps> = ({
   replayTrack,
   holoParallax = true,
   headParallax,
+  perfMode: externalPerfMode,
+  onTogglePerfMode,
 }) => {
+  const [internalQuality, setInternalQuality] = React.useState<'smooth' | 'cinematic'>(() => {
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem('cortex_core_quality');
+      if (saved === 'smooth' || saved === 'cinematic') return saved;
+    }
+    return 'smooth';
+  });
+
+  const qualityMode = externalPerfMode ?? internalQuality;
+
+  const handleToggleQuality = () => {
+    const next = qualityMode === 'smooth' ? 'cinematic' : 'smooth';
+    if (typeof window !== 'undefined') {
+      try { localStorage.setItem('cortex_core_quality', next); } catch {}
+    }
+    setInternalQuality(next);
+    onTogglePerfMode?.(next);
+  };
+
   const [reduced, setReduced] = React.useState(() =>
     typeof window !== 'undefined' && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
-  const [dpr, setDpr] = React.useState<number | [number, number]>(() => (reduced ? 1 : [1, 1.25]));
+  const [dpr, setDpr] = React.useState<number | [number, number]>(() => (qualityMode === 'smooth' || reduced ? 1 : [1, 1.25]));
   const [contextLost, setContextLost] = React.useState(false);
   const [restoreCount, setRestoreCount] = React.useState(0);
+
+  // 4D Chrono-DVR: prefer the live /api/cortex/replay event-log tail; fall
+  // back to the prop-supplied track (or the scripted reel) when unavailable.
+  const chronoActive = chronoTime != null && chronoTime >= 0;
+  const effectiveReplayTrack = useChronoReplayTrack(chronoActive, replayTrack);
+
+  React.useEffect(() => {
+    if (qualityMode === 'smooth' || reduced) {
+      setDpr(1);
+    } else {
+      setDpr([1, 1.25]);
+    }
+  }, [qualityMode, reduced]);
 
   React.useEffect(() => {
     const mq = window.matchMedia('(prefers-reduced-motion: reduce)');
     const onMq = () => {
       setReduced(mq.matches);
-      if (mq.matches) setDpr(1);
     };
     mq.addEventListener('change', onMq);
     return () => mq.removeEventListener('change', onMq);
@@ -3171,12 +3587,10 @@ export const CortexCoreScene: React.FC<CortexCoreSceneProps> = ({
             iterations={8}
             threshold={0.85}
             onDecline={() => {
-              // Adaptive GPU budget governor: throttle DPR down to 1.0 on low-power / integrated GPUs
               setDpr(1);
             }}
             onIncline={() => {
-              // Performance recovered: restore crisp 1.25 DPR ceiling
-              setDpr([1, 1.25]);
+              if (qualityMode === 'cinematic') setDpr([1, 1.25]);
             }}
           />
         )}
@@ -3187,12 +3601,59 @@ export const CortexCoreScene: React.FC<CortexCoreSceneProps> = ({
           onSelectMemory={onSelectMemory}
           visualMode={visualMode}
           chronoTime={chronoTime}
-          replayTrack={replayTrack}
+          replayTrack={effectiveReplayTrack}
           holoParallax={holoParallax}
           headParallax={headParallax}
+          qualityMode={qualityMode}
         />
         {reduced && <InvalidateBridge />}
       </Canvas>
+
+      {/* Floating quick quality badge on bottom-left for immediate feedback */}
+      <div style={{
+        position: 'absolute',
+        bottom: 24,
+        left: 24,
+        zIndex: 25,
+        display: 'flex',
+        alignItems: 'center',
+        gap: 8,
+      }}>
+        <button
+          onClick={handleToggleQuality}
+          title={qualityMode === 'smooth'
+            ? 'Smooth 60 FPS Mode Active (4-Pass Lean Shaders · DPR 1.0). Click to enable Cinematic 8-Pass FX.'
+            : 'Cinematic Mode Active (8-Pass GTAO + GodRays + DoF Bokeh). Click for Smooth 60 FPS Mode.'}
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 6,
+            padding: '4px 10px',
+            borderRadius: 14,
+            background: qualityMode === 'smooth' ? 'rgba(4,24,20,0.85)' : 'rgba(32,16,4,0.85)',
+            border: `1px solid ${qualityMode === 'smooth' ? 'rgba(52,211,153,0.45)' : 'rgba(251,191,36,0.5)'}`,
+            backdropFilter: 'blur(8px)',
+            color: qualityMode === 'smooth' ? '#34d399' : '#fbbf24',
+            fontFamily: "'IBM Plex Mono', monospace",
+            fontSize: 8.5,
+            fontWeight: 700,
+            letterSpacing: '0.14em',
+            cursor: 'pointer',
+            boxShadow: qualityMode === 'smooth' ? '0 0 10px rgba(52,211,153,0.18)' : '0 0 10px rgba(251,191,36,0.22)',
+            transition: 'all 0.2s ease',
+          }}
+        >
+          <span style={{
+            width: 5,
+            height: 5,
+            borderRadius: '50%',
+            background: qualityMode === 'smooth' ? '#34d399' : '#fbbf24',
+            boxShadow: `0 0 5px ${qualityMode === 'smooth' ? '#34d399' : '#fbbf24'}`,
+          }} />
+          <span>{qualityMode === 'smooth' ? '⚡ 60FPS SMOOTH' : '◈ CINEMATIC FX'}</span>
+        </button>
+      </div>
+
       {contextLost && (
         <div style={{
           position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column',

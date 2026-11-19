@@ -318,6 +318,13 @@ export default function CortexVisualizerPage() {
   // Initiative HUD badge + one-time auto-open: the first proposal of a session
   // surfaces the Inbox once; afterwards the badge keeps count visible without
   // interrupting (restraint).
+  const [coreQuality, setCoreQuality] = useState<'smooth' | 'cinematic'>(() => {
+    if (typeof window !== 'undefined') {
+      const s = localStorage.getItem('cortex_core_quality');
+      if (s === 'smooth' || s === 'cinematic') return s;
+    }
+    return 'smooth';
+  });
   const [initiativeCount, setInitiativeCount] = useState(0);
   const initiativeAutoOpenedRef = useRef(false);
   useEffect(() => {
@@ -556,17 +563,16 @@ export default function CortexVisualizerPage() {
   useEffect(() => {
     if (!chronoActive) { setReplayTrack(null); setChronoNowUi(null); return; }
     let dead = false;
-    fetch('/api/cortex/events?limit=200&types=task.transition,task.progress,agent.spawned,agent.retired,agent.spawn_proposed,agent.comm')
+    fetch('/api/cortex/replay?limit=500')
       .then((r) => r.json())
       .then((d) => {
         if (dead) return;
         const evs = (Array.isArray(d?.events) ? d.events : [])
           .map((e: any): ReplayTrackEvent => ({
-            seq: e.seq, at: e.at, type: e.type,
+            seq: e.seq, at: e.ts ?? e.at, type: e.type,
             agentId: e.agentId ?? e.task?.agentId ?? e.from ?? e.to ?? null,
           }))
-          .filter((e: ReplayTrackEvent) => e.agentId != null)
-          .slice(-160);
+          .slice(-500);
         setReplayTrack(evs.length > 0 ? evs : null);
       })
       .catch(() => { if (!dead) setReplayTrack(null); });
@@ -1053,6 +1059,8 @@ export default function CortexVisualizerPage() {
             chronoTime={chronoActive ? chronoTime : null}
             replayTrack={chronoActive ? replayTrack : null}
             headParallax={headParallax}
+            perfMode={coreQuality}
+            onTogglePerfMode={setCoreQuality}
           />
           {chronoActive && chronoNowUi && (
             <div style={{
@@ -1223,6 +1231,47 @@ export default function CortexVisualizerPage() {
           )}
           <span>CORE</span>
         </button>
+
+        {/* CORE GPU PERFORMANCE TOGGLE (Visible on Core face) */}
+        {faceMode === 'core' && !mapMode && (
+          <button
+            onClick={() => {
+              const next = coreQuality === 'smooth' ? 'cinematic' : 'smooth';
+              setCoreQuality(next);
+              try { localStorage.setItem('cortex_core_quality', next); } catch {}
+              cortexSpeak(next === 'smooth' ? 'Engaging 60 FPS smooth mode.' : 'Activating cinematic post stack.');
+            }}
+            title={coreQuality === 'smooth'
+              ? 'Smooth 60 FPS Active (4-Pass Lean Shaders · DPR 1.0 · Zero Lag). Click for Cinematic 8-Pass FX.'
+              : 'Cinematic FX Active (8-Pass GTAO + GodRays + DoF Bokeh). Click for Smooth 60 FPS Mode.'}
+            style={{
+              padding: '4px 10px',
+              borderRadius: 12,
+              border: coreQuality === 'smooth' ? '1px solid rgba(52,211,153,0.5)' : '1px solid rgba(251,191,36,0.5)',
+              background: coreQuality === 'smooth' ? 'rgba(6,28,22,0.75)' : 'rgba(34,18,6,0.75)',
+              color: coreQuality === 'smooth' ? '#34d399' : '#fbbf24',
+              fontFamily: "'IBM Plex Mono', monospace",
+              fontSize: 8.5,
+              fontWeight: 700,
+              letterSpacing: '0.12em',
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              gap: 5,
+              boxShadow: coreQuality === 'smooth' ? '0 0 8px rgba(52,211,153,0.2)' : '0 0 8px rgba(251,191,36,0.25)',
+              transition: 'all 0.2s',
+            }}
+          >
+            <span style={{
+              width: 5,
+              height: 5,
+              borderRadius: '50%',
+              background: coreQuality === 'smooth' ? '#34d399' : '#fbbf24',
+              boxShadow: `0 0 6px ${coreQuality === 'smooth' ? '#34d399' : '#fbbf24'}`,
+            }} />
+            <span>{coreQuality === 'smooth' ? '⚡ 60FPS' : '◈ CINEMA'}</span>
+          </button>
+        )}
 
         {/* FOUNDRY */}
         <button
