@@ -257,10 +257,10 @@ export const CELESTIAL_BIOMES: Record<CelestialPlanetId, CelestialBiomeDef> = {
     color: '#f59e0b',
     secondaryColor: '#38bdf8',
     atmosphereGlow: 'rgba(245, 158, 11, 0.42)',
-    orbitRadiusFactor: 0.65,
-    baseAngle: -Math.PI / 2, // North
-    orbitPeriod: 130,
-    planetRadius: 28,
+    orbitRadiusFactor: 0.45, // Track I: Innermost high-energy orbit
+    baseAngle: -Math.PI / 2, // North (12 o'clock)
+    orbitPeriod: 96,
+    planetRadius: 26,
     lore: 'Volcanic cybernetic forge with molten metallic core & laser gantries.',
     atmosphere: 'Thermal heat shimmer & compilation particle flares.',
     rings: 'Flowing git commits, syntax diffs & compile tokens.',
@@ -275,10 +275,10 @@ export const CELESTIAL_BIOMES: Record<CelestialPlanetId, CelestialBiomeDef> = {
     color: '#c084fc',
     secondaryColor: '#6366f1',
     atmosphereGlow: 'rgba(192, 132, 252, 0.42)',
-    orbitRadiusFactor: 0.88,
-    baseAngle: 0, // East
-    orbitPeriod: 180,
-    planetRadius: 32,
+    orbitRadiusFactor: 0.70, // Track II: Mid-Inner cognition orbit
+    baseAngle: 0, // East (3 o'clock)
+    orbitPeriod: 165,
+    planetRadius: 30,
     lore: 'Bioluminescent sapphire gas giant with synaptic lightning storms.',
     atmosphere: 'Soft Rayleigh gas haze with floating Hindsight memory nodes.',
     rings: 'Saturnian engram rings of 102+ crystalline memory asteroids.',
@@ -293,10 +293,10 @@ export const CELESTIAL_BIOMES: Record<CelestialPlanetId, CelestialBiomeDef> = {
     color: '#34d399',
     secondaryColor: '#10b981',
     atmosphereGlow: 'rgba(52, 211, 153, 0.42)',
-    orbitRadiusFactor: 0.72,
-    baseAngle: Math.PI / 2, // South
-    orbitPeriod: 155,
-    planetRadius: 26,
+    orbitRadiusFactor: 0.96, // Track III: Mid-Outer bastion barrier orbit
+    baseAngle: Math.PI / 2, // South (6 o'clock)
+    orbitPeriod: 240,
+    planetRadius: 25,
     lore: 'Obsidian geometric monolith planet with geodesic force-field shields.',
     atmosphere: 'Cold vector grid lines reflecting invariant safety boundaries.',
     rings: '4 Counsel tetrahedral moon beacons (CISO, Adversary, Pragmatist, Buyer).',
@@ -311,10 +311,10 @@ export const CELESTIAL_BIOMES: Record<CelestialPlanetId, CelestialBiomeDef> = {
     color: '#06b6d4',
     secondaryColor: '#f43f5e',
     atmosphereGlow: 'rgba(6, 182, 212, 0.42)',
-    orbitRadiusFactor: 0.94,
-    baseAngle: Math.PI, // West
-    orbitPeriod: 220,
-    planetRadius: 25,
+    orbitRadiusFactor: 1.22, // Track IV: Outermost super-luminal transit highway
+    baseAngle: Math.PI, // West (9 o'clock)
+    orbitPeriod: 320,
+    planetRadius: 24,
     lore: 'Super-luminal solar-amber & neon-cyan transit world with tachyon relays.',
     atmosphere: 'High-frequency electromagnetic pulse waves radiating into space.',
     rings: 'Outbound 4K frame buffers & API webhook transfer lanes.',
@@ -324,16 +324,28 @@ export const CELESTIAL_BIOMES: Record<CelestialPlanetId, CelestialBiomeDef> = {
 
 export const getAgentPlanet = (a?: AgentClient | null): CelestialPlanetId => {
   if (!a) return 'vulcan';
+  const id = (a.id || '').toLowerCase();
+  const role = (a.role || '').toLowerCase();
+
+  // 1. Explicit ID mapping to specialized home world
+  if (['antigravity', 'builder', 'runner', 'devin', 'claudecode', 'developer', 'architect'].includes(id)) return 'vulcan';
+  if (['sentinel', 'scout', 'memory', 'librarian', 'curator', 'forecaster'].includes(id)) return 'mnemosyne';
+  if (['warden', 'counsel', 'veto', 'reviewer', 'trainer', 'browser-guard', 'governor'].includes(id)) return 'themis';
+  if (['strategist', 'openclaw', 'hermes', 'distributor', 'broadcaster', 'plan-decomposer', 'ledger-7', 'prep', 'brief', 'debrief'].includes(id)) return 'hermes';
+
+  // 2. Semantic role mapping
+  if (/build|code|engineer|architect|developer|terminal|exec|compile/.test(role)) return 'vulcan';
+  if (/intel|scout|memory|library|curat|forecast|eval|research|hindsight|cognit/.test(role)) return 'mnemosyne';
+  if (/warden|counsel|veto|review|guard|safety|train|invariant|integrity|audit/.test(role)) return 'themis';
+  if (/gateway|claw|hermes|distribut|broadcast|reel|stream|ledger|decomp|transit|pulse/.test(role)) return 'hermes';
+
+  // 3. Fallback based on sector
   const sec = getAgentSector(a);
   if (sec === 'command' || sec === 'engineering') return 'vulcan';
   if (sec === 'intel') return 'mnemosyne';
   if (sec === 'governance') return 'themis';
   if (sec === 'gateways') return 'hermes';
 
-  const id = (a.id || '').toLowerCase();
-  if (id.includes('intel') || id.includes('scout') || id.includes('memory') || id.includes('recon') || id.includes('lib')) return 'mnemosyne';
-  if (id.includes('warden') || id.includes('counsel') || id.includes('veto') || id.includes('gov') || id.includes('safe') || id.includes('review')) return 'themis';
-  if (id.includes('claw') || id.includes('hermes') || id.includes('gate') || id.includes('reel') || id.includes('distrib') || id.includes('pulse')) return 'hermes';
   return 'vulcan';
 };
 
@@ -1555,31 +1567,41 @@ export const CortexAgentsScene: React.FC = () => {
       const working = agent.status === 'working';
       const errored = agent.status === 'error';
 
-      // Keplerian Gravitational Telemetry:
-      // - working: accelerated high-speed elliptical transfer orbit (speed = 1.35)
-      // - errored: retrograde amber warning orbit (speed = -0.75)
-      // - idle/standby: calm geosynchronous circular orbit (speed = 0.45)
-      let speed = working ? 1.35 : errored ? -0.75 : 0.45;
+      // ── Keplerian Multi-Shell Satellite Lanes around Home Planet ──
+      // Distinct non-clashing orbital shells:
+      // Shell 0 (Inner Satellite Lane): radius Rp + 32px
+      // Shell 1 (Mid Satellite Lane):   radius Rp + 54px
+      // Shell 2 (Outer Satellite Lane): radius Rp + 76px
+      const shell = i % 3;
+      const shellCount = Math.max(1, Math.ceil(n / 3));
+      const shellIndex = Math.floor(i / 3);
+
+      // Phase distribution: vessels on the same shell are spaced evenly (e.g. 180 deg apart)
+      const shellPhaseOffset = shell * (Math.PI / 3); // 60 deg staggered offset between shells
+      const basePhase = (shellIndex / shellCount) * Math.PI * 2 + shellPhaseOffset;
+
+      // Keplerian differential orbital speeds: inner shells orbit faster than outer shells
+      const shellSpeedDamp = 1 / Math.sqrt(1 + shell * 0.45);
+      let speed = (working ? 1.25 : errored ? -0.65 : 0.42) * shellSpeedDamp;
       if (reducedMotion.current) speed = 0;
 
-      const phase = (i / n) * Math.PI * 2 + (t * speed);
+      const wob = reducedMotion.current ? 0 : Math.sin(t * 0.65 + i * 1.5) * 0.03;
+      const angle = basePhase + (t * speed) + wob;
 
-      let radX = pDef.planetRadius + 28 + (i % 3) * 14;
-      let radY = (pDef.planetRadius + 22 + (i % 3) * 10) * 0.65;
-      let tilt = -0.22 + (i * 0.16);
+      let radX = pDef.planetRadius + 32 + shell * 22;
+      let radY = radX * 0.70;
+      let tilt = -0.16 + shell * 0.16;
 
       if (working) {
-        // High-velocity eccentric transfer orbit (e = 0.65)
-        radX *= 1.35;
-        radY *= 0.65;
-        tilt = -0.38 + (i * 0.25);
+        // High-velocity eccentric transfer corridor sweeping outward into open space
+        radX *= 1.30;
+        radY *= 0.68;
+        tilt = -0.36 + shell * 0.22;
       } else if (errored) {
-        radX *= 1.15;
-        radY *= 1.15;
+        // High-altitude quarantine warning orbit
+        radX += 28;
+        radY += 28;
       }
-
-      const wob = reducedMotion.current ? 0 : Math.sin(t * 0.75 + i * 1.5) * 0.04;
-      const angle = phase + wob;
 
       const lx = Math.cos(angle) * radX;
       const ly = Math.sin(angle) * radY;
@@ -1594,6 +1616,10 @@ export const CortexAgentsScene: React.FC = () => {
         sector: getAgentSector(agent),
         planetId,
         pPos,
+        shell,
+        orbitRadX: radX,
+        orbitRadY: radY,
+        orbitTilt: tilt,
       };
     };
 
@@ -1642,8 +1668,8 @@ export const CortexAgentsScene: React.FC = () => {
         }
 
         let hitStation = false;
-        const stRx = Math.min(w * 0.37, 580) * 1.48;
-        const stRy = Math.min(h * 0.32, 320) * 1.48;
+        const stRx = Math.min(w * 0.37, 580) * 1.46;
+        const stRy = Math.min(h * 0.32, 320) * 1.46;
         BUSINESS_STATIONS.forEach((st, si) => {
           const a = st.phase + time * 0.022 + si * 2.1;
           const sx = cx + Math.cos(a) * stRx;
@@ -1960,17 +1986,26 @@ export const CortexAgentsScene: React.FC = () => {
       const biomes = Object.values(CELESTIAL_BIOMES);
 
       // 1. Keplerian Planetary Orbit Tracks (Ellipses around Sovereign Core Sun)
-      biomes.forEach((b) => {
+      biomes.forEach((b, bIdx) => {
         const isSel = selectedPlanet === b.id;
         const isHov = hoverPlanetRef.current === b.id;
+        const orbitRx = baseRx * b.orbitRadiusFactor;
+        const orbitRy = baseRy * b.orbitRadiusFactor;
         ctx.save();
         ctx.strokeStyle = isSel ? hexA(b.color, 0.75) : isHov ? hexA(b.color, 0.45) : hexA(b.color, 0.16);
         ctx.lineWidth = isSel ? 2 : isHov ? 1.5 : 1;
         ctx.setLineDash(isSel ? [8, 4] : [4, 8]);
         ctx.beginPath();
-        ctx.ellipse(cx, cy, baseRx * b.orbitRadiusFactor, baseRy * b.orbitRadiusFactor, 0, 0, Math.PI * 2);
+        ctx.ellipse(cx, cy, orbitRx, orbitRy, 0, 0, Math.PI * 2);
         ctx.stroke();
         ctx.setLineDash([]);
+
+        // Elegant astronomical orbit lane marker
+        ctx.font = `7px ${MONO}`;
+        ctx.fillStyle = hexA(b.color, isSel ? 0.65 : 0.28);
+        ctx.textAlign = 'left';
+        const roman = ['I', 'II', 'III', 'IV'][bIdx] || 'I';
+        ctx.fillText(`ORBIT ${roman} // ${b.name}`, cx + orbitRx - 42, cy - 6);
         ctx.restore();
       });
 
@@ -2056,6 +2091,24 @@ export const CortexAgentsScene: React.FC = () => {
         ctx.lineWidth = isSel ? 2.2 : 1.4;
         ctx.beginPath(); ctx.arc(pos.x, pos.y, pr, 0, Math.PI * 2); ctx.stroke();
         ctx.restore();
+
+        // Concentric Satellite Orbit Shells for Stationed Agents
+        [0, 1, 2].forEach((sh) => {
+          const sRadX = pr + 32 + sh * 22;
+          const sRadY = sRadX * 0.70;
+          const sTilt = -0.16 + sh * 0.16;
+          ctx.save();
+          ctx.translate(pos.x, pos.y);
+          ctx.rotate(sTilt);
+          ctx.strokeStyle = hexA(b.color, isSel ? 0.22 : 0.09);
+          ctx.lineWidth = 0.8;
+          ctx.setLineDash([2, 5]);
+          ctx.beginPath();
+          ctx.ellipse(0, 0, sRadX, sRadY, 0, 0, Math.PI * 2);
+          ctx.stroke();
+          ctx.setLineDash([]);
+          ctx.restore();
+        });
 
         // ── Unique Biome Geometry & Specialty Features ──
         if (b.id === 'vulcan') {
@@ -2395,29 +2448,26 @@ export const CortexAgentsScene: React.FC = () => {
           ctx.beginPath(); ctx.arc(ax, ay, 12 + ps[k] * 48, 0, Math.PI * 2); ctx.stroke();
         }
 
-        // data conduit to home planet while working or for key specialists
+        // data conduit to home planet while working
         const pDef = CELESTIAL_BIOMES[getAgentPlanet(a)];
         const pPos = getPlanetPos(pDef, w, h, cx, cy, time);
-        const isCoreSpec = ['antigravity', 'builder', 'sentinel', 'scout'].includes(a.id);
-        if (working || isCoreSpec) {
+        if (working) {
           ctx.save();
           ctx.globalCompositeOperation = 'lighter';
-          const targetX = working ? pPos.x : cx;
-          const targetY = working ? pPos.y : cy;
+          const targetX = pPos.x;
+          const targetY = pPos.y;
           const beam = ctx.createLinearGradient(ax, ay, targetX, targetY);
-          const alphaBase = working ? 0.28 : 0.08;
-          beam.addColorStop(0, hexA(col, alphaBase));
-          beam.addColorStop(1, hexA(col, 0.01));
+          beam.addColorStop(0, hexA(col, 0.45));
+          beam.addColorStop(1, hexA(col, 0.05));
           ctx.strokeStyle = beam;
-          ctx.lineWidth = working ? 1.6 : 1.0;
+          ctx.lineWidth = 1.6;
           ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(targetX, targetY); ctx.stroke();
-          const prog = (time * (working ? 1.2 : 0.45) + i * 0.37) % 1;
+          const prog = (time * 1.35 + i * 0.37) % 1;
           const px2 = ax + (targetX - ax) * prog, py2 = ay + (targetY - ay) * prog;
-          ctx.fillStyle = hexA(col, working ? 0.95 : 0.65);
-          ctx.beginPath(); ctx.arc(px2, py2, working ? 2.8 : 1.6, 0, Math.PI * 2); ctx.fill();
-          // packet wake
-          ctx.fillStyle = hexA(col, working ? 0.3 : 0.15);
-          ctx.beginPath(); ctx.arc(ax + (targetX - ax) * Math.max(0, prog - 0.04), ay + (targetY - ay) * Math.max(0, prog - 0.04), working ? 1.4 : 0.8, 0, Math.PI * 2); ctx.fill();
+          ctx.fillStyle = '#ffffff';
+          ctx.beginPath(); ctx.arc(px2, py2, 2.4, 0, Math.PI * 2); ctx.fill();
+          ctx.fillStyle = hexA(col, 0.9);
+          ctx.beginPath(); ctx.arc(px2, py2, 5.0, 0, Math.PI * 2); ctx.fill();
           ctx.globalCompositeOperation = 'source-over';
           ctx.restore();
         }
@@ -2716,43 +2766,55 @@ export const CortexAgentsScene: React.FC = () => {
           ctx.fillText(a.name, ax, ay - vr * 1.5 - 8);
         }
 
-        ctx.textAlign = 'center';
-        ctx.fillStyle = offline ? 'rgba(100,116,139,0.75)' : INK;
-        ctx.font = `700 10px ${MONO}`;
-        ctx.fillText(a.name, ax, ay + vr * 1.15 + 16);
-        ctx.fillStyle = errored ? '#f87171' : isStandupDegraded ? '#fbbf24' : working ? col : DIM;
-        ctx.font = `8px ${MONO}`;
-        const sec = getAgentSector(a);
-        const sDef = SECTORS[sec];
-        const statusLabel = isStandupDegraded
-          ? `[${sDef.badge}] DEGRADED`
-          : isStandupOffline
-            ? `[${sDef.badge}] OFFLINE`
-            : `[${sDef.badge}] ${a.status.toUpperCase()}`;
-        ctx.fillText(statusLabel, ax, ay + vr * 1.15 + 27);
+        // Anti-clash staggered label placement
+        // Odd vessels place label above the ship, even vessels place label below the ship.
+        // In full solar view (camZoom < 1.25), show sleek callsign/name without overlapping!
+        // When zoomed in (selectedPlanet), always show full name + status.
+        const isZoomed = selectedPlanet !== null || camZoom > 1.25;
+        const placeAbove = (i % 2 === 1);
+        const labelY = placeAbove ? ay - vr * 1.15 - 9 : ay + vr * 1.15 + 15;
 
-        // Standup status dot indicator
-        const badgeColor = isStandupDegraded ? '#fbbf24' : isStandupOffline ? '#f87171' : stInfo?.status === 'healthy' ? '#34d399' : null;
-        if (badgeColor) {
-          ctx.fillStyle = badgeColor;
-          ctx.beginPath();
-          ctx.arc(ax - (ctx.measureText(statusLabel).width / 2) - 6, ay + vr * 1.15 + 24, 2, 0, Math.PI * 2);
-          ctx.fill();
+        ctx.textAlign = 'center';
+        ctx.fillStyle = offline ? 'rgba(100,116,139,0.75)' : hot ? '#ffffff' : INK;
+        ctx.font = `700 ${isZoomed || hot || working ? '9px' : '8px'} ${MONO}`;
+        ctx.fillText(a.name, ax, labelY);
+
+        if (isZoomed || hot || working || errored) {
+          ctx.fillStyle = errored ? '#f87171' : isStandupDegraded ? '#fbbf24' : working ? col : DIM;
+          ctx.font = `7px ${MONO}`;
+          const sec = getAgentSector(a);
+          const sDef = SECTORS[sec];
+          const statusLabel = isStandupDegraded
+            ? `[${sDef.badge}] DEGRADED`
+            : isStandupOffline
+              ? `[${sDef.badge}] OFFLINE`
+              : `[${sDef.badge}] ${a.status.toUpperCase()}`;
+          const statusY = placeAbove ? labelY - 9 : labelY + 9;
+          ctx.fillText(statusLabel, ax, statusY);
+
+          // Standup status dot indicator
+          const badgeColor = isStandupDegraded ? '#fbbf24' : isStandupOffline ? '#f87171' : stInfo?.status === 'healthy' ? '#34d399' : null;
+          if (badgeColor) {
+            ctx.fillStyle = badgeColor;
+            ctx.beginPath();
+            ctx.arc(ax - (ctx.measureText(statusLabel).width / 2) - 5, statusY - 3, 2, 0, Math.PI * 2);
+            ctx.fill();
+          }
         }
       });
 
       // ── 5b. Enterprise stations — businesses on the outer orbit ──
       {
-        const stRx = Math.min(w * 0.37, 580) * 1.24 * 1.10;
-        const stRy = Math.min(h * 0.32, 320) * 1.24 * 1.10;
-        ctx.strokeStyle = 'rgba(251,191,36,0.10)';
+        const stRx = Math.min(w * 0.37, 580) * 1.46;
+        const stRy = Math.min(h * 0.32, 320) * 1.46;
+        ctx.strokeStyle = 'rgba(251,191,36,0.12)';
         ctx.setLineDash([1, 9]);
         ctx.beginPath(); ctx.ellipse(cx, cy, stRx, stRy, 0, 0, Math.PI * 2); ctx.stroke();
         ctx.setLineDash([]);
         ctx.font = `7px ${MONO}`;
         ctx.textAlign = 'center';
         ctx.fillStyle = 'rgba(251,191,36,0.35)';
-        ctx.fillText('ENTERPRISES', cx, cy - stRy - 8);
+        ctx.fillText('ORBIT V // ENTERPRISES & SYNDICATION', cx, cy - stRy - 8);
 
         BUSINESS_STATIONS.forEach((st, si) => {
           const stt = stationStatus.current[st.id] || { busy: false, state: 'unknown' as const };
