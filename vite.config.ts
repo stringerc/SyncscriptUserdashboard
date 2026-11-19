@@ -40,6 +40,7 @@ import { defenseSystemPrefix } from './src/lib/cortex-agents/prompt-defense';
 import { instinctsBlock, listInstincts, promotableInstincts } from './src/lib/cortex-agents/instincts';
 import { listEvals, getEval, fileEvalDefinition, runEval, readRuns, evalScorecard, evalComparison, type GraderSpec, type EvalArm } from './src/lib/cortex-agents/evals';
 import { computeCounselScorecard } from './src/lib/cortex-agents/counsel-scorecard';
+import { initEventLog, readEvents } from './src/lib/cortex-agents/eventlog';
 import type { RouteTier } from './src/lib/cortex-agents/types';
 import { normalizeForSpeech } from './src/lib/tts-speech-normalize';
 import {
@@ -118,6 +119,10 @@ const DIRECT_AI_PROVIDERS: { name: string; url: string; model: string; keyEnv: s
   { name: 'groq-oss', url: 'https://api.groq.com/openai/v1/chat/completions', model: 'openai/gpt-oss-120b', keyEnv: 'GROQ_API_KEY', protocol: 'openai' },
   // OpenRouter — fastest verified streaming TTFT when funded (~240ms Llama 3.3 70B),
   // but account is out of credits (402) so it sits late in the chain.
+  // FreeLLMAPI — local aggregator (docker :3001) pooling 87 free providers behind one
+  // OpenAI-compatible endpoint; 'auto' lets its router pick the best live model.
+  // Sits before openrouter: local + free beats a broke hosted account.
+  { name: 'freellmapi', url: 'http://127.0.0.1:3001/v1/chat/completions', model: 'auto', keyEnv: 'FREELLMAPI_KEY', protocol: 'openai' },
   { name: 'openrouter', url: 'https://openrouter.ai/api/v1/chat/completions', model: 'meta-llama/llama-3.3-70b-instruct', keyEnv: 'OPENROUTER_API_KEY', protocol: 'openai' },
   { name: 'deepseek', url: 'https://api.deepseek.com/v1/chat/completions', model: 'deepseek-chat', keyEnv: 'DEEPSEEK_API_KEY', protocol: 'openai' },
   { name: 'openai', url: 'https://api.openai.com/v1/chat/completions', model: 'gpt-4o-mini', keyEnv: 'OPENAI_API_KEY', protocol: 'openai' },
@@ -1317,6 +1322,7 @@ function apiProxyPlugin(): Plugin {
 
       agentRuntime.attachSentinel(catalogSources, probeFactory);
       agentRuntime.start();
+      initEventLog(agentRuntime);
 
       // Publish the resolved TTS chain for the Warden's tts.neural probe —
       // .env values live in loadEnv(), not process.env, so the worker can't
@@ -11002,6 +11008,31 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
         const hb = setInterval(() => { try { res.write(': hb\n\n'); } catch { } }, 20_000);
         hb.unref?.();
         req.on('close', () => { unsub(); clearInterval(hb); });
+      });
+
+      // GET /api/cortex/events — persisted event replay & query
+      server.middlewares.use('/api/cortex/events', (req: any, res: any, next: any) => {
+        if (req.method === 'OPTIONS') {
+          res.writeHead(204, { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Methods': 'GET, OPTIONS', 'Access-Control-Allow-Headers': 'Content-Type' });
+          return res.end();
+        }
+        if (req.method !== 'GET') return next();
+        agentCors(req, res);
+        try {
+          const url = new URL(req.url || '/', 'http://localhost');
+          const since = url.searchParams.get('since') ? Number(url.searchParams.get('since')) : undefined;
+          const until = url.searchParams.get('until') ? Number(url.searchParams.get('until')) : undefined;
+          const limit = url.searchParams.get('limit') ? Number(url.searchParams.get('limit')) : undefined;
+          const agentId = url.searchParams.get('agentId') || undefined;
+          const typesParam = url.searchParams.get('types');
+          const types = typesParam ? typesParam.split(',').map((s) => s.trim()) : undefined;
+          const events = readEvents({ since, until, limit, agentId, types });
+          res.setHeader('Content-Type', 'application/json');
+          res.end(JSON.stringify({ ok: true, count: events.length, events }));
+        } catch (err: any) {
+          res.statusCode = 500;
+          res.end(JSON.stringify({ ok: false, error: err?.message || String(err) }));
+        }
       });
 
       // GET /api/cortex/models/health — model registry dump.
