@@ -81,6 +81,23 @@ test('a different problem is not deduped', async () => {
   assert.equal(f.calls.length, 2);
 });
 
+test('changing the target branch does not reuse the previous target session', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'heal-'));
+  const f = fakeFetch([
+    { status: 200, body: { session_id: 'devin-1', url: 'u1' } },
+    { status: 200, body: { session_id: 'devin-2', url: 'u2' } },
+  ]);
+  await dispatchDevinSession(req(), root, { fetchImpl: f.impl, retryDelayMs: 0 });
+  process.env.DEVIN_TARGET_BRANCH = 'other-branch';
+  try {
+    const res = await dispatchDevinSession(req(), root, { fetchImpl: f.impl, retryDelayMs: 0 });
+    assert.equal(res.sessionId, 'devin-2');
+    assert.equal(f.calls.length, 2);
+  } finally {
+    delete process.env.DEVIN_TARGET_BRANCH;
+  }
+});
+
 test('overlapping escalations keep both sessions in the cache', async () => {
   const root = mkdtempSync(join(tmpdir(), 'heal-'));
   const slow = (id: string, ms: number) =>

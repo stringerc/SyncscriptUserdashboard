@@ -166,14 +166,21 @@ function readJsonArray(file: string): any[] {
   }
 }
 
+function devinTarget(): { repo: string; branch: string } {
+  return {
+    repo: getEnvKey('DEVIN_TARGET_REPO') || DEVIN_DEFAULT_REPO,
+    branch: getEnvKey('DEVIN_TARGET_BRANCH') || DEVIN_DEFAULT_BRANCH,
+  };
+}
+
 export function devinDedupeKey(request: EscalationRequest): string {
-  const basis = `${request.problemDescription.trim().toLowerCase()}|${(request.componentPath || '').trim()}`;
+  const { repo, branch } = devinTarget();
+  const basis = `${request.problemDescription.trim().toLowerCase()}|${(request.componentPath || '').trim()}|${repo}|${branch}`;
   return createHash('sha256').update(basis).digest('hex').slice(0, 16);
 }
 
 export function buildDevinPrompt(request: EscalationRequest): string {
-  const repo = getEnvKey('DEVIN_TARGET_REPO') || DEVIN_DEFAULT_REPO;
-  const branch = getEnvKey('DEVIN_TARGET_BRANCH') || DEVIN_DEFAULT_BRANCH;
+  const { repo, branch } = devinTarget();
   const prompt = `Cortex Escalation: Investigate and fix issue in ${request.componentPath || 'SyncScript repository'}.
 
 Repository: ${repo} (base branch: ${branch} — branch from it and open the PR against it; other branches do not contain the Cortex code)
