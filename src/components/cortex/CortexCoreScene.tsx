@@ -1362,6 +1362,31 @@ function Satellites({ live }: { live: React.MutableRefObject<LiveSignal> }) {
               }}
               visible={false}
               renderOrder={6}
+              onPointerOver={(e) => {
+                e.stopPropagation();
+                if (agent && typeof window !== 'undefined') {
+                  const recent = (agentsClient.snapshot.tasks || []).find(
+                    (t) => t.agentId === agent.id && (t.status === 'running' || t.status === 'queued')
+                  );
+                  window.dispatchEvent(
+                    new CustomEvent('cortex-packet-hover', {
+                      detail: {
+                        agentId: agent.id,
+                        agentName: agent.name,
+                        color: SAT_AGENT_COLORS[agent.id] || '#38bdf8',
+                        title: recent?.title || 'Telemetry packet streaming',
+                        x: e.clientX,
+                        y: e.clientY,
+                      },
+                    })
+                  );
+                }
+              }}
+              onPointerOut={() => {
+                if (typeof window !== 'undefined') {
+                  window.dispatchEvent(new CustomEvent('cortex-packet-hover', { detail: null }));
+                }
+              }}
             >
               <spriteMaterial
                 map={getGlowTexture()}
@@ -1957,14 +1982,18 @@ function ThoughtSwarm({ live }: { live: React.MutableRefObject<LiveSignal> }) {
   return <points geometry={material.geo} material={material.mat} frustumCulled={false} />;
 }
 
-// ── Camera rig: intro dolly + parallax + level shake + orbit chase ───────
+// ── Camera rig: intro dolly + parallax + level shake + orbit chase + chrono-dvr ───────
 
 function CameraRig({
   live,
   selectedAgentId: selectedProp,
+  chronoTime,
+  holoParallax = true,
 }: {
   live: React.MutableRefObject<LiveSignal>;
   selectedAgentId?: string | null;
+  chronoTime?: number | null;
+  holoParallax?: boolean;
 }) {
   const [selectedAgentId, setSelectedAgentId] = React.useState<string | null>(selectedProp ?? null);
   const targetLookAt = useRef(new THREE.Vector3(0, 0, 0));
@@ -2009,27 +2038,66 @@ function CameraRig({
     const sx = (Math.sin(t * 41.3) + Math.sin(t * 23.7) * 0.5) * shake * 0.5;
     const sy = (Math.cos(t * 37.1) + Math.sin(t * 29.3) * 0.5) * shake * 0.5;
 
+    // ── 1. 4D CHRONO-DVR REPLAY KINEMATICS (Lemo Opuscar Q-Map) ─────────────
+    if (chronoTime != null && chronoTime >= 0) {
+      const ct = chronoTime;
+      if (ct < 2.5) {
+        // Stage 1: Macro Swarm Orbit
+        const p = ct / 2.5;
+        const ep = p < 0.5 ? 2 * p * p : 1 - Math.pow(-2 * p + 2, 2) / 2;
+        const angle = 0.5 + ep * 0.8;
+        const dist = 5.2 - ep * 0.8;
+        targetCamPos.current.set(dist * Math.sin(angle), 1.8 - ep * 0.4, dist * Math.cos(angle));
+        targetLookAt.current.set(0, 0, 0);
+      } else if (ct < 5.0) {
+        // Stage 2: Target Lock on GovTech Scanner
+        const p = (ct - 2.5) / 2.5;
+        const ep = p < 0.5 ? 4 * p * p * p : 1 - Math.pow(-2 * p + 2, 3) / 2;
+        const scPos = agentWorldPositions['scanner'] || agentWorldPositions['librarian'] || new THREE.Vector3(2.2, 0.4, 1.2);
+        targetCamPos.current.set(scPos.x + 1.4 * (1 - ep * 0.3), scPos.y + 0.65, scPos.z + 1.4 * (1 - ep * 0.3));
+        targetLookAt.current.copy(scPos);
+      } else if (ct < 7.2) {
+        // Stage 3: Security Audit Lock on SkillSpector / Sentinel
+        const p = (ct - 5.0) / 2.2;
+        const ep = p < 0.5 ? 4 * p * p * p : 1 - Math.pow(-2 * p + 2, 3) / 2;
+        const secPos = agentWorldPositions['sentinel'] || agentWorldPositions['reviewer'] || new THREE.Vector3(-2.2, -0.3, 1.5);
+        targetCamPos.current.set(secPos.x + 1.5 * Math.cos(p * 2.0), secPos.y + 0.6, secPos.z + 1.5 * Math.sin(p * 2.0));
+        targetLookAt.current.copy(secPos);
+      } else {
+        // Stage 4: Command Convergence
+        const p = (ct - 7.2) / 0.8;
+        const ep = p < 0.5 ? 2 * p * p : 1 - Math.pow(-2 * p + 2, 2) / 2;
+        targetCamPos.current.set(4.2 + ep * 0.6, 1.6 + ep * 0.4, 3.8 + ep * 0.6);
+        targetLookAt.current.set(0, 0, 0);
+      }
+      camera.position.lerp(targetCamPos.current, Math.min(1, delta * 4.5));
+      camera.lookAt(targetLookAt.current);
+      return;
+    }
+
+    // ── 2. LIVE REAL-TIME ORBIT CHASE MODE ──────────────────────────────────
     const agentWorldPos = selectedAgentId ? agentWorldPositions[selectedAgentId] : null;
 
     if (agentWorldPos) {
-      // ── ORBIT CHASE MODE ──────────────────────────────────────────────────
-      // Smoothly track look-at toward the active agent's 3D coordinates
       targetLookAt.current.lerp(agentWorldPos, Math.min(1, delta * 3.8));
-
-      // Chase position: orbit along with the agent, standing radially outwards
-      // elevated +0.65 in Y with subtle organic breathing drift
       const radial = agentWorldPos.clone().normalize();
       if (radial.lengthSq() < 0.001) radial.set(0, 0, 1);
       const chasePos = agentWorldPos.clone().add(radial.multiplyScalar(2.6));
       chasePos.y += 0.65 + Math.sin(t * 1.5) * 0.04;
       targetCamPos.current.lerp(chasePos, Math.min(1, delta * 3.2));
     } else {
-      // ── SOVEREIGN MACRO OVERVIEW ──────────────────────────────────────────
+      // ── 3. HOLOGRAPHIC WINDOW MACRO PARALLAX ──────────────────────────────
       targetLookAt.current.lerp(new THREE.Vector3(0, 0, 0), Math.min(1, delta * 2.4));
-      const tx = pointer.x * 0.6;
-      const ty = 0.3 + pointer.y * 0.4 + Math.sin(t * 0.35) * 0.06;
+      const pFactor = holoParallax ? 0.92 : 0.6;
+      const tx = pointer.x * pFactor;
+      const ty = 0.3 + pointer.y * (pFactor * 0.7) + Math.sin(t * 0.35) * 0.06;
       const tz = baseZ - sig.level * 0.22 - sig.energy * 0.15;
       targetCamPos.current.set(tx + sx, ty + sy, tz);
+
+      // Subtle holographic perspective banking
+      if (holoParallax) {
+        camera.rotation.z = -pointer.x * 0.035;
+      }
     }
 
     camera.position.lerp(targetCamPos.current, Math.min(1, delta * 3.2));
@@ -2116,9 +2184,13 @@ function Ignition({ fx }: { fx: React.MutableRefObject<{ shocks: Shock[] }> }) {
 function CortexCoreInner({
   fx,
   selectedAgentId,
+  chronoTime,
+  holoParallax,
 }: {
   fx: React.MutableRefObject<{ shocks: Shock[] }>;
   selectedAgentId?: string | null;
+  chronoTime?: number | null;
+  holoParallax?: boolean;
 }) {
   const live = useRef<LiveSignal>(makeLive());
 
@@ -2168,7 +2240,7 @@ function CortexCoreInner({
       <ThoughtSwarm live={live} />
       <Shockwaves fx={fx} />
 
-      <CameraRig live={live} selectedAgentId={selectedAgentId} />
+      <CameraRig live={live} selectedAgentId={selectedAgentId} chronoTime={chronoTime} holoParallax={holoParallax} />
       <PostFX live={live} />
     </>
   );
@@ -2177,9 +2249,13 @@ function CortexCoreInner({
 function SceneWithInput({
   selectedAgentId,
   onSelectAgent,
+  chronoTime,
+  holoParallax,
 }: {
   selectedAgentId?: string | null;
   onSelectAgent?: (id: string | null) => void;
+  chronoTime?: number | null;
+  holoParallax?: boolean;
 }) {
   const fx = useRef<{ shocks: Shock[] }>({ shocks: [] });
   const { gl, clock } = useThree();
@@ -2196,7 +2272,7 @@ function SceneWithInput({
     return () => el.removeEventListener('pointerdown', onDown);
   }, [gl, clock]);
 
-  return <CortexCoreInner fx={fx} selectedAgentId={selectedAgentId} />;
+  return <CortexCoreInner fx={fx} selectedAgentId={selectedAgentId} chronoTime={chronoTime} holoParallax={holoParallax} />;
 }
 
 // Under prefers-reduced-motion the Canvas renders on demand: ambient
@@ -2214,11 +2290,15 @@ const InvalidateBridge: React.FC = () => {
 export interface CortexCoreSceneProps {
   selectedAgentId?: string | null;
   onSelectAgent?: (id: string | null) => void;
+  chronoTime?: number | null;
+  holoParallax?: boolean;
 }
 
 export const CortexCoreScene: React.FC<CortexCoreSceneProps> = ({
   selectedAgentId,
   onSelectAgent,
+  chronoTime,
+  holoParallax = true,
 }) => {
   const [reduced, setReduced] = React.useState(() =>
     typeof window !== 'undefined' && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
@@ -2278,7 +2358,7 @@ export const CortexCoreScene: React.FC<CortexCoreSceneProps> = ({
             }}
           />
         )}
-        <SceneWithInput selectedAgentId={selectedAgentId} onSelectAgent={onSelectAgent} />
+        <SceneWithInput selectedAgentId={selectedAgentId} onSelectAgent={onSelectAgent} chronoTime={chronoTime} holoParallax={holoParallax} />
         {reduced && <InvalidateBridge />}
       </Canvas>
       {contextLost && (

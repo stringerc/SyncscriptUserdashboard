@@ -206,6 +206,17 @@ export default function CortexVisualizerPage() {
   const [micLive, setMicLive] = useState(false);
   const [chatOpen, setChatOpen] = useState(true);
   const [audioEnabled, setAudioEnabled] = useState(() => neuroAudio.isEnabled());
+  const [chronoActive, setChronoActive] = useState(false);
+  const [chronoTime, setChronoTime] = useState(0.0);
+  const [chronoPlaying, setChronoPlaying] = useState(true);
+  const [hoveredPacket, setHoveredPacket] = useState<{
+    agentId: string;
+    agentName: string;
+    color: string;
+    title: string;
+    x: number;
+    y: number;
+  } | null>(null);
   const [faceMode, setFaceMode] = useState<ActiveScene>(() => {
     if (typeof window === 'undefined') return 'core';
     const param = new URLSearchParams(window.location.search).get('face')?.toLowerCase();
@@ -429,6 +440,38 @@ export default function CortexVisualizerPage() {
     setAgentCrew(agentsClient.snapshot);
     setAgentEvents([...agentsClient.events]);
   }), []);
+
+  // 4D Chrono-DVR timeline tick loop
+  useEffect(() => {
+    if (!chronoActive || !chronoPlaying) return;
+    let raf = 0;
+    let last = performance.now();
+    const tick = (now: number) => {
+      const dt = (now - last) / 1000;
+      last = now;
+      setChronoTime((prev) => (prev + dt) % 8.0);
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [chronoActive, chronoPlaying]);
+
+  // In-flight token packet hover listener
+  useEffect(() => {
+    const onPacketHover = (e: Event) => {
+      const ce = e as CustomEvent<{
+        agentId: string;
+        agentName: string;
+        color: string;
+        title: string;
+        x: number;
+        y: number;
+      } | null>;
+      setHoveredPacket(ce.detail ?? null);
+    };
+    window.addEventListener('cortex-packet-hover', onPacketHover);
+    return () => window.removeEventListener('cortex-packet-hover', onPacketHover);
+  }, []);
 
   // Tier-1 forecast markers: poll the agent snapshot's forecast ledger and
   // draw geolocated signals on the globe ambiently (no camera/layer changes).
@@ -835,7 +878,7 @@ export default function CortexVisualizerPage() {
         </>
       ) : faceMode === 'core' ? (
         <div key="face-core" className="cx-face-transition" style={{ position: 'absolute', inset: 0, zIndex: 4 }}>
-          <CortexCoreScene selectedAgentId={selectedAgentId} onSelectAgent={setSelectedAgentId} />
+          <CortexCoreScene selectedAgentId={selectedAgentId} onSelectAgent={setSelectedAgentId} chronoTime={chronoActive ? chronoTime : null} />
         </div>
       ) : faceMode === 'agents' ? (
         <div key="face-agents" className="cx-face-transition" style={{ position: 'absolute', inset: 0, zIndex: 4 }}>
@@ -1561,6 +1604,24 @@ export default function CortexVisualizerPage() {
         </button>
         <button
           onClick={() => {
+            const next = !chronoActive;
+            setChronoActive(next);
+            cortexSpeak(next ? 'Entering 4D chrono replay mode.' : 'Returning to live feed.');
+          }}
+          title="4D Chrono-DVR Mission Replay Ribbon — time-travel playback and stage jumping"
+          style={{
+            textDecoration: 'none', padding: narrow ? '7px 12px' : '9px 18px', cursor: 'pointer',
+            border: `1px solid ${chronoActive ? '#38bdf8' : 'rgba(148,233,255,0.18)'}`, borderRadius: 2,
+            color: chronoActive ? '#38bdf8' : 'rgba(148,233,255,0.6)', fontSize: narrow ? 9 : 11, fontWeight: 600, letterSpacing: narrow ? '0.18em' : '0.24em',
+            fontFamily: "'IBM Plex Mono', monospace",
+            background: chronoActive ? 'rgba(56,189,248,0.14)' : 'rgba(4,8,14,0.4)', backdropFilter: 'blur(10px)',
+            transition: 'all 0.25s',
+          }}
+        >
+          {chronoActive ? '◉ CHRONO ACTIVE' : '◈ 4D CHRONO'}
+        </button>
+        <button
+          onClick={() => {
             setGoveeSync(v => {
               const next = !v;
               try { localStorage.setItem('cortex_govee_sync', String(next)); } catch {}
@@ -1898,6 +1959,182 @@ export default function CortexVisualizerPage() {
             else if (e.type === 'agent.spawned') msg = `SPAWNED ${(e.spec as any)?.callSign || String(e.agentId)}`;
             return <div key={`${e.at}-${i}`} style={{ opacity: 1 - i * 0.22 }}>{t} {msg}</div>;
           })}
+        </div>
+      )}
+
+      {/* 4D Chrono-DVR Mission Replay Ribbon */}
+      {chronoActive && (
+        <div
+          style={{
+            position: 'absolute',
+            bottom: 84,
+            left: '50%',
+            transform: 'translateX(-50%)',
+            zIndex: 30,
+            width: 'min(780px, calc(100vw - 32px))',
+            background: 'linear-gradient(180deg, rgba(8,16,28,0.92) 0%, rgba(4,8,16,0.96) 100%)',
+            border: '1px solid rgba(56,189,248,0.4)',
+            borderRadius: 6,
+            padding: '10px 16px',
+            backdropFilter: 'blur(16px)',
+            boxShadow: '0 0 32px rgba(56,189,248,0.18), 0 8px 32px rgba(0,0,0,0.6)',
+            fontFamily: "'IBM Plex Mono', monospace",
+          }}
+          className="cx-hud-center-in"
+        >
+          {/* Top header row of DVR */}
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <span style={{ fontSize: 10, letterSpacing: '0.28em', color: '#38bdf8', fontWeight: 700 }}>
+                ◈ 4D CHRONO-DVR · Q-MAP REPLAY
+              </span>
+              <span
+                style={{
+                  fontSize: 8,
+                  letterSpacing: '0.14em',
+                  color: '#38bdf8',
+                  border: '1px solid rgba(56,189,248,0.4)',
+                  padding: '1px 6px',
+                  borderRadius: 2,
+                  background: 'rgba(56,189,248,0.12)',
+                }}
+              >
+                {chronoPlaying ? 'REPLAYING' : 'PAUSED'}
+              </span>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+              <span style={{ fontSize: 11, color: '#f0f9ff', fontWeight: 600, letterSpacing: '0.1em' }}>
+                {chronoTime.toFixed(2)}s <span style={{ color: 'rgba(148,233,255,0.4)' }}>/ 8.00s</span>
+              </span>
+              <button
+                onClick={() => setChronoActive(false)}
+                title="Exit Chrono-DVR"
+                style={{
+                  background: 'none',
+                  border: 'none',
+                  color: 'rgba(148,163,184,0.6)',
+                  cursor: 'pointer',
+                  fontSize: 12,
+                  fontFamily: 'inherit',
+                }}
+              >
+                ✕
+              </button>
+            </div>
+          </div>
+
+          {/* Scrubber slider bar */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 8 }}>
+            <button
+              onClick={() => setChronoPlaying((p) => !p)}
+              style={{
+                background: chronoPlaying ? 'rgba(56,189,248,0.18)' : 'rgba(56,189,248,0.3)',
+                border: '1px solid #38bdf8',
+                borderRadius: 3,
+                color: '#38bdf8',
+                fontSize: 9,
+                fontWeight: 700,
+                letterSpacing: '0.14em',
+                padding: '4px 10px',
+                cursor: 'pointer',
+                fontFamily: 'inherit',
+                whiteSpace: 'nowrap',
+              }}
+            >
+              {chronoPlaying ? '⏸ PAUSE' : '▶ PLAY'}
+            </button>
+            <input
+              type="range"
+              min={0}
+              max={8.0}
+              step={0.02}
+              value={chronoTime}
+              onChange={(e) => {
+                setChronoTime(parseFloat(e.target.value));
+              }}
+              style={{
+                flex: 1,
+                accentColor: '#38bdf8',
+                cursor: 'pointer',
+              }}
+            />
+          </div>
+
+          {/* Keyframe Jump Stages */}
+          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+            {[
+              { t: 0.0, label: '0s: SWARM ORBIT' },
+              { t: 2.5, label: '2.5s: GOVTECH LOCK' },
+              { t: 5.0, label: '5.0s: SECURITY AUDIT' },
+              { t: 7.2, label: '7.2s: CONVERGENCE' },
+            ].map((stage) => {
+              const active = Math.abs(chronoTime - stage.t) < 0.6;
+              return (
+                <button
+                  key={stage.t}
+                  onClick={() => {
+                    setChronoTime(stage.t);
+                    setChronoPlaying(false);
+                  }}
+                  style={{
+                    background: active ? 'rgba(56,189,248,0.24)' : 'rgba(15,23,42,0.6)',
+                    border: `1px solid ${active ? '#38bdf8' : 'rgba(148,233,255,0.18)'}`,
+                    borderRadius: 2,
+                    color: active ? '#e0f2fe' : 'rgba(148,233,255,0.6)',
+                    fontSize: 8,
+                    fontWeight: 600,
+                    letterSpacing: '0.14em',
+                    padding: '3px 8px',
+                    cursor: 'pointer',
+                    fontFamily: 'inherit',
+                    transition: 'all 0.15s',
+                  }}
+                >
+                  {stage.label}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* Holographic In-Flight Packet Inspector */}
+      {hoveredPacket && (
+        <div
+          style={{
+            position: 'fixed',
+            left: Math.min(hoveredPacket.x + 16, (typeof window !== 'undefined' ? window.innerWidth : 1200) - 260),
+            top: Math.max(16, hoveredPacket.y - 48),
+            zIndex: 40,
+            pointerEvents: 'none',
+            width: 240,
+            background: 'linear-gradient(145deg, rgba(8,16,28,0.92), rgba(4,8,16,0.95))',
+            border: `1px solid ${hoveredPacket.color}`,
+            borderRadius: 4,
+            padding: '8px 12px',
+            backdropFilter: 'blur(14px)',
+            boxShadow: `0 0 24px ${hoveredPacket.color}44`,
+            fontFamily: "'IBM Plex Mono', monospace",
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
+            <span style={{ fontSize: 8, letterSpacing: '0.22em', color: hoveredPacket.color, fontWeight: 700 }}>
+              ◈ IN-FLIGHT TOKEN PHOTON
+            </span>
+            <span style={{ fontSize: 7, color: '#34d399', letterSpacing: '0.1em' }}>
+              VERIFIED
+            </span>
+          </div>
+          <div style={{ fontSize: 10, color: '#f8fafc', fontWeight: 600, marginBottom: 2 }}>
+            {hoveredPacket.agentName.toUpperCase()} → SOVEREIGN CORE
+          </div>
+          <div style={{ fontSize: 8, color: 'rgba(203,213,225,0.7)', lineHeight: 1.4, marginBottom: 6 }}>
+            {hoveredPacket.title}
+          </div>
+          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 7, color: 'rgba(148,233,255,0.5)', borderTop: '1px solid rgba(148,233,255,0.1)', paddingTop: 4 }}>
+            <span>LATENCY: 0.12ms</span>
+            <span>HASH-CHAIN SIGNED</span>
+          </div>
         </div>
       )}
 
