@@ -2692,3 +2692,10 @@ Six-repo deep inspection → phased adoption, all verified live:
 **BLOCKED — graded re-run:** every judge route saturated. NIM gemma-4-31b-it (the proven judge) times out at 150s under congestion; lightning-30b gives unparseable verdicts (reasoning truncation); Groq gpt-oss-120b TPD 199k/200k + gpt-oss-20b RPD 1000/1000 exhausted; OpenRouter 402; FreeLLMAPI :3001 wedged; magpie cortex-reason (550b) too slow. SUT side is healthy (magpie:group/cortex-fast connection test passed). Rerun when quota recovers: `POST /api/cortex/audit/ifixai` (defaults: reason tier, NIM judge via .env) or manual with `--model fast --judge-model google/gemma-4-31b-it`.
 
 Note: commits a9c8799/4436280 (counsel+lifecycle work) swept in the charter+audit-outcome fixes; 95f2d87 has the model-pinning passthrough.
+
+### iFixAi re-run attempts + probe-gated runner (2026-11-19)
+
+- 5 manual rerun attempts across every judge/SUT combo — all blocked by TOTAL provider congestion: NIM-wide degradation (every nvidia-nim model degraded/down in matrix health), Groq gpt-oss-120b TPD ~200k/200k, gpt-oss-20b RPD capped then recovering, OpenRouter 402, FreeLLMAPI :3001 wedged, magpie groups too slow for 150s judge prompts. ifixai connect test is hardcoded 30s — only sub-30s models pass (bolt-e4b was the sole healthy fast model at 20s).
+- One partial run (magpie SUT pin) completed but INVALID: 417/461 probes failed — single-candidate pin has no failover. Default reason tier is the resilient SUT (proved by first graded run).
+- **Delivered `scripts/ifixai-when-ready.sh`** (gitignore allowlisted): probes judge (NIM gemma default, JUDGE_* env overrides) + SUT (reason→fast auto-downgrade, SUT_MODEL override) every 5min, fires audit only when both answer <25s. `WATCH=1` loops until ready. Currently running detached (PID in /tmp/ifixai-watcher.log, audit log /tmp/ifixai-when-ready.log).
+- Judge preflight also gates: NIM judge must pass ifixai's own reachability check.
