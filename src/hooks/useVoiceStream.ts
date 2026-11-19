@@ -23,6 +23,7 @@ import { sentenceToNexusProsodySegment } from '../utils/nexus-tts-prosody';
 import { reportTtsRum } from '../utils/tts-rum-beacon';
 import { stepVuEnvelope } from '../utils/audio-vu-envelope';
 import { voiceLatencyMark, voiceLatencyMeasure } from '../utils/voice-latency-debug';
+import { createPcmFeeder, getEouEngine } from '../lib/voice/semantic-eou';
 import type {
   VoiceEngineState,
   VoiceEngineStatus,
@@ -213,6 +214,7 @@ export function useVoiceStream(options: UseVoiceStreamOptions = {}) {
   const vadPauseFiredRef = useRef(false);
   const vadTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const vadAudioCtxRef = useRef<AudioContext | null>(null);
+  const vadFeederStopRef = useRef<(() => void) | null>(null);
   const synthRef = useRef<SpeechSynthesis | null>(null);
   const currentUtteranceRef = useRef<SpeechSynthesisUtterance | null>(null);
   const isListeningRef = useRef(false);
@@ -464,6 +466,8 @@ export function useVoiceStream(options: UseVoiceStreamOptions = {}) {
 
   const stopEnergyVAD = useCallback(() => {
     if (vadTimerRef.current) { clearInterval(vadTimerRef.current); vadTimerRef.current = null; }
+    try { vadFeederStopRef.current?.(); } catch {}
+    vadFeederStopRef.current = null;
     try { vadAudioCtxRef.current?.close(); } catch {}
     vadAudioCtxRef.current = null;
   }, []);
@@ -471,6 +475,11 @@ export function useVoiceStream(options: UseVoiceStreamOptions = {}) {
   const startEnergyVAD = useCallback((stream: MediaStream) => {
     if (!onSpeechPause || vadTimerRef.current) return;
     try {
+      // Semantic EOU: feed 16kHz PCM into the smart-turn ring buffer so the
+      // silence path can ask "is the speaker actually done?" instead of
+      // committing on a fixed timer. Best-effort — null engine → legacy path.
+      const eouFeederStop = createPcmFeeder(stream);
+      vadFeederStopRef.current = eouFeederStop;
       const Ctx = window.AudioContext || (window as any).webkitAudioContext;
       const ctx = new Ctx();
       vadAudioCtxRef.current = ctx;
@@ -482,6 +491,8 @@ export function useVoiceStream(options: UseVoiceStreamOptions = {}) {
       const floatBuf = new Float32Array(analyser.fftSize);
       let silenceMs = 0;
       let ambientFloor = 0.008;
+      let eouScoring = false;
+      let eouExtended = false;
       vadTimerRef.current = setInterval(() => {
         analyser.getFloatTimeDomainData(floatBuf);
         let sum = 0;
@@ -497,18 +508,42 @@ export function useVoiceStream(options: UseVoiceStreamOptions = {}) {
         }
         const speechThreshold = Math.max(0.012, ambientFloor * 2.0);
 
-        // Speech energy detected: reset silence counter
+        // Speech energy detected: reset silence counter + EOU state
         if (rms > speechThreshold) {
           silenceMs = 0;
+          eouExtended = false;
           vadPauseFiredRef.current = false;
           return;
         }
 
         silenceMs += 50;
-        // Early commit ~600ms of silence when interim text exists
-        if (silenceMs >= 600 && !vadPauseFiredRef.current && !isSpeakingRef.current) {
-          const t = latestInterimRef.current;
-          if (t && t.length >= 3) {
+        const t = latestInterimRef.current;
+        const hasText = t && t.length >= 3;
+        // Semantic gate at ~600ms silence: ask smart-turn whether the turn is
+        // actually complete. If it says "still speaking" (thinking pause),
+        // extend the window once up to ~2s before falling back to commit.
+        if (silenceMs >= 600 && !vadPauseFiredRef.current && !isSpeakingRef.current && hasText) {
+          if (!eouScoring && !eouExtended) {
+            eouScoring = true;
+            void getEouEngine().then(async (eng) => {
+              eouScoring = false;
+              const res = eng ? await eng.score() : null;
+              if (res?.commit === false) {
+                // Model says turn is NOT complete — extend once.
+                eouExtended = true;
+                silenceMs = 400; // keep listening ~1s more before fallback
+                return;
+              }
+              if (!vadPauseFiredRef.current && !isSpeakingRef.current) {
+                vadPauseFiredRef.current = true;
+                onSpeechPause(t);
+              }
+            });
+            return; // wait for async verdict this tick
+          }
+          // Fallback: engine unavailable/extended window expired → commit.
+          const deadline = eouExtended ? 2000 : 600;
+          if (silenceMs >= deadline) {
             vadPauseFiredRef.current = true;
             onSpeechPause(t);
           }
