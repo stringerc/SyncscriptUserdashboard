@@ -56,9 +56,21 @@ export const SEED_MATRIX: Record<RouteTier, ModelCandidate[]> = {
 
 const key = (c: ModelCandidate) => `${c.provider}:${c.model}`;
 
+/** Models that answer HTTP 200 but cannot do chat completion — safety
+ *  guards, translation/rerank/embedding utilities, media models. Catalog
+ *  discovery promotes anything that answers a probe, so these leak into
+ *  lanes and then serve garbage (a translate model once "answered" a
+ *  synthesis call by echoing the prompt). Filtered at ordered(), the
+ *  single routing chokepoint — pins cannot override this either. */
+const NON_CHAT_RE = /guard|safety|reward|translate|rerank|embed|moderation|whisper|tts|speech|image|video|ocr|caption|detect|segment|sentiment|classifier|nsfw|content.?filter/i;
+export function isChatModel(modelId: string): boolean {
+  return !NON_CHAT_RE.test(modelId);
+}
+
 /** Heuristic tier fit for catalog-discovered models. */
 export function inferTierFit(modelId: string): RouteTier[] {
   const m = modelId.toLowerCase();
+  if (NON_CHAT_RE.test(m)) return [];
   const fast = /flash|lite|mini|nano|bolt|20b|30b|7b|8b|small/.test(m);
   const deep = /ultra|253b|1t|deepseek-v4(?!\.1-flash)|reasoning|think/.test(m) && !/embed|guard|safety|reward/.test(m);
   if (deep) return ['reason', 'deep'];
@@ -161,7 +173,7 @@ export class ModelMatrix {
       // Promotion: a catalog model that just answered a real probe earns a
       // lane seat. Until then it was probation-only and could not route.
       const c = { provider, model };
-      if (h.source === 'catalog' && !this.inLane(c)) {
+      if (h.source === 'catalog' && isChatModel(model) && !this.inLane(c)) {
         this.lanes[this.laneFor(c)].push(c);
       }
     } else {
@@ -195,10 +207,11 @@ export class ModelMatrix {
       // Pins are an operator override but still obey the honesty gate: the
       // model must be lane-seated (seed/promoted) or probe-verified healthy.
       const proven = this.inLane(c) || h?.status === 'healthy';
-      return !excluded.has(provider) && proven && this.isUsable(h, now) ? [c] : [];
+      return !excluded.has(provider) && isChatModel(model) && proven && this.isUsable(h, now) ? [c] : [];
     }
     const usable = this.lanes[tier].filter((c) => {
       if (excluded.has(c.provider)) return false;
+      if (!isChatModel(c.model)) return false;
       return this.isUsable(this.healthOf(c.provider, c.model), now);
     });
     const score = (c: ModelCandidate) => {

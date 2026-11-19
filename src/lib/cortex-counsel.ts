@@ -191,7 +191,9 @@ function validatePosition(p: Partial<CounselPosition>): string | null {
     return 'keyEvidence required — uncited positions are rejected (Evidence or Silence)';
   }
   if (typeof p.reasoning !== 'string' || !p.reasoning.trim()) return 'reasoning required';
-  if (p.reasoning.length > MAX_REASONING_CHARS) return `reasoning exceeds ${MAX_REASONING_CHARS} chars`;
+  // Length is enforced by truncation in filePosition, not rejection —
+  // models routinely overshoot the 400-char guidance and the position
+  // is still worth filing.
   return null;
 }
 

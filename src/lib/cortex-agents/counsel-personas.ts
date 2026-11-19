@@ -74,11 +74,37 @@ export async function hindsightRecall(query: string, maxChars = 1200): Promise<s
 
 // ── Persona generation (STRATEGIST: counsel_personas) ───────────────────────
 
+/** Brace-matching JSON extractor — immune to leading prose, trailing
+ *  commentary, and multiple objects (the old greedy regex grabbed first{
+ *  to last}, which broke on any trailing '}' in prose). Returns null on
+ *  truncation rather than throwing. */
+function extractBalanced(text: string, open: '{' | '[', close: '}' | ']'): string | null {
+  const start = text.indexOf(open);
+  if (start < 0) return null;
+  let depth = 0, inStr = false, esc = false;
+  for (let i = start; i < text.length; i++) {
+    const ch = text[i];
+    if (inStr) {
+      if (esc) esc = false;
+      else if (ch === '\\') esc = true;
+      else if (ch === '"') inStr = false;
+      continue;
+    }
+    if (ch === '"') inStr = true;
+    else if (ch === open) depth++;
+    else if (ch === close) {
+      depth--;
+      if (depth === 0) return text.slice(start, i + 1);
+    }
+  }
+  return null; // truncated mid-object
+}
+
 function extractJsonArray(text: string): any[] | null {
-  const m = text.match(/\[[\s\S]*\]/);
-  if (!m) return null;
+  const raw = extractBalanced(text, '[', ']');
+  if (!raw) return null;
   try {
-    const arr = JSON.parse(m[0]);
+    const arr = JSON.parse(raw);
     return Array.isArray(arr) ? arr : null;
   } catch { return null; }
 }
@@ -125,7 +151,7 @@ export async function runCounselPersonas(ctx: AgentContext, runtime: AgentRuntim
 
   const text = await ctx.llm({
     tier: 'reason',
-    maxTokens: 1200,
+    maxTokens: 1600,
     messages: [
       { role: 'system', content: PERSONA_GEN_SYSTEM },
       { role: 'user', content: personaGenPrompt(grounded, count) },
@@ -139,15 +165,15 @@ export async function runCounselPersonas(ctx: AgentContext, runtime: AgentRuntim
   const attached = attachPersonas(sessionId, raw);
   if (!attached.ok || !attached.session) return { error: attached.error || 'attach failed' };
 
-  // Dispatch one position task per persona — SCOUT hosts ephemeral
-  // personas (recon/investigation is the natural console for synthetic
-  // advisors; standing agent budgets govern the spend).
+  // Dispatch one position task per persona — STRATEGIST hosts ephemeral
+  // personas (it generated them; scout's small daily budget must not be
+  // able to stall a deliberation mid-session).
   const round = attached.session.status === 'rebuttal' ? 2 : 1;
   let dispatched = 0;
   for (const p of attached.session.personas || []) {
     const already = attached.session.positions.some((x) => x.member === p.id && x.round === round);
     if (already) continue;
-    const sub = runtime.submitTask('scout' as AgentId, 'counsel_persona_position',
+    const sub = runtime.submitTask('strategist' as AgentId, 'counsel_persona_position',
       `Persona ${p.callSign} on ${sessionId}: ${s.question.slice(0, 70)}`,
       { sessionId, personaId: p.id });
     if (sub.ok) dispatched++;
@@ -178,9 +204,9 @@ function anonymizedRound1(s: CounselSession): string {
 }
 
 function extractJson(text: string): any | null {
-  const m = text.match(/\{[\s\S]*\}/);
-  if (!m) return null;
-  try { return JSON.parse(m[0]); } catch { return null; }
+  const raw = extractBalanced(text, '{', '}');
+  if (!raw) return null;
+  try { return JSON.parse(raw); } catch { return null; }
 }
 
 /** SCOUT worker kind 'counsel_persona_position': one ephemeral persona
@@ -241,7 +267,7 @@ export async function runPersonaPosition(ctx: AgentContext) {
   ctx.progress(0.5);
   const text = await ctx.llm({
     tier: 'reason',
-    maxTokens: 800,
+    maxTokens: 1400,
     messages: [
       { role: 'system', content: `You are ${persona.callSign}, an ephemeral advisor persona on a structured decision poll. Stay in persona. JSON only, evidence-cited.` },
       { role: 'user', content: prompt },

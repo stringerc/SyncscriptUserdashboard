@@ -17,9 +17,29 @@ import { getCounselSession, filePosition, type CounselSession } from '../cortex-
 const MAX_POSITIONS_PER_TASK = 1;
 
 function extractJson(text: string): any | null {
-  const m = text.match(/\{[\s\S]*\}/);
-  if (!m) return null;
-  try { return JSON.parse(m[0]); } catch { return null; }
+  // Brace-match the first complete object — greedy regex breaks on
+  // trailing prose and truncation.
+  const start = text.indexOf('{');
+  if (start < 0) return null;
+  let depth = 0, inStr = false, esc = false;
+  for (let i = start; i < text.length; i++) {
+    const ch = text[i];
+    if (inStr) {
+      if (esc) esc = false;
+      else if (ch === '\\') esc = true;
+      else if (ch === '"') inStr = false;
+      continue;
+    }
+    if (ch === '"') inStr = true;
+    else if (ch === '{') depth++;
+    else if (ch === '}') {
+      depth--;
+      if (depth === 0) {
+        try { return JSON.parse(text.slice(start, i + 1)); } catch { return null; }
+      }
+    }
+  }
+  return null;
 }
 
 function anonymizedRound1(s: CounselSession): string {
@@ -73,7 +93,7 @@ export async function runCounselPosition(ctx: AgentContext, memberId: string, ro
   ctx.progress(0.5);
   const text = await ctx.llm({
     tier: 'reason',
-    maxTokens: 800,
+    maxTokens: 1400,
     messages: [
       { role: 'system', content: 'You are a specialist council member filing a structured position. JSON only, evidence-cited.' },
       { role: 'user', content: prompt },

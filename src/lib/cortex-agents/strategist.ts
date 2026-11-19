@@ -33,7 +33,7 @@ import {
   recordSynthesis, pollBoard, COUNSEL_CONSOLES, memberLabel,
 } from '../cortex-counsel';
 import { getWorldState, formatWorldStateHeader } from '../cortex-world-state';
-import { runCounselPersonas } from './counsel-personas';
+import { runCounselPersonas, runPersonaPosition } from './counsel-personas';
 
 const STATE_DIR = process.env.CORTEX_AGENTS_STATE_DIR || path.join(process.cwd(), '.cortex-runtime');
 const STRATEGY_DIR = '05 - Strategy';
@@ -496,14 +496,28 @@ async function counselSynthesizeWorker(ctx: AgentContext) {
     `Rules: recommendation 'go' only if no member filed 'no-go' without a rebutted revision; 'conditional' if conditions must be met; 'no-go' if objections stand. Cite member stances, not your own opinion.`,
   ].filter(Boolean).join('\n');
 
-  const text = await ctx.llm({
-    tier: 'reason',
-    maxTokens: 1200,
-    messages: [
-      { role: 'system', content: 'You synthesize counsel polls into verdict-ready briefings. JSON only.' },
-      { role: 'user', content: prompt },
-    ],
-  });
+  // Reason lane first; on provider stall/timeout degrade to fast rather
+  // than losing the synthesis entirely (observed: 3 consecutive 90s
+  // bridge timeouts while reason candidates burned 55s each).
+  let text = '';
+  let llmErr = '';
+  for (const tier of ['reason', 'fast'] as const) {
+    try {
+      text = await ctx.llm({
+        tier,
+        maxTokens: 1200,
+        messages: [
+          { role: 'system', content: 'You synthesize counsel polls into verdict-ready briefings. JSON only.' },
+          { role: 'user', content: prompt },
+        ],
+      });
+      llmErr = '';
+      break;
+    } catch (e: any) {
+      llmErr = String(e?.message || e);
+    }
+  }
+  if (llmErr) return { error: `synthesis LLM failed on all tiers: ${llmErr}` };
 
   const m = text.match(/\{[\s\S]*\}/);
   if (!m) return { error: 'LLM returned no JSON synthesis', raw: text.slice(0, 300) };
@@ -703,11 +717,12 @@ export function makeStrategistWorker(runtime: AgentRuntime): WorkerHandler {
       case 'counsel_convene': return counselConveneWorker(ctx);
       case 'counsel_synthesize': return counselSynthesizeWorker(ctx);
       case 'counsel_personas': return runCounselPersonas(ctx, runtime);
+      case 'counsel_persona_position': return runPersonaPosition(ctx);
       case 'goal_plan': return goalPlanWorker(ctx);
       case 'goal_review': return goalReviewWorker(ctx);
       case 'tune_cycle': return tuneCycleWorker(ctx);
       default:
-        return { error: `unknown strategist kind '${ctx.task.kind}'`, kinds: ['cluster', 'plan', 'manifest', 'regress', 'propose_skill', 'propose_agent', 'counsel_convene', 'counsel_synthesize', 'counsel_personas', 'goal_plan', 'goal_review', 'tune_cycle'] };
+        return { error: `unknown strategist kind '${ctx.task.kind}'`, kinds: ['cluster', 'plan', 'manifest', 'regress', 'propose_skill', 'propose_agent', 'counsel_convene', 'counsel_synthesize', 'counsel_personas', 'counsel_persona_position', 'goal_plan', 'goal_review', 'tune_cycle'] };
     }
   };
 }
