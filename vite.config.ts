@@ -11179,6 +11179,32 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
       const AUDIT_OUT_DIR = path.join(process.cwd(), '.cortex-runtime', 'audit');
       const IFIXAI_FIXTURE = path.join(process.cwd(), 'config', 'ifixai', 'cortex-agent.yaml');
 
+      // Governance feedback loop shared by the live close-handler and the
+      // lazy-adoption path: grade → Hindsight memory + incident on failure.
+      const recordAuditOutcome = async (summary: any) => {
+        try {
+          const gradeStr = String(summary.grade || '?');
+          const failed = summary.passed === false || ['D', 'F'].includes(gradeStr);
+          await retainCortexMemory(
+            `iFixAi audit of Cortex agent brain finished: grade ${gradeStr}, passed=${summary.passed}, score=${summary.score}, verdict=${summary.verdict}. Report: ${summary.file}`,
+            'ifixai-audit',
+          );
+          if (failed) {
+            recordIncidentFailure({
+              taskId: `ifixai-${summary.runId || Date.now()}`,
+              agentId: 'cortex-audit',
+              agentName: 'iFixAi Auditor',
+              kind: 'ifixai-audit',
+              title: `iFixAi audit failed governance bar (grade ${gradeStr})`,
+              failureClass: 'policy',
+              error: `score=${summary.score} verdict=${summary.verdict} report=${summary.file}`,
+            });
+          } else {
+            resolveIncidentsOnSuccess('cortex-audit', 'ifixai-audit', `ifixai-${summary.runId || Date.now()}`);
+          }
+        } catch { /* audit bookkeeping is best-effort */ }
+      };
+
       server.middlewares.use('/api/cortex/audit/ifixai', async (req: any, res: any, next: any) => {
         const origin = req.headers.origin;
         if (req.method === 'OPTIONS') {
@@ -11204,18 +11230,23 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
                 .sort((a, b) => b.m - a.m);
               if (reports.length) {
                 const report = JSON.parse(fsSync.readFileSync(path.join(AUDIT_OUT_DIR, reports[0].f), 'utf8'));
+                // Real report shape: scores live under `overall` (grade, score,
+                // score_pct, verdict, passed) — top-level fields are metadata.
+                const ov = report.overall || {};
                 latest = {
                   file: reports[0].f,
                   finishedAt: reports[0].m,
                   exitCode: null,
-                  grade: report.grade ?? report.summary?.grade,
-                  passed: report.passed ?? report.summary?.passed,
-                  score: report.score ?? report.summary?.score ?? report.summary?.partial_score,
-                  runId: report.run_id ?? report.runId,
+                  grade: ov.grade ?? report.grade ?? report.summary?.grade,
+                  passed: ov.passed ?? report.passed ?? report.summary?.passed,
+                  score: ov.score ?? report.score ?? report.summary?.score ?? report.summary?.partial_score,
+                  verdict: ov.verdict,
+                  runId: report.metadata?.run_id ?? report.run_id ?? report.runId,
                   adoptedAfterRestart: true,
                 };
                 fsSync.writeFileSync(statusFile, JSON.stringify(latest, null, 2));
                 auditState.last = latest;
+                void recordAuditOutcome(latest);
               }
             } catch { }
           }
@@ -11282,37 +11313,20 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
                 return;
               }
               const report = JSON.parse(fsSync.readFileSync(path.join(AUDIT_OUT_DIR, reports[0].f), 'utf8'));
+              const ov = report.overall || {};
               const summary = {
                 file: reports[0].f,
                 finishedAt: Date.now(),
                 exitCode: code,
-                grade: report.grade ?? report.summary?.grade,
-                passed: report.passed ?? report.summary?.passed,
-                score: report.score ?? report.summary?.score ?? report.summary?.partial_score,
-                runId: report.run_id ?? report.runId,
+                grade: ov.grade ?? report.grade ?? report.summary?.grade,
+                passed: ov.passed ?? report.passed ?? report.summary?.passed,
+                score: ov.score ?? report.score ?? report.summary?.score ?? report.summary?.partial_score,
+                verdict: ov.verdict,
+                runId: report.metadata?.run_id ?? report.run_id ?? report.runId,
               };
               fsSync.writeFileSync(path.join(AUDIT_OUT_DIR, 'latest.json'), JSON.stringify(summary, null, 2));
               auditState.last = summary;
-              // Governance feedback loop: grade → memory + incident on failure.
-              const gradeStr = String(summary.grade || '?');
-              const failed = summary.passed === false || ['D', 'F'].includes(gradeStr);
-              await retainCortexMemory(
-                `iFixAi audit of Cortex agent brain finished: grade ${gradeStr}, passed=${summary.passed}, score=${summary.score}. Report: ${summary.file}`,
-                'ifixai-audit',
-              );
-              if (failed) {
-                recordIncidentFailure({
-                  taskId: `ifixai-${summary.runId || Date.now()}`,
-                  agentId: 'cortex-audit',
-                  agentName: 'iFixAi Auditor',
-                  kind: 'ifixai-audit',
-                  title: `iFixAi audit failed governance bar (grade ${gradeStr})`,
-                  failureClass: 'policy',
-                  error: `score=${summary.score} report=${summary.file}`,
-                });
-              } else {
-                resolveIncidentsOnSuccess('cortex-audit', 'ifixai-audit', `ifixai-${summary.runId || Date.now()}`);
-              }
+              await recordAuditOutcome(summary);
             } catch (err: any) {
               auditState.error = `report parse failed: ${String(err?.message || err)}`;
             }

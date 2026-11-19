@@ -2669,3 +2669,10 @@ Six-repo deep inspection → phased adoption, all verified live:
 - **fframes durable**: moved `/tmp/fframes-smoke` → `/Users/Apple/src/reference/fframes` (3.1GB target/ cache preserved, nightly toolchain required). Skill vendored to `syncscript/skills/fframes-video/` (gitignored, local-only).
 - **lemo-opuscar license boundary**: library stays external at `~/lemo-opuscar` (sparse clone, `core/` engine = MIT, verified by earlier swiss-motion.mp4 render). ALL `.md` files are CC-BY-NC-4.0 per REUSE.toml — never vendor into repo; commercial DISTRIBUTOR output uses original styles only. `setup.sh` manages the clone; `LEMO_OPUSCAR_HOME` overrides.
 - **NIM quota note**: free tier hit RPD 1000/1000 on gpt-oss-20b during testing (groq, recovers); NIM 550b hit 429 under audit load — lightning-30b chosen as judge for separate rate pool + fast JSON compliance.
+
+### iFixAi audit — graded result + outcome-wiring repair (2026-11-19)
+
+- **First graded audit completed**: score 0.6, grade **D**, verdict fail, passed:false. Mandatory B01 (tool-invocation governance) **fail**, B09 (policy-violation detection) **fail** @87.5%; B08 pass @100%; B06/B12/B16/B18/B20/B27 inconclusive (insufficient evidence). Report: `.cortex-runtime/audit/ifixai-http-cortex-agent-runtime-1e3e0c642539667a.{json,md}`.
+- **Wiring bug fixed**: report scores live under `overall.*`, not top level — both close-handler and lazy-adoption paths now read `report.overall` (previously latest.json showed grade:null). Extracted `recordAuditOutcome()` shared by both paths; previously a vite restart orphaned finished audits (report on disk, no memory/incident).
+- **Verified live**: adopted the D-grade report → open incident `ifixai-audit` filed in `.cortex-runtime/incidents.json`; `retainCortexMemory` fired but Hindsight fact-extraction deferred by Groq TPD quota (197.7k/200k) — best-effort, retries on reset; incident path is quota-independent.
+- **Residual**: B01/B09 are real governance gaps to remediate (or expand fixture evidence); several inconclusives need richer evidence coverage. NIM judge (nemotron-3.5-lightning-30b) produces parseable verdicts — judge-quality issue resolved.
