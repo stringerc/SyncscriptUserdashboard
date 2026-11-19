@@ -7,6 +7,7 @@ import {
   readEvents,
   recoverNextSeq,
   getEventLogStats,
+  verifyEventLog,
   _resetEventLogForTest,
 } from '../cortex-agents/eventlog';
 import type { AgentEvent } from '../cortex-agents/types';
@@ -176,5 +177,50 @@ describe('Cortex EventLog (Persistent Event Sourcing)', () => {
 
     const eventsAfter = readEvents();
     expect(eventsAfter.length).toBe(2); // no new events captured
+  });
+
+  it('hash-chains appended records and verifies clean', () => {
+    appendEvent({ type: 'agent.status', agentId: 'hermes', status: 'working', at: Date.now() } as AgentEvent);
+    appendEvent({ type: 'agent.status', agentId: 'curator', status: 'idle', at: Date.now() } as AgentEvent);
+    const v = verifyEventLog();
+    expect(v.ok).toBe(true);
+    expect(v.chained).toBe(2);
+    expect(v.legacy).toBe(0);
+    expect(v.writers).toBe(1);
+    const [r1, r2] = readEvents();
+    expect(r1.prevHash).toBe('GENESIS');
+    expect(r2.prevHash).toBe(r1.hash);
+  });
+
+  it('detects tampered record content as hash mismatch', () => {
+    appendEvent({ type: 'agent.status', agentId: 'hermes', status: 'working', at: Date.now() } as AgentEvent);
+    appendEvent({ type: 'agent.status', agentId: 'curator', status: 'idle', at: Date.now() } as AgentEvent);
+    // Tamper: rewrite the second record's status in the file.
+    const logDir = path.join(testStateDir, 'eventlog');
+    const file = fs.readdirSync(logDir).find((f) => f.endsWith('.jsonl'))!;
+    const fp = path.join(logDir, file);
+    const lines = fs.readFileSync(fp, 'utf8').split('\n').filter(Boolean);
+    const rec = JSON.parse(lines[1]);
+    rec.status = 'retired';
+    lines[1] = JSON.stringify(rec);
+    fs.writeFileSync(fp, lines.join('\n') + '\n');
+    const v = verifyEventLog();
+    expect(v.ok).toBe(false);
+    expect(v.firstBreak?.reason).toContain('hash mismatch');
+  });
+
+  it('tolerates legacy records mixed into the log', () => {
+    appendEvent({ type: 'agent.status', agentId: 'hermes', status: 'working', at: Date.now() } as AgentEvent);
+    // Inject a legacy (unhashed) line mid-log, then more chained records.
+    const logDir = path.join(testStateDir, 'eventlog');
+    const file = fs.readdirSync(logDir).find((f) => f.endsWith('.jsonl'))!;
+    const fp = path.join(logDir, file);
+    const legacy = JSON.stringify({ seq: 999, at: Date.now(), type: 'agent.status', agentId: 'legacy' });
+    fs.appendFileSync(fp, legacy + '\n');
+    appendEvent({ type: 'agent.status', agentId: 'curator', status: 'idle', at: Date.now() } as AgentEvent);
+    const v = verifyEventLog();
+    expect(v.ok).toBe(true);
+    expect(v.legacy).toBe(1);
+    expect(v.chained).toBe(2);
   });
 });

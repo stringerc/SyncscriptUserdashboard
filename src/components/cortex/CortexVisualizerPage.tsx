@@ -2113,7 +2113,7 @@ export default function CortexVisualizerPage() {
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
               <span style={{ fontSize: 11, color: '#f0f9ff', fontWeight: 600, letterSpacing: '0.1em' }}>
-                {chronoTime.toFixed(2)}s <span style={{ color: 'rgba(148,233,255,0.4)' }}>/ 8.00s</span>
+                {chronoTime.toFixed(2)}s <span style={{ color: 'rgba(148,233,255,0.4)' }}>/ {replayDuration.toFixed(1)}s</span>
               </span>
               <button
                 onClick={() => setChronoActive(false)}
@@ -2155,8 +2155,8 @@ export default function CortexVisualizerPage() {
             <input
               type="range"
               min={0}
-              max={8.0}
-              step={0.02}
+              max={replayDuration}
+              step={Math.max(0.01, replayDuration / 500)}
               value={chronoTime}
               onChange={(e) => {
                 setChronoTime(parseFloat(e.target.value));
@@ -2169,14 +2169,22 @@ export default function CortexVisualizerPage() {
             />
           </div>
 
-          {/* Keyframe Jump Stages */}
+          {/* Keyframe Jump Stages — real event track waypoints when a
+              persisted replay exists, canned reel stages otherwise. */}
           <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-            {[
-              { t: 0.0, label: '0s: SWARM ORBIT' },
-              { t: 2.5, label: '2.5s: GOVTECH LOCK' },
-              { t: 5.0, label: '5.0s: SECURITY AUDIT' },
-              { t: 7.2, label: '7.2s: CONVERGENCE' },
-            ].map((stage) => {
+            {(replayTrack && replayTrack.length > 0
+              ? Array.from({ length: Math.min(6, replayTrack.length) }, (_, k) => {
+                  const idx = Math.floor((k * (replayTrack.length - 1)) / Math.max(1, Math.min(6, replayTrack.length) - 1));
+                  const ev = replayTrack[idx];
+                  return { t: idx * 1.4, label: `SEQ ${ev.seq}: ${ev.type}${ev.agentId ? ' · ' + ev.agentId : ''}` };
+                })
+              : [
+                  { t: 0.0, label: '0s: SWARM ORBIT' },
+                  { t: 2.5, label: '2.5s: GOVTECH LOCK' },
+                  { t: 5.0, label: '5.0s: SECURITY AUDIT' },
+                  { t: 7.2, label: '7.2s: CONVERGENCE' },
+                ]
+            ).map((stage) => {
               const active = Math.abs(chronoTime - stage.t) < 0.6;
               return (
                 <button

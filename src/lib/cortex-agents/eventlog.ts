@@ -11,6 +11,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
+import crypto from 'node:crypto';
 import type { AgentEvent } from './types';
 import type { AgentRuntime } from './runtime';
 
@@ -23,6 +24,15 @@ export interface PersistedEvent {
   seq: number;
   at: number;
   type: string;
+  /** Hash-chain fields: prevHash links to the prior record's hash ('GENESIS'
+   *  for the first chained record), hash = sha256(prevHash | canonical). */
+  prevHash?: string;
+  hash?: string;
+  /** Identifies the writer process/boot that produced this record. Each boot
+   *  forms its own chain epoch anchored at the recovered head, so concurrent
+   *  appenders interleave safely and the verifier checks each writer's
+   *  sub-chain independently. */
+  writer?: string;
   [key: string]: unknown;
 }
 
@@ -42,6 +52,66 @@ export interface ReadEventsOptions {
 let nextSeq = 1;
 let initialized = false;
 let activeUnsub: (() => void) | null = null;
+let lastHash = 'GENESIS';
+// Unique per process boot: pid + boot timestamp + random suffix.
+const WRITER_ID = `${process.pid.toString(36)}-${Date.now().toString(36)}-${crypto.randomBytes(3).toString('hex')}`;
+
+const sha256 = (s: string) => crypto.createHash('sha256').update(s, 'utf8').digest('hex');
+
+/** Canonical preimage for hashing: seq + event payload. Chain-epoch metadata
+ *  (prevHash/hash/writer) is excluded — writer identifies which epoch a record
+ *  belongs to but is not event content, and excluding it keeps records written
+ *  by every deployed scheme verifiable under one preimage. */
+function eventPreimage(rec: Record<string, unknown>): string {
+  const { prevHash: _p, hash: _h, writer: _w, ...rest } = rec;
+  return JSON.stringify(rest);
+}
+
+function hashRecord(prevHash: string, rec: Record<string, unknown>): string {
+  return sha256(`${prevHash}|${eventPreimage(rec)}`);
+}
+
+/** Preimage variant used by the intermediate deploy that hash-covered the
+ *  writer field. Retained so those records remain verifiable; new records
+ *  never use it. */
+function eventPreimageWithWriter(rec: Record<string, unknown>): string {
+  const { prevHash: _p, hash: _h, ...rest } = rec;
+  return JSON.stringify(rest);
+}
+
+function hashRecordAlt(prevHash: string, rec: Record<string, unknown>): string {
+  return sha256(`${prevHash}|${eventPreimageWithWriter(rec)}`);
+}
+
+/** Recover the chain head: the hash of the highest-seq record that carries
+ *  one; if the highest-seq record is unhashed (legacy/interleaved), anchor to
+ *  sha256 of its raw line — matching verifyEventLog's per-line anchor. */
+function recoverLastHash(): string {
+  const logDir = getLogDir();
+  let bestSeq = -1;
+  let bestHash: string | null = null;
+  let bestRaw: string | null = null;
+  try {
+    if (!fs.existsSync(logDir)) return 'GENESIS';
+    const files = fs.readdirSync(logDir)
+      .filter((f) => f.startsWith('events-') && f.endsWith('.jsonl'));
+    for (const file of files) {
+      for (const line of fs.readFileSync(path.join(logDir, file), 'utf8').split('\n')) {
+        if (!line.trim()) continue;
+        let seq = -1;
+        let hash: string | null = null;
+        try {
+          const parsed = JSON.parse(line);
+          if (typeof parsed.seq === 'number') seq = parsed.seq;
+          if (typeof parsed.hash === 'string') hash = parsed.hash;
+        } catch { continue; }
+        if (seq > bestSeq) { bestSeq = seq; bestHash = hash; bestRaw = line; }
+      }
+    }
+  } catch { /* fall through */ }
+  if (bestSeq < 0) return 'GENESIS';
+  return bestHash ?? sha256(bestRaw!);
+}
 
 export function getDayFileName(d: Date = new Date()): string {
   const yyyy = d.getUTCFullYear();
@@ -51,36 +121,30 @@ export function getDayFileName(d: Date = new Date()): string {
 }
 
 export function recoverNextSeq(): number {
+  // Max seq across every line of every file — order-independent, so interleaved
+  // appends from overlapping writer processes can never reset the counter.
   const logDir = getLogDir();
+  let max = 0;
   try {
     if (!fs.existsSync(logDir)) return 1;
     const files = fs.readdirSync(logDir)
-      .filter((f) => f.startsWith('events-') && f.endsWith('.jsonl'))
-      .sort();
-    if (files.length === 0) return 1;
-
-    for (let i = files.length - 1; i >= 0; i--) {
-      const fullPath = path.join(logDir, files[i]);
-      const content = fs.readFileSync(fullPath, 'utf8').trim();
-      if (!content) continue;
-      const lines = content.split('\n');
-      for (let j = lines.length - 1; j >= 0; j--) {
-        const line = lines[j].trim();
-        if (!line) continue;
+      .filter((f) => f.startsWith('events-') && f.endsWith('.jsonl'));
+    for (const file of files) {
+      const content = fs.readFileSync(path.join(logDir, file), 'utf8');
+      for (const line of content.split('\n')) {
+        if (!line.trim()) continue;
         try {
           const parsed = JSON.parse(line);
-          if (typeof parsed.seq === 'number' && Number.isFinite(parsed.seq)) {
-            return parsed.seq + 1;
+          if (typeof parsed.seq === 'number' && Number.isFinite(parsed.seq) && parsed.seq > max) {
+            max = parsed.seq;
           }
-        } catch {
-          // Skip corrupt line
-        }
+        } catch { /* skip corrupt line */ }
       }
     }
   } catch (err) {
     console.warn('[cortex-eventlog] Seq recovery error:', err);
   }
-  return 1;
+  return max + 1;
 }
 
 export function appendEvent(e: AgentEvent): PersistedEvent | null {
@@ -91,13 +155,19 @@ export function appendEvent(e: AgentEvent): PersistedEvent | null {
     }
     if (!initialized) {
       nextSeq = recoverNextSeq();
+      lastHash = recoverLastHash();
       initialized = true;
     }
     const seq = nextSeq++;
     const record: PersistedEvent = {
       seq,
+      prevHash: lastHash,
+      writer: WRITER_ID,
       ...e,
+      hash: '',
     };
+    record.hash = hashRecord(lastHash, record);
+    lastHash = record.hash;
     const targetFile = path.join(logDir, getDayFileName(new Date(e.at || Date.now())));
     fs.appendFileSync(targetFile, JSON.stringify(record) + '\n', 'utf8');
     return record;
@@ -114,6 +184,7 @@ export function initEventLog(runtime: AgentRuntime): () => void {
       fs.mkdirSync(logDir, { recursive: true });
     }
     nextSeq = recoverNextSeq();
+    lastHash = recoverLastHash();
     initialized = true;
 
     if (activeUnsub) {
@@ -201,6 +272,73 @@ export function readEvents(opts: ReadEventsOptions = {}): PersistedEvent[] {
   return results;
 }
 
+/** Walk the entire log and verify every chained record's content hash.
+ *  Linkage (prevHash) discontinuities are reported as linkBreaks — expected
+ *  across legacy/interleaved history — while a content-hash mismatch is
+ *  tampering and fails the audit. */
+export function verifyEventLog(): {
+  ok: boolean; checked: number; chained: number; legacy: number; linkBreaks: number;
+  altScheme: number; writers: number;
+  firstBreak: { file: string; seq?: number; reason: string } | null;
+} {
+  const result = {
+    ok: true, checked: 0, chained: 0, legacy: 0, linkBreaks: 0, altScheme: 0, writers: 0,
+    firstBreak: null as { file: string; seq?: number; reason: string } | null,
+  };
+  const logDir = getLogDir();
+  try {
+    if (!fs.existsSync(logDir)) return result;
+    const files = fs.readdirSync(logDir)
+      .filter((f) => f.startsWith('events-') && f.endsWith('.jsonl'))
+      .sort();
+    // Each writer boot forms its own chain epoch: expectedPrev is tracked per
+    // writer id so interleaved appends from concurrent processes verify
+    // independently. Unlabeled legacy-era chained records share '_unlabeled'.
+    const expectedPrev = new Map<string, string>();
+    for (const file of files) {
+      const lines = fs.readFileSync(path.join(logDir, file), 'utf8').split('\n');
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        result.checked++;
+        let rec: Record<string, unknown>;
+        try { rec = JSON.parse(line); } catch {
+          result.ok = false; result.firstBreak = { file, reason: 'unparseable line' }; return result;
+        }
+        if (typeof rec.hash !== 'string') {
+          result.legacy++;
+          continue;
+        }
+        result.chained++;
+        const writerKey = typeof rec.writer === 'string' ? rec.writer : '_unlabeled';
+        const expected = expectedPrev.get(writerKey) ?? 'GENESIS';
+        if (rec.prevHash !== expected) {
+          result.linkBreaks++;
+          if (!result.firstBreak) {
+            result.firstBreak = { file, seq: rec.seq as number, reason: `prevHash discontinuity (writer ${writerKey}) — expected ${expected.slice(0, 12)}…, record claims ${String(rec.prevHash).slice(0, 12)}…` };
+          }
+        }
+        if (hashRecord(rec.prevHash as string, rec) !== rec.hash) {
+          // Records written while the writer field was briefly inside the
+          // hash preimage verify under the alternate preimage — a known
+          // migration artifact, not tampering. Anything else is tampering.
+          if (hashRecordAlt(rec.prevHash as string, rec) !== rec.hash) {
+            result.ok = false;
+            result.firstBreak = { file, seq: rec.seq as number, reason: 'hash mismatch — record content tampered' };
+            return result;
+          }
+          result.altScheme++;
+        }
+        expectedPrev.set(writerKey, rec.hash);
+      }
+    }
+    result.writers = expectedPrev.size;
+  } catch (err) {
+    result.ok = false;
+    result.firstBreak = { file: '', reason: String(err) };
+  }
+  return result;
+}
+
 export function getEventLogStats() {
   const logDir = getLogDir();
   const files = fs.existsSync(logDir)
@@ -216,6 +354,7 @@ export function getEventLogStats() {
 
 export function _resetEventLogForTest() {
   nextSeq = 1;
+  lastHash = 'GENESIS';
   initialized = false;
   if (activeUnsub) {
     activeUnsub();

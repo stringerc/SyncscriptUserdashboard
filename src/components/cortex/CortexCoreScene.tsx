@@ -25,6 +25,7 @@ import {
   Noise,
   Vignette,
 } from '@react-three/postprocessing';
+import { Effect, BlendFunction } from 'postprocessing';
 import * as THREE from 'three';
 import {
   cortexSignalBus,
@@ -695,6 +696,12 @@ function Satellites({ live }: { live: React.MutableRefObject<LiveSignal> }) {
   const satMitosisMatRefs = useRef<(THREE.MeshStandardMaterial | null)[]>([]);
   const satLatticeRefs = useRef<(THREE.Mesh | null)[][]>([]);
   const satLatticeMatRefs = useRef<(THREE.MeshBasicMaterial | null)[][]>([]);
+  // Inter-agent token photons — real agent.comm traffic rendered as light
+  // packets flying satellite → satellite (or → core) in world space.
+  const PHOTON_COUNT = 10;
+  const photonRefs = useRef<(THREE.Sprite | null)[]>([]);
+  const photons = useRef<{ from: string; to: string; t0: number; slot: number; color: string }[]>([]);
+  const lastCommScan = useRef(0);
   const tmpW = useMemo(() => new THREE.Vector3(), []);
   const tmpT = useMemo(() => new THREE.Vector3(), []);
   const basisMat = useMemo(() => new THREE.Matrix4(), []);
@@ -742,6 +749,22 @@ function Satellites({ live }: { live: React.MutableRefObject<LiveSignal> }) {
         if (e.type === 'task.transition' && task?.status === 'completed' && task.agentId) {
           const idx = list.findIndex((a) => a.id === task.agentId);
           if (idx >= 0) surgeRef.current[idx] = 1;
+        }
+        // In-flight token photons: agent.comm events become real packets
+        // traveling between the two agents' live orbital positions.
+        const comm = e as { type?: string; at?: number; from?: string; to?: string };
+        const commAt = comm.at ?? 0;
+        if (comm.type === 'agent.comm' && commAt > lastCommScan.current) {
+          lastCommScan.current = Math.max(lastCommScan.current, commAt);
+          if (comm.from && comm.to && comm.to !== 'all' && photons.current.length < 64) {
+            photons.current.push({
+              from: comm.from,
+              to: comm.to,
+              t0: performance.now() / 1000,
+              slot: photons.current.length % PHOTON_COUNT,
+              color: SAT_AGENT_COLORS[comm.from] || '#67e8f9',
+            });
+          }
         }
       }
       rebuildTags();
@@ -1148,6 +1171,39 @@ function Satellites({ live }: { live: React.MutableRefObject<LiveSignal> }) {
         }
       }
     });
+    // ── Inter-agent token photons: agent.comm packets in world space ──
+    const nowS = performance.now() / 1000;
+    photons.current = photons.current.filter((ph) => {
+      const age = nowS - ph.t0;
+      if (age > 1.15) return false;
+      const a = agentWorldPositions[ph.from];
+      const b = ph.to === 'cortex' ? tmpV.set(0, 0, 0) : agentWorldPositions[ph.to];
+      const spr = photonRefs.current[ph.slot];
+      if (!a || !b || !spr) return false;
+      const p = age / 1.15;
+      const e = p < 0.5 ? 4 * p * p * p : 1 - Math.pow(-2 * p + 2, 3) / 2;
+      tmpDir.copy(b).sub(a);
+      const chord = tmpDir.length();
+      if (chord < 0.001) return false;
+      tmpDir.normalize();
+      tmpPerp.crossVectors(tmpDir, UP).normalize();
+      if (tmpPerp.lengthSq() < 0.001) tmpPerp.set(0, 1, 0);
+      const arc = Math.sin(p * Math.PI) * Math.min(0.6, chord * 0.18);
+      tmpCtrl.copy(a).lerp(b, e).addScaledVector(tmpPerp, arc);
+      spr.visible = true;
+      spr.position.copy(tmpCtrl);
+      const m = spr.material as THREE.SpriteMaterial;
+      m.color.set(ph.color);
+      m.opacity = Math.sin(p * Math.PI) * 0.9;
+      spr.scale.setScalar(0.13 + 0.05 * Math.sin(p * Math.PI));
+      return true;
+    });
+    for (let k = 0; k < PHOTON_COUNT; k++) {
+      const inUse = photons.current.some((ph) => ph.slot === k);
+      const spr = photonRefs.current[k];
+      if (spr && !inUse) spr.visible = false;
+    }
+
     // Prune anchors and world vectors for agents that left the visible fleet.
     for (const k of Object.keys(agentScreenAnchors)) {
       if (!seenAnchors.has(k)) {
@@ -1158,6 +1214,7 @@ function Satellites({ live }: { live: React.MutableRefObject<LiveSignal> }) {
   });
 
   return (
+    <>
     <group ref={groupRef}>
       {/* Lighting for the enterprise satellite hulls (standard materials).
           Sprites/basic materials are unlit and unaffected. The cyan point
@@ -1482,6 +1539,26 @@ function Satellites({ live }: { live: React.MutableRefObject<LiveSignal> }) {
         </group>
       ))}
     </group>
+      {/* Inter-agent token photons — world-space sprites outside the rotating
+          group so agentWorldPositions map 1:1 to scene coordinates. */}
+      {Array.from({ length: PHOTON_COUNT }, (_, k) => (
+        <sprite
+          key={`photon${k}`}
+          ref={(el) => { photonRefs.current[k] = el; }}
+          visible={false}
+          renderOrder={8}
+        >
+          <spriteMaterial
+            map={getGlowTexture()}
+            color="#67e8f9"
+            transparent
+            opacity={0}
+            depthWrite={false}
+            blending={THREE.AdditiveBlending}
+          />
+        </sprite>
+      ))}
+    </>
   );
 }
 
@@ -2340,6 +2417,8 @@ function PostFX({ live }: { live: React.MutableRefObject<LiveSignal> }) {
   const smooth = useRef(0);
   const smoothPhi = useRef(0);
   const smoothThink = useRef(0);
+  const lensing = React.useMemo(() => new LensingEffect(), []);
+  const lensCenter = useRef(new THREE.Vector3());
 
   useFrame((state, delta) => {
     // Decay displayed level and smooth IIT-Phi and cognitive load
@@ -2348,6 +2427,15 @@ function PostFX({ live }: { live: React.MutableRefObject<LiveSignal> }) {
     smoothThink.current += ((live.current.think ?? 0) - smoothThink.current) * Math.min(1, delta * 4.0);
     const b = Math.round(smooth.current * 4);
     setBucket((prev) => (prev === b ? prev : b));
+
+    // Track the Sovereign Core's projected screen position so the lens stays
+    // glued to it while the camera orbits or chases agents.
+    lensCenter.current.set(0, 0, 0).project(state.camera);
+    lensing.center.set((lensCenter.current.x + 1) / 2, (lensCenter.current.y + 1) / 2);
+    lensing.aspect = state.size.width / Math.max(1, state.size.height);
+    // Mass proxy: integrated information + cognitive load bend spacetime.
+    lensing.strength = Math.min(0.012, smoothPhi.current * 0.004 + smoothThink.current * 0.003 + smooth.current * 0.002);
+    lensing.updateUniforms();
   });
 
   const lvl = bucket / 4;
@@ -2355,6 +2443,67 @@ function PostFX({ live }: { live: React.MutableRefObject<LiveSignal> }) {
   const phiDisp = smoothPhi.current * 0.0016 + smoothThink.current * 0.0012;
   const vigDarkness = 0.52 + lvl * 0.16 + smoothThink.current * 0.14;
   const vigOffset = Math.max(0.12, 0.28 - phiDisp * 15);
+
+// ── Stylized gravitational lensing ──────────────────────────────────────
+// A custom postprocessing effect that refracts the frame around the projected
+// position of the Sovereign Core: a radial UV bend that magnifies toward the
+// center, strongest when the core's live signal (phi/think) is high. This is
+// a visualization of mass-bending-light, not a physical simulation.
+const LENSING_FRAG = /* glsl */ `
+  uniform vec2 uCenter;
+  uniform float uStrength;
+  uniform float uRadius;
+  uniform float uAspect;
+  void mainImage(const in vec4 inputColor, const in vec2 uv, out vec4 outputColor) {
+    vec2 delta = uv - uCenter;
+    delta.x *= uAspect;
+    float r = length(delta);
+    float influence = 1.0 - smoothstep(uRadius * 0.45, uRadius, r);
+    float bend = influence * influence * uStrength;
+    vec2 dir = delta / max(r, 1e-4);
+    vec2 offset = dir * bend;
+    offset.x /= uAspect;
+    outputColor = texture(inputBuffer, uv - offset);
+  }
+`;
+
+class LensingEffect extends Effect {
+  readonly center = new THREE.Vector2(0.5, 0.5);
+  strength = 0;
+  radius = 0.22;
+  aspect = 1;
+  private uCenter: THREE.Uniform;
+  private uStrength: THREE.Uniform;
+  private uRadius: THREE.Uniform;
+  private uAspect: THREE.Uniform;
+
+  constructor() {
+    const uCenter = new THREE.Uniform(new THREE.Vector2(0.5, 0.5));
+    const uStrength = new THREE.Uniform(0);
+    const uRadius = new THREE.Uniform(0.22);
+    const uAspect = new THREE.Uniform(1);
+    super('LensingEffect', LENSING_FRAG, {
+      blendFunction: BlendFunction.NORMAL,
+      uniforms: new Map<string, THREE.Uniform>([
+        ['uCenter', uCenter],
+        ['uStrength', uStrength],
+        ['uRadius', uRadius],
+        ['uAspect', uAspect],
+      ]),
+    });
+    this.uCenter = uCenter;
+    this.uStrength = uStrength;
+    this.uRadius = uRadius;
+    this.uAspect = uAspect;
+  }
+
+  updateUniforms() {
+    (this.uCenter.value as THREE.Vector2).copy(this.center);
+    this.uStrength.value = this.strength;
+    this.uRadius.value = this.radius;
+    this.uAspect.value = this.aspect;
+  }
+}
 
   return (
     <EffectComposer multisampling={0}>
@@ -2370,6 +2519,7 @@ function PostFX({ live }: { live: React.MutableRefObject<LiveSignal> }) {
         radialModulation
         modulationOffset={Math.max(0.1, 0.35 - smoothPhi.current * 0.12)}
       />
+      <primitive object={lensing} />
       <Vignette
         eskil={false}
         offset={vigOffset}

@@ -40,7 +40,7 @@ import { defenseSystemPrefix } from './src/lib/cortex-agents/prompt-defense';
 import { instinctsBlock, listInstincts, promotableInstincts } from './src/lib/cortex-agents/instincts';
 import { listEvals, getEval, fileEvalDefinition, runEval, readRuns, evalScorecard, evalComparison, type GraderSpec, type EvalArm } from './src/lib/cortex-agents/evals';
 import { computeCounselScorecard } from './src/lib/cortex-agents/counsel-scorecard';
-import { initEventLog, readEvents, getEventLogStats } from './src/lib/cortex-agents/eventlog';
+import { initEventLog, readEvents, getEventLogStats, verifyEventLog } from './src/lib/cortex-agents/eventlog';
 import type { RouteTier } from './src/lib/cortex-agents/types';
 import { normalizeForSpeech } from './src/lib/tts-speech-normalize';
 import {
@@ -11008,6 +11008,25 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
         const hb = setInterval(() => { try { res.write(': hb\n\n'); } catch { } }, 20_000);
         hb.unref?.();
         req.on('close', () => { unsub(); clearInterval(hb); });
+      });
+
+// GET /api/cortex/events/verify — hash-chain integrity audit of the
+      // append-only event log (tamper-evident ledger check).
+      server.middlewares.use('/api/cortex/events/verify', (req: any, res: any, next: any) => {
+        if (req.method === 'OPTIONS') {
+          res.writeHead(204, { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Methods': 'GET, OPTIONS', 'Access-Control-Allow-Headers': 'Content-Type' });
+          return res.end();
+        }
+        if (req.method !== 'GET') return next();
+        agentCors(req, res);
+        try {
+          const v = verifyEventLog();
+          res.setHeader('Content-Type', 'application/json');
+          res.end(JSON.stringify({ ok: v.ok, ...v }));
+        } catch (err: any) {
+          res.statusCode = 500;
+          res.end(JSON.stringify({ ok: false, error: err?.message || String(err) }));
+        }
       });
 
       // GET /api/cortex/events — persisted event replay & query
