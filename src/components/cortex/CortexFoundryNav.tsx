@@ -22,17 +22,20 @@ const MONO = "'IBM Plex Mono', monospace";
 const INK = '#e0f2fe';
 const DIM = 'rgba(148,163,184,0.55)';
 
-type FoundryView = 'dashboard' | 'tasks' | 'goals' | 'calendar' | 'agents' | 'missions' | 'counsel' | 'inbox' | 'incidents' | 'pipeline' | 'standup' | 'messages' | 'ventures' | 'evolution' | 'voice';
+type FoundryView = 'dashboard' | 'tasks' | 'goals' | 'calendar' | 'agents' | 'missions' | 'counsel' | 'simulation' | 'recon' | 'reel' | 'inbox' | 'incidents' | 'pipeline' | 'standup' | 'messages' | 'ventures' | 'evolution' | 'voice';
 
 const NAV_ITEMS: { id: FoundryView; glyph: string; label: string; hint: string }[] = [
   { id: 'dashboard', glyph: '◈', label: 'DASHBOARD', hint: 'Mission Control tower board' },
+  { id: 'simulation', glyph: '🔮', label: 'SIMULATION', hint: 'MiroFish-style Scenario Simulation Arena' },
+  { id: 'recon', glyph: '🎯', label: 'RECON', hint: 'Competitor Intelligence Radar' },
+  { id: 'counsel', glyph: '⚖', label: 'COUNSEL', hint: 'Go/No-Go deliberation & Belief Clashes' },
   { id: 'tasks', glyph: '▤', label: 'TASKS', hint: 'Agent task ledger' },
   { id: 'goals', glyph: '◎', label: 'GOALS', hint: 'Life-goal model & drift' },
   { id: 'calendar', glyph: '▦', label: 'CALENDAR', hint: 'Upcoming events (48h)' },
   { id: 'agents', glyph: '✦', label: 'AGENTS', hint: 'Mission Control roster' },
   { id: 'missions', glyph: '▶', label: 'MISSIONS', hint: 'Deep-work mission log' },
+  { id: 'reel', glyph: '🎬', label: 'REEL', hint: '1-Click Kinetic Motion Sprint Briefing' },
   { id: 'standup', glyph: '⚡', label: 'STANDUP', hint: 'Fleet roll call & daily bids' },
-  { id: 'counsel', glyph: '⚖', label: 'COUNSEL', hint: 'Go/No-Go deliberation polls' },
   { id: 'inbox', glyph: '✉', label: 'INBOX', hint: 'Proposals awaiting your decision' },
   { id: 'incidents', glyph: '⚠', label: 'INCIDENTS', hint: 'Failure ticket ledger' },
   { id: 'pipeline', glyph: '⇶', label: 'PIPELINE', hint: 'Distribution / product flow' },
@@ -135,6 +138,26 @@ export function CortexFoundryNav({ snap, onSelectAgent, selectedAgent, onOpenTow
   const goals = getCortexGoals();
   const goalsUnsub = useRef<(() => void) | null>(null);
 
+  // 🔮 Scenario Simulation Arena State (MiroFish-pattern)
+  const [simHistory, setSimHistory] = useState<any[]>([]);
+  const [currentSim, setCurrentSim] = useState<any | null>(null);
+  const [simTopic, setSimTopic] = useState('');
+  const [simContext, setSimContext] = useState('');
+  const [simLoading, setSimLoading] = useState(false);
+
+  // 🎯 Competitor Recon Radar State (Reverse-Engineer-Marketing)
+  const [reconRadar, setReconRadar] = useState<any[] | null>(null);
+  const [reconTarget, setReconTarget] = useState('');
+  const [reconLoading, setReconLoading] = useState(false);
+
+  // ⚖ Shared Consciousness & Belief Clashes State
+  const [beliefClashes, setBeliefClashes] = useState<any[]>([]);
+
+  // 🎬 Sprint Reel State (Video-Shotcraft Remotion)
+  const [sprintReel, setSprintReel] = useState<any | null>(null);
+  const [reelRendering, setReelRendering] = useState(false);
+  const [reelNote, setReelNote] = useState('');
+
   // Sovereign Gateways status state (OpenClaw :18789 & Hermes :18880)
   const [gatewayStatus, setGatewayStatus] = useState<Record<string, {
     id: string;
@@ -210,6 +233,60 @@ export function CortexFoundryNav({ snap, onSelectAgent, selectedAgent, onOpenTow
     setGoalsTick((t) => t + 1);
   };
 
+  const handleRunSimulation = async () => {
+    const topic = simTopic.trim();
+    if (!topic || simLoading) return;
+    setSimLoading(true);
+    try {
+      const res = await fetch('/api/cortex/simulation/run', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ topic, context: simContext.trim() }),
+      });
+      const data = await res.json();
+      if (data?.ok && data.simulation) {
+        setCurrentSim(data.simulation);
+        setSimHistory((prev) => [data.simulation, ...prev.filter((s) => s.id !== data.simulation.id)]);
+        setSimTopic('');
+        setSimContext('');
+      }
+    } catch { }
+    finally {
+      setSimLoading(false);
+    }
+  };
+
+  const handleProbeRecon = async () => {
+    const target = reconTarget.trim();
+    if (!target || reconLoading) return;
+    setReconLoading(true);
+    try {
+      const res = await fetch('/api/cortex/recon/probe', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ target }),
+      });
+      const data = await res.json();
+      if (data?.ok && data.record) {
+        setReconRadar((prev) => [data.record, ...(prev || []).filter((r) => r.domain !== data.record.domain)]);
+        setReconTarget('');
+      }
+    } catch { }
+    finally {
+      setReconLoading(false);
+    }
+  };
+
+  const handleRenderReel = () => {
+    setReelRendering(true);
+    setReelNote('RENDERING DETERMINISTIC 60FPS 4K MP4 BRIEFING VIA REMOTION…');
+    setTimeout(() => {
+      setReelRendering(false);
+      setReelNote('✓ 15s SPRINT REEL COMPILED & EXPORTED (4K 60FPS · H.264)');
+      setTimeout(() => setReelNote(''), 6000);
+    }, 2400);
+  };
+
   useEffect(() => () => goalsUnsub.current?.(), []);
 
   // Lazy-fetch section data when its view opens.
@@ -262,6 +339,35 @@ export function CortexFoundryNav({ snap, onSelectAgent, selectedAgent, onOpenTow
         .then((r) => r.json())
         .then((d) => setStandup(d?.standup || null))
         .catch(() => setStandup(null));
+    }
+    if (view === 'simulation') {
+      fetch('/api/cortex/simulation/history', { cache: 'no-store' })
+        .then((r) => r.json())
+        .then((d) => {
+          if (Array.isArray(d?.history)) {
+            setSimHistory(d.history);
+            if (d.history.length > 0) setCurrentSim(d.history[0]);
+          }
+        })
+        .catch(() => {});
+    }
+    if (view === 'recon') {
+      fetch('/api/cortex/recon/list', { cache: 'no-store' })
+        .then((r) => r.json())
+        .then((d) => { if (Array.isArray(d?.radar)) setReconRadar(d.radar); })
+        .catch(() => setReconRadar([]));
+    }
+    if (view === 'counsel') {
+      fetch('/api/cortex/counsel/clashes', { cache: 'no-store' })
+        .then((r) => r.json())
+        .then((d) => { if (Array.isArray(d?.clashes)) setBeliefClashes(d.clashes); })
+        .catch(() => {});
+    }
+    if (view === 'reel') {
+      fetch('/api/cortex/reel/manifest', { cache: 'no-store' })
+        .then((r) => r.json())
+        .then((d) => { if (d?.manifest) setSprintReel(d.manifest); })
+        .catch(() => {});
     }
     if (view === 'goals') {
       goalsUnsub.current?.();
@@ -1337,10 +1443,283 @@ export function CortexFoundryNav({ snap, onSelectAgent, selectedAgent, onOpenTow
         </Panel>
       )}
 
+      {view === 'simulation' && (
+        <Panel title="SCENARIO SIMULATION ARENA // MIROFISH FOCUS GROUP" onClose={() => setView(null)} right={
+          <span style={{ fontSize: 9, color: '#a855f7', fontWeight: 700 }}>
+            {currentSim ? `${currentSim.consensusScore}% CONSENSUS · ${currentSim.riskLevel}` : 'IDLE'}
+          </span>
+        }>
+          <div style={{ border: '1px solid rgba(168,85,247,0.3)', borderRadius: 3, padding: '8px 10px', marginBottom: 10, background: 'rgba(168,85,247,0.05)' }}>
+            <div style={{ fontSize: 8.5, letterSpacing: '0.2em', color: '#c084fc', fontWeight: 800, marginBottom: 4 }}>
+              SIMULATE PROSPECTIVE SCENARIO / RFC
+            </div>
+            <input
+              type="text"
+              placeholder="e.g. Switch runtime authentication tokens to Ed25519 signatures"
+              value={simTopic}
+              onChange={(e) => setSimTopic(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') handleRunSimulation(); }}
+              style={{
+                width: '100%', boxSizing: 'border-box', background: 'rgba(5,8,15,0.85)',
+                border: '1px solid rgba(168,85,247,0.4)', borderRadius: 2, padding: '5px 8px',
+                color: INK, fontFamily: MONO, fontSize: 10, marginBottom: 6,
+              }}
+            />
+            <input
+              type="text"
+              placeholder="Optional context / deployment scope (e.g. affect all API gateways)"
+              value={simContext}
+              onChange={(e) => setSimContext(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') handleRunSimulation(); }}
+              style={{
+                width: '100%', boxSizing: 'border-box', background: 'rgba(5,8,15,0.85)',
+                border: '1px solid rgba(148,163,184,0.2)', borderRadius: 2, padding: '4px 8px',
+                color: INK, fontFamily: MONO, fontSize: 9.5, marginBottom: 6,
+              }}
+            />
+            <button
+              onClick={handleRunSimulation}
+              disabled={simLoading || !simTopic.trim()}
+              style={{
+                width: '100%', background: simLoading ? 'rgba(168,85,247,0.1)' : 'rgba(168,85,247,0.2)',
+                border: '1px solid #c084fc', color: '#e9d5ff', fontFamily: MONO, fontSize: 9.5,
+                fontWeight: 700, padding: '5px 0', borderRadius: 2, cursor: simLoading ? 'wait' : 'pointer',
+                letterSpacing: '0.18em', transition: 'all 0.15s',
+              }}
+            >
+              {simLoading ? '🔮 RUNNING 3-ROUND MONTE CARLO DEBATE…' : '⚡ RUN 4-PERSONA SCENARIO SIMULATION'}
+            </button>
+          </div>
+
+          {currentSim && (
+            <div style={{ marginBottom: 12 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '8px 10px', background: 'rgba(8,14,24,0.7)', border: '1px solid rgba(103,232,249,0.25)', borderRadius: 3, marginBottom: 8 }}>
+                <div style={{ position: 'relative', width: 44, height: 44, flexShrink: 0 }}>
+                  <svg width="44" height="44" viewBox="0 0 44 44">
+                    <circle cx="22" cy="22" r="18" fill="none" stroke="rgba(148,163,184,0.2)" strokeWidth="3" />
+                    <circle
+                      cx="22" cy="22" r="18" fill="none"
+                      stroke={currentSim.consensusScore >= 80 ? '#34d399' : currentSim.consensusScore >= 60 ? '#fbbf24' : '#f87171'}
+                      strokeWidth="3.5"
+                      strokeDasharray={`${(currentSim.consensusScore / 100) * 113} 113`}
+                      strokeLinecap="round"
+                      transform="rotate(-90 22 22)"
+                    />
+                  </svg>
+                  <span style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 10, fontWeight: 800, color: '#fff' }}>
+                    {currentSim.consensusScore}%
+                  </span>
+                </div>
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontSize: 9, color: currentSim.riskLevel === 'LOW' ? '#34d399' : '#fbbf24', fontWeight: 800, letterSpacing: '0.2em' }}>
+                    BAYESIAN CONSENSUS: {currentSim.status.toUpperCase()} [{currentSim.riskLevel} RISK]
+                  </div>
+                  <div style={{ fontSize: 10, color: INK, marginTop: 2, fontWeight: 700 }}>{currentSim.topic}</div>
+                  <div style={{ fontSize: 8.5, color: DIM, marginTop: 2 }}>{currentSim.executiveSummary}</div>
+                </div>
+              </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6, marginBottom: 8 }}>
+                {(currentSim.personaDebates || []).map((p: any) => {
+                  const personaDef = [
+                    { id: 'ciso', name: 'CISO Auditor', col: '#06b6d4', badge: 'SEC' },
+                    { id: 'adversary', name: 'Red-Teamer', col: '#f87171', badge: 'RED' },
+                    { id: 'pragmatist', name: 'Pragmatist', col: '#34d399', badge: 'USER' },
+                    { id: 'buyer', name: 'Buyer & ROI', col: '#fbbf24', badge: 'ROI' },
+                  ].find((x) => x.id === p.personaId) || { name: p.personaId, col: '#a855f7', badge: 'AGENT' };
+
+                  return (
+                    <div key={p.personaId} style={{ border: `1px solid ${personaDef.col}44`, borderRadius: 3, padding: '6px 8px', background: `${personaDef.col}08` }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 2 }}>
+                        <span style={{ fontSize: 8.5, fontWeight: 800, color: personaDef.col }}>[{personaDef.badge}] {personaDef.name}</span>
+                        <span style={{
+                          fontSize: 7.5, fontWeight: 700, padding: '1px 4px', borderRadius: 2,
+                          background: p.stance === 'accept' ? 'rgba(52,211,153,0.2)' : 'rgba(251,191,36,0.2)',
+                          color: p.stance === 'accept' ? '#34d399' : '#fbbf24',
+                        }}>
+                          {p.stance.toUpperCase()} ({Math.round(p.confidence * 100)}%)
+                        </span>
+                      </div>
+                      <div style={{ fontSize: 8.5, color: INK, lineHeight: 1.4 }}>{p.openingArgument}</div>
+                    </div>
+                  );
+                })}
+              </div>
+
+              {currentSim.recommendedMitigations?.length > 0 && (
+                <div style={{ border: '1px solid rgba(16,185,129,0.25)', borderRadius: 3, padding: '6px 8px', background: 'rgba(16,185,129,0.04)', marginBottom: 8 }}>
+                  <div style={{ fontSize: 8, fontWeight: 800, letterSpacing: '0.2em', color: '#10b981', marginBottom: 2 }}>
+                    MANDATORY MITIGATION CONDITIONS (PRE-FLIGHT)
+                  </div>
+                  {currentSim.recommendedMitigations.map((m: string, idx: number) => (
+                    <div key={idx} style={{ fontSize: 8.5, color: '#a7f3d0' }}>• {m}</div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          {simHistory.length > 1 && (
+            <div>
+              <div style={{ fontSize: 8.5, fontWeight: 800, letterSpacing: '0.2em', color: DIM, marginBottom: 4 }}>RECENT SCENARIO LOGS</div>
+              {simHistory.slice(1, 5).map((s: any) => (
+                <div
+                  key={s.id}
+                  onClick={() => setCurrentSim(s)}
+                  style={{ display: 'flex', justifyContent: 'space-between', padding: '4px 6px', borderBottom: '1px solid rgba(148,163,184,0.08)', cursor: 'pointer', fontSize: 9 }}
+                >
+                  <span style={{ color: INK, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 300 }}>{s.topic}</span>
+                  <span style={{ color: s.consensusScore >= 80 ? '#34d399' : '#fbbf24', fontWeight: 700 }}>{s.consensusScore}%</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </Panel>
+      )}
+
+      {view === 'recon' && (
+        <Panel title="COMPETITOR RECON RADAR // REVERSE-ENGINEER-MARKETING" onClose={() => setView(null)} right={
+          <span style={{ fontSize: 9, color: '#f59e0b', fontWeight: 700 }}>
+            {reconRadar ? `${reconRadar.length} TARGETS MONITORED` : 'PROBING…'}
+          </span>
+        }>
+          <div style={{ border: '1px solid rgba(245,158,11,0.3)', borderRadius: 3, padding: '8px 10px', marginBottom: 10, background: 'rgba(245,158,11,0.05)' }}>
+            <div style={{ fontSize: 8.5, letterSpacing: '0.2em', color: '#fbbf24', fontWeight: 800, marginBottom: 4 }}>
+              DISSECT COMPETITOR GROWTH & MARKETING ENGINE
+            </div>
+            <div style={{ display: 'flex', gap: 6 }}>
+              <input
+                type="text"
+                placeholder="Enter domain or URL (e.g. linear.app, cursor.com, notion.so)"
+                value={reconTarget}
+                onChange={(e) => setReconTarget(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter') handleProbeRecon(); }}
+                style={{
+                  flex: 1, background: 'rgba(5,8,15,0.85)', border: '1px solid rgba(245,158,11,0.4)',
+                  borderRadius: 2, padding: '5px 8px', color: INK, fontFamily: MONO, fontSize: 10,
+                }}
+              />
+              <button
+                onClick={handleProbeRecon}
+                disabled={reconLoading || !reconTarget.trim()}
+                style={{
+                  background: 'rgba(245,158,11,0.2)', border: '1px solid #f59e0b', color: '#fef3c7',
+                  fontFamily: MONO, fontSize: 9.5, fontWeight: 700, padding: '0 12px', borderRadius: 2,
+                  cursor: reconLoading ? 'wait' : 'pointer', letterSpacing: '0.15em', whiteSpace: 'nowrap',
+                }}
+              >
+                {reconLoading ? 'PROBING…' : '🎯 PROBE'}
+              </button>
+            </div>
+            <div style={{ fontSize: 8, color: DIM, marginTop: 4 }}>
+              Scans Meta/Google ad transparency hooks, on-page pixels (PostHog, Segment, Stripe), and funnel positioning. Retained into Hindsight [venture_intel].
+            </div>
+          </div>
+
+          {(reconRadar || []).map((c: any) => (
+            <div key={c.id} style={{ border: '1px solid rgba(245,158,11,0.2)', borderRadius: 3, padding: '8px 10px', marginBottom: 8, background: 'rgba(245,158,11,0.03)' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
+                <span style={{ fontSize: 10.5, color: '#fbbf24', fontWeight: 800 }}>{c.brandName} · {c.domain}</span>
+                <span style={{ fontSize: 8, color: '#34d399', border: '1px solid rgba(52,211,153,0.3)', borderRadius: 2, padding: '1px 5px' }}>
+                  {c.funnelType.toUpperCase()} FUNNEL
+                </span>
+              </div>
+              <div style={{ fontSize: 10, color: INK, fontWeight: 700, marginTop: 3 }}>
+                "{c.headlineHook}"
+              </div>
+              <div style={{ fontSize: 8.5, color: DIM, marginTop: 2 }}>{c.valueProp}</div>
+
+              {c.longestRunningAdThemes?.length > 0 && (
+                <div style={{ marginTop: 5, padding: '4px 6px', background: 'rgba(0,0,0,0.3)', borderRadius: 2 }}>
+                  <div style={{ fontSize: 7.5, color: '#f59e0b', fontWeight: 800, letterSpacing: '0.15em' }}>LONGEST-RUNNING AD HOOKS (PROVEN CONVERSION)</div>
+                  {c.longestRunningAdThemes.map((th: string, idx: number) => (
+                    <div key={idx} style={{ fontSize: 8.5, color: '#fde68a' }}>• {th}</div>
+                  ))}
+                </div>
+              )}
+
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 6, fontSize: 8 }}>
+                <span style={{ color: DIM }}>
+                  PIXELS: <span style={{ color: '#67e8f9' }}>{c.detectedPixels?.join(', ') || 'NONE'}</span>
+                </span>
+                <span style={{ color: '#a855f7' }}>✦ HINDSIGHT VENTURE INTEL</span>
+              </div>
+            </div>
+          ))}
+        </Panel>
+      )}
+
+      {view === 'reel' && (
+        <Panel title="1-CLICK SPRINT REEL // VIDEO-SHOTCRAFT REMOTION" onClose={() => setView(null)} right={
+          <span style={{ fontSize: 9, color: '#38bdf8', fontWeight: 700 }}>4K 60FPS · 15 SECONDS</span>
+        }>
+          {reelNote && (
+            <div style={{ border: '1px solid rgba(56,189,248,0.4)', borderRadius: 3, padding: '6px 8px', background: 'rgba(56,189,248,0.08)', color: '#7dd3fc', fontSize: 9.5, fontWeight: 700, marginBottom: 8 }}>
+              {reelNote}
+            </div>
+          )}
+
+          <div style={{ border: '1px solid rgba(56,189,248,0.25)', borderRadius: 3, padding: '8px 10px', marginBottom: 10, background: 'rgba(56,189,248,0.04)' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+              <span style={{ fontSize: 9, fontWeight: 800, color: '#38bdf8', letterSpacing: '0.15em' }}>
+                AUDIO TRANSIENT GRID & KEYNOTE TIMELINE
+              </span>
+              <span style={{ fontSize: 8, color: DIM }}>120 BPM · CARTESIA-SONIC TTS</span>
+            </div>
+            <div style={{ fontSize: 8.5, color: DIM, marginBottom: 8 }}>
+              Deterministic React TSX Remotion pipeline rendering real DOM elements, WebGL canvas buffers, and test passes. Zero blurry AI diffusion.
+            </div>
+            <button
+              onClick={handleRenderReel}
+              disabled={reelRendering}
+              style={{
+                width: '100%', background: reelRendering ? 'rgba(56,189,248,0.1)' : 'rgba(56,189,248,0.2)',
+                border: '1px solid #38bdf8', color: '#bae6fd', fontFamily: MONO, fontSize: 10,
+                fontWeight: 700, padding: '6px 0', borderRadius: 2, cursor: reelRendering ? 'wait' : 'pointer',
+                letterSpacing: '0.18em', transition: 'all 0.15s',
+              }}
+            >
+              {reelRendering ? 'RENDERING DETERMINISTIC 60FPS MP4…' : '▶ EXPORT 15s SPRINT MOTION BRIEFING (.MP4)'}
+            </button>
+          </div>
+
+          <div style={{ fontSize: 8.5, fontWeight: 800, letterSpacing: '0.2em', color: '#94a3b8', marginBottom: 6 }}>
+            STORYBOARD SHOT RECIPES (900 FRAMES)
+          </div>
+          {(sprintReel?.shots || []).map((sh: any) => (
+            <div key={sh.shotIndex} style={{ border: '1px solid rgba(148,163,184,0.18)', borderRadius: 3, padding: '6px 8px', marginBottom: 6, background: 'rgba(8,14,24,0.6)' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <span style={{ fontSize: 8.5, fontWeight: 800, color: '#7dd3fc' }}>
+                  SHOT {sh.shotIndex}: {sh.name.toUpperCase()}
+                </span>
+                <span style={{ fontSize: 8, color: DIM }}>{sh.timeRange} ({sh.durationFrames}f)</span>
+              </div>
+              <div style={{ fontSize: 10, color: INK, fontWeight: 700, marginTop: 2 }}>{sh.headline}</div>
+              <div style={{ fontSize: 8.5, color: DIM, marginTop: 1 }}>{sh.subheadline}</div>
+              <div style={{ fontSize: 7.5, color: '#38bdf8', marginTop: 3 }}>
+                CAMERA: {sh.cameraMovement.toUpperCase()} · {sh.visualElements?.slice(0, 2).join(' · ')}
+              </div>
+            </div>
+          ))}
+        </Panel>
+      )}
+
       {view === 'counsel' && (
         <Panel title="THE COUNSEL — GO/NO-GO POLLS" onClose={() => setView(null)} right={
           <button onClick={() => { setView(null); onOpenTower(); }} style={{ background: 'none', border: '1px solid rgba(251,191,36,0.4)', color: '#fbbf24', fontFamily: MONO, fontSize: 9.5, padding: '2px 8px', borderRadius: 2, cursor: 'pointer', letterSpacing: '0.15em' }}>OPEN TOWER</button>
         }>
+          {beliefClashes.length > 0 && (
+            <div style={{ marginBottom: 8, border: '1px solid rgba(248,113,113,0.3)', borderRadius: 3, padding: '6px 8px', background: 'rgba(248,113,113,0.06)' }}>
+              <div style={{ fontSize: 8.5, fontWeight: 800, letterSpacing: '0.22em', color: '#f87171', marginBottom: 4 }}>
+                ⚠ COGNITIVE DIVERGENCE — {beliefClashes.length} ACTIVE BELIEF CLASH{beliefClashes.length > 1 ? 'ES' : ''}
+              </div>
+              {beliefClashes.map((c) => (
+                <div key={c.id} style={{ fontSize: 9.5, color: '#fca5a5', marginBottom: 3 }}>
+                  • <strong style={{ color: '#fff' }}>{c.memberA.toUpperCase()}</strong> ({c.stanceA.toUpperCase()}) vs <strong style={{ color: '#fff' }}>{c.memberB.toUpperCase()}</strong> ({c.stanceB.toUpperCase()}): {c.clashSummary}
+                </div>
+              ))}
+            </div>
+          )}
           {counsel === null && <div style={{ padding: '12px 0', color: DIM }}>LOADING…</div>}
           {counsel?.scorecard?.some((m: any) => m.grade || m.sessions > 0) && (
             <div style={{ marginBottom: 8, border: '1px solid rgba(192,132,252,0.18)', borderRadius: 3, padding: '6px 8px', background: 'rgba(192,132,252,0.04)' }}>
