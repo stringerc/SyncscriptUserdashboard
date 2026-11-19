@@ -41,6 +41,7 @@ import { instinctsBlock, listInstincts, promotableInstincts } from './src/lib/co
 import { listEvals, getEval, fileEvalDefinition, runEval, readRuns, evalScorecard, evalComparison, type GraderSpec, type EvalArm } from './src/lib/cortex-agents/evals';
 import { computeCounselScorecard } from './src/lib/cortex-agents/counsel-scorecard';
 import { initEventLog, readEvents, getEventLogStats, verifyEventLog } from './src/lib/cortex-agents/eventlog';
+import { recallCortexMemory, retainCortexMemory } from './src/lib/cortex-memory';
 import type { RouteTier } from './src/lib/cortex-agents/types';
 import { normalizeForSpeech } from './src/lib/tts-speech-normalize';
 import {
@@ -11027,6 +11028,42 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
           res.statusCode = 500;
           res.end(JSON.stringify({ ok: false, error: err?.message || String(err) }));
         }
+      });
+
+      // GET /api/cortex/memory/recall?q= — query the Hindsight memory bank
+      server.middlewares.use('/api/cortex/memory/recall', (req: any, res: any, next: any) => {
+        if (req.method === 'OPTIONS') {
+          res.writeHead(204, { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Methods': 'GET, POST, OPTIONS', 'Access-Control-Allow-Headers': 'Content-Type' });
+          return res.end();
+        }
+        agentCors(req, res);
+        const u = new URL(req.url || '', 'http://x');
+        const q = u.searchParams.get('q') || '';
+        if (req.method === 'GET') {
+          recallCortexMemory(q, { budget: (u.searchParams.get('budget') as any) || 'mid', timeoutMs: 8000 })
+            .then((ctx) => {
+              res.setHeader('Content-Type', 'application/json');
+              res.end(JSON.stringify({ query: q, context: ctx }));
+            })
+            .catch((err: any) => { res.statusCode = 500; res.end(JSON.stringify({ error: String(err) })); });
+          return;
+        }
+        if (req.method === 'POST') {
+          let body = '';
+          req.on('data', (c: any) => { body += c; if (body.length > 20000) req.destroy(); });
+          req.on('end', async () => {
+            try {
+              const j = JSON.parse(body || '{}');
+              const ok = await retainCortexMemory(String(j.content || ''), j.context ? String(j.context) : undefined, j.timestamp);
+              res.setHeader('Content-Type', 'application/json');
+              res.end(JSON.stringify({ ok }));
+            } catch (err: any) {
+              res.statusCode = 500; res.end(JSON.stringify({ error: String(err) }));
+            }
+          });
+          return;
+        }
+        next();
       });
 
       // GET /api/cortex/events — persisted event replay & query

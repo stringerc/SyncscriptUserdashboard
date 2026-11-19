@@ -14,6 +14,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import type { AgentEvent } from './types';
 import type { AgentRuntime } from './runtime';
+import { maybeRetainEvent } from '../cortex-memory';
 
 function getLogDir(): string {
   const stateDir = process.env.CORTEX_AGENTS_STATE_DIR || path.join(process.cwd(), '.cortex-runtime');
@@ -230,6 +231,7 @@ export function appendEvent(e: AgentEvent): PersistedEvent | null {
     lastHash = record.hash;
     const targetFile = path.join(logDir, getDayFileName(new Date(e.at || Date.now())));
     fs.appendFileSync(targetFile, JSON.stringify(record) + '\n', 'utf8');
+    try { maybeRetainEvent(record); } catch { /* memory is best-effort */ }
     return record;
   } catch (err) {
     console.warn('[cortex-eventlog] Failed to append event:', err);

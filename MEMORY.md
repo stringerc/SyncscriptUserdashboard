@@ -2611,3 +2611,22 @@ Govee API key: Dab9261f-d5cf-4607-81fb-d4ff6f63974e — configured for physical 
 - **Duplicate seq fix**: `.seq-head` high-water mark + `.seq.lock` mutex (O_EXCL create, 10s stale-break, 2s wait) makes seq allocation atomic across processes. Live-verified: new appends seq 20275–20281 unique and hash-chained.
 - **Verifier metric**: `duplicateSeqs` now reported (8,711 historical — immutable pre-lock era; new appends add zero).
 - **Verification**: 8/8 eventlog vitest, cortex typecheck guard PASSED, eslint clean, `/api/cortex/events/verify` ok:true (28,991 records, 21 writers).
+
+
+### 2026-11-19 — Disk cleanup round 2 (~19GB freed total)
+
+- Freed: ai-empire/local_services AI pipelines (ComfyUI 7.7G, LivePortrait 3.2G, roop-floyd 2.5G, Wav2Lip 886M — no running processes), truncated hermes-executor.err.log (148M) + coherence-daemon.error.log (102M), uv cache prune (210M), npm cache clean. Disk: 210MB → 26GB free.
+- Audited but NOT touched (real data, user declined): Cursor state.vscdb 7.4GB chat history (0 freelist pages), OpenClaw scout/archivist sqlite 9.4GB (126k research chunks, ~0 freelist — VACUUM would reclaim nothing), Chrome OptGuideOnDeviceModel 4GB, CoreSimulator devices 7GB, ai-empire remaining models, all personal Downloads/Desktop/Legal content.
+- Remaining headroom options if needed later: Chrome on-device AI model (auto re-downloads), unavailable simulators via `xcrun simctl delete unavailable`, old cursor-agent versions.
+
+### 2026-11-19 — Hindsight memory + motion-skills integration
+
+- **Hindsight 1.2.1 deployed** self-hosted: embedded pg0 Postgres, local embeddings (bge-small-en-v1.5) + reranker (hs-rerank-1) on CPU, LLM extraction via Groq `openai/gpt-oss-120b` (OpenRouter 402'd on credits; `llama-3.3-70b-versatile` 404'd — model name corrected). venv `/Users/Apple/.cortex/venvs/hindsight`, env `~/.cortex/hindsight.env`, logs `~/.cortex/logs/hindsight-api.log`, **launchd `com.syncscript.hindsight`** (durable, single process pid-managed).
+- **Bank `cortex`** created (skepticism/literalism/empathy 3). Live retain+recall verified. Groq TPM cap (8000) caused one consolidation deferral — Hindsight retries gracefully; expect occasional 429 backoff under load.
+- **MCP endpoint live** at `http://127.0.0.1:8888/mcp/` (HTTP 200).
+- **SyncScript client** `src/lib/cortex-memory.ts`: `recallCortexMemory` (bounded prompt block, 2.5s timeout, fail-soft ''), `retainCortexMemory` (fire-and-forget), `maybeRetainEvent` (throttled queue: 15s interval, max 20 pending, batches of 10; only task.transition completed/failed + agent.spawned/retired).
+- **Hooks**: `eventlog.appendEvent` → `maybeRetainEvent` (try/catch, never blocks bus); `workers.ts` BUILDER planner injects `PRIOR MEMORY` block after distilled rules.
+- **API**: `GET/POST /api/cortex/memory/recall` in vite.config.ts — live-verified: recall returned real bank facts, POST retain `{"ok":true}`.
+- **Tests**: `src/lib/__tests__/cortex-memory.test.ts` 10/10 pass (mocked fetch: success/error/timeout/empty/truncation/queue-flush).
+- **motion-skills (iart-ai)**: index repo = 19 pack repos, MIT, install via `npx skills add iart-ai/<pack>`. Vendored `skills/javascript-animation` + `skills/soundtrack` (84K+40K, LICENSE.upstream attribution added). Verified render pipeline live: `render.mjs templates/starter.html` → real JPEG contact sheet via playwright-core+Chrome+ffmpeg. Deterministic frame-pure canvas animation (draw(frame) pure fn, seeded rng, storyboard-as-data BPM/SECTIONS/SHOTS/EVENTS) — candidate engine for future Cortex visual exports.
+- **Gates**: cortex typecheck guard PASSED, eslint clean on touched files, vitest 10/10.

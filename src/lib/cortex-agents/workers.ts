@@ -29,6 +29,7 @@ import { runCounselPosition } from './counsel-position';
 import { getCortexProactiveInitiative } from '../cortex-proactive-initiative';
 import { cortexObsidianMemory } from '../cortex-obsidian-memory';
 import { relevantRules, rulesBlock, RULES_DIR, vaultFolder, listMd } from './rules';
+import { recallCortexMemory } from '../cortex-memory';
 import { LEARNINGS_DIR } from './outcomes';
 import { readSessionHandoff, writeSessionHandoff, markHandoffClaimed } from './handoff';
 import { fileEvalDefinition, runEval, type LlmFn } from './evals';
@@ -1747,6 +1748,7 @@ const builderWorker: WorkerHandler = async (ctx) => {
 
   ctx.progress(0.1);
   const distilledRules = relevantRules(instruction);
+  const memoryCtx = await recallCortexMemory(instruction, { budget: 'low', timeoutMs: 2500 });
   // Spec expansion: terse instruction → contract (objective/constraints/
   // non-goals/verification) before planning. Fail-soft to raw instruction.
   const spec = await expandTaskSpec(ctx.llm, instruction + retryNote(ctx.task.input), 'reason');
@@ -1756,7 +1758,7 @@ const builderWorker: WorkerHandler = async (ctx) => {
   const planMessages = [
     {
       role: 'system',
-      content: `You are BUILDER, Cortex's engineering operative. Given a coding task, output a JSON array of steps, each {"tool": "<name>", "args": {...}, "why": "..."}. Allowed tools: read_file, write_file, edit_file, list_dir, run_command, search_code. Prefer read/search before write. If the task needs anything destructive or external (deploy, push, rm -rf, purchases, messages to people), output {"veto": true, "reason": "..."} instead — those become user proposals, never silent execution. Output ONLY the JSON array.${distilledRules ? `\n\nDISTILLED RULES (constraints learned from accepted agent outcomes — follow unless they conflict with governance):\n${distilledRules}` : ''}${ENGINEERING_DISCIPLINE}`,
+      content: `You are BUILDER, Cortex's engineering operative. Given a coding task, output a JSON array of steps, each {"tool": "<name>", "args": {...}, "why": "..."}. Allowed tools: read_file, write_file, edit_file, list_dir, run_command, search_code. Prefer read/search before write. If the task needs anything destructive or external (deploy, push, rm -rf, purchases, messages to people), output {"veto": true, "reason": "..."} instead — those become user proposals, never silent execution. Output ONLY the JSON array.${distilledRules ? `\n\nDISTILLED RULES (constraints learned from accepted agent outcomes — follow unless they conflict with governance):\n${distilledRules}` : ''}${memoryCtx ? `\n\n${memoryCtx}` : ''}${ENGINEERING_DISCIPLINE}`,
     },
     { role: 'user', content: instruction + specBlock(spec) + designBlock() + retryNote(ctx.task.input) },
   ];
