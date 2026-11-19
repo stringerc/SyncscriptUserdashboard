@@ -1085,8 +1085,16 @@ export class AgentRuntime {
         }
       }
       for (const t of data.tasks ?? []) {
-        // Only restore terminal tasks — queued/running died with the process.
         if (['completed', 'failed', 'vetoed', 'cancelled'].includes(t.status)) {
+          this.tasks.set(t.id, t);
+        } else {
+          // Non-terminal tasks died with the process. Record the death
+          // honestly instead of letting them vanish — a silent drop is the
+          // exact failure class Cortex exists to expose.
+          const wasRunning = t.status === 'running';
+          t.status = 'failed';
+          t.error = `runtime restart — ${wasRunning ? 'interrupted mid-flight' : 'queued task never dispatched'} (process reboot)`;
+          t.finishedAt = Date.now();
           this.tasks.set(t.id, t);
         }
       }
