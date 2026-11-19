@@ -225,6 +225,118 @@ export const SECTORS: Record<AgentSectorId, SectorDef> = {
   },
 };
 
+// ── 4 Celestial Biomes Architecture (Keplerian Dyson Solar System) ──
+export type CelestialPlanetId = 'vulcan' | 'mnemosyne' | 'themis' | 'hermes';
+
+export interface CelestialBiomeDef {
+  id: CelestialPlanetId;
+  name: string;
+  codename: string;
+  domain: string;
+  glyph: string;
+  color: string;
+  secondaryColor: string;
+  atmosphereGlow: string;
+  orbitRadiusFactor: number;
+  baseAngle: number;
+  orbitPeriod: number;
+  planetRadius: number;
+  lore: string;
+  atmosphere: string;
+  rings: string;
+  stationedSpecialists: string[];
+}
+
+export const CELESTIAL_BIOMES: Record<CelestialPlanetId, CelestialBiomeDef> = {
+  vulcan: {
+    id: 'vulcan',
+    name: 'VULCAN',
+    codename: 'THE FORGE',
+    domain: 'Engineering & Execution',
+    glyph: '🌋',
+    color: '#f59e0b',
+    secondaryColor: '#38bdf8',
+    atmosphereGlow: 'rgba(245, 158, 11, 0.42)',
+    orbitRadiusFactor: 0.65,
+    baseAngle: -Math.PI / 2, // North
+    orbitPeriod: 130,
+    planetRadius: 28,
+    lore: 'Volcanic cybernetic forge with molten metallic core & laser gantries.',
+    atmosphere: 'Thermal heat shimmer & compilation particle flares.',
+    rings: 'Flowing git commits, syntax diffs & compile tokens.',
+    stationedSpecialists: ['antigravity', 'builder', 'developer', 'architect'],
+  },
+  mnemosyne: {
+    id: 'mnemosyne',
+    name: 'MNEMOSYNE',
+    codename: 'THE AETHER',
+    domain: 'Intel & Strategic Memory',
+    glyph: '🧠',
+    color: '#c084fc',
+    secondaryColor: '#6366f1',
+    atmosphereGlow: 'rgba(192, 132, 252, 0.42)',
+    orbitRadiusFactor: 0.88,
+    baseAngle: 0, // East
+    orbitPeriod: 180,
+    planetRadius: 32,
+    lore: 'Bioluminescent sapphire gas giant with synaptic lightning storms.',
+    atmosphere: 'Soft Rayleigh gas haze with floating Hindsight memory nodes.',
+    rings: 'Saturnian engram rings of 102+ crystalline memory asteroids.',
+    stationedSpecialists: ['sentinel', 'scout', 'memory', 'librarian'],
+  },
+  themis: {
+    id: 'themis',
+    name: 'THEMIS',
+    codename: 'THE BASTION',
+    domain: 'Governance & Integrity',
+    glyph: '🛡️',
+    color: '#34d399',
+    secondaryColor: '#10b981',
+    atmosphereGlow: 'rgba(52, 211, 153, 0.42)',
+    orbitRadiusFactor: 0.72,
+    baseAngle: Math.PI / 2, // South
+    orbitPeriod: 155,
+    planetRadius: 26,
+    lore: 'Obsidian geometric monolith planet with geodesic force-field shields.',
+    atmosphere: 'Cold vector grid lines reflecting invariant safety boundaries.',
+    rings: '4 Counsel tetrahedral moon beacons (CISO, Adversary, Pragmatist, Buyer).',
+    stationedSpecialists: ['warden', 'counsel', 'veto', 'governor'],
+  },
+  hermes: {
+    id: 'hermes',
+    name: 'HERMES',
+    codename: 'THE PULSE',
+    domain: 'Gateways & Delivery',
+    glyph: '⚡',
+    color: '#06b6d4',
+    secondaryColor: '#f43f5e',
+    atmosphereGlow: 'rgba(6, 182, 212, 0.42)',
+    orbitRadiusFactor: 0.94,
+    baseAngle: Math.PI, // West
+    orbitPeriod: 220,
+    planetRadius: 25,
+    lore: 'Super-luminal solar-amber & neon-cyan transit world with tachyon relays.',
+    atmosphere: 'High-frequency electromagnetic pulse waves radiating into space.',
+    rings: 'Outbound 4K frame buffers & API webhook transfer lanes.',
+    stationedSpecialists: ['strategist', 'openclaw', 'gateway', 'broadcaster'],
+  },
+};
+
+export const getAgentPlanet = (a?: AgentClient | null): CelestialPlanetId => {
+  if (!a) return 'vulcan';
+  const sec = getAgentSector(a);
+  if (sec === 'command' || sec === 'engineering') return 'vulcan';
+  if (sec === 'intel') return 'mnemosyne';
+  if (sec === 'governance') return 'themis';
+  if (sec === 'gateways') return 'hermes';
+
+  const id = (a.id || '').toLowerCase();
+  if (id.includes('intel') || id.includes('scout') || id.includes('memory') || id.includes('recon') || id.includes('lib')) return 'mnemosyne';
+  if (id.includes('warden') || id.includes('counsel') || id.includes('veto') || id.includes('gov') || id.includes('safe') || id.includes('review')) return 'themis';
+  if (id.includes('claw') || id.includes('hermes') || id.includes('gate') || id.includes('reel') || id.includes('distrib') || id.includes('pulse')) return 'hermes';
+  return 'vulcan';
+};
+
 export const SECTOR_ORDER: Record<AgentSectorId, string[]> = {
   command: ['antigravity', 'strategist'],
   engineering: ['builder', 'runner', 'devin', 'claudecode'],
@@ -1057,6 +1169,8 @@ export const CortexAgentsScene: React.FC = () => {
   const [snap, setSnap] = useState<AgentsSnapshotClient>(snapRef.current);
   const [events, setEvents] = useState(agentsClient.events);
   const [selectedAgent, setSelectedAgent] = useState<string | null>(null);
+  const [selectedPlanet, setSelectedPlanet] = useState<CelestialPlanetId | null>(null);
+  const hoverPlanetRef = useRef<CelestialPlanetId | null>(null);
   const [dossiers, setDossiers] = useState<{ id: string; pinned: boolean }[]>([]);
   const [selectedStation, setSelectedStation] = useState<string | null>(null);
   const [towerOpen, setTowerOpen] = useState(false);
@@ -1137,7 +1251,9 @@ export const CortexAgentsScene: React.FC = () => {
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
-        if (inspectedShot !== null) {
+        if (selectedPlanet !== null) {
+          setSelectedPlanet(null);
+        } else if (inspectedShot !== null) {
           setInspectedShot(null);
           setPreviewPlaying(false);
         } else if (showExportModal) {
@@ -1147,7 +1263,7 @@ export const CortexAgentsScene: React.FC = () => {
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [inspectedShot, showExportModal]);
+  }, [selectedPlanet, inspectedShot, showExportModal]);
 
   const handleStartRender = () => {
     if (isRendering) return;
@@ -1400,6 +1516,71 @@ export const CortexAgentsScene: React.FC = () => {
     const ro = new ResizeObserver(resize);
     ro.observe(container);
 
+    let time = 0, last = performance.now(), raf = 0;
+
+    const getPlanetPos = (p: CelestialBiomeDef, w: number, h: number, cx: number, cy: number, t: number) => {
+      const baseRx = Math.min(w * 0.38, 590);
+      const baseRy = Math.min(h * 0.33, 330);
+      const orbitA = p.baseAngle + (reducedMotion.current ? 0 : (t * (Math.PI * 2) / p.orbitPeriod));
+      const px = cx + Math.cos(orbitA) * (baseRx * p.orbitRadiusFactor);
+      const py = cy + Math.sin(orbitA) * (baseRy * p.orbitRadiusFactor);
+      return { x: px, y: py, orbitA, rx: baseRx * p.orbitRadiusFactor, ry: baseRy * p.orbitRadiusFactor };
+    };
+
+    const agentPos = (agents: AgentClient[], agent: AgentClient, w: number, h: number, cx: number, cy: number, t: number) => {
+      const planetId = getAgentPlanet(agent);
+      const pDef = CELESTIAL_BIOMES[planetId];
+      const pPos = getPlanetPos(pDef, w, h, cx, cy, t);
+
+      const planetAgents = agents.filter((x) => getAgentPlanet(x) === planetId).sort(agentSort);
+      const i = Math.max(0, planetAgents.findIndex((x) => x.id === agent.id));
+      const n = Math.max(planetAgents.length, 1);
+
+      const working = agent.status === 'working';
+      const errored = agent.status === 'error';
+
+      // Keplerian Gravitational Telemetry:
+      // - working: accelerated high-speed elliptical transfer orbit (speed = 1.35)
+      // - errored: retrograde amber warning orbit (speed = -0.75)
+      // - idle/standby: calm geosynchronous circular orbit (speed = 0.45)
+      let speed = working ? 1.35 : errored ? -0.75 : 0.45;
+      if (reducedMotion.current) speed = 0;
+
+      const phase = (i / n) * Math.PI * 2 + (t * speed);
+
+      let radX = pDef.planetRadius + 28 + (i % 3) * 14;
+      let radY = (pDef.planetRadius + 22 + (i % 3) * 10) * 0.65;
+      let tilt = -0.22 + (i * 0.16);
+
+      if (working) {
+        // High-velocity eccentric transfer orbit (e = 0.65)
+        radX *= 1.35;
+        radY *= 0.65;
+        tilt = -0.38 + (i * 0.25);
+      } else if (errored) {
+        radX *= 1.15;
+        radY *= 1.15;
+      }
+
+      const wob = reducedMotion.current ? 0 : Math.sin(t * 0.75 + i * 1.5) * 0.04;
+      const angle = phase + wob;
+
+      const lx = Math.cos(angle) * radX;
+      const ly = Math.sin(angle) * radY;
+      const rx = lx * Math.cos(tilt) - ly * Math.sin(tilt);
+      const ry = lx * Math.sin(tilt) + ly * Math.cos(tilt);
+
+      return {
+        x: pPos.x + rx,
+        y: pPos.y + ry,
+        a: angle,
+        tier: agentOrbitTier(agent),
+        sector: getAgentSector(agent),
+        planetId,
+        pPos,
+      };
+    };
+
     const onMouse = (ev: MouseEvent) => {
       const r = canvas.getBoundingClientRect();
       mouse.current = { x: (ev.clientX - r.left) / r.width, y: (ev.clientY - r.top) / r.height, inside: true };
@@ -1412,28 +1593,51 @@ export const CortexAgentsScene: React.FC = () => {
       const cx = w / 2 + (w >= 900 ? 100 : 0), cy = h / 2 + h * 0.05;
       const mx = ev.clientX - r.left, my = ev.clientY - r.top;
 
-      let hitStation = false;
-      const stRx = Math.min(w * 0.37, 580) * 1.48;
-      const stRy = Math.min(h * 0.32, 320) * 1.48;
-      BUSINESS_STATIONS.forEach((st, si) => {
-        const a = st.phase + time * 0.022 + si * 2.1;
-        const sx = cx + Math.cos(a) * stRx;
-        const sy = cy + Math.sin(a) * stRy;
-        if (Math.hypot(mx - sx, my - sy) < 45) {
-          hitStation = true;
-          setSelectedStation((cur) => (cur === st.id ? null : st.id));
+      // 1. Check planet click (Keplerian Dyson Swarm Biomes)
+      let hitPlanet = false;
+      const biomesList = Object.values(CELESTIAL_BIOMES);
+      biomesList.forEach((b) => {
+        const bPos = getPlanetPos(b, w, h, cx, cy, time);
+        if (Math.hypot(mx - bPos.x, my - bPos.y) < b.planetRadius + 22) {
+          hitPlanet = true;
+          setSelectedPlanet((cur) => (cur === b.id ? null : b.id));
           clearEphemeralDossiers();
+          setSelectedStation(null);
         }
       });
 
-      if (!hitStation) {
-        agents.forEach((a) => {
-          const { x: ax, y: ay } = agentPos(agents, a, w, h, cx, cy, time);
-          if (Math.hypot(mx - ax, my - ay) < 34) {
-            toggleDossier(a.id);
-            setSelectedStation(null);
+      if (!hitPlanet) {
+        // Sovereign Singularity Core click deselects planet & station
+        if (Math.hypot(mx - cx, my - cy) < 45) {
+          setSelectedPlanet(null);
+          setSelectedStation(null);
+          clearEphemeralDossiers();
+          return;
+        }
+
+        let hitStation = false;
+        const stRx = Math.min(w * 0.37, 580) * 1.48;
+        const stRy = Math.min(h * 0.32, 320) * 1.48;
+        BUSINESS_STATIONS.forEach((st, si) => {
+          const a = st.phase + time * 0.022 + si * 2.1;
+          const sx = cx + Math.cos(a) * stRx;
+          const sy = cy + Math.sin(a) * stRy;
+          if (Math.hypot(mx - sx, my - sy) < 45) {
+            hitStation = true;
+            setSelectedStation((cur) => (cur === st.id ? null : st.id));
+            clearEphemeralDossiers();
           }
         });
+
+        if (!hitStation) {
+          agents.forEach((a) => {
+            const { x: ax, y: ay } = agentPos(agents, a, w, h, cx, cy, time);
+            if (Math.hypot(mx - ax, my - ay) < 34) {
+              toggleDossier(a.id);
+              setSelectedStation(null);
+            }
+          });
+        }
       }
     };
     canvas.addEventListener('mousemove', onMouse);
@@ -1456,7 +1660,6 @@ export const CortexAgentsScene: React.FC = () => {
     let meteorTimer = 4;
     let lastAgentKey = '';
     const prevStatus = new Map<string, string>();
-    let raf = 0, time = 0, last = performance.now();
 
     // Gradient caches — CanvasGradient objects are expensive to allocate;
     // rebuild only when the quantized inputs actually change.
@@ -1467,58 +1670,6 @@ export const CortexAgentsScene: React.FC = () => {
       x: reducedMotion.current || !mouse.current.inside ? 0 : (mouse.current.x - 0.5) * 18,
       y: reducedMotion.current || !mouse.current.inside ? 0 : (mouse.current.y - 0.5) * 12,
     });
-
-    const agentPos = (agents: AgentClient[], agent: AgentClient, w: number, h: number, cx: number, cy: number, t: number) => {
-      const sector = getAgentSector(agent);
-      const tier = agentOrbitTier(agent);
-      const sectorAgents = agents.filter((x) => getAgentSector(x) === sector).sort(sectorAgentSort(sector));
-      const i = Math.max(0, sectorAgents.findIndex((x) => x.id === agent.id));
-      const n = Math.max(sectorAgents.length, 1);
-
-      let baseA = 0;
-      let k = 1.0;
-      let wob = 0;
-
-      if (sector === 'command') {
-        k = 0.45;
-        if (n === 1) {
-          baseA = -Math.PI / 2;
-        } else if (n === 2) {
-          baseA = -Math.PI / 2 + (i === 0 ? -0.42 : 0.42);
-        } else {
-          const span = 1.1;
-          baseA = -Math.PI / 2 - span / 2 + (i / (n - 1)) * span;
-        }
-        wob = reducedMotion.current ? 0 : Math.sin(t * 0.7 + i * 2.1) * 0.035;
-      } else if (sector === 'satellite') {
-        k = 1.28;
-        baseA = (i / n) * Math.PI * 2 - Math.PI / 3 + (reducedMotion.current ? 0 : t * 0.03);
-        wob = reducedMotion.current ? 0 : Math.sin(t * 0.6 + i * 1.7) * 0.04;
-      } else {
-        const sDef = SECTORS[sector];
-        const centerAngle = sDef.centerAngle;
-        const span = sDef.span;
-
-        if (n === 1) {
-          baseA = centerAngle;
-        } else {
-          baseA = centerAngle - span / 2 + (i / (n - 1)) * span;
-        }
-
-        // Staggered echelon radii: ensures neighbor cards & hit-targets never overlap
-        if (n > 1) {
-          k = (i % 2 === 0) ? 0.84 : 1.06;
-        } else {
-          k = 0.94;
-        }
-
-        wob = reducedMotion.current ? 0 : Math.sin(t * 0.55 + i * 1.8 + (sector === 'engineering' ? 0.5 : sector === 'intel' ? 1.2 : sector === 'governance' ? 2.0 : 2.8)) * 0.03;
-      }
-
-      const rx = Math.min(w * 0.37, 580) * k;
-      const ry = Math.min(h * 0.32, 320) * k;
-      return { x: cx + Math.cos(baseA + wob) * rx, y: cy + Math.sin(baseA + wob) * ry, a: baseA, tier, sector };
-    };
 
     const draw = (now: number) => {
       const dt = Math.min((now - last) / 1000, 0.1); last = now;
@@ -1721,101 +1872,233 @@ export const CortexAgentsScene: React.FC = () => {
       const s = snapRef.current;
       const agents = (s.agents || []).slice().sort(agentSort);
 
-      // ── Tactical Mission Quadrant Radar Architecture ──
-      const baseRx = Math.min(w * 0.37, 580);
-      const baseRy = Math.min(h * 0.32, 320);
+      // ── 4 Celestial Biomes Architecture (Keplerian Dyson Solar System) ──
+      const baseRx = Math.min(w * 0.38, 590);
+      const baseRy = Math.min(h * 0.33, 330);
 
-      // 1. Quadrant Dividing Crosshair Rays (45°, 135°, 225°, 315°)
-      ctx.save();
-      ctx.strokeStyle = 'rgba(103,232,249,0.13)';
-      ctx.lineWidth = 1;
-      ctx.setLineDash([4, 6]);
-      const rayAngles = [
-        -Math.PI * 0.75, // NW
-        -Math.PI * 0.25, // NE
-        Math.PI * 0.25,  // SE
-        Math.PI * 0.75,  // SW
-      ];
-      for (const ra of rayAngles) {
-        const cosA = Math.cos(ra);
-        const sinA = Math.sin(ra);
+      const biomes = Object.values(CELESTIAL_BIOMES);
+
+      // 1. Keplerian Planetary Orbit Tracks (Ellipses around Sovereign Core Sun)
+      biomes.forEach((b) => {
+        const isSel = selectedPlanet === b.id;
+        const isHov = hoverPlanetRef.current === b.id;
+        ctx.save();
+        ctx.strokeStyle = isSel ? hexA(b.color, 0.75) : isHov ? hexA(b.color, 0.45) : hexA(b.color, 0.16);
+        ctx.lineWidth = isSel ? 2 : isHov ? 1.5 : 1;
+        ctx.setLineDash(isSel ? [8, 4] : [4, 8]);
         ctx.beginPath();
-        ctx.moveTo(cx + cosA * (baseRx * 0.48), cy + sinA * (baseRy * 0.48));
-        ctx.lineTo(cx + cosA * (baseRx * 1.18), cy + sinA * (baseRy * 1.18));
+        ctx.ellipse(cx, cy, baseRx * b.orbitRadiusFactor, baseRy * b.orbitRadiusFactor, 0, 0, Math.PI * 2);
         ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.restore();
+      });
 
-        // Perimeter crosshair tick
-        const tipX = cx + cosA * (baseRx * 1.18);
-        const tipY = cy + sinA * (baseRy * 1.18);
-        ctx.fillStyle = 'rgba(103,232,249,0.35)';
-        ctx.fillRect(tipX - 1.5, tipY - 1.5, 3, 3);
-      }
-      ctx.setLineDash([]);
-      ctx.restore();
+      // 2. Inter-Planetary Synaptic Conduits (Hyper-Luminal Laser Data Highways)
+      // Vulcan ⇄ Themis (Audit Invariant Pipeline), Themis ⇄ Hermes (Release & 4K Reel Broadcast)
+      // Mnemosyne ⇄ Vulcan (Hindsight Engram Recall), Hermes ⇄ Mnemosyne (Telemetry Feedback Loop)
+      const CONDUIT_PAIRS: [CelestialPlanetId, CelestialPlanetId, string, string][] = [
+        ['vulcan', 'themis', 'VULCAN ⇄ THEMIS // INVARIANT AUDIT PIPELINE', '#f59e0b'],
+        ['themis', 'hermes', 'THEMIS ⇄ HERMES // SYNDICATION & REEL RELEASE', '#34d399'],
+        ['mnemosyne', 'vulcan', 'MNEMOSYNE ⇄ VULCAN // HINDSIGHT ENGRAM RECALL', '#c084fc'],
+        ['hermes', 'mnemosyne', 'HERMES ⇄ MNEMOSYNE // TELEMETRY FEEDBACK LOOP', '#06b6d4'],
+      ];
 
-      // 2. Command Apex Inner Ring (k = 0.45)
-      ctx.strokeStyle = 'rgba(192,132,252,0.26)';
-      ctx.lineWidth = 1.2;
-      ctx.setLineDash([4, 6]);
-      ctx.beginPath();
-      ctx.ellipse(cx, cy, baseRx * 0.45, baseRy * 0.45, 0, 0, Math.PI * 2);
-      ctx.stroke();
-      ctx.setLineDash([]);
+      CONDUIT_PAIRS.forEach(([p1Id, p2Id, _label, beamCol], cIdx) => {
+        const p1Def = CELESTIAL_BIOMES[p1Id];
+        const p2Def = CELESTIAL_BIOMES[p2Id];
+        const p1Pos = getPlanetPos(p1Def, w, h, cx, cy, time);
+        const p2Pos = getPlanetPos(p2Def, w, h, cx, cy, time);
 
-      // 3. Staggered Echelon Guide Rings (k = 0.84, k = 1.06)
-      ctx.strokeStyle = 'rgba(103,232,249,0.08)';
-      ctx.lineWidth = 0.8;
-      ctx.setLineDash([2, 8]);
-      ctx.beginPath();
-      ctx.ellipse(cx, cy, baseRx * 0.84, baseRy * 0.84, 0, 0, Math.PI * 2);
-      ctx.stroke();
-      ctx.beginPath();
-      ctx.ellipse(cx, cy, baseRx * 1.06, baseRy * 1.06, 0, 0, Math.PI * 2);
-      ctx.stroke();
-      ctx.setLineDash([]);
-
-      // 4. Outer Satellite Deck Ring (k = 1.28)
-      const hasSatellites = agents.some((a) => getAgentSector(a) === 'satellite');
-      if (hasSatellites) {
-        ctx.strokeStyle = 'rgba(251,191,36,0.18)';
-        ctx.lineWidth = 1;
-        ctx.setLineDash([4, 8]);
+        ctx.save();
+        ctx.globalCompositeOperation = 'lighter';
+        // Highway Conduit Beam
+        const beamGrad = ctx.createLinearGradient(p1Pos.x, p1Pos.y, p2Pos.x, p2Pos.y);
+        beamGrad.addColorStop(0, hexA(p1Def.color, 0.35));
+        beamGrad.addColorStop(0.5, 'rgba(255,255,255,0.4)');
+        beamGrad.addColorStop(1, hexA(p2Def.color, 0.35));
+        ctx.strokeStyle = beamGrad;
+        ctx.lineWidth = 1.4;
+        ctx.setLineDash([5, 8]);
         ctx.beginPath();
-        ctx.ellipse(cx, cy, baseRx * 1.28, baseRy * 1.28, 0, 0, Math.PI * 2);
+        ctx.moveTo(p1Pos.x, p1Pos.y);
+        ctx.lineTo(p2Pos.x, p2Pos.y);
         ctx.stroke();
         ctx.setLineDash([]);
 
-        ctx.font = `700 8px ${MONO}`;
-        ctx.textAlign = 'center';
-        ctx.fillStyle = 'rgba(251,191,36,0.65)';
-        ctx.fillText('ENTERPRISE SATELLITE DECK', cx, cy - baseRy * 1.28 - 8);
-      }
+        // Continuous Flowing Photon Packets along Conduit Highway
+        const packetProg = (time * 0.35 + cIdx * 0.25) % 1;
+        const ptx = p1Pos.x + (p2Pos.x - p1Pos.x) * packetProg;
+        const pty = p1Pos.y + (p2Pos.y - p1Pos.y) * packetProg;
+        // Packet core & wake
+        ctx.fillStyle = '#ffffff';
+        ctx.beginPath(); ctx.arc(ptx, pty, 2.8, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = hexA(beamCol, 0.8);
+        ctx.beginPath(); ctx.arc(ptx, pty, 6, 0, Math.PI * 2); ctx.fill();
 
-      // 5. Quadrant HUD Perimeter Banners
-      const drawHudBanner = (bx: number, by: number, text: string, color: string, align: CanvasTextAlign = 'center') => {
-        ctx.save();
-        ctx.font = `700 8px ${MONO}`;
-        ctx.textAlign = align;
-        ctx.textBaseline = 'middle';
-        const tw = ctx.measureText(text).width;
-        const padX = 7, bh = 15;
-        const startX = align === 'center' ? bx - tw / 2 - padX : align === 'left' ? bx : bx - tw - padX * 2;
-        ctx.fillStyle = 'rgba(6,10,22,0.85)';
-        ctx.fillRect(startX, by - bh / 2, tw + padX * 2, bh);
-        ctx.strokeStyle = hexA(color, 0.4);
-        ctx.lineWidth = 1;
-        ctx.strokeRect(startX, by - bh / 2, tw + padX * 2, bh);
-        ctx.fillStyle = color;
-        ctx.fillText(text, align === 'center' ? bx : align === 'left' ? bx + padX : bx - padX, by);
         ctx.restore();
-      };
+      });
 
-      drawHudBanner(cx, cy - baseRy * 0.45 - 12, '★ COMMAND APEX', '#c084fc', 'center');
-      drawHudBanner(cx, cy - baseRy * 1.20 - 4, '▲ NORTH // ENGINEERING & EXECUTION', '#38bdf8', 'center');
-      drawHudBanner(cx + baseRx * 1.16 + 8, cy, '► EAST // INTEL & MEMORY', '#fbbf24', 'left');
-      drawHudBanner(cx, cy + baseRy * 1.20 + 8, '▼ SOUTH // GOVERNANCE & INTEGRITY', '#fb7185', 'center');
-      const westX = Math.max(180, cx - baseRx * 1.16 - 8);
-      drawHudBanner(westX, cy, '◄ WEST // GATEWAYS & DELIVERY', '#06b6d4', 'right');
+      // 3. Render 4 Living Celestial Biomes (Planets)
+      biomes.forEach((b) => {
+        const pos = getPlanetPos(b, w, h, cx, cy, time);
+        const isSel = selectedPlanet === b.id;
+        const isHov = hoverPlanetRef.current === b.id;
+        const pr = b.planetRadius * (isSel ? 1.25 : isHov ? 1.12 : 1.0);
+
+        // Atmosphere volumetric radial glow
+        ctx.save();
+        ctx.globalCompositeOperation = 'lighter';
+        const atmoGlow = ctx.createRadialGradient(pos.x, pos.y, pr * 0.8, pos.x, pos.y, pr * 3.4);
+        atmoGlow.addColorStop(0, isSel ? hexA(b.color, 0.65) : isHov ? hexA(b.color, 0.45) : b.atmosphereGlow);
+        atmoGlow.addColorStop(1, 'rgba(0,0,0,0)');
+        ctx.fillStyle = atmoGlow;
+        ctx.beginPath(); ctx.arc(pos.x, pos.y, pr * 3.4, 0, Math.PI * 2); ctx.fill();
+        ctx.restore();
+
+        // 3D Spherical Light Calculation relative to Sovereign Core Sun at (cx, cy)
+        const sunAngle = Math.atan2(cy - pos.y, cx - pos.x);
+        const lx = pos.x + Math.cos(sunAngle) * (pr * 0.38);
+        const ly = pos.y + Math.sin(sunAngle) * (pr * 0.38);
+
+        // Planet 3D Sphere Surface
+        ctx.save();
+        const sphereGrad = ctx.createRadialGradient(lx, ly, pr * 0.1, pos.x, pos.y, pr);
+        sphereGrad.addColorStop(0, '#ffffff'); // Specular Sunward Highlight
+        sphereGrad.addColorStop(0.25, b.secondaryColor);
+        sphereGrad.addColorStop(0.72, b.color);
+        sphereGrad.addColorStop(1, '#03050c'); // Occluded dark side
+        ctx.fillStyle = sphereGrad;
+        ctx.beginPath(); ctx.arc(pos.x, pos.y, pr, 0, Math.PI * 2); ctx.fill();
+
+        // Planet Limb / Fresnel Rim
+        ctx.strokeStyle = hexA(b.color, isSel ? 0.95 : 0.6);
+        ctx.lineWidth = isSel ? 2.2 : 1.4;
+        ctx.beginPath(); ctx.arc(pos.x, pos.y, pr, 0, Math.PI * 2); ctx.stroke();
+        ctx.restore();
+
+        // ── Unique Biome Geometry & Specialty Features ──
+        if (b.id === 'vulcan') {
+          // 🌋 VULCAN: Rotating Scaffold Rings + Molten Heat Flares
+          ctx.save();
+          ctx.translate(pos.x, pos.y);
+          ctx.rotate(time * 0.6);
+          ctx.strokeStyle = hexA(b.secondaryColor, 0.45);
+          ctx.lineWidth = 1.2;
+          ctx.setLineDash([6, 6]);
+          ctx.beginPath(); ctx.arc(0, 0, pr * 1.45, 0, Math.PI * 2); ctx.stroke();
+          ctx.setLineDash([]);
+          // Kinetic Piston Gantry ticks
+          for (let k = 0; k < 6; k++) {
+            const ka = (k * Math.PI) / 3;
+            ctx.fillStyle = '#f59e0b';
+            ctx.fillRect(Math.cos(ka) * pr * 1.45 - 2, Math.sin(ka) * pr * 1.45 - 2, 4, 4);
+          }
+          ctx.restore();
+        } else if (b.id === 'mnemosyne') {
+          // 🧠 MNEMOSYNE: Saturnian Engram Rings with Glowing Crystalline Memory Asteroids
+          ctx.save();
+          ctx.translate(pos.x, pos.y);
+          ctx.rotate(-0.35); // Saturn tilt
+          // Ring plane
+          ctx.strokeStyle = 'rgba(192, 132, 252, 0.5)';
+          ctx.lineWidth = 2.2;
+          ctx.beginPath();
+          ctx.ellipse(0, 0, pr * 2.2, pr * 0.75, 0, 0, Math.PI * 2);
+          ctx.stroke();
+          // Inner engram dust ring
+          ctx.strokeStyle = 'rgba(99, 102, 241, 0.3)';
+          ctx.lineWidth = 1;
+          ctx.beginPath();
+          ctx.ellipse(0, 0, pr * 1.75, pr * 0.6, 0, 0, Math.PI * 2);
+          ctx.stroke();
+          // 8 Crystalline Engram Asteroids orbiting on the ring
+          for (let m = 0; m < 8; m++) {
+            const ma = (m / 8) * Math.PI * 2 + time * 0.4;
+            const ex = Math.cos(ma) * pr * 2.2;
+            const ey = Math.sin(ma) * pr * 0.75;
+            ctx.fillStyle = '#ffffff';
+            ctx.beginPath(); ctx.arc(ex, ey, 1.8, 0, Math.PI * 2); ctx.fill();
+            ctx.fillStyle = 'rgba(192, 132, 252, 0.85)';
+            ctx.beginPath(); ctx.arc(ex, ey, 3.5, 0, Math.PI * 2); ctx.fill();
+          }
+          ctx.restore();
+        } else if (b.id === 'themis') {
+          // 🛡️ THEMIS: Obsidian Hexagonal Geodesic Bastion + 4 Counsel Moon Beacons
+          ctx.save();
+          ctx.translate(pos.x, pos.y);
+          ctx.rotate(time * 0.25);
+          // Interlocking Geodesic Shield
+          ctx.strokeStyle = 'rgba(52, 211, 153, 0.45)';
+          ctx.lineWidth = 1.2;
+          ctx.beginPath();
+          for (let h = 0; h < 6; h++) {
+            const ha = (h * Math.PI) / 3;
+            const hx = Math.cos(ha) * pr * 1.35;
+            const hy = Math.sin(ha) * pr * 1.35;
+            if (h === 0) ctx.moveTo(hx, hy); else ctx.lineTo(hx, hy);
+          }
+          ctx.closePath();
+          ctx.stroke();
+          // 4 Counsel Moon Beacons (CISO, Adversary, Pragmatist, Buyer)
+          const counselColors = ['#34d399', '#f87171', '#38bdf8', '#fbbf24'];
+          for (let c = 0; c < 4; c++) {
+            const ca = (c * Math.PI) / 2 - time * 0.8;
+            const cxM = Math.cos(ca) * pr * 1.75;
+            const cyM = Math.sin(ca) * pr * 1.75;
+            ctx.fillStyle = counselColors[c];
+            ctx.beginPath();
+            ctx.moveTo(cxM, cyM - 3); ctx.lineTo(cxM + 3, cyM); ctx.lineTo(cxM, cyM + 3); ctx.lineTo(cxM - 3, cyM);
+            ctx.closePath(); ctx.fill();
+          }
+          ctx.restore();
+        } else if (b.id === 'hermes') {
+          // ⚡ HERMES: Tachyon Warp Relays + Radiating Electromagnetic Pulse Rings
+          ctx.save();
+          ctx.translate(pos.x, pos.y);
+          // 3 Radiating pulse waves
+          for (let w = 0; w < 3; w++) {
+            const pulseWave = (time * 1.5 + w * 0.8) % 2.4;
+            const pR = pr * (1.1 + pulseWave);
+            ctx.strokeStyle = `rgba(6, 182, 212, ${Math.max(0, 0.65 - pulseWave * 0.25)})`;
+            ctx.lineWidth = 1.2;
+            ctx.beginPath(); ctx.arc(0, 0, pR, 0, Math.PI * 2); ctx.stroke();
+          }
+          // Acceleration transfer gate ticks
+          ctx.rotate(-time * 1.2);
+          ctx.strokeStyle = 'rgba(244, 63, 94, 0.5)';
+          ctx.setLineDash([4, 6]);
+          ctx.beginPath(); ctx.arc(0, 0, pr * 1.5, 0, Math.PI * 2); ctx.stroke();
+          ctx.setLineDash([]);
+          ctx.restore();
+        }
+
+        // 4. Planetary Biome HUD Name Banner
+        const stationed = agents.filter(x => getAgentPlanet(x) === b.id);
+        const bannerText = `${b.glyph} ${b.name} // ${b.codename}`;
+        const subText = `${b.domain.toUpperCase()} · ${stationed.length} VESSELS`;
+
+        ctx.save();
+        ctx.font = `700 8.5px ${MONO}`;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        const btw = ctx.measureText(bannerText).width;
+        const bth = 26;
+        const by = pos.y + pr + 18;
+
+        ctx.fillStyle = 'rgba(6, 10, 24, 0.88)';
+        ctx.strokeStyle = isSel ? hexA(b.color, 0.9) : isHov ? hexA(b.color, 0.6) : hexA(b.color, 0.35);
+        ctx.lineWidth = isSel ? 1.8 : 1;
+        ctx.fillRect(pos.x - btw / 2 - 8, by - bth / 2, btw + 16, bth);
+        ctx.strokeRect(pos.x - btw / 2 - 8, by - bth / 2, btw + 16, bth);
+
+        ctx.fillStyle = isSel ? '#ffffff' : b.color;
+        ctx.fillText(bannerText, pos.x, by - 5);
+
+        ctx.font = `7px ${MONO}`;
+        ctx.fillStyle = isSel ? hexA(b.color, 0.95) : 'rgba(165, 243, 252, 0.7)';
+        ctx.fillText(subText, pos.x, by + 6);
+        ctx.restore();
+      });
 
       const agentKey = agents.map(a => `${a.id}:${a.status}:${a.currentTaskId}`).join('|');
       if (agentKey !== lastAgentKey) {
@@ -1836,6 +2119,18 @@ export const CortexAgentsScene: React.FC = () => {
 
       // hover detection
       if (mouse.current.inside) {
+        let bestPlanet: CelestialPlanetId | null = null;
+        let bestPlanetDist = 48;
+        biomes.forEach((b) => {
+          const bPos = getPlanetPos(b, w, h, cx, cy, time);
+          const d = Math.hypot(mouse.current.x * w - bPos.x, mouse.current.y * h - bPos.y);
+          if (d < b.planetRadius + 20 && d < bestPlanetDist) {
+            bestPlanetDist = d;
+            bestPlanet = b.id;
+          }
+        });
+        hoverPlanetRef.current = bestPlanet;
+
         let best: string | null = null, bestD = 34;
         agents.forEach((a) => {
           const { x: ax, y: ay } = agentPos(agents, a, w, h, cx, cy, time);
@@ -1843,8 +2138,9 @@ export const CortexAgentsScene: React.FC = () => {
           if (d < bestD) { bestD = d; best = a.id; }
         });
         hoverAgent.current = best;
-        canvas.style.cursor = best ? 'pointer' : 'crosshair';
+        canvas.style.cursor = (best || bestPlanet) ? 'pointer' : 'crosshair';
       } else {
+        hoverPlanetRef.current = null;
         hoverAgent.current = null;
         canvas.style.cursor = 'crosshair';
       }
@@ -1977,25 +2273,29 @@ export const CortexAgentsScene: React.FC = () => {
           ctx.beginPath(); ctx.arc(ax, ay, 12 + ps[k] * 48, 0, Math.PI * 2); ctx.stroke();
         }
 
-        // data conduit to core while working or for key specialists
+        // data conduit to home planet while working or for key specialists
+        const pDef = CELESTIAL_BIOMES[getAgentPlanet(a)];
+        const pPos = getPlanetPos(pDef, w, h, cx, cy, time);
         const isCoreSpec = ['antigravity', 'builder', 'sentinel', 'scout'].includes(a.id);
         if (working || isCoreSpec) {
           ctx.save();
           ctx.globalCompositeOperation = 'lighter';
-          const beam = ctx.createLinearGradient(ax, ay, cx, cy);
-          const alphaBase = working ? 0.22 : 0.08;
+          const targetX = working ? pPos.x : cx;
+          const targetY = working ? pPos.y : cy;
+          const beam = ctx.createLinearGradient(ax, ay, targetX, targetY);
+          const alphaBase = working ? 0.28 : 0.08;
           beam.addColorStop(0, hexA(col, alphaBase));
           beam.addColorStop(1, hexA(col, 0.01));
           ctx.strokeStyle = beam;
           ctx.lineWidth = working ? 1.6 : 1.0;
-          ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(cx, cy); ctx.stroke();
-          const prog = (time * (working ? 1.0 : 0.45) + i * 0.37) % 1;
-          const px2 = ax + (cx - ax) * prog, py2 = ay + (cy - ay) * prog;
+          ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(targetX, targetY); ctx.stroke();
+          const prog = (time * (working ? 1.2 : 0.45) + i * 0.37) % 1;
+          const px2 = ax + (targetX - ax) * prog, py2 = ay + (targetY - ay) * prog;
           ctx.fillStyle = hexA(col, working ? 0.95 : 0.65);
           ctx.beginPath(); ctx.arc(px2, py2, working ? 2.8 : 1.6, 0, Math.PI * 2); ctx.fill();
           // packet wake
           ctx.fillStyle = hexA(col, working ? 0.3 : 0.15);
-          ctx.beginPath(); ctx.arc(ax + (cx - ax) * Math.max(0, prog - 0.04), ay + (cy - ay) * Math.max(0, prog - 0.04), working ? 1.4 : 0.8, 0, Math.PI * 2); ctx.fill();
+          ctx.beginPath(); ctx.arc(ax + (targetX - ax) * Math.max(0, prog - 0.04), ay + (targetY - ay) * Math.max(0, prog - 0.04), working ? 1.4 : 0.8, 0, Math.PI * 2); ctx.fill();
           ctx.globalCompositeOperation = 'source-over';
           ctx.restore();
         }
@@ -2014,7 +2314,7 @@ export const CortexAgentsScene: React.FC = () => {
 
         ctx.save();
         ctx.translate(ax, ay);
-        ctx.rotate(Math.atan2(ay - cy, ax - cx) + Math.PI / 2);
+        ctx.rotate(Math.atan2(ay - pPos.y, ax - pPos.x) + Math.PI / 2);
         // engine flare when working
         if (working) {
           const fl = 0.6 + 0.4 * Math.sin(time * 9 + i);
@@ -2413,7 +2713,7 @@ export const CortexAgentsScene: React.FC = () => {
       canvas.removeEventListener('mouseleave', onLeave);
       canvas.removeEventListener('click', onClick);
     };
-  }, [selectedAgent, selectedStation]);
+  }, [selectedAgent, selectedStation, selectedPlanet]);
 
   // ── DOM overlay data ──
   const tasksByAgent = new Map<string, AgentTaskClient[]>();
@@ -2440,7 +2740,7 @@ export const CortexAgentsScene: React.FC = () => {
 
       {/* ── Top Header Deck: Tactical Command Holodeck ── */}
       <header style={{
-        position: 'absolute', top: 16, left: '50%', transform: 'translateX(-50%)',
+        position: 'absolute', top: 56, left: '50%', transform: 'translateX(-50%)',
         zIndex: 15, textAlign: 'center', pointerEvents: 'auto',
         display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4,
       }}>
@@ -2459,23 +2759,60 @@ export const CortexAgentsScene: React.FC = () => {
           </span>
         </div>
         <div style={{
-          display: 'flex', alignItems: 'center', gap: 12, fontSize: 8, letterSpacing: '0.2em',
+          display: 'flex', alignItems: 'center', gap: 10, fontSize: 8, letterSpacing: '0.15em',
           color: 'rgba(165,243,252,0.75)', fontFamily: MONO,
         }}>
           <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
             <span style={{ color: '#38bdf8' }}>◈</span> {hindsightNodesCount} MEMORY ENGRAMS
           </span>
           <span>·</span>
-          <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-            <span style={{ color: '#c084fc' }}>★</span> 4 SPECIALISTS ARMED
-          </span>
+          <button
+            onClick={() => setSelectedPlanet((cur) => cur === 'vulcan' ? null : 'vulcan')}
+            style={{
+              background: selectedPlanet === 'vulcan' ? 'rgba(245,158,11,0.25)' : 'none',
+              border: selectedPlanet === 'vulcan' ? '1px solid #f59e0b' : 'none',
+              borderRadius: 3, padding: '2px 6px',
+              color: '#f59e0b', cursor: 'pointer', fontFamily: MONO, fontSize: 8, fontWeight: 700,
+            }}
+          >
+            🌋 VULCAN
+          </button>
           <span>·</span>
-          <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-            <span style={{ color: divergenceClashes.length > 0 ? '#f43f5e' : '#34d399' }}>
-              {divergenceClashes.length > 0 ? '⚠' : '✓'}
-            </span>
-            {divergenceClashes.length > 0 ? `${divergenceClashes.length} CLASHES` : 'ZERO BELIEF DRIFT'}
-          </span>
+          <button
+            onClick={() => setSelectedPlanet((cur) => cur === 'mnemosyne' ? null : 'mnemosyne')}
+            style={{
+              background: selectedPlanet === 'mnemosyne' ? 'rgba(192,132,252,0.25)' : 'none',
+              border: selectedPlanet === 'mnemosyne' ? '1px solid #c084fc' : 'none',
+              borderRadius: 3, padding: '2px 6px',
+              color: '#c084fc', cursor: 'pointer', fontFamily: MONO, fontSize: 8, fontWeight: 700,
+            }}
+          >
+            🧠 MNEMOSYNE
+          </button>
+          <span>·</span>
+          <button
+            onClick={() => setSelectedPlanet((cur) => cur === 'themis' ? null : 'themis')}
+            style={{
+              background: selectedPlanet === 'themis' ? 'rgba(52,211,153,0.25)' : 'none',
+              border: selectedPlanet === 'themis' ? '1px solid #34d399' : 'none',
+              borderRadius: 3, padding: '2px 6px',
+              color: '#34d399', cursor: 'pointer', fontFamily: MONO, fontSize: 8, fontWeight: 700,
+            }}
+          >
+            🛡️ THEMIS
+          </button>
+          <span>·</span>
+          <button
+            onClick={() => setSelectedPlanet((cur) => cur === 'hermes' ? null : 'hermes')}
+            style={{
+              background: selectedPlanet === 'hermes' ? 'rgba(6,182,212,0.25)' : 'none',
+              border: selectedPlanet === 'hermes' ? '1px solid #06b6d4' : 'none',
+              borderRadius: 3, padding: '2px 6px',
+              color: '#06b6d4', cursor: 'pointer', fontFamily: MONO, fontSize: 8, fontWeight: 700,
+            }}
+          >
+            ⚡ HERMES
+          </button>
           <span>·</span>
           <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
             <span style={{ color: '#fbbf24' }}>⚡</span> {workingCount} ACTIVE SPRINT
@@ -3022,9 +3359,10 @@ export const CortexAgentsScene: React.FC = () => {
         const col = AGENT_COLORS[a.id] || (a.spawnSpec ? `hsl(${spawnHue(a.id)} 85% 68%)` : '#94a3b8');
         const tasks = tasksByAgent.get(a.id) || [];
         if (!tasks.length) return null;
-        const baseA = (i / Math.max(agents.length, 1)) * Math.PI * 2 - Math.PI / 2;
-        const left = (narrow ? 50 : 57) + Math.cos(baseA) * (narrow ? 36 : 33);
-        const top = 50 + Math.sin(baseA) * 28;
+        const pDef = CELESTIAL_BIOMES[getAgentPlanet(a)];
+        const baseA = pDef.baseAngle + ((i % 4) - 1.5) * 0.35;
+        const left = (narrow ? 50 : 57) + Math.cos(baseA) * (narrow ? 32 : 28);
+        const top = 50 + Math.sin(baseA) * 24;
         const isFocused = selectedAgent === a.id || tasksByAgent.size === 1;
 
         if (!isFocused) {
@@ -3109,6 +3447,196 @@ export const CortexAgentsScene: React.FC = () => {
       {selectedStation && (
         <OmniSyndicationPanel onClose={() => setSelectedStation(null)} dockLeft={!narrow} />
       )}
+
+      {/* ── Planetary Biome Dossier HUD Card ── */}
+      {selectedPlanet && (() => {
+        const p = CELESTIAL_BIOMES[selectedPlanet];
+        const stationedAgents = agents.filter(x => getAgentPlanet(x) === p.id);
+        return (
+          <>
+            <div
+              onClick={() => setSelectedPlanet(null)}
+              style={{
+                position: 'absolute', inset: 0, zIndex: 40,
+                background: 'rgba(2, 4, 10, 0.55)', backdropFilter: 'blur(4px)',
+              }}
+            />
+            <div
+              role="dialog"
+              aria-modal="true"
+              style={{
+                position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -50%)',
+                zIndex: 42, width: 'min(680px, 94vw)', maxHeight: '86vh',
+                background: 'linear-gradient(170deg, rgba(8,14,30,0.96) 0%, rgba(4,7,18,0.98) 100%)',
+                border: `1px solid ${hexA(p.color, 0.65)}`,
+                borderLeft: `4px solid ${p.color}`,
+                borderRadius: 8,
+                boxShadow: `0 0 48px ${hexA(p.color, 0.25)}, 0 16px 48px rgba(0,0,0,0.85)`,
+                display: 'flex', flexDirection: 'column',
+                overflow: 'hidden', fontFamily: MONO,
+              }}
+            >
+              {/* Header */}
+              <div style={{
+                padding: '12px 16px', borderBottom: `1px solid ${hexA(p.color, 0.25)}`,
+                display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                background: `linear-gradient(90deg, ${hexA(p.color, 0.12)}, rgba(0,0,0,0))`,
+              }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                  <span style={{ fontSize: 18 }}>{p.glyph}</span>
+                  <div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <span style={{ fontSize: 12, fontWeight: 800, letterSpacing: '0.22em', color: '#ffffff' }}>
+                        PLANET {p.name}
+                      </span>
+                      <span style={{ fontSize: 8, padding: '1px 6px', borderRadius: 10, background: hexA(p.color, 0.2), color: p.color, border: `1px solid ${hexA(p.color, 0.4)}` }}>
+                        {p.codename}
+                      </span>
+                    </div>
+                    <div style={{ fontSize: 8, color: 'rgba(165,243,252,0.7)', letterSpacing: '0.12em', marginTop: 2 }}>
+                      SECTOR DOMAIN // {p.domain.toUpperCase()}
+                    </div>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setSelectedPlanet(null)}
+                  style={{
+                    background: 'none', border: 'none', color: 'rgba(165,243,252,0.6)',
+                    cursor: 'pointer', fontFamily: MONO, fontSize: 14,
+                  }}
+                  title="Close (Esc)"
+                >
+                  ✕
+                </button>
+              </div>
+
+              {/* Body */}
+              <div style={{ padding: '16px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 14 }}>
+                {/* Lore & Atmospheric Telemetry */}
+                <div style={{
+                  background: 'rgba(6,10,24,0.6)', border: `1px solid ${hexA(p.color, 0.2)}`,
+                  borderRadius: 4, padding: '12px 14px', display: 'flex', flexDirection: 'column', gap: 8,
+                }}>
+                  <div style={{ fontSize: 8.5, color: '#f0f9ff', lineHeight: 1.4 }}>
+                    <span style={{ color: p.color, fontWeight: 700 }}>BIOME ARCHITECTURE: </span>
+                    {p.lore}
+                  </div>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginTop: 4 }}>
+                    <div style={{ background: 'rgba(4,7,18,0.7)', padding: '8px 10px', borderRadius: 4, border: '1px solid rgba(103,232,249,0.1)' }}>
+                      <div style={{ fontSize: 7.5, color: 'rgba(165,243,252,0.6)', letterSpacing: '0.1em' }}>ATMOSPHERE</div>
+                      <div style={{ fontSize: 8, color: '#e0f2fe', marginTop: 3 }}>{p.atmosphere}</div>
+                    </div>
+                    <div style={{ background: 'rgba(4,7,18,0.7)', padding: '8px 10px', borderRadius: 4, border: '1px solid rgba(103,232,249,0.1)' }}>
+                      <div style={{ fontSize: 7.5, color: 'rgba(165,243,252,0.6)', letterSpacing: '0.1em' }}>ORBITAL RINGS & SATELLITES</div>
+                      <div style={{ fontSize: 8, color: '#e0f2fe', marginTop: 3 }}>{p.rings}</div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Stationed Fleet Vessels */}
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <span style={{ fontSize: 8.5, fontWeight: 700, color: 'rgba(165,243,252,0.85)', letterSpacing: '0.12em' }}>
+                      STATIONED AUTONOMOUS VESSELS ({stationedAgents.length})
+                    </span>
+                    <span style={{ fontSize: 7.5, color: hexA(p.color, 0.8) }}>
+                      KEPLERIAN TELEMETRY SYNCED
+                    </span>
+                  </div>
+
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+                    {stationedAgents.map((ag) => {
+                      const agCol = AGENT_COLORS[ag.id] || p.color;
+                      const agTasks = tasksByAgent.get(ag.id) || [];
+                      const isWorking = ag.status === 'working';
+                      return (
+                        <div
+                          key={ag.id}
+                          onClick={() => {
+                            setSelectedPlanet(null);
+                            toggleDossier(ag.id);
+                          }}
+                          style={{
+                            background: 'rgba(6,10,24,0.7)',
+                            border: `1px solid ${hexA(agCol, 0.4)}`,
+                            borderRadius: 4, padding: '10px 12px',
+                            cursor: 'pointer', transition: 'all 0.2s',
+                          }}
+                          onMouseEnter={(e) => {
+                            e.currentTarget.style.borderColor = agCol;
+                            e.currentTarget.style.boxShadow = `0 0 16px ${hexA(agCol, 0.3)}`;
+                          }}
+                          onMouseLeave={(e) => {
+                            e.currentTarget.style.borderColor = hexA(agCol, 0.4);
+                            e.currentTarget.style.boxShadow = 'none';
+                          }}
+                        >
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                            <span style={{ fontSize: 9.5, fontWeight: 700, color: agCol }}>{ag.name}</span>
+                            <span style={{
+                              fontSize: 7.5, padding: '1px 6px', borderRadius: 8,
+                              background: isWorking ? hexA(agCol, 0.2) : 'rgba(148,163,184,0.1)',
+                              color: isWorking ? agCol : '#94a3b8',
+                              border: `1px solid ${isWorking ? hexA(agCol, 0.4) : 'rgba(148,163,184,0.2)'}`,
+                            }}>
+                              {ag.status.toUpperCase()}
+                            </span>
+                          </div>
+                          <div style={{ fontSize: 7.5, color: 'rgba(224,242,254,0.7)', marginTop: 4 }}>
+                            {ag.role || 'Autonomous Specialist Agent'}
+                          </div>
+                          {agTasks.length > 0 ? (
+                            <div style={{ marginTop: 6, fontSize: 7.5, color: 'rgba(165,243,252,0.9)', display: 'flex', alignItems: 'center', gap: 4 }}>
+                              <span style={{ color: agCol }}>⚡</span>
+                              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                {agTasks[0].title}
+                              </span>
+                            </div>
+                          ) : (
+                            <div style={{ marginTop: 6, fontSize: 7.5, color: 'rgba(148,163,184,0.5)' }}>
+                              Geosynchronous standby orbit
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              </div>
+
+              {/* Footer */}
+              <div style={{
+                padding: '12px 16px', borderTop: `1px solid ${hexA(p.color, 0.2)}`,
+                display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                background: 'rgba(6,10,24,0.4)',
+              }}>
+                <button
+                  onClick={() => setSelectedPlanet(null)}
+                  style={{
+                    padding: '6px 14px', borderRadius: 4,
+                    background: 'transparent', border: '1px solid rgba(148,233,255,0.25)',
+                    color: 'rgba(165,243,252,0.7)', fontFamily: MONO, fontSize: 8.5, cursor: 'pointer',
+                  }}
+                >
+                  [ ESC ] DISMISS
+                </button>
+                <button
+                  onClick={() => setSelectedPlanet(null)}
+                  style={{
+                    padding: '7px 16px', borderRadius: 4,
+                    background: `linear-gradient(90deg, ${hexA(p.color, 0.4)}, ${hexA(p.secondaryColor, 0.4)})`,
+                    border: `1px solid ${p.color}`,
+                    color: '#ffffff', fontFamily: MONO, fontSize: 8.5, fontWeight: 800,
+                    cursor: 'pointer', boxShadow: `0 0 16px ${hexA(p.color, 0.3)}`,
+                  }}
+                >
+                  ◈ RETURN TO SYSTEM ORBIT
+                </button>
+              </div>
+            </div>
+          </>
+        );
+      })()}
 
       <CortexFoundryNav
         snap={snap}
