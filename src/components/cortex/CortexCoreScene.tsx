@@ -563,6 +563,13 @@ export const agentScreenAnchors: Record<string, { x: number; y: number; behind: 
  *  used by CameraRig to smoothly lock on and chase active agents in orbit. */
 export const agentWorldPositions: Record<string, THREE.Vector3> = {};
 
+/** One persisted runtime event reduced to what the chrono replay camera needs. */
+export interface ReplayTrackEvent { seq: number; at: number; type: string; agentId: string | null; }
+
+/** Live pointer to the event currently under the chrono replay cursor —
+ *  written every frame by CameraRig, polled by the DOM HUD. */
+export const chronoNow: { seq: number; type: string; agentId: string | null } = { seq: 0, type: '', agentId: null };
+
 const SAT_COUNT = 24;
 export const SAT_AGENT_COLORS: Record<string, string> = {
   antigravity: '#c084fc', devin: '#38bdf8', claudecode: '#f97316', openclaw: '#06b6d4', hermes: '#ef4444', curator: '#8b5cf6', sentinel: '#67e8f9', scout: '#e879f9', librarian: '#fbbf24', builder: '#34d399', reviewer: '#fb7185', runner: '#a3e635', distributor: '#fb923c', warden: '#818cf8', prep: '#f472b6', forecaster: '#2dd4bf', strategist: '#e879f9',
@@ -2043,16 +2050,20 @@ function ThoughtSwarm({ live }: { live: React.MutableRefObject<LiveSignal> }) {
 
 // ── Camera rig: intro dolly + parallax + level shake + orbit chase + chrono-dvr ───────
 
+const CHRONO_SEG = 1.4; // seconds each replayed event holds the camera
+
 function CameraRig({
   live,
   selectedAgentId: selectedProp,
   chronoTime,
+  replayTrack,
   holoParallax = true,
   headParallax,
 }: {
   live: React.MutableRefObject<LiveSignal>;
   selectedAgentId?: string | null;
   chronoTime?: number | null;
+  replayTrack?: ReplayTrackEvent[] | null;
   holoParallax?: boolean;
   headParallax?: { x: number; y: number } | null;
 }) {
@@ -2205,9 +2216,33 @@ function CameraRig({
     const sx = (Math.sin(t * 41.3) + Math.sin(t * 23.7) * 0.5) * shake * 0.5;
     const sy = (Math.cos(t * 37.1) + Math.sin(t * 29.3) * 0.5) * shake * 0.5;
 
-    // ── 1. 4D CHRONO-DVR REPLAY KINEMATICS (Lemo Opuscar Q-Map) ─────────────
+    // ── 1. 4D CHRONO-DVR REPLAY KINEMATICS ─────────────────────────────────
+    // Event-sourced replay: when a persisted-event track is supplied, the
+    // cursor walks REAL runtime events and the camera attends each event's
+    // agent. Otherwise falls back to the scripted demo reel.
     if (chronoTime != null && chronoTime >= 0) {
       const ct = chronoTime;
+      if (replayTrack && replayTrack.length > 0) {
+        const idx = Math.min(Math.floor(ct / CHRONO_SEG), replayTrack.length - 1);
+        const ev = replayTrack[idx];
+        chronoNow.seq = ev.seq; chronoNow.type = ev.type; chronoNow.agentId = ev.agentId;
+        const pos = ev.agentId ? agentWorldPositions[ev.agentId] : null;
+        if (pos) {
+          targetLookAt.current.lerp(pos, Math.min(1, delta * 3.8));
+          const radial = pos.clone().normalize();
+          if (radial.lengthSq() < 0.001) radial.set(0, 0, 1);
+          const chasePos = pos.clone().add(radial.multiplyScalar(2.6));
+          chasePos.y += 0.65 + Math.sin(t * 1.5) * 0.04;
+          targetCamPos.current.lerp(chasePos, Math.min(1, delta * 3.2));
+        } else {
+          targetLookAt.current.lerp(tmpV.set(0, 0, 0), Math.min(1, delta * 2.4));
+          targetCamPos.current.lerp(tmpV.set(0, 0.3, 5.6), Math.min(1, delta * 2.6));
+        }
+        camera.position.lerp(targetCamPos.current, Math.min(1, delta * 4.2));
+        camera.lookAt(targetLookAt.current);
+        return;
+      }
+      chronoNow.seq = 0; chronoNow.type = ''; chronoNow.agentId = null;
       if (ct < 2.5) {
         // Stage 1: Macro Swarm Orbit
         const p = ct / 2.5;
@@ -2376,12 +2411,14 @@ function CortexCoreInner({
   fx,
   selectedAgentId,
   chronoTime,
+  replayTrack,
   holoParallax,
   headParallax,
 }: {
   fx: React.MutableRefObject<{ shocks: Shock[] }>;
   selectedAgentId?: string | null;
   chronoTime?: number | null;
+  replayTrack?: ReplayTrackEvent[] | null;
   holoParallax?: boolean;
   headParallax?: { x: number; y: number } | null;
 }) {
@@ -2432,7 +2469,7 @@ function CortexCoreInner({
       <ThoughtSwarm live={live} />
       <Shockwaves fx={fx} />
 
-      <CameraRig live={live} selectedAgentId={selectedAgentId} chronoTime={chronoTime} holoParallax={holoParallax} headParallax={headParallax} />
+      <CameraRig live={live} selectedAgentId={selectedAgentId} chronoTime={chronoTime} replayTrack={replayTrack} holoParallax={holoParallax} headParallax={headParallax} />
       <PostFX live={live} />
     </>
   );
@@ -2442,12 +2479,14 @@ function SceneWithInput({
   selectedAgentId,
   onSelectAgent,
   chronoTime,
+  replayTrack,
   holoParallax,
   headParallax,
 }: {
   selectedAgentId?: string | null;
   onSelectAgent?: (id: string | null) => void;
   chronoTime?: number | null;
+  replayTrack?: ReplayTrackEvent[] | null;
   holoParallax?: boolean;
   headParallax?: { x: number; y: number } | null;
 }) {
@@ -2466,7 +2505,7 @@ function SceneWithInput({
     return () => el.removeEventListener('pointerdown', onDown);
   }, [gl, clock]);
 
-  return <CortexCoreInner fx={fx} selectedAgentId={selectedAgentId} chronoTime={chronoTime} holoParallax={holoParallax} headParallax={headParallax} />;
+  return <CortexCoreInner fx={fx} selectedAgentId={selectedAgentId} chronoTime={chronoTime} replayTrack={replayTrack} holoParallax={holoParallax} headParallax={headParallax} />;
 }
 
 // Under prefers-reduced-motion the Canvas renders on demand: ambient
@@ -2485,6 +2524,7 @@ export interface CortexCoreSceneProps {
   selectedAgentId?: string | null;
   onSelectAgent?: (id: string | null) => void;
   chronoTime?: number | null;
+  replayTrack?: ReplayTrackEvent[] | null;
   holoParallax?: boolean;
   headParallax?: { x: number; y: number } | null;
 }
@@ -2493,6 +2533,7 @@ export const CortexCoreScene: React.FC<CortexCoreSceneProps> = ({
   selectedAgentId,
   onSelectAgent,
   chronoTime,
+  replayTrack,
   holoParallax = true,
   headParallax,
 }) => {
@@ -2554,7 +2595,7 @@ export const CortexCoreScene: React.FC<CortexCoreSceneProps> = ({
             }}
           />
         )}
-        <SceneWithInput selectedAgentId={selectedAgentId} onSelectAgent={onSelectAgent} chronoTime={chronoTime} holoParallax={holoParallax} headParallax={headParallax} />
+        <SceneWithInput selectedAgentId={selectedAgentId} onSelectAgent={onSelectAgent} chronoTime={chronoTime} replayTrack={replayTrack} holoParallax={holoParallax} headParallax={headParallax} />
         {reduced && <InvalidateBridge />}
       </Canvas>
       {contextLost && (

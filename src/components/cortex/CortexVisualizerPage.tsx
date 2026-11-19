@@ -3,7 +3,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { cortexSignalBus, CortexVisualizer, type VisualizerFace, type CortexSignalBusPayload, type CortexVoiceState } from './CortexVisualizer';
 import { CortexAgentsScene } from './CortexAgentsScene';
-import { CortexCoreScene, agentScreenAnchors } from './CortexCoreScene';
+import { CortexCoreScene, agentScreenAnchors, chronoNow, type ReplayTrackEvent } from './CortexCoreScene';
 import { useVisualizerVoice } from './useVisualizerVoice';
 import { startInitiativeSensor } from '../../lib/cortex-initiative-sensor';
 import { CortexChatDrawer } from './CortexChatDrawer';
@@ -210,6 +210,8 @@ export default function CortexVisualizerPage() {
   const [chronoActive, setChronoActive] = useState(false);
   const [chronoTime, setChronoTime] = useState(0.0);
   const [chronoPlaying, setChronoPlaying] = useState(true);
+  const [replayTrack, setReplayTrack] = useState<ReplayTrackEvent[] | null>(null);
+  const [chronoNowUi, setChronoNowUi] = useState<{ seq: number; type: string; agentId: string | null } | null>(null);
   const [holoCamActive, setHoloCamActive] = useState(false);
   const [headParallax, setHeadParallax] = useState<{ x: number; y: number } | null>(null);
   const [handPinch, setHandPinch] = useState<HandPinchState | null>(null);
@@ -445,7 +447,39 @@ export default function CortexVisualizerPage() {
     setAgentEvents([...agentsClient.events]);
   }), []);
 
-  // 4D Chrono-DVR timeline tick loop
+  // 4D Chrono-DVR: load the persisted event-sourced replay track once per activation.
+  useEffect(() => {
+    if (!chronoActive) { setReplayTrack(null); setChronoNowUi(null); return; }
+    let dead = false;
+    fetch('/api/cortex/events?limit=200&types=task.transition,task.progress,agent.spawned,agent.retired,agent.spawn_proposed,agent.comm')
+      .then((r) => r.json())
+      .then((d) => {
+        if (dead) return;
+        const evs = (Array.isArray(d?.events) ? d.events : [])
+          .map((e: any): ReplayTrackEvent => ({
+            seq: e.seq, at: e.at, type: e.type,
+            agentId: e.agentId ?? e.task?.agentId ?? e.from ?? e.to ?? null,
+          }))
+          .filter((e: ReplayTrackEvent) => e.agentId != null)
+          .slice(-160);
+        setReplayTrack(evs.length > 0 ? evs : null);
+      })
+      .catch(() => { if (!dead) setReplayTrack(null); });
+    return () => { dead = true; };
+  }, [chronoActive]);
+
+  // Poll the replay cursor for the HUD readout.
+  useEffect(() => {
+    if (!chronoActive) return;
+    const id = setInterval(() => {
+      setChronoNowUi(chronoNow.seq ? { seq: chronoNow.seq, type: chronoNow.type, agentId: chronoNow.agentId } : null);
+    }, 250);
+    return () => clearInterval(id);
+  }, [chronoActive]);
+
+  // 4D Chrono-DVR timeline tick loop — duration follows the real track length
+  // (1.4s per event) or the 8s scripted reel when no events exist.
+  const replayDuration = replayTrack ? replayTrack.length * 1.4 : 8.0;
   useEffect(() => {
     if (!chronoActive || !chronoPlaying) return;
     let raf = 0;
@@ -453,12 +487,12 @@ export default function CortexVisualizerPage() {
     const tick = (now: number) => {
       const dt = (now - last) / 1000;
       last = now;
-      setChronoTime((prev) => (prev + dt) % 8.0);
+      setChronoTime((prev) => (prev + dt) % replayDuration);
       raf = requestAnimationFrame(tick);
     };
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
-  }, [chronoActive, chronoPlaying]);
+  }, [chronoActive, chronoPlaying, replayDuration]);
 
   // In-flight token packet hover listener
   useEffect(() => {
@@ -909,8 +943,23 @@ export default function CortexVisualizerPage() {
             selectedAgentId={selectedAgentId}
             onSelectAgent={setSelectedAgentId}
             chronoTime={chronoActive ? chronoTime : null}
+            replayTrack={chronoActive ? replayTrack : null}
             headParallax={headParallax}
           />
+          {chronoActive && chronoNowUi && (
+            <div style={{
+              position: 'absolute', bottom: 14, left: '50%', transform: 'translateX(-50%)',
+              zIndex: 6, pointerEvents: 'none',
+              padding: '6px 14px', borderRadius: 2,
+              border: '1px solid rgba(56,189,248,0.35)',
+              background: 'rgba(4,8,14,0.72)', backdropFilter: 'blur(8px)',
+              color: '#7dd3fc', fontFamily: "'IBM Plex Mono', monospace",
+              fontSize: 10, letterSpacing: '0.14em', whiteSpace: 'nowrap',
+            }}>
+              {replayTrack ? '◉ REPLAY' : '◈ REEL'} · SEQ {chronoNowUi.seq} · {chronoNowUi.type}
+              {chronoNowUi.agentId ? ` · ${chronoNowUi.agentId}` : ''}
+            </div>
+          )}
         </div>
       ) : faceMode === 'agents' ? (
         <div key="face-agents" className="cx-face-transition" style={{ position: 'absolute', inset: 0, zIndex: 4 }}>
