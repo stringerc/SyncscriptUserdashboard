@@ -316,7 +316,7 @@ interface CortexChatDrawerProps {
   onSubmitText?: (text: string) => void;
 }
 
-export function CortexChatDrawer({ open, onClose, payload, onSubmitText }: CortexChatDrawerProps) {
+function CortexChatDrawerInner({ open, onClose, payload, onSubmitText }: CortexChatDrawerProps) {
   const messages = useCortexChatMessages();
   const scrollRef = useRef<HTMLDivElement>(null);
   const [draft, setDraft] = useState('');
@@ -677,3 +677,14 @@ export function CortexChatDrawer({ open, onClose, payload, onSubmitText }: Corte
     </div>
   );
 }
+
+export const CortexChatDrawer = React.memo(CortexChatDrawerInner, (prev, next) => {
+  return (
+    prev.open === next.open &&
+    prev.payload.state === next.payload.state &&
+    prev.payload.text === next.payload.text &&
+    prev.payload.stage === next.payload.stage &&
+    prev.payload.tool === next.payload.tool &&
+    prev.payload.thought === next.payload.thought
+  );
+});

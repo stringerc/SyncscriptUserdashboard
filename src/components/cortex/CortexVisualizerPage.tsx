@@ -5,6 +5,7 @@ import { cortexSignalBus, CortexVisualizer, type VisualizerFace, type CortexSign
 import { CortexAgentsScene } from './CortexAgentsScene';
 import {
   CortexCoreScene,
+  type CoreQualityMode,
   agentScreenAnchors,
   memoryScreenAnchors,
   chronoNow,
@@ -318,12 +319,12 @@ export default function CortexVisualizerPage() {
   // Initiative HUD badge + one-time auto-open: the first proposal of a session
   // surfaces the Inbox once; afterwards the badge keeps count visible without
   // interrupting (restraint).
-  const [coreQuality, setCoreQuality] = useState<'smooth' | 'cinematic'>(() => {
+  const [coreQuality, setCoreQuality] = useState<CoreQualityMode>(() => {
     if (typeof window !== 'undefined') {
-      const s = localStorage.getItem('cortex_core_quality');
-      if (s === 'smooth' || s === 'cinematic') return s;
+      const s = localStorage.getItem('cortex_core_quality') as CoreQualityMode | null;
+      if (s === 'ultra' || s === 'smooth' || s === 'cinematic') return s;
     }
-    return 'smooth';
+    return 'ultra';
   });
   const [initiativeCount, setInitiativeCount] = useState(0);
   const initiativeAutoOpenedRef = useRef(false);
@@ -711,9 +712,23 @@ export default function CortexVisualizerPage() {
 
     let goveeSyncTimer: ReturnType<typeof setTimeout> | null = null;
     let lastSyncedMood = '';
+    let lastPayloadState = '';
+    let lastPayloadText = '';
+    let lastLevelUpdateTime = 0;
 
     const unsub = cortexSignalBus.subscribe((p) => {
-      setPayload(p);
+      // Eagerly update React on semantic changes; throttle audio meter to 10Hz to prevent DOM thrashing
+      const now = performance.now();
+      const isSemantic = p.state !== lastPayloadState || p.text !== lastPayloadText;
+      const isLevelThrottled = (now - lastLevelUpdateTime >= 100);
+
+      if (isSemantic || isLevelThrottled) {
+        lastPayloadState = p.state;
+        lastPayloadText = p.text || '';
+        if (isLevelThrottled) lastLevelUpdateTime = now;
+        setPayload(p);
+      }
+
       if (goveeSyncRef.current && p.state && p.state !== lastSyncedMood) {
         lastSyncedMood = p.state;
         if (goveeSyncTimer) clearTimeout(goveeSyncTimer);
@@ -1236,20 +1251,38 @@ export default function CortexVisualizerPage() {
         {faceMode === 'core' && !mapMode && (
           <button
             onClick={() => {
-              const next = coreQuality === 'smooth' ? 'cinematic' : 'smooth';
+              const next: CoreQualityMode =
+                coreQuality === 'ultra' ? 'smooth' : coreQuality === 'smooth' ? 'cinematic' : 'ultra';
               setCoreQuality(next);
               try { localStorage.setItem('cortex_core_quality', next); } catch {}
-              cortexSpeak(next === 'smooth' ? 'Engaging 60 FPS smooth mode.' : 'Activating cinematic post stack.');
+              cortexSpeak(
+                next === 'ultra' ? 'Engaging Turbo 120 FPS Direct WebGL mode.' :
+                next === 'smooth' ? 'Engaging 60 FPS smooth mode.' :
+                'Activating cinematic post stack.'
+              );
             }}
-            title={coreQuality === 'smooth'
-              ? 'Smooth 60 FPS Active (4-Pass Lean Shaders · DPR 1.0 · Zero Lag). Click for Cinematic 8-Pass FX.'
-              : 'Cinematic FX Active (8-Pass GTAO + GodRays + DoF Bokeh). Click for Smooth 60 FPS Mode.'}
+            title={
+              coreQuality === 'ultra'
+                ? 'Turbo 120 FPS Active (Direct Native WebGL · Zero Post Overhead · Butter-Smooth). Click for 60 FPS Smooth.'
+                : coreQuality === 'smooth'
+                ? 'Smooth 60 FPS Active (4-Pass Lean Shaders · DPR 1.0 · Zero Lag). Click for Cinematic 8-Pass FX.'
+                : 'Cinematic FX Active (8-Pass GTAO + GodRays + DoF Bokeh). Click for Turbo 120 FPS.'
+            }
             style={{
               padding: '4px 10px',
               borderRadius: 12,
-              border: coreQuality === 'smooth' ? '1px solid rgba(52,211,153,0.5)' : '1px solid rgba(251,191,36,0.5)',
-              background: coreQuality === 'smooth' ? 'rgba(6,28,22,0.75)' : 'rgba(34,18,6,0.75)',
-              color: coreQuality === 'smooth' ? '#34d399' : '#fbbf24',
+              border:
+                coreQuality === 'ultra' ? '1px solid rgba(56,189,248,0.55)' :
+                coreQuality === 'smooth' ? '1px solid rgba(52,211,153,0.5)' :
+                '1px solid rgba(251,191,36,0.5)',
+              background:
+                coreQuality === 'ultra' ? 'rgba(4,24,36,0.85)' :
+                coreQuality === 'smooth' ? 'rgba(6,28,22,0.75)' :
+                'rgba(34,18,6,0.75)',
+              color:
+                coreQuality === 'ultra' ? '#38bdf8' :
+                coreQuality === 'smooth' ? '#34d399' :
+                '#fbbf24',
               fontFamily: "'IBM Plex Mono', monospace",
               fontSize: 8.5,
               fontWeight: 700,
@@ -1258,7 +1291,10 @@ export default function CortexVisualizerPage() {
               display: 'flex',
               alignItems: 'center',
               gap: 5,
-              boxShadow: coreQuality === 'smooth' ? '0 0 8px rgba(52,211,153,0.2)' : '0 0 8px rgba(251,191,36,0.25)',
+              boxShadow:
+                coreQuality === 'ultra' ? '0 0 8px rgba(56,189,248,0.25)' :
+                coreQuality === 'smooth' ? '0 0 8px rgba(52,211,153,0.2)' :
+                '0 0 8px rgba(251,191,36,0.25)',
               transition: 'all 0.2s',
             }}
           >
@@ -1266,10 +1302,19 @@ export default function CortexVisualizerPage() {
               width: 5,
               height: 5,
               borderRadius: '50%',
-              background: coreQuality === 'smooth' ? '#34d399' : '#fbbf24',
-              boxShadow: `0 0 6px ${coreQuality === 'smooth' ? '#34d399' : '#fbbf24'}`,
+              background:
+                coreQuality === 'ultra' ? '#38bdf8' :
+                coreQuality === 'smooth' ? '#34d399' :
+                '#fbbf24',
+              boxShadow: `0 0 6px ${
+                coreQuality === 'ultra' ? '#38bdf8' :
+                coreQuality === 'smooth' ? '#34d399' :
+                '#fbbf24'
+              }`,
             }} />
-            <span>{coreQuality === 'smooth' ? '⚡ 60FPS' : '◈ CINEMA'}</span>
+            <span>
+              {coreQuality === 'ultra' ? '🚀 TURBO 120FPS' : coreQuality === 'smooth' ? '⚡ 60FPS' : '◈ CINEMA'}
+            </span>
           </button>
         )}
 

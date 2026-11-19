@@ -770,7 +770,12 @@ const COLOR_CRIMSON = new THREE.Color('#ef4444');
 const COLOR_SLATE = new THREE.Color('#94a3b8');
 const COLOR_LIGHT_SLATE = new THREE.Color('#e2e8f0');
 
+// Zero-allocation scratch objects for Satellites
+const _satTmpProj = new THREE.Vector3();
+const _satSeenAnchors = new Set<string>();
+
 function Satellites({ live }: { live: React.MutableRefObject<LiveSignal> }) {
+  const satPruneFrame = useRef(0);
   const groupRef = useRef<THREE.Group>(null);
   const sats = useMemo(
     () =>
@@ -907,7 +912,7 @@ function Satellites({ live }: { live: React.MutableRefObject<LiveSignal> }) {
     const t = state.clock.elapsedTime;
     const cam = state.camera;
     const { width: vw, height: vh } = state.size;
-    const seenAnchors = new Set<string>();
+    _satSeenAnchors.clear();
     sats.forEach((s, i) => {
       const agent = agentsRef.current[i];
       const col = agent ? agentColorsRef.current[i] : null;
@@ -918,21 +923,28 @@ function Satellites({ live }: { live: React.MutableRefObject<LiveSignal> }) {
       const py = Math.sin(a * 0.7 + s.incl) * rad * 0.45;
       const pz = Math.sin(a) * rad;
 
-      // Screen anchor & 3D world position — the DOM inspect card & camera chase ride this point.
+      // Screen anchor & 3D world position — zero-allocation scratch projections
       if (agent && groupRef.current) {
-        seenAnchors.add(agent.id);
+        _satSeenAnchors.add(agent.id);
         const wp = tmpV.set(px, py, pz).applyMatrix4(groupRef.current.matrixWorld);
         if (!agentWorldPositions[agent.id]) {
           agentWorldPositions[agent.id] = new THREE.Vector3();
         }
         agentWorldPositions[agent.id].copy(wp);
 
-        const proj = tmpV.clone().project(cam);
-        agentScreenAnchors[agent.id] = {
-          x: (proj.x * 0.5 + 0.5) * vw,
-          y: (0.5 - proj.y * 0.5) * vh,
-          behind: proj.z > 1,
-        };
+        _satTmpProj.copy(wp).project(cam);
+        const sx = (_satTmpProj.x * 0.5 + 0.5) * vw;
+        const sy = (0.5 - _satTmpProj.y * 0.5) * vh;
+        const behind = _satTmpProj.z > 1;
+
+        const anchor = agentScreenAnchors[agent.id];
+        if (anchor) {
+          anchor.x = sx;
+          anchor.y = sy;
+          anchor.behind = behind;
+        } else {
+          agentScreenAnchors[agent.id] = { x: sx, y: sy, behind };
+        }
       }
 
       const mote = moteRefs.current[i];
@@ -1327,11 +1339,13 @@ function Satellites({ live }: { live: React.MutableRefObject<LiveSignal> }) {
       if (spr && !inUse) spr.visible = false;
     }
 
-    // Prune anchors and world vectors for agents that left the visible fleet.
-    for (const k of Object.keys(agentScreenAnchors)) {
-      if (!seenAnchors.has(k)) {
-        delete agentScreenAnchors[k];
-        delete agentWorldPositions[k];
+    // Prune anchors and world vectors once every 60 frames to eliminate GC spikes
+    if (++satPruneFrame.current % 60 === 0) {
+      for (const k of Object.keys(agentScreenAnchors)) {
+        if (!_satSeenAnchors.has(k)) {
+          delete agentScreenAnchors[k];
+          delete agentWorldPositions[k];
+        }
       }
     }
   });
@@ -1786,6 +1800,10 @@ function ModelConstellation({ live }: { live: React.MutableRefObject<LiveSignal>
 // Memory engrams circle the Sovereign Core in concentric semantic shells.
 // Real Hindsight graph edges form synaptic filaments with flowing photon currents.
 
+// Zero-allocation scratch objects for MemoryBankConstellation
+const _memTmpProj = new THREE.Vector3();
+const _memSeenAnchors = new Set<string>();
+
 function MemoryBankConstellation({
   live,
   selectedMemoryId,
@@ -1793,6 +1811,8 @@ function MemoryBankConstellation({
   live: React.MutableRefObject<LiveSignal>;
   selectedMemoryId?: string | null;
 }) {
+  const memPruneFrame = useRef(0);
+  const memLineFrame = useRef(0);
   const groupRef = useRef<THREE.Group>(null);
   const [graphData, setGraphData] = React.useState<{ nodes: any[]; edges: any[] }>({ nodes: [], edges: [] });
   const lineGeoRef = useRef<THREE.BufferGeometry>(null);
@@ -1887,7 +1907,7 @@ function MemoryBankConstellation({
       groupRef.current.updateWorldMatrix(true, false);
     }
 
-    const seenAnchors = new Set<string>();
+    _memSeenAnchors.clear();
 
     orbs.forEach((orb, i) => {
       const a = t * orb.speed + orb.phase;
@@ -1901,19 +1921,26 @@ function MemoryBankConstellation({
       nodePositions.current[orb.id].set(px, py, pz);
 
       if (groupRef.current) {
-        seenAnchors.add(orb.id);
+        _memSeenAnchors.add(orb.id);
         const wp = tmpV.set(px, py, pz).applyMatrix4(groupRef.current.matrixWorld);
         if (!memoryWorldPositions[orb.id]) {
           memoryWorldPositions[orb.id] = new THREE.Vector3();
         }
         memoryWorldPositions[orb.id].copy(wp);
 
-        const proj = tmpV.clone().project(cam);
-        memoryScreenAnchors[orb.id] = {
-          x: (proj.x * 0.5 + 0.5) * vw,
-          y: (0.5 - proj.y * 0.5) * vh,
-          behind: proj.z > 1,
-        };
+        _memTmpProj.copy(wp).project(cam);
+        const sx = (_memTmpProj.x * 0.5 + 0.5) * vw;
+        const sy = (0.5 - _memTmpProj.y * 0.5) * vh;
+        const behind = _memTmpProj.z > 1;
+
+        const anchor = memoryScreenAnchors[orb.id];
+        if (anchor) {
+          anchor.x = sx;
+          anchor.y = sy;
+          anchor.behind = behind;
+        } else {
+          memoryScreenAnchors[orb.id] = { x: sx, y: sy, behind };
+        }
       }
 
       // Update mote sprite
@@ -1946,16 +1973,18 @@ function MemoryBankConstellation({
       }
     });
 
-    // Cleanup stale anchors
-    for (const k of Object.keys(memoryScreenAnchors)) {
-      if (!seenAnchors.has(k)) {
-        delete memoryScreenAnchors[k];
-        delete memoryWorldPositions[k];
+    // Cleanup stale anchors once every 60 frames to eliminate GC spikes
+    if (++memPruneFrame.current % 60 === 0) {
+      for (const k of Object.keys(memoryScreenAnchors)) {
+        if (!_memSeenAnchors.has(k)) {
+          delete memoryScreenAnchors[k];
+          delete memoryWorldPositions[k];
+        }
       }
     }
 
-    // Update line buffer for synaptic filaments
-    if (lineGeoRef.current && edges.length > 0) {
+    // Update line buffer for synaptic filaments (throttled to every 2nd frame)
+    if (++memLineFrame.current % 2 === 0 && lineGeoRef.current && edges.length > 0) {
       const posAttr = lineGeoRef.current.attributes.position as THREE.BufferAttribute;
       if (posAttr) {
         const arr = posAttr.array as Float32Array;
@@ -2715,6 +2744,13 @@ function KineticMotes({
 const CHRONO_SEG = 1.4; // seconds each replayed event holds the camera
 const GOAL_EPS = 0.015; // min goal delta before pushing a new setLookAt transition
 
+// Zero-allocation persistent vectors for CameraRig
+const _vecOrigin = new THREE.Vector3(0, 0, 0);
+const _chaseRadial = new THREE.Vector3();
+const _chasePos = new THREE.Vector3();
+const _defaultScPos = new THREE.Vector3(2.2, 0.4, 1.2);
+const _defaultSecPos = new THREE.Vector3(-2.2, -0.3, 1.5);
+
 function CameraRig({
   live,
   selectedAgentId: selectedProp,
@@ -2965,13 +3001,13 @@ function CameraRig({
         const pos = ev.agentId ? agentWorldPositions[ev.agentId] : null;
         if (pos) {
           targetLookAt.current.lerp(pos, Math.min(1, delta * 3.8));
-          const radial = pos.clone().normalize();
-          if (radial.lengthSq() < 0.001) radial.set(0, 0, 1);
-          const chasePos = pos.clone().add(radial.multiplyScalar(2.6));
-          chasePos.y += 0.65 + Math.sin(t * 1.5) * 0.04;
-          targetCamPos.current.lerp(chasePos, Math.min(1, delta * 3.2));
+          _chaseRadial.copy(pos).normalize();
+          if (_chaseRadial.lengthSq() < 0.001) _chaseRadial.set(0, 0, 1);
+          _chasePos.copy(pos).addScaledVector(_chaseRadial, 2.6);
+          _chasePos.y += 0.65 + Math.sin(t * 1.5) * 0.04;
+          targetCamPos.current.lerp(_chasePos, Math.min(1, delta * 3.2));
         } else {
-          targetLookAt.current.lerp(tmpV.set(0, 0, 0), Math.min(1, delta * 2.4));
+          targetLookAt.current.lerp(_vecOrigin, Math.min(1, delta * 2.4));
           targetCamPos.current.lerp(tmpV.set(0, 0.3, 5.6), Math.min(1, delta * 2.6));
         }
         apply();
@@ -2990,14 +3026,14 @@ function CameraRig({
         // Stage 2: Target Lock on GovTech Scanner
         const p = (ct - 2.5) / 2.5;
         const ep = p < 0.5 ? 4 * p * p * p : 1 - Math.pow(-2 * p + 2, 3) / 2;
-        const scPos = agentWorldPositions['scanner'] || agentWorldPositions['librarian'] || new THREE.Vector3(2.2, 0.4, 1.2);
+        const scPos = agentWorldPositions['scanner'] || agentWorldPositions['librarian'] || _defaultScPos;
         targetCamPos.current.set(scPos.x + 1.4 * (1 - ep * 0.3), scPos.y + 0.65, scPos.z + 1.4 * (1 - ep * 0.3));
         targetLookAt.current.copy(scPos);
       } else if (ct < 7.2) {
         // Stage 3: Security Audit Lock on SkillSpector / Sentinel
         const p = (ct - 5.0) / 2.2;
         const ep = p < 0.5 ? 4 * p * p * p : 1 - Math.pow(-2 * p + 2, 3) / 2;
-        const secPos = agentWorldPositions['sentinel'] || agentWorldPositions['reviewer'] || new THREE.Vector3(-2.2, -0.3, 1.5);
+        const secPos = agentWorldPositions['sentinel'] || agentWorldPositions['reviewer'] || _defaultSecPos;
         targetCamPos.current.set(secPos.x + 1.5 * Math.cos(p * 2.0), secPos.y + 0.6, secPos.z + 1.5 * Math.sin(p * 2.0));
         targetLookAt.current.copy(secPos);
       } else {
@@ -3020,14 +3056,14 @@ function CameraRig({
 
     if (targetWorldPos) {
       targetLookAt.current.lerp(targetWorldPos, Math.min(1, delta * 3.8));
-      const radial = targetWorldPos.clone().normalize();
-      if (radial.lengthSq() < 0.001) radial.set(0, 0, 1);
-      const chasePos = targetWorldPos.clone().add(radial.multiplyScalar(2.6));
-      chasePos.y += 0.65 + Math.sin(t * 1.5) * 0.04;
-      targetCamPos.current.lerp(chasePos, Math.min(1, delta * 3.2));
+      _chaseRadial.copy(targetWorldPos).normalize();
+      if (_chaseRadial.lengthSq() < 0.001) _chaseRadial.set(0, 0, 1);
+      _chasePos.copy(targetWorldPos).addScaledVector(_chaseRadial, 2.6);
+      _chasePos.y += 0.65 + Math.sin(t * 1.5) * 0.04;
+      targetCamPos.current.lerp(_chasePos, Math.min(1, delta * 3.2));
     } else {
       // ── 3. HOLOGRAPHIC WINDOW MACRO PARALLAX & 360° ORBIT ─────────────────
-      targetLookAt.current.lerp(new THREE.Vector3(0, 0, 0), Math.min(1, delta * 2.4));
+      targetLookAt.current.lerp(_vecOrigin, Math.min(1, delta * 2.4));
       const hasHead = !orb.isDragging && !!headParallax;
       const inputX = hasHead ? headParallax.x : pointer.x;
       const inputY = hasHead ? headParallax.y : pointer.y;
@@ -3135,19 +3171,25 @@ class LensingEffect extends Effect {
 }
 
 
+export type CoreQualityMode = 'ultra' | 'smooth' | 'cinematic';
+
 function PostFX({
   live,
-  qualityMode = 'smooth',
+  qualityMode = 'ultra',
 }: {
   live: React.MutableRefObject<LiveSignal>;
-  qualityMode?: 'smooth' | 'cinematic';
+  qualityMode?: CoreQualityMode;
 }) {
-  const [bucket, setBucket] = React.useState(0);
+  if (qualityMode === 'ultra') {
+    return null; // DIRECT HARDWARE BLIT: 0 post-processing passes, 0 offscreen buffers, native 120 FPS
+  }
+
   const smooth = useRef(0);
   const smoothPhi = useRef(0);
   const smoothThink = useRef(0);
   const lensing = React.useMemo(() => new LensingEffect(), []);
   const lensCenter = useRef(new THREE.Vector3());
+  const chromaOffset = React.useMemo(() => new THREE.Vector2(0.00035, 0.00035), []);
   const scene = useThree((s) => s.scene);
   const camera = useThree((s) => s.camera);
 
@@ -3231,8 +3273,6 @@ function PostFX({
     smooth.current += (live.current.rawLevel - smooth.current) * Math.min(1, delta * 6);
     smoothPhi.current += ((live.current.phiS ?? 0) - smoothPhi.current) * Math.min(1, delta * 3.5);
     smoothThink.current += ((live.current.think ?? 0) - smoothThink.current) * Math.min(1, delta * 4.0);
-    const b = Math.round(smooth.current * 4);
-    setBucket((prev) => (prev === b ? prev : b));
 
     // Track the Sovereign Core's projected screen position so the lens stays
     // glued to it while the camera orbits or chases agents.
@@ -3242,9 +3282,14 @@ function PostFX({
     // Mass proxy: integrated information + cognitive load bend spacetime.
     lensing.strength = Math.min(0.012, smoothPhi.current * 0.004 + smoothThink.current * 0.003 + smooth.current * 0.002);
     lensing.updateUniforms();
+
+    const lvl = smooth.current;
+    const phiDisp = smoothPhi.current * 0.0016 + smoothThink.current * 0.0012;
+    const off = 0.00035 + lvl * 0.0008 + phiDisp;
+    chromaOffset.set(off, off);
   });
 
-  const lvl = bucket / 4;
+  const lvl = smooth.current;
   // Relativistic spacetime warping: chromatic aberration & Einstein-radius contraction
   const phiDisp = smoothPhi.current * 0.0016 + smoothThink.current * 0.0012;
   const vigDarkness = 0.52 + lvl * 0.16 + smoothThink.current * 0.14;
@@ -3261,7 +3306,7 @@ function PostFX({
           radius={0.70 + smoothThink.current * 0.15}
         />
         <ChromaticAberration
-          offset={new THREE.Vector2(0.00035 + lvl * 0.0008 + phiDisp, 0.00035 + lvl * 0.0008 + phiDisp)}
+          offset={chromaOffset}
           radialModulation
           modulationOffset={Math.max(0.1, 0.35 - smoothPhi.current * 0.12)}
         />
@@ -3288,7 +3333,7 @@ function PostFX({
         radius={0.70 + smoothThink.current * 0.15}
       />
       <ChromaticAberration
-        offset={new THREE.Vector2(0.00035 + lvl * 0.0008 + phiDisp, 0.00035 + lvl * 0.0008 + phiDisp)}
+        offset={chromaOffset}
         radialModulation
         modulationOffset={Math.max(0.1, 0.35 - smoothPhi.current * 0.12)}
       />
@@ -3340,7 +3385,7 @@ function CortexCoreInner({
   replayTrack,
   holoParallax,
   headParallax,
-  qualityMode = 'smooth',
+  qualityMode = 'ultra',
 }: {
   fx: React.MutableRefObject<{ shocks: Shock[] }>;
   selectedAgentId?: string | null;
@@ -3350,7 +3395,7 @@ function CortexCoreInner({
   replayTrack?: ReplayTrackEvent[] | null;
   holoParallax?: boolean;
   headParallax?: { x: number; y: number } | null;
-  qualityMode?: 'smooth' | 'cinematic';
+  qualityMode?: CoreQualityMode;
 }) {
   const live = useRef<LiveSignal>(makeLive());
 
@@ -3382,8 +3427,16 @@ function CortexCoreInner({
       <Ignition fx={fx} />
       <color attach="background" args={['#03040a']} />
       <Nebula live={live} />
-      <StarLayer live={live} count={qualityMode === 'smooth' ? 800 : 1400} rMin={14} rMax={30} sMin={0.7} sMax={1.8} rotSpeed={0.008} twinkle={0.8} />
-      <StarLayer live={live} count={qualityMode === 'smooth' ? 300 : 500} rMin={9} rMax={18} sMin={1.2} sMax={2.6} rotSpeed={-0.02} twinkle={1.0} />
+      <StarLayer
+        live={live}
+        count={qualityMode === 'ultra' ? 400 : qualityMode === 'smooth' ? 800 : 1400}
+        rMin={14} rMax={30} sMin={0.7} sMax={1.8} rotSpeed={0.008} twinkle={0.8}
+      />
+      <StarLayer
+        live={live}
+        count={qualityMode === 'ultra' ? 150 : qualityMode === 'smooth' ? 300 : 500}
+        rMin={9} rMax={18} sMin={1.2} sMax={2.6} rotSpeed={-0.02} twinkle={1.0}
+      />
 
       <group scale={0.75}>
         <Core live={live} />
@@ -3398,7 +3451,11 @@ function CortexCoreInner({
       <AccretionDisk live={live} />
       <NeuralWeb live={live} />
       <ThoughtSwarm live={live} />
-      <KineticMotes live={live} fx={fx} count={qualityMode === 'smooth' ? 400 : 1400} />
+      <KineticMotes
+        live={live}
+        fx={fx}
+        count={qualityMode === 'ultra' ? 250 : qualityMode === 'smooth' ? 400 : 1400}
+      />
       <Shockwaves fx={fx} />
 
       <CameraRig
@@ -3425,7 +3482,7 @@ function SceneWithInput({
   replayTrack,
   holoParallax,
   headParallax,
-  qualityMode = 'smooth',
+  qualityMode = 'ultra',
 }: {
   selectedAgentId?: string | null;
   onSelectAgent?: (id: string | null) => void;
@@ -3436,7 +3493,7 @@ function SceneWithInput({
   replayTrack?: ReplayTrackEvent[] | null;
   holoParallax?: boolean;
   headParallax?: { x: number; y: number } | null;
-  qualityMode?: 'smooth' | 'cinematic';
+  qualityMode?: CoreQualityMode;
 }) {
   const fx = useRef<{ shocks: Shock[] }>({ shocks: [] });
   const { gl, clock } = useThree();
@@ -3490,8 +3547,8 @@ export interface CortexCoreSceneProps {
   replayTrack?: ReplayTrackEvent[] | null;
   holoParallax?: boolean;
   headParallax?: { x: number; y: number } | null;
-  perfMode?: 'smooth' | 'cinematic';
-  onTogglePerfMode?: (mode: 'smooth' | 'cinematic') => void;
+  perfMode?: CoreQualityMode;
+  onTogglePerfMode?: (mode: CoreQualityMode) => void;
 }
 
 export const CortexCoreScene: React.FC<CortexCoreSceneProps> = ({
@@ -3507,18 +3564,19 @@ export const CortexCoreScene: React.FC<CortexCoreSceneProps> = ({
   perfMode: externalPerfMode,
   onTogglePerfMode,
 }) => {
-  const [internalQuality, setInternalQuality] = React.useState<'smooth' | 'cinematic'>(() => {
+  const [internalQuality, setInternalQuality] = React.useState<CoreQualityMode>(() => {
     if (typeof window !== 'undefined') {
-      const saved = localStorage.getItem('cortex_core_quality');
-      if (saved === 'smooth' || saved === 'cinematic') return saved;
+      const saved = localStorage.getItem('cortex_core_quality') as CoreQualityMode | null;
+      if (saved === 'ultra' || saved === 'smooth' || saved === 'cinematic') return saved;
     }
-    return 'smooth';
+    return 'ultra';
   });
 
   const qualityMode = externalPerfMode ?? internalQuality;
 
   const handleToggleQuality = () => {
-    const next = qualityMode === 'smooth' ? 'cinematic' : 'smooth';
+    const next: CoreQualityMode =
+      qualityMode === 'ultra' ? 'smooth' : qualityMode === 'smooth' ? 'cinematic' : 'ultra';
     if (typeof window !== 'undefined') {
       try { localStorage.setItem('cortex_core_quality', next); } catch {}
     }
@@ -3528,9 +3586,12 @@ export const CortexCoreScene: React.FC<CortexCoreSceneProps> = ({
 
   const [reduced, setReduced] = React.useState(() =>
     typeof window !== 'undefined' && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
-  const [dpr, setDpr] = React.useState<number | [number, number]>(() => (qualityMode === 'smooth' || reduced ? 1 : [1, 1.25]));
+  const [dpr, setDpr] = React.useState<number | [number, number]>(() =>
+    (qualityMode === 'ultra' || qualityMode === 'smooth' || reduced ? 1 : [1, 1.25]));
   const [contextLost, setContextLost] = React.useState(false);
   const [restoreCount, setRestoreCount] = React.useState(0);
+  const [docHidden, setDocHidden] = React.useState(() =>
+    typeof document !== 'undefined' ? document.hidden : false);
 
   // 4D Chrono-DVR: prefer the live /api/cortex/replay event-log tail; fall
   // back to the prop-supplied track (or the scripted reel) when unavailable.
@@ -3538,7 +3599,7 @@ export const CortexCoreScene: React.FC<CortexCoreSceneProps> = ({
   const effectiveReplayTrack = useChronoReplayTrack(chronoActive, replayTrack);
 
   React.useEffect(() => {
-    if (qualityMode === 'smooth' || reduced) {
+    if (qualityMode === 'ultra' || qualityMode === 'smooth' || reduced) {
       setDpr(1);
     } else {
       setDpr([1, 1.25]);
@@ -3554,11 +3615,17 @@ export const CortexCoreScene: React.FC<CortexCoreSceneProps> = ({
     return () => mq.removeEventListener('change', onMq);
   }, []);
 
+  React.useEffect(() => {
+    const onVis = () => setDocHidden(document.hidden);
+    document.addEventListener('visibilitychange', onVis);
+    return () => document.removeEventListener('visibilitychange', onVis);
+  }, []);
+
   return (
     <div style={{ position: 'absolute', inset: 0, overflow: 'hidden' }}>
       <Canvas
         key={restoreCount}
-        frameloop={reduced || contextLost ? 'demand' : 'always'}
+        frameloop={docHidden ? 'never' : (reduced || contextLost ? 'demand' : 'always')}
         dpr={dpr}
         gl={{ antialias: true, alpha: false, powerPreference: 'high-performance' }}
         camera={{ position: [0, 0.3, 8.2], fov: 42, near: 0.1, far: 120 }}
@@ -3621,25 +3688,42 @@ export const CortexCoreScene: React.FC<CortexCoreSceneProps> = ({
       }}>
         <button
           onClick={handleToggleQuality}
-          title={qualityMode === 'smooth'
-            ? 'Smooth 60 FPS Mode Active (4-Pass Lean Shaders · DPR 1.0). Click to enable Cinematic 8-Pass FX.'
-            : 'Cinematic Mode Active (8-Pass GTAO + GodRays + DoF Bokeh). Click for Smooth 60 FPS Mode.'}
+          title={
+            qualityMode === 'ultra'
+              ? 'Turbo 120 FPS Active (Direct Native WebGL · Zero Post Overhead · Butter-Smooth). Click for 60 FPS Smooth.'
+              : qualityMode === 'smooth'
+              ? 'Smooth 60 FPS Active (4-Pass Lean Shaders · DPR 1.0). Click for Cinematic 8-Pass FX.'
+              : 'Cinematic FX Active (8-Pass GTAO + GodRays + DoF Bokeh). Click for Turbo 120 FPS.'
+          }
           style={{
             display: 'flex',
             alignItems: 'center',
             gap: 6,
             padding: '4px 10px',
             borderRadius: 14,
-            background: qualityMode === 'smooth' ? 'rgba(4,24,20,0.85)' : 'rgba(32,16,4,0.85)',
-            border: `1px solid ${qualityMode === 'smooth' ? 'rgba(52,211,153,0.45)' : 'rgba(251,191,36,0.5)'}`,
+            background:
+              qualityMode === 'ultra' ? 'rgba(4,24,36,0.85)' :
+              qualityMode === 'smooth' ? 'rgba(4,24,20,0.85)' :
+              'rgba(32,16,4,0.85)',
+            border: `1px solid ${
+              qualityMode === 'ultra' ? 'rgba(56,189,248,0.55)' :
+              qualityMode === 'smooth' ? 'rgba(52,211,153,0.45)' :
+              'rgba(251,191,36,0.5)'
+            }`,
             backdropFilter: 'blur(8px)',
-            color: qualityMode === 'smooth' ? '#34d399' : '#fbbf24',
+            color:
+              qualityMode === 'ultra' ? '#38bdf8' :
+              qualityMode === 'smooth' ? '#34d399' :
+              '#fbbf24',
             fontFamily: "'IBM Plex Mono', monospace",
             fontSize: 8.5,
             fontWeight: 700,
             letterSpacing: '0.14em',
             cursor: 'pointer',
-            boxShadow: qualityMode === 'smooth' ? '0 0 10px rgba(52,211,153,0.18)' : '0 0 10px rgba(251,191,36,0.22)',
+            boxShadow:
+              qualityMode === 'ultra' ? '0 0 10px rgba(56,189,248,0.22)' :
+              qualityMode === 'smooth' ? '0 0 10px rgba(52,211,153,0.18)' :
+              '0 0 10px rgba(251,191,36,0.22)',
             transition: 'all 0.2s ease',
           }}
         >
@@ -3647,10 +3731,19 @@ export const CortexCoreScene: React.FC<CortexCoreSceneProps> = ({
             width: 5,
             height: 5,
             borderRadius: '50%',
-            background: qualityMode === 'smooth' ? '#34d399' : '#fbbf24',
-            boxShadow: `0 0 5px ${qualityMode === 'smooth' ? '#34d399' : '#fbbf24'}`,
+            background:
+              qualityMode === 'ultra' ? '#38bdf8' :
+              qualityMode === 'smooth' ? '#34d399' :
+              '#fbbf24',
+            boxShadow: `0 0 5px ${
+              qualityMode === 'ultra' ? '#38bdf8' :
+              qualityMode === 'smooth' ? '#34d399' :
+              '#fbbf24'
+            }`,
           }} />
-          <span>{qualityMode === 'smooth' ? '⚡ 60FPS SMOOTH' : '◈ CINEMATIC FX'}</span>
+          <span>
+            {qualityMode === 'ultra' ? '🚀 TURBO 120FPS' : qualityMode === 'smooth' ? '⚡ 60FPS SMOOTH' : '◈ CINEMATIC FX'}
+          </span>
         </button>
       </div>
 
