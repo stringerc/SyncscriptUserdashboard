@@ -94,6 +94,7 @@ test-*.js
 /lib/
 /social/
 scripts/*
+!scripts/ifixai-when-ready.sh
 !scripts/engram-public-supabase-url.mjs
 !scripts/bringup-hermes-tunnel-supabase.sh
 !scripts/suggest-compact.mjs
