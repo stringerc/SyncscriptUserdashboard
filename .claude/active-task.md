@@ -1,3 +1,17 @@
+# Active task — voice semantic EOU (2026-11-19)
+
+STATUS: implemented + committed (7917b78, eb6a6e4); browser smoke UNVERIFIED.
+
+DONE: smart-turn v3.2 ONNX semantic end-of-turn in useVoiceStream (commit on
+completion-probability, one extension, 2.4s cap); hardware AEC constraints
+confirmed; zero-gain mic feeder; ring-buffer reset per utterance; legacy
+fallback on any engine failure. Deps: onnxruntime-web, @huggingface/transformers,
+@ricky0123/vad-web (installed, not yet wired).
+
+NEXT: browser smoke on :5173 (start/pause/barge-in/restart/cleanup); measure
+commit latency vs old 600ms+850ms path; then neural VAD swap + streaming TTS.
+
+---
 # Active task — external capability wave (PLAN.md)
 
 STATUS: implementation complete pending final audit result + commit.
