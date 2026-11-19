@@ -2294,7 +2294,6 @@ function CortexCoreInner({
       <group scale={0.75}>
         <Core live={live} />
         <DetailShell live={live} />
-        <VoiceHalo live={live} />
       </group>
       {RINGS.map((r, i) => (
         <OrbitRing key={i} spec={r} live={live} index={i} />
