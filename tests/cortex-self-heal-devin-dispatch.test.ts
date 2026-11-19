@@ -81,6 +81,21 @@ test('a different problem is not deduped', async () => {
   assert.equal(f.calls.length, 2);
 });
 
+test('overlapping escalations keep both sessions in the cache', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'heal-'));
+  const slow = (id: string, ms: number) =>
+    (async () => {
+      await new Promise((r) => setTimeout(r, ms));
+      return new Response(JSON.stringify({ session_id: id, url: id }), { status: 200 });
+    }) as unknown as typeof fetch;
+  await Promise.all([
+    dispatchDevinSession(req('problem A'), root, { fetchImpl: slow('devin-a', 20), retryDelayMs: 0 }),
+    dispatchDevinSession(req('problem B'), root, { fetchImpl: slow('devin-b', 5), retryDelayMs: 0 }),
+  ]);
+  const cache = JSON.parse(readFileSync(join(root, '.cache/cortex_devin_sessions.json'), 'utf8'));
+  assert.deepEqual(cache.map((s: any) => s.sessionId).sort(), ['devin-a', 'devin-b']);
+});
+
 test('transient 503 / network errors are retried', async () => {
   const root = mkdtempSync(join(tmpdir(), 'heal-'));
   const f = fakeFetch([new Error('ECONNRESET'), { status: 503 }, { status: 200, body: { session_id: 'devin-r', url: 'ur' } }]);

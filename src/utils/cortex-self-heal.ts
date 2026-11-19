@@ -263,7 +263,8 @@ export async function dispatchDevinSession(
         } else {
           const sessionId = String(data.session_id);
           const url = data.url || `https://app.devin.ai/sessions/${sessionId.replace(/^devin-/, '')}`;
-          sessions.push({
+          const latest = readJsonArray(sessionCacheFile);
+          latest.push({
             sessionId,
             url,
             title,
@@ -272,7 +273,7 @@ export async function dispatchDevinSession(
             problem: request.problemDescription,
             createdAt: new Date(now()).toISOString(),
           });
-          writeJsonFile(sessionCacheFile, sessions.slice(-30));
+          writeJsonFile(sessionCacheFile, latest.slice(-30));
           console.log(`[Cortex Self-Heal] Devin session ready: ${sessionId} (${url})`);
           return { ok: true, sessionId, url, status: res.status, attempts };
         }
