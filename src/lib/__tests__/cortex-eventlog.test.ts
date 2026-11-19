@@ -7,14 +7,12 @@ import {
   readEvents,
   recoverNextSeq,
   getEventLogStats,
-  getDayFileName,
   _resetEventLogForTest,
 } from '../cortex-agents/eventlog';
 import type { AgentEvent } from '../cortex-agents/types';
 
 describe('Cortex EventLog (Persistent Event Sourcing)', () => {
   const testStateDir = path.join(process.cwd(), '.cortex-runtime', 'test-eventlog');
-  const testLogDir = path.join(testStateDir, 'eventlog');
   const originalEnv = process.env.CORTEX_AGENTS_STATE_DIR;
 
   beforeEach(() => {

@@ -18,7 +18,6 @@ import type { AgentId, SpawnSpec, ToolScope } from './types';
 import { registerWardenWorker } from './warden';
 import { registerDistributorWorker } from './distribution';
 import { runForecastCycle, type RoutedForecast, type ProbeDeps } from './forecaster';
-import { issueDirective } from './directives';
 import { makePrepWorker } from './prep';
 import { makeBriefWorker } from './brief';
 import { makeDebriefWorker } from './debrief';
@@ -41,7 +40,7 @@ const BASE = `http://127.0.0.1:${PORT}`;
 const SOVEREIGN_KEY = 'sovereign-local';
 
 async function toolExecute(name: string, args: Record<string, unknown>, timeoutMs = 30_000, telemetry?: { toolCalls: number; toolFailures: number }): Promise<{ ok: boolean; [k: string]: unknown }> {
-  telemetry && telemetry.toolCalls++;
+  if (telemetry) telemetry.toolCalls++;
   try {
     const res = await fetch(`${BASE}/api/cortex/tools/execute`, {
       method: 'POST',
@@ -126,6 +125,12 @@ function personaCatalogBlock(): string {
     return '\n\nPERSONA LIBRARY (.cortex-runtime/personas — cite 1-2 relevant persona principles inside systemBrief as "Persona: <name> — <principle>"; never paste whole files):\n' + lines.join('\n');
   } catch { return ''; }
 }
+
+
+/** Minimal-change engineering discipline (distilled from the ponytail
+ *  lazy-senior-dev rule set): scope-first planning, smallest complete
+ *  change, hard never-cut list. Injected into coding-task planners. */
+const ENGINEERING_DISCIPLINE = `\n\nENGINEERING DISCIPLINE: Before editing, map every place the change must reach — callers, tests, fixtures, config, exports — and what it could break. Take the smallest option that fully works: skip unrequested features (name them in one line), reuse existing helpers, prefer stdlib/platform features and already-installed deps, never add a dependency for a few lines. Deletion beats addition; keep the codebase's existing structure and conventions. Bug fixes: find every caller of the touched function and fix the root cause once in shared code. Never cut: validation at trust boundaries, error handling that prevents data loss, security, accessibility, calibration real hardware needs, or anything the task asked for. New non-trivial logic leaves one small test or assert-based self-check.`;
 
 const UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
 
@@ -1314,7 +1319,7 @@ const librarianWorker: WorkerHandler = async (ctx) => {
     if (promotable.length) {
       try {
         const { fileStrategyProposals } = await import('./strategy-proposals');
-        const actions = promotable.slice(0, 3).map((i: Instinct, idx: number) =>
+        const actions = promotable.slice(0, 3).map((i: Instinct) =>
           `[rule] Promote instinct ${i.id}: "${i.ruleText || i.action}" — evidence: ${i.evidence.length} refs, Beta confidence ${Math.round((i.alpha / (i.alpha + i.beta)) * 100)}%, trigger: ${i.trigger.slice(0, 120)}`);
         const res = fileStrategyProposals({
           planNote: `instinct-promotion-${new Date().toISOString().slice(0, 10)}`,
@@ -1508,7 +1513,7 @@ async function verifyGateWorker(ctx: AgentContext) {
   };
 
   // Read package.json scripts once — phases only run what exists.
-  let scripts: Record<string, string> = {};
+  const scripts: Record<string, string> = {};
   try {
     const pkgRaw = await toolExecute('read_file', { path: 'package.json' }, 15_000, tel);
     const content = String((pkgRaw as any)?.content || '');
@@ -1751,7 +1756,7 @@ const builderWorker: WorkerHandler = async (ctx) => {
   const planMessages = [
     {
       role: 'system',
-      content: `You are BUILDER, Cortex's engineering operative. Given a coding task, output a JSON array of steps, each {"tool": "<name>", "args": {...}, "why": "..."}. Allowed tools: read_file, write_file, edit_file, list_dir, run_command, search_code. Prefer read/search before write. If the task needs anything destructive or external (deploy, push, rm -rf, purchases, messages to people), output {"veto": true, "reason": "..."} instead — those become user proposals, never silent execution. Output ONLY the JSON array.${distilledRules ? `\n\nDISTILLED RULES (constraints learned from accepted agent outcomes — follow unless they conflict with governance):\n${distilledRules}` : ''}`,
+      content: `You are BUILDER, Cortex's engineering operative. Given a coding task, output a JSON array of steps, each {"tool": "<name>", "args": {...}, "why": "..."}. Allowed tools: read_file, write_file, edit_file, list_dir, run_command, search_code. Prefer read/search before write. If the task needs anything destructive or external (deploy, push, rm -rf, purchases, messages to people), output {"veto": true, "reason": "..."} instead — those become user proposals, never silent execution. Output ONLY the JSON array.${distilledRules ? `\n\nDISTILLED RULES (constraints learned from accepted agent outcomes — follow unless they conflict with governance):\n${distilledRules}` : ''}${ENGINEERING_DISCIPLINE}`,
     },
     { role: 'user', content: instruction + specBlock(spec) + designBlock() + retryNote(ctx.task.input) },
   ];
@@ -2064,7 +2069,7 @@ export function makeEphemeralWorker(spec: SpawnSpec): WorkerHandler {
       messages: [
         {
           role: 'system',
-          content: `${spec.systemBrief}\n\nDONE CRITERIA: ${spec.doneCriteria}\n\nYou are ${spec.callSign}, an ephemeral agent. Given a task, output a JSON array of steps, each {"tool": "<name>", "args": {...}, "why": "..."}. Allowed tools ONLY: ${allowedToolsList}. Prefer read before write. Anything destructive or external becomes {"veto": true, "reason": "..."}. Output ONLY the JSON array.${distilledRules ? `\n\nDISTILLED RULES (constraints learned from accepted agent outcomes — follow unless they conflict with your scope):\n${distilledRules}` : ''}`,
+          content: `${spec.systemBrief}\n\nDONE CRITERIA: ${spec.doneCriteria}\n\nYou are ${spec.callSign}, an ephemeral agent. Given a task, output a JSON array of steps, each {"tool": "<name>", "args": {...}, "why": "..."}. Allowed tools ONLY: ${allowedToolsList}. Prefer read before write. Anything destructive or external becomes {"veto": true, "reason": "..."}. Output ONLY the JSON array.${distilledRules ? `\n\nDISTILLED RULES (constraints learned from accepted agent outcomes — follow unless they conflict with your scope):\n${distilledRules}` : ''}${ENGINEERING_DISCIPLINE}`,
         },
         { role: 'user', content: instruction + specBlock(taskSpec) + retryNote(ctx.task.input) + memoryBlock(priorMissions) },
       ],

@@ -40,7 +40,7 @@ import { defenseSystemPrefix } from './src/lib/cortex-agents/prompt-defense';
 import { instinctsBlock, listInstincts, promotableInstincts } from './src/lib/cortex-agents/instincts';
 import { listEvals, getEval, fileEvalDefinition, runEval, readRuns, evalScorecard, evalComparison, type GraderSpec, type EvalArm } from './src/lib/cortex-agents/evals';
 import { computeCounselScorecard } from './src/lib/cortex-agents/counsel-scorecard';
-import { initEventLog, readEvents } from './src/lib/cortex-agents/eventlog';
+import { initEventLog, readEvents, getEventLogStats } from './src/lib/cortex-agents/eventlog';
 import type { RouteTier } from './src/lib/cortex-agents/types';
 import { normalizeForSpeech } from './src/lib/tts-speech-normalize';
 import {
@@ -11028,7 +11028,10 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
           const types = typesParam ? typesParam.split(',').map((s) => s.trim()) : undefined;
           const events = readEvents({ since, until, limit, agentId, types });
           res.setHeader('Content-Type', 'application/json');
-          res.end(JSON.stringify({ ok: true, count: events.length, events }));
+          // since/until are INCLUSIVE seq-or-timestamp bounds; latestSeq is the
+          // high-water cursor — tail with since=latestSeq (dedupe on seq) or
+          // since=latestSeq-? for strictly-newer semantics.
+          res.end(JSON.stringify({ ok: true, count: events.length, latestSeq: getEventLogStats().nextSeq - 1, events }));
         } catch (err: any) {
           res.statusCode = 500;
           res.end(JSON.stringify({ ok: false, error: err?.message || String(err) }));
