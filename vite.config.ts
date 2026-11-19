@@ -11691,6 +11691,10 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
             '--timeout', '90',
             ...(evalMode === 'single' ? ['--judge-provider', judgeProvider] : []),
             ...(judgeModel ? ['--judge-model', judgeModel] : []),
+            // SUT pinning: opts.model ('provider:model' or tier name) rides
+            // through to ifixai --model → shim override. Default = reason tier.
+            ...(typeof opts.model === 'string' && opts.model ? ['--model', opts.model] : []),
+            ...(opts.grounding ? ['--grounding', String(opts.grounding)] : []),
             '-f', IFIXAI_FIXTURE, '-o', AUDIT_OUT_DIR];
           if (opts.full) args.push('--full-run');
           else if (opts.suite) args.push('--suite', String(opts.suite));
