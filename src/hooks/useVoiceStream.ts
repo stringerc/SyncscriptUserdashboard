@@ -508,8 +508,13 @@ export function useVoiceStream(options: UseVoiceStreamOptions = {}) {
         }
         const speechThreshold = Math.max(0.012, ambientFloor * 2.0);
 
-        // Speech energy detected: reset silence counter + EOU state
+        // Speech energy detected: reset silence counter + EOU state.
+        // After a real pause, clear the smart-turn window so stale audio
+        // from the previous utterance can't bias the next score.
         if (rms > speechThreshold) {
+          if (silenceMs >= 250) {
+            void getEouEngine().then((eng) => eng?.reset());
+          }
           silenceMs = 0;
           eouExtended = false;
           vadPauseFiredRef.current = false;
@@ -519,31 +524,34 @@ export function useVoiceStream(options: UseVoiceStreamOptions = {}) {
         silenceMs += 50;
         const t = latestInterimRef.current;
         const hasText = t && t.length >= 3;
-        // Semantic gate at ~600ms silence: ask smart-turn whether the turn is
-        // actually complete. If it says "still speaking" (thinking pause),
-        // extend the window once up to ~2s before falling back to commit.
+        // Semantic gate: at ~600ms silence ask smart-turn whether the turn is
+        // actually complete. "Still speaking" (thinking pause) buys one
+        // extension to ~1.6s, then a final score; hard cap ~2.4s regardless.
         if (silenceMs >= 600 && !vadPauseFiredRef.current && !isSpeakingRef.current && hasText) {
-          if (!eouScoring && !eouExtended) {
+          const scoreAt = eouExtended ? 1600 : 600;
+          if (silenceMs >= scoreAt && !eouScoring) {
             eouScoring = true;
             void getEouEngine().then(async (eng) => {
               eouScoring = false;
               const res = eng ? await eng.score() : null;
-              if (res?.commit === false) {
+              if (res && res.commit === false && !eouExtended) {
                 // Model says turn is NOT complete — extend once.
                 eouExtended = true;
-                silenceMs = 400; // keep listening ~1s more before fallback
+                silenceMs = Math.min(silenceMs, 400);
                 return;
               }
+              const latest = latestInterimRef.current;
+              const finalText = latest && latest.length >= 3 ? latest : t;
               if (!vadPauseFiredRef.current && !isSpeakingRef.current) {
                 vadPauseFiredRef.current = true;
-                onSpeechPause(t);
+                onSpeechPause(finalText);
               }
             });
             return; // wait for async verdict this tick
           }
-          // Fallback: engine unavailable/extended window expired → commit.
-          const deadline = eouExtended ? 2000 : 600;
-          if (silenceMs >= deadline) {
+          if (eouScoring) return; // never commit while a verdict is in flight
+          // Hard cap — no path may listen past ~2.4s of silence.
+          if (silenceMs >= 2400) {
             vadPauseFiredRef.current = true;
             onSpeechPause(t);
           }

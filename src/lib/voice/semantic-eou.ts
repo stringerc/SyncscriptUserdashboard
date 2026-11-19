@@ -49,7 +49,9 @@ async function createEngine(): Promise<EouEngine | null> {
       executionProviders: ['wasm'],
       graphOptimizationLevel: 'all',
     });
-    const extractor = await tf.WhisperFeatureExtractor.create();
+    // Whisper config matching smart-turn's reference feature extractor.
+    // Downloads a small preprocessor JSON from HF hub once, then caches.
+    const extractor = await tf.WhisperFeatureExtractor.from_pretrained('openai/whisper-tiny');
 
     // Ring buffer of the last WINDOW_SAMPLES at 16kHz.
     let buf = new Float32Array(WINDOW_SAMPLES);
@@ -82,18 +84,16 @@ async function createEngine(): Promise<EouEngine | null> {
       const t0 = performance.now();
       try {
         const audio = ordered();
-        const feats = extractor(audio, {
-          sampling_rate: SAMPLE_RATE,
-          padding: 'max_length',
-          max_length: WINDOW_SAMPLES,
-          truncation: true,
-          do_normalize: true,
-        });
-        // transformers.js returns { input_features: Tensor }
+        // Whisper hop = 160 samples @16kHz → 100 fps → 8s window = 800 frames.
+        const feats = await (extractor as unknown as {
+          _call(
+            a: Float32Array,
+            opts?: { max_length?: number },
+          ): Promise<{ input_features: { dims: number[]; data: Float32Array } }>;
+        })._call(audio, { max_length: WINDOW_SAMPLES / 160 });
         const inputFeatures = feats.input_features;
-        const dims = inputFeatures.dims; // [1, 80, 3000]
-        const feeds: Record<string, ort.Tensor> = {
-          input_features: new ort.Tensor('float32', inputFeatures.data as Float32Array, dims as number[]),
+        const feeds = {
+          input_features: new ort.Tensor('float32', inputFeatures.data, inputFeatures.dims),
         };
         const out = await session.run(feeds);
         const prob = (out[Object.keys(out)[0]].data as Float32Array)[0];
@@ -144,6 +144,11 @@ export function createPcmFeeder(stream: MediaStream, onPcm?: (engine: EouEngine)
     });
   };
   src.connect(proc);
-  proc.connect(ctx.destination);
+  // ScriptProcessor must reach destination to fire, but mic audio must NOT
+  // be audible — route through a zero-gain node or we get speaker feedback.
+  const mute = ctx.createGain();
+  mute.gain.value = 0;
+  proc.connect(mute);
+  mute.connect(ctx.destination);
   return () => { try { proc.disconnect(); src.disconnect(); ctx.close(); } catch { /* best-effort */ } };
 }
