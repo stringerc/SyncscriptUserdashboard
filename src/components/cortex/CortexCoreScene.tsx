@@ -526,12 +526,9 @@ function OrbitRing({ spec, live, index }: { spec: RingSpec; live: React.MutableR
 
     const g = groupRef.current;
     if (g) {
-      const phiBoost = 1.0 + (sig.phiS ?? 0) * 0.45;
-      g.rotation.z += delta * spec.spin * (0.5 + sig.energy) * phiBoost;
+      g.rotation.z += delta * spec.spin * (0.5 + sig.energy);
       g.rotation.x = THREE.MathUtils.degToRad(spec.tiltX) + Math.sin(material.uniforms.uTime.value * 0.3 + index) * 0.05;
       g.rotation.y = THREE.MathUtils.degToRad(spec.tiltZ);
-      const scaleBreathing = 1.0 + (sig.phiS ?? 0) * 0.04 * Math.sin(material.uniforms.uTime.value * 2.0 + index);
-      g.scale.setScalar(scaleBreathing);
     }
     // satellite bead riding the ring
     if (satRef.current) {
@@ -1947,82 +1944,6 @@ function VoiceHalo({ live }: { live: React.MutableRefObject<LiveSignal> }) {
   );
 }
 
-// ── Markov Blanket: Fristonian Bioelectric Statistical Boundary ─────────
-// Geodesic boundary membrane separating internal sovereign cognition from
-// external agent satellites. Ripples with active inference bioelectric polarization.
-
-function MarkovBlanket({ live }: { live: React.MutableRefObject<LiveSignal> }) {
-  const meshRef = useRef<THREE.Mesh>(null);
-  const material = useMemo(
-    () =>
-      new THREE.ShaderMaterial({
-        transparent: true,
-        depthWrite: false,
-        blending: THREE.AdditiveBlending,
-        side: THREE.DoubleSide,
-        uniforms: {
-          uTime: { value: 0 },
-          uEnergy: { value: 0 },
-          uPhi: { value: 0 },
-          uColor: { value: c('#38bdf8') },
-        },
-        vertexShader: /* glsl */ `
-          uniform float uTime;
-          uniform float uEnergy;
-          varying vec3 vNormal;
-          varying vec3 vViewPosition;
-          void main() {
-            vNormal = normalize(normalMatrix * normal);
-            vec3 pos = position;
-            // Bioelectric cellular membrane ripples (Friston FEP / Levin bioelectricity)
-            float ripple = sin(pos.x * 3.5 + uTime * 2.0) * cos(pos.y * 3.5 + uTime * 1.6) * 0.03 * (0.5 + uEnergy);
-            pos += normal * ripple;
-            vec4 mvPosition = modelViewMatrix * vec4(pos, 1.0);
-            vViewPosition = -mvPosition.xyz;
-            gl_Position = projectionMatrix * mvPosition;
-          }
-        `,
-        fragmentShader: /* glsl */ `
-          uniform float uTime;
-          uniform float uEnergy;
-          uniform float uPhi;
-          uniform vec3 uColor;
-          varying vec3 vNormal;
-          varying vec3 vViewPosition;
-          void main() {
-            vec3 normal = normalize(vNormal);
-            vec3 viewDir = normalize(vViewPosition);
-            // Fresnel rim boundary: translucent interior, glowing bioelectric shell
-            float fresnel = pow(1.0 - abs(dot(normal, viewDir)), 3.2);
-            float pulse = 0.82 + 0.18 * sin(uTime * 2.8);
-            float alpha = fresnel * (0.09 + uEnergy * 0.15 + uPhi * 0.12) * pulse;
-            gl_FragColor = vec4(uColor * 1.4, alpha);
-          }
-        `,
-      }),
-    []
-  );
-
-  useFrame((state, delta) => {
-    const sig = live.current;
-    material.uniforms.uTime.value += delta;
-    material.uniforms.uEnergy.value = sig.energy;
-    material.uniforms.uPhi.value = sig.phiS ?? 0;
-    material.uniforms.uColor.value.copy(sig.colorRim);
-    if (meshRef.current) {
-      meshRef.current.rotation.y += delta * 0.06;
-      meshRef.current.rotation.x -= delta * 0.03;
-    }
-  });
-
-  return (
-    <mesh ref={meshRef}>
-      <icosahedronGeometry args={[2.22, 3]} />
-      <primitive object={material} attach="material" />
-    </mesh>
-  );
-}
-
 // ── Thought swarm (cognitive-load accretion) ─────────────────────────────
 // ~900 GPU particles on tilted orbital shells. Each has a lifecycle: spawn
 // at outer radius → spiral inward → absorbed by the core → respawn. The
@@ -2375,7 +2296,6 @@ function CortexCoreInner({
         <DetailShell live={live} />
         <VoiceHalo live={live} />
       </group>
-      <MarkovBlanket live={live} />
       {RINGS.map((r, i) => (
         <OrbitRing key={i} spec={r} live={live} index={i} />
       ))}
