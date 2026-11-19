@@ -564,6 +564,57 @@ export const agentScreenAnchors: Record<string, { x: number; y: number; behind: 
  *  used by CameraRig to smoothly lock on and chase active agents in orbit. */
 export const agentWorldPositions: Record<string, THREE.Vector3> = {};
 
+/** Screen-space anchors for memory engrams — written every frame by MemoryBankConstellation,
+ *  read by the DOM engram dossier card. */
+export const memoryScreenAnchors: Record<string, { x: number; y: number; behind: boolean }> = {};
+
+/** 3D World space positions for memory engrams — written every frame by MemoryBankConstellation,
+ *  used by CameraRig to smoothly lock on and chase memory engrams in orbit. */
+export const memoryWorldPositions: Record<string, THREE.Vector3> = {};
+
+export type MemoryDomain = 'runtime' | 'system' | 'venture' | 'working' | 'learning';
+
+export const MEMORY_DOMAIN_COLORS: Record<MemoryDomain, string> = {
+  runtime: '#c084fc',  // Purple: Runtime Operations & Agent Lifecycle
+  system: '#38bdf8',   // Electric Cyan: Architecture & Specifications
+  venture: '#fbbf24',  // Amber / Gold: Ventures & Initiatives
+  working: '#34d399',  // Emerald / Mint: Working Memory & Operational Tasks
+  learning: '#fb7185', // Rose / Coral: Instincts & Anomaly Audits
+};
+
+export const MEMORY_DOMAIN_NAMES: Record<MemoryDomain, string> = {
+  runtime: 'RUNTIME ENGRAM',
+  system: 'SYSTEM SPEC',
+  venture: 'VENTURE INTEL',
+  working: 'WORKING MEMORY',
+  learning: 'LEARNING & AUDIT',
+};
+
+export function getMemoryDomain(ctx?: string, label?: string, entities?: string): MemoryDomain {
+  const s = `${ctx || ''} ${label || ''} ${entities || ''}`.toLowerCase();
+  if (s.includes('incident') || s.includes('fail') || s.includes('timeout') || s.includes('abort') || s.includes('learn') || s.includes('instinct')) {
+    return 'learning';
+  }
+  if (s.includes('initiative') || s.includes('venture') || s.includes('distribut') || s.includes('drain') || s.includes('outreach') || s.includes('queue')) {
+    return 'venture';
+  }
+  if (s.includes('system') || s.includes('architecture') || s.includes('port') || s.includes('vite') || s.includes('launchd') || s.includes('hindsight') || s.includes('smoke-test') || s.includes('schema')) {
+    return 'system';
+  }
+  if (s.includes('agent') || s.includes('spawn') || s.includes('retire') || s.includes('runtime') || s.includes('patrol') || s.includes('boot')) {
+    return 'runtime';
+  }
+  return 'working';
+}
+
+export function hashMemory(id: string): number {
+  let h = 0;
+  for (let i = 0; i < id.length; i++) {
+    h = (h * 31 + id.charCodeAt(i)) >>> 0;
+  }
+  return h;
+}
+
 /** One persisted runtime event reduced to what the chrono replay camera needs. */
 export interface ReplayTrackEvent { seq: number; at: number; type: string; agentId: string | null; }
 
@@ -1658,6 +1709,328 @@ function ModelConstellation({ live }: { live: React.MutableRefObject<LiveSignal>
   );
 }
 
+// ── Memory Bank Constellation (Hindsight Cognitive Graph) ─────────────────
+// Memory engrams circle the Sovereign Core in concentric semantic shells.
+// Real Hindsight graph edges form synaptic filaments with flowing photon currents.
+
+function MemoryBankConstellation({
+  live,
+  selectedMemoryId,
+}: {
+  live: React.MutableRefObject<LiveSignal>;
+  selectedMemoryId?: string | null;
+}) {
+  const groupRef = useRef<THREE.Group>(null);
+  const [graphData, setGraphData] = React.useState<{ nodes: any[]; edges: any[] }>({ nodes: [], edges: [] });
+  const lineGeoRef = useRef<THREE.BufferGeometry>(null);
+  const nodePositions = useRef<Record<string, THREE.Vector3>>({});
+  const moteRefs = useRef<(THREE.Sprite | null)[]>([]);
+  const coreMeshRefs = useRef<(THREE.Mesh | null)[]>([]);
+  const tagRefs = useRef<(THREE.Sprite | null)[]>([]);
+  const photonRefs = useRef<(THREE.Sprite | null)[]>([]);
+  const tmpV = useMemo(() => new THREE.Vector3(), []);
+  const VEC_ZERO = useMemo(() => new THREE.Vector3(0, 0, 0), []);
+
+  // Fetch memory graph from local endpoint
+  React.useEffect(() => {
+    let active = true;
+    const fetchGraph = async () => {
+      try {
+        const res = await fetch('/api/cortex/memory/graph');
+        if (!res.ok) return;
+        const data = await res.json();
+        if (active && data.ok && Array.isArray(data.nodes)) {
+          setGraphData({ nodes: data.nodes, edges: data.edges || [] });
+        }
+      } catch {
+        // fail-soft
+      }
+    };
+    fetchGraph();
+    const interval = setInterval(fetchGraph, 8000);
+    return () => { active = false; clearInterval(interval); };
+  }, []);
+
+  // Parse nodes into orbital bodies (capped at 48 nodes for optimal clarity)
+  const orbs = useMemo(() => {
+    return (graphData.nodes || []).slice(0, 48).map((n) => {
+      const data = n.data || {};
+      const id = String(data.id || Math.random());
+      const label = String(data.label || 'Memory Engram');
+      const text = String(data.text || '');
+      const context = String(data.context || 'cortex-runtime');
+      const entities = String(data.entities || '');
+      const domain = getMemoryDomain(context, label, entities);
+      const hash = hashMemory(id);
+      const domainBaseR = domain === 'runtime' ? 2.3 : domain === 'system' ? 2.85 : domain === 'venture' ? 3.4 : domain === 'working' ? 3.95 : 4.5;
+      const radius = domainBaseR + ((hash % 10) * 0.05);
+      const speed = (0.05 + ((hash >> 3) % 8) * 0.012) * ((hash % 2 === 0) ? 1 : -1);
+      const incl = (((hash >> 6) % 100) / 50 - 1) * 0.85;
+      const phase = ((hash >> 10) % 360) * (Math.PI / 180);
+      const colorHex = MEMORY_DOMAIN_COLORS[domain];
+      return {
+        id, label, text, context, entities, domain,
+        color: c(colorHex), colorHex,
+        radius, speed, incl, phase,
+      };
+    });
+  }, [graphData.nodes]);
+
+  // Edges filtered to nodes present in orbs (capped at 120 lines)
+  const edges = useMemo(() => {
+    const nodeSet = new Set(orbs.map(o => o.id));
+    const list: { source: string; target: string; color: string }[] = [];
+    for (const e of graphData.edges || []) {
+      const ed = e.data || {};
+      if (ed.source && ed.target && ed.source !== ed.target && nodeSet.has(ed.source) && nodeSet.has(ed.target)) {
+        list.push({ source: ed.source, target: ed.target, color: ed.color || '#38bdf8' });
+        if (list.length >= 120) break;
+      }
+    }
+    return list;
+  }, [graphData.edges, orbs]);
+
+  // Line buffer for synaptic filaments
+  const linePositions = useMemo(() => {
+    return new Float32Array(Math.max(120, edges.length) * 6);
+  }, [edges.length]);
+
+  // Photons traveling along synapses into core
+  const PHOTON_COUNT = 8;
+  const photons = useRef(Array.from({ length: PHOTON_COUNT }, (_, i) => ({
+    nodeIndex: i % Math.max(1, orbs.length),
+    progress: (i / PHOTON_COUNT),
+    speed: 0.18 + (i % 3) * 0.08,
+  })));
+
+  useFrame((state, delta) => {
+    const sig = live.current;
+    const t = state.clock.elapsedTime;
+    const cam = state.camera;
+    const { width: vw, height: vh } = state.size;
+
+    if (groupRef.current) {
+      groupRef.current.rotation.y += delta * 0.03 * (0.5 + sig.energy);
+      groupRef.current.updateWorldMatrix(true, false);
+    }
+
+    const seenAnchors = new Set<string>();
+
+    orbs.forEach((orb, i) => {
+      const a = t * orb.speed + orb.phase;
+      const px = Math.cos(a) * orb.radius;
+      const py = Math.sin(a * 0.8 + orb.incl) * orb.radius * 0.42;
+      const pz = Math.sin(a) * orb.radius;
+
+      if (!nodePositions.current[orb.id]) {
+        nodePositions.current[orb.id] = new THREE.Vector3();
+      }
+      nodePositions.current[orb.id].set(px, py, pz);
+
+      if (groupRef.current) {
+        seenAnchors.add(orb.id);
+        const wp = tmpV.set(px, py, pz).applyMatrix4(groupRef.current.matrixWorld);
+        if (!memoryWorldPositions[orb.id]) {
+          memoryWorldPositions[orb.id] = new THREE.Vector3();
+        }
+        memoryWorldPositions[orb.id].copy(wp);
+
+        const proj = tmpV.clone().project(cam);
+        memoryScreenAnchors[orb.id] = {
+          x: (proj.x * 0.5 + 0.5) * vw,
+          y: (0.5 - proj.y * 0.5) * vh,
+          behind: proj.z > 1,
+        };
+      }
+
+      // Update mote sprite
+      const isSelected = selectedMemoryId === orb.id;
+      const mote = moteRefs.current[i];
+      if (mote) {
+        mote.position.set(px, py, pz);
+        const mm = mote.material as THREE.SpriteMaterial;
+        const pulse = 1 + 0.12 * Math.sin(t * 3.2 + i);
+        const scale = isSelected ? 0.54 * pulse : 0.30 * pulse;
+        mote.scale.setScalar(scale);
+        mm.color.copy(orb.color);
+        mm.opacity = isSelected ? 0.95 : 0.65;
+      }
+
+      // Update inner core
+      const core = coreMeshRefs.current[i];
+      if (core) {
+        core.position.set(px, py, pz);
+        const s = isSelected ? 1.4 : 1.0;
+        core.scale.setScalar(s);
+      }
+
+      // Update label
+      const tag = tagRefs.current[i];
+      if (tag) {
+        tag.position.set(px, py + 0.18, pz);
+        const tm = tag.material as THREE.SpriteMaterial;
+        tm.opacity = isSelected ? 1.0 : 0.55;
+      }
+    });
+
+    // Cleanup stale anchors
+    for (const k of Object.keys(memoryScreenAnchors)) {
+      if (!seenAnchors.has(k)) {
+        delete memoryScreenAnchors[k];
+        delete memoryWorldPositions[k];
+      }
+    }
+
+    // Update line buffer for synaptic filaments
+    if (lineGeoRef.current && edges.length > 0) {
+      const posAttr = lineGeoRef.current.attributes.position as THREE.BufferAttribute;
+      if (posAttr) {
+        const arr = posAttr.array as Float32Array;
+        let ptr = 0;
+        for (let k = 0; k < edges.length; k++) {
+          const e = edges[k];
+          const p1 = nodePositions.current[e.source];
+          const p2 = nodePositions.current[e.target];
+          if (p1 && p2) {
+            arr[ptr++] = p1.x; arr[ptr++] = p1.y; arr[ptr++] = p1.z;
+            arr[ptr++] = p2.x; arr[ptr++] = p2.y; arr[ptr++] = p2.z;
+          } else {
+            arr[ptr++] = 0; arr[ptr++] = 0; arr[ptr++] = 0;
+            arr[ptr++] = 0; arr[ptr++] = 0; arr[ptr++] = 0;
+          }
+        }
+        posAttr.needsUpdate = true;
+      }
+    }
+
+    // Update synaptic photons flowing to core
+    photons.current.forEach((ph, idx) => {
+      ph.progress += delta * ph.speed;
+      if (ph.progress >= 1) {
+        ph.progress = 0;
+        ph.nodeIndex = Math.floor(Math.random() * Math.max(1, orbs.length));
+        sig.ingest = Math.min(1, sig.ingest + 0.22);
+        if (orbs[ph.nodeIndex]) {
+          sig.ingestColor.copy(orbs[ph.nodeIndex].color);
+        }
+      }
+      const orb = orbs[ph.nodeIndex];
+      const pSprite = photonRefs.current[idx];
+      if (orb && pSprite) {
+        const pNode = nodePositions.current[orb.id];
+        if (pNode) {
+          tmpV.lerpVectors(pNode, VEC_ZERO, ph.progress);
+          pSprite.position.copy(tmpV);
+          pSprite.scale.setScalar(0.09 * (1 - ph.progress * 0.4));
+          (pSprite.material as THREE.SpriteMaterial).color.copy(orb.color);
+          (pSprite.material as THREE.SpriteMaterial).opacity = 0.85 * (1 - ph.progress * 0.3);
+        }
+      }
+    });
+  });
+
+  return (
+    <group ref={groupRef}>
+      {/* ── Synaptic Filament Lines ── */}
+      {edges.length > 0 && (
+        <lineSegments>
+          <bufferGeometry ref={lineGeoRef}>
+            <bufferAttribute
+              attach="attributes-position"
+              count={edges.length * 2}
+              array={linePositions}
+              itemSize={3}
+            />
+          </bufferGeometry>
+          <lineBasicMaterial
+            color="#38bdf8"
+            transparent
+            opacity={0.25}
+            blending={THREE.AdditiveBlending}
+            depthWrite={false}
+          />
+        </lineSegments>
+      )}
+
+      {/* ── Memory Engram Nodes ── */}
+      {orbs.map((orb, i) => (
+        <group key={orb.id}>
+          {/* Outer glowing halo sprite */}
+          <sprite
+            ref={(el) => { moteRefs.current[i] = el; }}
+            renderOrder={5}
+            onClick={(e) => {
+              e.stopPropagation();
+              window.dispatchEvent(new CustomEvent('cortex-memory-select', { detail: orb.id }));
+            }}
+            onPointerOver={() => { document.body.style.cursor = 'pointer'; }}
+            onPointerOut={() => { document.body.style.cursor = ''; }}
+          >
+            <spriteMaterial
+              map={getGlowTexture()}
+              color={orb.colorHex}
+              transparent
+              opacity={0.7}
+              blending={THREE.AdditiveBlending}
+              depthWrite={false}
+            />
+          </sprite>
+
+          {/* Inner quantum core */}
+          <mesh
+            ref={(el) => { coreMeshRefs.current[i] = el; }}
+            onClick={(e) => {
+              e.stopPropagation();
+              window.dispatchEvent(new CustomEvent('cortex-memory-select', { detail: orb.id }));
+            }}
+          >
+            <sphereGeometry args={[0.038, 12, 12]} />
+            <meshStandardMaterial
+              color="#ffffff"
+              emissive={orb.colorHex}
+              emissiveIntensity={2.5}
+              roughness={0.1}
+              metalness={0.9}
+            />
+          </mesh>
+
+          {/* Floating text label sprite */}
+          <sprite
+            ref={(el) => { tagRefs.current[i] = el; }}
+            scale={[0.74, 0.18, 1]}
+            renderOrder={6}
+          >
+            <spriteMaterial
+              map={textTexture(orb.label, orb.colorHex)}
+              transparent
+              opacity={0.55}
+              depthWrite={false}
+            />
+          </sprite>
+        </group>
+      ))}
+
+      {/* ── Synaptic Inflow Photons ── */}
+      {Array.from({ length: PHOTON_COUNT }, (_, idx) => (
+        <sprite
+          key={`ph-${idx}`}
+          ref={(el) => { photonRefs.current[idx] = el; }}
+          renderOrder={7}
+        >
+          <spriteMaterial
+            map={getGlowTexture()}
+            color="#67e8f9"
+            transparent
+            opacity={0.8}
+            blending={THREE.AdditiveBlending}
+            depthWrite={false}
+          />
+        </sprite>
+      ))}
+    </group>
+  );
+}
+
 // ── Neural web (nodes + synapses) ───────────────────────────────────────
 
 const NODE_COUNT = 130;
@@ -2132,6 +2505,7 @@ const CHRONO_SEG = 1.4; // seconds each replayed event holds the camera
 function CameraRig({
   live,
   selectedAgentId: selectedProp,
+  selectedMemoryId: selectedMemoryProp,
   chronoTime,
   replayTrack,
   holoParallax = true,
@@ -2139,6 +2513,7 @@ function CameraRig({
 }: {
   live: React.MutableRefObject<LiveSignal>;
   selectedAgentId?: string | null;
+  selectedMemoryId?: string | null;
   chronoTime?: number | null;
   replayTrack?: ReplayTrackEvent[] | null;
   holoParallax?: boolean;
@@ -2146,6 +2521,7 @@ function CameraRig({
 }) {
   const { gl } = useThree();
   const [selectedAgentId, setSelectedAgentId] = React.useState<string | null>(selectedProp ?? null);
+  const [selectedMemoryId, setSelectedMemoryId] = React.useState<string | null>(selectedMemoryProp ?? null);
   const targetLookAt = useRef(new THREE.Vector3(0, 0, 0));
   const targetCamPos = useRef(new THREE.Vector3(0, 0.3, 5.6));
   const intro = useRef(0);
@@ -2173,20 +2549,36 @@ function CameraRig({
   }, [selectedProp]);
 
   React.useEffect(() => {
+    if (selectedMemoryProp !== undefined) {
+      setSelectedMemoryId(selectedMemoryProp);
+    }
+  }, [selectedMemoryProp]);
+
+  React.useEffect(() => {
     const onSelect = (e: Event) => {
       const ce = e as CustomEvent<string | null>;
       setSelectedAgentId(ce.detail ?? null);
+      if (ce.detail) setSelectedMemoryId(null);
+    };
+    const onSelectMem = (e: Event) => {
+      const ce = e as CustomEvent<string | null>;
+      setSelectedMemoryId(ce.detail ?? null);
+      if (ce.detail) setSelectedAgentId(null);
     };
     window.addEventListener('cortex-agent-select', onSelect);
+    window.addEventListener('cortex-memory-select', onSelectMem);
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         setSelectedAgentId(null);
+        setSelectedMemoryId(null);
         window.dispatchEvent(new CustomEvent('cortex-agent-select', { detail: null }));
+        window.dispatchEvent(new CustomEvent('cortex-memory-select', { detail: null }));
       }
     };
     window.addEventListener('keydown', onKey);
     return () => {
       window.removeEventListener('cortex-agent-select', onSelect);
+      window.removeEventListener('cortex-memory-select', onSelectMem);
       window.removeEventListener('keydown', onKey);
     };
   }, []);
@@ -2214,9 +2606,11 @@ function CameraRig({
       const dy = e.clientY - orb.startY;
       if (!orb.hasMoved && Math.hypot(dx, dy) > 4) {
         orb.hasMoved = true;
-        // Releasing agent chase if currently locked
+        // Releasing agent or memory chase if currently locked
         setSelectedAgentId(null);
+        setSelectedMemoryId(null);
         window.dispatchEvent(new CustomEvent('cortex-agent-select', { detail: null }));
+        window.dispatchEvent(new CustomEvent('cortex-memory-select', { detail: null }));
       }
       if (orb.hasMoved) {
         orb.targetTheta = orb.startTheta - dx * 0.0055;
@@ -2355,13 +2749,17 @@ function CameraRig({
     }
 
     // ── 2. LIVE REAL-TIME ORBIT CHASE MODE ──────────────────────────────────
-    const agentWorldPos = selectedAgentId ? agentWorldPositions[selectedAgentId] : null;
+    const targetWorldPos = selectedAgentId
+      ? agentWorldPositions[selectedAgentId]
+      : selectedMemoryId
+      ? memoryWorldPositions[selectedMemoryId]
+      : null;
 
-    if (agentWorldPos) {
-      targetLookAt.current.lerp(agentWorldPos, Math.min(1, delta * 3.8));
-      const radial = agentWorldPos.clone().normalize();
+    if (targetWorldPos) {
+      targetLookAt.current.lerp(targetWorldPos, Math.min(1, delta * 3.8));
+      const radial = targetWorldPos.clone().normalize();
       if (radial.lengthSq() < 0.001) radial.set(0, 0, 1);
-      const chasePos = agentWorldPos.clone().add(radial.multiplyScalar(2.6));
+      const chasePos = targetWorldPos.clone().add(radial.multiplyScalar(2.6));
       chasePos.y += 0.65 + Math.sin(t * 1.5) * 0.04;
       targetCamPos.current.lerp(chasePos, Math.min(1, delta * 3.2));
     } else {
@@ -2401,7 +2799,7 @@ function CameraRig({
     camera.lookAt(targetLookAt.current);
 
     // Subtle holographic perspective banking
-    if (!agentWorldPos && (holoParallax || (headParallax && !orb.isDragging))) {
+    if (!targetWorldPos && (holoParallax || (headParallax && !orb.isDragging))) {
       const inputX = headParallax ? headParallax.x : pointer.x;
       camera.rotation.z += -inputX * (headParallax ? 0.055 : 0.035);
     }
@@ -2561,6 +2959,8 @@ function Ignition({ fx }: { fx: React.MutableRefObject<{ shocks: Shock[] }> }) {
 function CortexCoreInner({
   fx,
   selectedAgentId,
+  selectedMemoryId,
+  visualMode = 'fleet',
   chronoTime,
   replayTrack,
   holoParallax,
@@ -2568,6 +2968,8 @@ function CortexCoreInner({
 }: {
   fx: React.MutableRefObject<{ shocks: Shock[] }>;
   selectedAgentId?: string | null;
+  selectedMemoryId?: string | null;
+  visualMode?: 'fleet' | 'memory' | 'both';
   chronoTime?: number | null;
   replayTrack?: ReplayTrackEvent[] | null;
   holoParallax?: boolean;
@@ -2613,14 +3015,23 @@ function CortexCoreInner({
       {RINGS.map((r, i) => (
         <OrbitRing key={i} spec={r} live={live} index={i} />
       ))}
-      <Satellites live={live} />
+      {visualMode !== 'memory' && <Satellites live={live} />}
+      {visualMode !== 'fleet' && <MemoryBankConstellation live={live} selectedMemoryId={selectedMemoryId} />}
       <ModelConstellation live={live} />
       <AccretionDisk live={live} />
       <NeuralWeb live={live} />
       <ThoughtSwarm live={live} />
       <Shockwaves fx={fx} />
 
-      <CameraRig live={live} selectedAgentId={selectedAgentId} chronoTime={chronoTime} replayTrack={replayTrack} holoParallax={holoParallax} headParallax={headParallax} />
+      <CameraRig
+        live={live}
+        selectedAgentId={selectedAgentId}
+        selectedMemoryId={selectedMemoryId}
+        chronoTime={chronoTime}
+        replayTrack={replayTrack}
+        holoParallax={holoParallax}
+        headParallax={headParallax}
+      />
       <PostFX live={live} />
     </>
   );
@@ -2629,6 +3040,9 @@ function CortexCoreInner({
 function SceneWithInput({
   selectedAgentId,
   onSelectAgent,
+  selectedMemoryId,
+  onSelectMemory,
+  visualMode = 'fleet',
   chronoTime,
   replayTrack,
   holoParallax,
@@ -2636,6 +3050,9 @@ function SceneWithInput({
 }: {
   selectedAgentId?: string | null;
   onSelectAgent?: (id: string | null) => void;
+  selectedMemoryId?: string | null;
+  onSelectMemory?: (id: string | null) => void;
+  visualMode?: 'fleet' | 'memory' | 'both';
   chronoTime?: number | null;
   replayTrack?: ReplayTrackEvent[] | null;
   holoParallax?: boolean;
@@ -2656,7 +3073,18 @@ function SceneWithInput({
     return () => el.removeEventListener('pointerdown', onDown);
   }, [gl, clock]);
 
-  return <CortexCoreInner fx={fx} selectedAgentId={selectedAgentId} chronoTime={chronoTime} replayTrack={replayTrack} holoParallax={holoParallax} headParallax={headParallax} />;
+  return (
+    <CortexCoreInner
+      fx={fx}
+      selectedAgentId={selectedAgentId}
+      selectedMemoryId={selectedMemoryId}
+      visualMode={visualMode}
+      chronoTime={chronoTime}
+      replayTrack={replayTrack}
+      holoParallax={holoParallax}
+      headParallax={headParallax}
+    />
+  );
 }
 
 // Under prefers-reduced-motion the Canvas renders on demand: ambient
@@ -2674,6 +3102,9 @@ const InvalidateBridge: React.FC = () => {
 export interface CortexCoreSceneProps {
   selectedAgentId?: string | null;
   onSelectAgent?: (id: string | null) => void;
+  selectedMemoryId?: string | null;
+  onSelectMemory?: (id: string | null) => void;
+  visualMode?: 'fleet' | 'memory' | 'both';
   chronoTime?: number | null;
   replayTrack?: ReplayTrackEvent[] | null;
   holoParallax?: boolean;
@@ -2683,6 +3114,9 @@ export interface CortexCoreSceneProps {
 export const CortexCoreScene: React.FC<CortexCoreSceneProps> = ({
   selectedAgentId,
   onSelectAgent,
+  selectedMemoryId,
+  onSelectMemory,
+  visualMode = 'fleet',
   chronoTime,
   replayTrack,
   holoParallax = true,
@@ -2746,7 +3180,17 @@ export const CortexCoreScene: React.FC<CortexCoreSceneProps> = ({
             }}
           />
         )}
-        <SceneWithInput selectedAgentId={selectedAgentId} onSelectAgent={onSelectAgent} chronoTime={chronoTime} replayTrack={replayTrack} holoParallax={holoParallax} headParallax={headParallax} />
+        <SceneWithInput
+          selectedAgentId={selectedAgentId}
+          onSelectAgent={onSelectAgent}
+          selectedMemoryId={selectedMemoryId}
+          onSelectMemory={onSelectMemory}
+          visualMode={visualMode}
+          chronoTime={chronoTime}
+          replayTrack={replayTrack}
+          holoParallax={holoParallax}
+          headParallax={headParallax}
+        />
         {reduced && <InvalidateBridge />}
       </Canvas>
       {contextLost && (

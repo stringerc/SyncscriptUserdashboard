@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import {
   recallCortexMemory,
   retainCortexMemory,
+  fetchCortexMemoryGraph,
   maybeRetainEvent,
   _resetCortexMemoryForTest,
 } from '../cortex-memory';
@@ -108,5 +109,36 @@ describe('Cortex Memory (Hindsight client)', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it('fetchCortexMemoryGraph returns parsed graph on 200', async () => {
+    fetchMock.mockResolvedValue(new Response(JSON.stringify({
+      nodes: [{ data: { id: 'n1', label: 'Engram 1' } }],
+      edges: [{ data: { id: 'e1', source: 'n1', target: 'n1' } }],
+      total_units: 1,
+    }), { status: 200 }));
+    const graph = await fetchCortexMemoryGraph();
+    expect(graph).not.toBeNull();
+    expect(graph?.nodes.length).toBe(1);
+    expect(graph?.edges.length).toBe(1);
+    const [url] = fetchMock.mock.calls[0];
+    expect(url).toContain('/v1/default/banks/cortex/graph');
+  });
+
+  it('fetchCortexMemoryGraph queries entities when view is entities', async () => {
+    fetchMock.mockResolvedValue(new Response(JSON.stringify({
+      nodes: [],
+      edges: [],
+    }), { status: 200 }));
+    await fetchCortexMemoryGraph({ view: 'entities' });
+    const [url] = fetchMock.mock.calls[0];
+    expect(url).toContain('/v1/default/banks/cortex/entities/graph');
+  });
+
+  it('fetchCortexMemoryGraph returns null on network or HTTP error fail-softly', async () => {
+    fetchMock.mockRejectedValue(new Error('ECONNREFUSED'));
+    expect(await fetchCortexMemoryGraph()).toBeNull();
+    fetchMock.mockResolvedValue(new Response('error', { status: 500 }));
+    expect(await fetchCortexMemoryGraph()).toBeNull();
   });
 });

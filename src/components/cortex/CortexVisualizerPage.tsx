@@ -3,7 +3,16 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { cortexSignalBus, CortexVisualizer, type VisualizerFace, type CortexSignalBusPayload, type CortexVoiceState } from './CortexVisualizer';
 import { CortexAgentsScene } from './CortexAgentsScene';
-import { CortexCoreScene, agentScreenAnchors, chronoNow, type ReplayTrackEvent } from './CortexCoreScene';
+import {
+  CortexCoreScene,
+  agentScreenAnchors,
+  memoryScreenAnchors,
+  chronoNow,
+  type ReplayTrackEvent,
+  getMemoryDomain,
+  MEMORY_DOMAIN_COLORS,
+  MEMORY_DOMAIN_NAMES,
+} from './CortexCoreScene';
 import { useVisualizerVoice } from './useVisualizerVoice';
 import { startInitiativeSensor } from '../../lib/cortex-initiative-sensor';
 import { CortexChatDrawer } from './CortexChatDrawer';
@@ -436,6 +445,102 @@ export default function CortexVisualizerPage() {
     window.addEventListener('pointerdown', onDown, true);
     return () => window.removeEventListener('pointerdown', onDown, true);
   }, [selectedAgentId]);
+
+  // ── Memory Bank (Hindsight) State & Tracking ──────────────────────────────
+  const [coreVisualMode, setCoreVisualMode] = useState<'fleet' | 'memory'>(() => {
+    if (typeof window === 'undefined') return 'fleet';
+    return (localStorage.getItem('cortex_core_visual_mode') as 'fleet' | 'memory') || 'fleet';
+  });
+  const [selectedMemoryId, setSelectedMemoryId] = useState<string | null>(null);
+  const [memoryGraphSummary, setMemoryGraphSummary] = useState<{ total: number; edges: number; online: boolean }>({ total: 0, edges: 0, online: false });
+  const [memoryNodesMap, setMemoryNodesMap] = useState<Record<string, any>>({});
+  const [recallHits, setRecallHits] = useState<string[]>([]);
+  const [recallLoading, setRecallLoading] = useState(false);
+  const memoryCardRef = useRef<HTMLDivElement | null>(null);
+
+  // Track memory screen anchors for the dossier card
+  useEffect(() => {
+    if (!selectedMemoryId) return;
+    let raf = 0;
+    const tick = () => {
+      const el = memoryCardRef.current;
+      if (el) {
+        const anchor = memoryScreenAnchors[selectedMemoryId];
+        if (anchor && !anchor.behind) {
+          el.style.left = `${Math.max(200, Math.min(window.innerWidth - 200, anchor.x))}px`;
+          el.style.top = `${Math.max(90, Math.min(window.innerHeight - 100, anchor.y - 14))}px`;
+          el.style.right = 'auto';
+          el.style.transform = 'translate(-50%, -100%)';
+          el.style.opacity = '1';
+        } else {
+          el.style.left = '50%';
+          el.style.right = 'auto';
+          el.style.top = '50%';
+          el.style.transform = 'translate(-50%, -50%)';
+          el.style.opacity = anchor ? '0.45' : '1';
+        }
+      }
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [selectedMemoryId]);
+
+  // Click-off closes memory card
+  const suppressMemorySelect = useRef(0);
+  useEffect(() => {
+    if (!selectedMemoryId) return;
+    const onDown = (e: PointerEvent) => {
+      if (memoryCardRef.current?.contains(e.target as Node)) return;
+      setSelectedMemoryId(null);
+      suppressMemorySelect.current = Date.now() + 300;
+    };
+    window.addEventListener('pointerdown', onDown, true);
+    return () => window.removeEventListener('pointerdown', onDown, true);
+  }, [selectedMemoryId]);
+
+  // Listen for cortex-memory-select event
+  useEffect(() => {
+    const onMemSelect = (e: Event) => {
+      if (Date.now() < suppressMemorySelect.current) return;
+      const id = (e as CustomEvent).detail;
+      if (typeof id === 'string') {
+        setSelectedMemoryId((cur) => (cur === id ? null : id));
+        setSelectedAgentId(null);
+        setRecallHits([]);
+      }
+    };
+    window.addEventListener('cortex-memory-select', onMemSelect);
+    return () => window.removeEventListener('cortex-memory-select', onMemSelect);
+  }, []);
+
+  // Poll memory graph for HUD telemetry and engram data
+  useEffect(() => {
+    let active = true;
+    const fetchGraph = async () => {
+      try {
+        const res = await fetch('/api/cortex/memory/graph');
+        if (!res.ok) return;
+        const data = await res.json();
+        if (!active || !data.ok) return;
+        setMemoryGraphSummary({
+          total: data.nodes?.length || 0,
+          edges: data.edges?.length || 0,
+          online: true,
+        });
+        const map: Record<string, any> = {};
+        for (const n of data.nodes || []) {
+          if (n?.data?.id) map[n.data.id] = n.data;
+        }
+        setMemoryNodesMap(map);
+      } catch {
+        if (active) setMemoryGraphSummary((prev) => ({ ...prev, online: false }));
+      }
+    };
+    fetchGraph();
+    const iv = setInterval(fetchGraph, 10000);
+    return () => { active = false; clearInterval(iv); };
+  }, []);
   useEffect(() => {
     if (!missionExpanded) return;
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setMissionExpanded(false); };
@@ -942,6 +1047,9 @@ export default function CortexVisualizerPage() {
           <CortexCoreScene
             selectedAgentId={selectedAgentId}
             onSelectAgent={setSelectedAgentId}
+            selectedMemoryId={selectedMemoryId}
+            onSelectMemory={setSelectedMemoryId}
+            visualMode={coreVisualMode}
             chronoTime={chronoActive ? chronoTime : null}
             replayTrack={chronoActive ? replayTrack : null}
             headParallax={headParallax}
@@ -1007,9 +1115,35 @@ export default function CortexVisualizerPage() {
           color: 'rgba(148,233,255,0.55)', textTransform: 'uppercase',
           animation: 'cx-fade-up 0.9s 0.7s cubic-bezier(0.16,1,0.3,1) both',
         }}>
-          {faceMode === 'agents' ? 'Nexus Foundry // Fleet Command Deck' : 'Sovereign Core // Neural Sanctum'}
+          {faceMode === 'agents' ? 'Nexus Foundry // Fleet Command Deck' : coreVisualMode === 'memory' ? 'Sovereign Core // Live Memory Bank Constellation' : 'Sovereign Core // Neural Sanctum'}
         </div>
       </div>
+
+      {/* Top-center: Live Memory Bank Telemetry Strip */}
+      {faceMode === 'core' && coreVisualMode === 'memory' && (
+        <div style={{
+          position: 'absolute', top: 76, left: '50%', transform: 'translateX(-50%)',
+          zIndex: 16, pointerEvents: 'auto',
+          display: 'flex', alignItems: 'center', gap: 12,
+          padding: '6px 18px', borderRadius: 20,
+          background: 'rgba(4, 8, 18, 0.78)', backdropFilter: 'blur(14px)',
+          border: '1px solid rgba(192,132,252,0.35)',
+          boxShadow: '0 4px 20px rgba(0,0,0,0.5), 0 0 16px rgba(192,132,252,0.15)',
+          color: '#c084fc', fontFamily: "'IBM Plex Mono', monospace", fontSize: 9.5, letterSpacing: '0.16em',
+          animation: 'cx-fade-up 0.4s ease both',
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#34d399', boxShadow: '0 0 6px #34d399' }} />
+            <span style={{ fontWeight: 700 }}>HINDSIGHT 1.2.1</span>
+          </div>
+          <span style={{ color: 'rgba(148,163,184,0.3)' }}>|</span>
+          <span style={{ color: '#f8fafc', fontWeight: 600 }}>{memoryGraphSummary.total} ENGRAMS</span>
+          <span style={{ color: 'rgba(148,163,184,0.3)' }}>|</span>
+          <span style={{ color: '#7dd3fc' }}>{memoryGraphSummary.edges} SYNAPSES</span>
+          <span style={{ color: 'rgba(148,163,184,0.3)' }}>|</span>
+          <span style={{ color: '#fbbf24', fontSize: 8.5 }}>CLICK ORB TO INSPECT</span>
+        </div>
+      )}
 
       {/* Top-center: marquee ticker — hidden on Foundry face to avoid header collision */}
       {faceMode !== 'agents' && (
@@ -1609,6 +1743,159 @@ export default function CortexVisualizerPage() {
         );
       })()}
 
+      {/* Memory Engram Dossier HUD Card */}
+      {!narrow && selectedMemoryId && (() => {
+        const node = memoryNodesMap[selectedMemoryId];
+        if (!node) return null;
+        const domain = getMemoryDomain(node.context, node.label, node.entities);
+        const col = MEMORY_DOMAIN_COLORS[domain] || '#67e8f9';
+        const domainName = MEMORY_DOMAIN_NAMES[domain] || 'ENGRAM';
+        const dateStr = node.date ? new Date(node.date).toLocaleString() : 'Recent';
+
+        return (
+          <div
+            ref={memoryCardRef}
+            style={{
+              position: 'absolute',
+              top: '24%',
+              right: 64,
+              zIndex: 35,
+              width: 380,
+              maxWidth: '92vw',
+              borderRadius: 4,
+              border: `1px solid ${col}66`,
+              background: 'linear-gradient(165deg, rgba(8,14,28,0.94), rgba(4,8,18,0.92))',
+              backdropFilter: 'blur(16px)',
+              boxShadow: `0 12px 40px rgba(0,0,0,0.65), 0 0 30px ${col}25`,
+              color: '#e2e8f0',
+              fontFamily: "'IBM Plex Mono', monospace",
+              padding: 16,
+              pointerEvents: 'auto',
+            }}
+            className="cx-hud-in"
+          >
+            <div style={{ position: 'absolute', top: -1, left: -1, width: 10, height: 10, borderTop: `2px solid ${col}`, borderLeft: `2px solid ${col}` }} />
+            <div style={{ position: 'absolute', bottom: -1, right: -1, width: 10, height: 10, borderBottom: `2px solid ${col}`, borderRight: `2px solid ${col}` }} />
+
+            {/* Header */}
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 10 }}>
+              <div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
+                  <span style={{ fontSize: 9, letterSpacing: '0.18em', color: col, border: `1px solid ${col}66`, padding: '2px 6px', borderRadius: 2, background: `${col}15`, fontWeight: 700 }}>
+                    {domainName}
+                  </span>
+                  <span style={{ fontSize: 8, letterSpacing: '0.12em', color: 'rgba(148,233,255,0.6)' }}>
+                    ORBIT CHASE
+                  </span>
+                </div>
+                <div style={{ fontSize: 13, fontWeight: 700, color: '#f8fafc', letterSpacing: '0.04em', lineHeight: 1.3 }}>
+                  {node.label || 'Memory Engram'}
+                </div>
+              </div>
+              <button
+                onClick={() => {
+                  setSelectedMemoryId(null);
+                  window.dispatchEvent(new CustomEvent('cortex-memory-select', { detail: null }));
+                }}
+                style={{
+                  background: 'none', border: 'none', color: 'rgba(148,163,184,0.6)',
+                  fontSize: 14, cursor: 'pointer', padding: 4,
+                }}
+              >
+                ✕
+              </button>
+            </div>
+
+            {/* Fact text proposition */}
+            <div style={{
+              fontSize: 10.5, lineHeight: 1.6, color: 'rgba(226,232,240,0.88)',
+              background: 'rgba(0,0,0,0.35)', padding: '10px 12px', borderRadius: 3,
+              border: '1px solid rgba(255,255,255,0.06)', marginBottom: 12,
+              maxHeight: 140, overflowY: 'auto',
+            }}>
+              {node.text || 'No propositional text recorded.'}
+            </div>
+
+            {/* Metadata grid */}
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, fontSize: 8.5, marginBottom: 12, color: 'rgba(148,233,255,0.7)' }}>
+              <div>
+                <span style={{ color: 'rgba(148,163,184,0.5)', display: 'block', fontSize: 7.5 }}>CONTEXT</span>
+                <span>{node.context || 'cortex-runtime'}</span>
+              </div>
+              <div>
+                <span style={{ color: 'rgba(148,163,184,0.5)', display: 'block', fontSize: 7.5 }}>RECORDED</span>
+                <span>{dateStr}</span>
+              </div>
+            </div>
+
+            {/* Entities */}
+            {node.entities && (
+              <div style={{ marginBottom: 12 }}>
+                <div style={{ fontSize: 8, color: 'rgba(148,163,184,0.5)', marginBottom: 4, letterSpacing: '0.1em' }}>ASSOCIATED ENTITIES</div>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                  {String(node.entities).split(',').map((e: string, idx: number) => (
+                    <span
+                      key={idx}
+                      style={{
+                        fontSize: 8, padding: '2px 6px', borderRadius: 2,
+                        background: 'rgba(56,189,248,0.1)', border: '1px solid rgba(56,189,248,0.25)',
+                        color: '#7dd3fc',
+                      }}
+                    >
+                      {e.trim()}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Live Recall Related Probe */}
+            <div>
+              <button
+                onClick={async () => {
+                  setRecallLoading(true);
+                  try {
+                    const q = node.label || node.text?.slice(0, 80) || '';
+                    const r = await fetch(`/api/cortex/memory/recall?q=${encodeURIComponent(q)}&budget=mid`);
+                    if (r.ok) {
+                      const data = await r.json();
+                      const lines = (data.context || '')
+                        .split('\n')
+                        .filter((l: string) => l.startsWith('- '))
+                        .map((l: string) => l.replace(/^- /, ''));
+                      setRecallHits(lines);
+                    }
+                  } finally {
+                    setRecallLoading(false);
+                  }
+                }}
+                disabled={recallLoading}
+                style={{
+                  width: '100%', padding: '7px 10px', fontSize: 9, fontWeight: 600,
+                  letterSpacing: '0.14em', fontFamily: 'inherit', borderRadius: 2,
+                  border: `1px solid ${col}88`, background: `${col}18`, color: col,
+                  cursor: recallLoading ? 'wait' : 'pointer', transition: 'all 0.2s',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+                }}
+              >
+                {recallLoading ? 'RECALLING SYNAPSES...' : '⚡ RECALL ASSOCIATED MEMORIES'}
+              </button>
+
+              {recallHits.length > 0 && (
+                <div style={{ marginTop: 8, maxHeight: 110, overflowY: 'auto', background: 'rgba(0,0,0,0.45)', padding: 8, borderRadius: 2, border: '1px solid rgba(255,255,255,0.06)' }}>
+                  <div style={{ fontSize: 7.5, color: '#94a3b8', letterSpacing: '0.1em', marginBottom: 4 }}>ASSOCIATED ENGRAMS:</div>
+                  {recallHits.map((hit, hi) => (
+                    <div key={hi} style={{ fontSize: 8, color: '#cbd5e1', lineHeight: 1.4, marginBottom: 4, borderLeft: `2px solid ${col}`, paddingLeft: 4 }}>
+                      {hit}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        );
+      })()}
+
       {/* Bottom nav command dock: centered to clear left-rail flyouts */}
       <div style={{
         position: 'absolute', bottom: 24, left: '50%', transform: 'translate(-50%, 0)',
@@ -1645,6 +1932,51 @@ export default function CortexVisualizerPage() {
         >
           {mapMode ? '◉ GLOBE · ESC' : '◈ MAP'}
         </button>
+        )}
+        {faceMode === 'core' && (
+          <div style={{
+            display: 'inline-flex',
+            borderRadius: 2,
+            border: '1px solid rgba(148,233,255,0.18)',
+            overflow: 'hidden',
+            background: 'rgba(4,8,14,0.4)',
+            backdropFilter: 'blur(10px)',
+          }}>
+            <button
+              onClick={() => {
+                setCoreVisualMode('fleet');
+                try { localStorage.setItem('cortex_core_visual_mode', 'fleet'); } catch {}
+                cortexSpeak('Fleet deck active.');
+              }}
+              title="Fleet Deck — active agent vessels orbiting Sovereign Core"
+              style={{
+                padding: narrow ? '7px 10px' : '9px 14px', cursor: 'pointer', border: 'none',
+                background: coreVisualMode === 'fleet' ? 'rgba(56,189,248,0.22)' : 'transparent',
+                color: coreVisualMode === 'fleet' ? '#38bdf8' : 'rgba(148,233,255,0.5)',
+                fontSize: narrow ? 9 : 10, fontWeight: 700, letterSpacing: '0.18em', fontFamily: "'IBM Plex Mono', monospace",
+                transition: 'all 0.2s',
+              }}
+            >
+              ◈ FLEET
+            </button>
+            <button
+              onClick={() => {
+                setCoreVisualMode('memory');
+                try { localStorage.setItem('cortex_core_visual_mode', 'memory'); } catch {}
+                cortexSpeak('Memory bank constellation active.');
+              }}
+              title="Hindsight Memory Bank — live cognitive engrams & synaptic filaments"
+              style={{
+                padding: narrow ? '7px 10px' : '9px 14px', cursor: 'pointer', border: 'none',
+                background: coreVisualMode === 'memory' ? 'rgba(192,132,252,0.26)' : 'transparent',
+                color: coreVisualMode === 'memory' ? '#c084fc' : 'rgba(148,233,255,0.5)',
+                fontSize: narrow ? 9 : 10, fontWeight: 700, letterSpacing: '0.18em', fontFamily: "'IBM Plex Mono', monospace",
+                transition: 'all 0.2s',
+              }}
+            >
+              🧠 MEMORY
+            </button>
+          </div>
         )}
         <button
           onClick={() => {

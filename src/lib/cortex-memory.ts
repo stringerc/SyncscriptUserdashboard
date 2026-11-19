@@ -19,6 +19,55 @@ interface RecallResult {
   entities?: string[];
 }
 
+export interface MemoryGraphNodeData {
+  id: string;
+  label?: string;
+  text?: string;
+  date?: string;
+  context?: string;
+  entities?: string;
+  color?: string;
+}
+
+export interface MemoryGraphEdgeData {
+  id: string;
+  source: string;
+  target: string;
+  linkType?: string;
+  weight?: number;
+  entityName?: string;
+  color?: string;
+  lineStyle?: string;
+}
+
+export interface MemoryGraphPayload {
+  nodes: Array<{ data: MemoryGraphNodeData }>;
+  edges: Array<{ data: MemoryGraphEdgeData }>;
+  total_units?: number;
+  total_entities?: number;
+}
+
+/** Fetch live memory knowledge graph from Hindsight. Fail-soft; returns null on error. */
+export async function fetchCortexMemoryGraph(
+  opts: { view?: 'facts' | 'entities'; timeoutMs?: number } = {},
+): Promise<MemoryGraphPayload | null> {
+  try {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), opts.timeoutMs ?? 3000);
+    const subpath = opts.view === 'entities' ? 'entities/graph' : 'graph';
+    const res = await fetch(`${HINDSIGHT_URL}/v1/default/banks/${BANK}/${subpath}`, {
+      method: 'GET',
+      headers: { 'Accept': 'application/json' },
+      signal: ctrl.signal,
+    });
+    clearTimeout(timer);
+    if (!res.ok) return null;
+    return (await res.json()) as MemoryGraphPayload;
+  } catch {
+    return null;
+  }
+}
+
 /** Recall relevant memories for a query. Returns a compact context block
  *  suitable for prompt injection, or '' on any failure/timeout. */
 export async function recallCortexMemory(

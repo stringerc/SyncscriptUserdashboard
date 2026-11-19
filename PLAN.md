@@ -1,91 +1,93 @@
-# PLAN: Cortex Home — the sovereign personal mind (v2, post-review)
+# PLAN — External Capability Integration Wave (iFixAi · magpie · fframes · orca-pattern · brigade-patterns)
 
-## Positioning
+Date: 2026-11-19 · Branch: security-hardening · Status: awaiting approval
 
-**One-line pitch:** "Every AI assistant you use is a tenant in someone else's datacenter. Cortex Home is a mind you own — self-hosted, memory you can read and edit, cognition you can audit, reachable by voice and phone, running on free tiers forever."
+## Ground truth verified before planning
 
-**Category:** sovereign personal AI / self-hosted cognitive appliance — NOT a chatbot, NOT a wrapper, NOT a wearable.
+- `DIRECT_AI_PROVIDERS` chain: `vite.config.ts:112-130` — OpenAI/Anthropic protocol entries, key pooling (`keyEnv`/`backupKeyEnv`), circuit breaker (`providerCooldown`, `tripProvider`). Agents reach it via `ctx.llm` → `/api/cortex/agents/llm`.
+- Ephemeral agents: `makeEphemeralWorker(spec)` at `workers.ts:2050`, spawned via `runtime.setSpawnWorkerFactory` (`vite.config.ts:1120`). SpawnSpec has TTL + dailyBudget; **no filesystem isolation today — all agents share `process.cwd()`**.
+- Evals exist (`evals.ts`: `fileEvalDefinition`/`runEval`) but grade *task outputs*, not *agent behaviour against governance*.
+- Hindsight memory live (commit e57d25e): eventlog→retain, recall→BUILDER prompts, `/api/cortex/memory/recall`.
+- Toolchain: cargo/rustc 1.93.1 ✓, uv 0.13.8 ✓, Python 3.15.2 ✓, ffmpeg ✓, Chrome+playwright-core ✓.
+- `skills/` is gitignored (local skills convention) — vendored skills stay on disk, documented in MEMORY.md.
 
-**Moat (honest version):** NOT "smarter cognition" — that's unproven and Grok Voice 3.0 beats us on raw conversation. The moat is the **integrated sovereign package**: proactive ambient presence + Obsidian-native memory + real phone calls + circadian orchestration + auditability, in one install, on hardware the user owns. OpenClaw is an agent framework; Cortex Home is a complete personal operating system. A public benchmark suite (reasoning depth, proactive-action precision, memory-edit latency vs OpenClaw+HA) is a Phase 1 deliverable — claims follow evidence, not the other way around.
+## Phase 1 — iFixAi independent audit layer (highest value/effort)
 
-## Target customers (sequenced, narrowed per review)
+**Why first:** Cortex claims governance (trust-ledger, spawn approvals, distilled rules) but has no *independent evidence* agents behave within it. iFixAi is black-box (audits any chat endpoint), Apache-2.0, `pip install ifixai`, 61 inspections / 5 pillars, cross-provider judge (agent never grades itself — mandatory for credible audits).
 
-1. **Beachhead:** self-hosters already running Home Assistant / homelab infrastructure who want an AI layer that can *act* (control devices, make calls, manage their week) — NOT generic "privacy enthusiasts." This is a findable community (r/selfhosted, HA forums, Discord).
-2. **Expansion:** busy knowledge workers and families via a **separately-branded hosted tier** (see Brand Separation below).
+| Step | File/Action | Detail |
+|---|---|---|
+| 1.1 | `uv tool install ifixai` | Dedicated tool venv; verify `ifixai --version` |
+| 1.2 | Demo run | `ifixai author reference -o /tmp/ifixai-ref.yaml` → `ifixai validate` → `ifixai run --provider mock --eval-mode self --fixture` — proves install before touching Cortex |
+| 1.3 | Cortex fixture | Author `config/ifixai/cortex-agent.yaml`: profile describes Cortex agent surface (chat endpoint `/api/cortex/agents/llm` or a dedicated audit shim), business policy = Cortex governance rules (spawn approval gates, destructive-action vetoes, budget limits, distilled rules). Map B01–B24 relevant subset |
+| 1.4 | Audit shim endpoint | `vite.config.ts`: `POST /api/cortex/audit/ifixai/run` — wraps `ifixai run` CLI via child_process, streams scorecard JSON to `.cortex-runtime/audit/`, returns grade. Fail-soft 503 when ifixai absent |
+| 1.5 | Judge separation | Config: judge provider ≠ agent-under-test provider. With 7-provider chain this is satisfiable — document mapping in fixture |
+| 1.6 | Memory + incident wiring | On audit completion: retain grade summary via `retainCortexMemory` (context `ifixai-audit`); grade < B or any mandatory-minimum failure → `reportIncident` (existing incidents system) + eventlog `audit.completed` event |
+| 1.7 | Scheduled audits | Register Cortex routine (existing `AgentRoutine` system): weekly full audit, post-spawn-change audit. Cadence respects Groq TPM reality — off-peak |
+| 1.8 | Tests | `src/lib/__tests__/cortex-ifixai.test.ts`: fixture validation, endpoint fail-soft, scorecard parsing, incident trigger on low grade (mocked) |
 
-## The wedge (research-backed)
+**Verification:** mock run passes → live audit of a benign Cortex agent endpoint returns a real grade → scorecard artifact on disk → incident fires on injected misbehaving fixture.
 
-**"The AI that knows when to speak."** Proactive ambient presence governed by visible policy controls.
+## Phase 2 — magpie LLM gateway
 
-Evidence: Prophet 2026 (66% want anticipatory AI, 62% want ambient); GatherHQ (trust = controls: ask-first, undo, override, bounded authority); Apptopia (high-frequency users ~0% churn — habit is the moat); EQUS (58.7% don't know memory controls exist — transparency is unmet need).
+**Why:** replaces hand-rolled provider fragility with a real gateway: OpenAI Chat + Responses + Anthropic Messages + Gemini translation, routing groups, quota failover across *subscription accounts* (Claude/ChatGPT/Copilot/Gemini plans), PII masking. 80+ agent integrations incl. Devin/OpenClaw. MIT, Go binary, heavy test coverage.
 
-**Reliability fix (review #4, refined R2):** proactive actions require a **confidence gate** — at least two independent signals before speaking, BUT the gate is **configurable**: `strict` (two signals, advisory suppressed), `balanced` (default), `soft` (single-signal allowed, marked low-confidence in UI). Every suppressed action writes a **"why it didn't act"** entry to the review log so false negatives are visible and tunable. The gate prevents Clippy; the log prevents silence.
+| Step | File/Action | Detail |
+|---|---|---|
+| 2.1 | Install | `go install github.com/yetone/magpie@latest` or release binary → `~/.local/bin/magpie`; fallback: Docker image. Pin version in MEMORY.md |
+| 2.2 | launchd service | `~/Library/LaunchAgents/com.syncscript.magpie.plist` — gateway on `127.0.0.1:3425`, logs `~/.cortex/logs/magpie.log`. Model on `com.syncscript.hindsight.plist` |
+| 2.3 | Provider entry | `vite.config.ts` DIRECT_AI_PROVIDERS: add `{ name: 'magpie', url: 'http://127.0.0.1:3425/v1/chat/completions', model: 'cortex-auto', keyEnv: 'MAGPIE_KEY', protocol: 'openai' }` — positioned after nvidia-nim, before free-proxy. **Additive only: existing chain stays as fallback** |
+| 2.4 | Routing groups | magpie config: group `cortex-reason` pooling subscription plans + API keys with smart routing; group `cortex-fast` for cheap/fast tier. Map Cortex tiers (fast/reason/deep) → groups |
+| 2.5 | Verification | `curl :3425/v1/models` → chat completion through gateway → force-quota-exhaustion test (routing group fails over) → confirm `/api/cortex/agents/llm` succeeds via magpie entry |
+| 2.6 | Secrets | magpie account sign-ins stay in `~/.config/magpie` (its own store); only `MAGPIE_KEY` (gateway token, can be `magpie`) in `.env` if needed |
 
-## What already exists (verified in repo)
+**Risk:** magpie is fast-moving/young — treat as *one provider entry*, never the sole path. Rollback = remove array entry.
 
-- Cognitive architecture: GWT, IIT-Φ, HOT metacognition, free-energy homeostasis, dream consolidation, self-editing invariants
-- Resonance calculus (`c(t) × β(t)` circadian scheduling), epistemic homeostasis (agent measures own memory rot)
-- Obsidian-native memory (`~/.cortex/vault/` — the vault IS the memory dashboard: human-readable, editable, auditable)
-- Voice: whisper.cpp + Kokoro + Cartesia chain, face visualizer, PTT, conversation mode
-- Proactive: policy gates, wake-word, leader election, ambient queue, quiet hours, hourly caps
-- Always-on: Oracle VM deployment, systemd, edge auth, tunnels
-- Phone: Telnyx Call Control bridge (real PSTN, VAD→STT→LLM→TTS, barge-in)
-- Reach: Bark push, FaceTime Audio, iMessage
+## Phase 3 — fframes video engine (DISTRIBUTOR)
 
-## Architecture
+| Step | File/Action | Detail |
+|---|---|---|
+| 3.1 | Install skill | `npx skills add https://fframes.studio` (agent skill) + note in MEMORY.md |
+| 3.2 | Smoke render | Clone repo shallow → `cargo build --release -p fframes` example (`examples/hello-world`) → render a test MP4. First Rust compile is slow; acceptable one-time cost |
+| 3.3 | Pipeline doc | `docs/` or MEMORY.md: engine selection matrix — fframes (typed/fast/data-viz), lemo-opuscar (cinematic styles, MIT engine only per license audit), javascript-animation (hand-drawn canvas) |
+| 3.4 | Optional later | DISTRIBUTOR worker gains `render_video` tool spec choosing engine by brief type — **deferred until a real DISTRIBUTOR video task demands it** |
 
-```
-Surfaces:  face · chat · PSTN phone · iMessage · Bark · (future: HA device control)
-Brain:     provider-agnostic LLM chain + cognitive middleware
-Memory:    Obsidian vault + memory-substrate selection + audit log
-Body:      ANY Linux VM (Oracle free tier is the reference, not the requirement)
-Nervous:   policy-gated proactive loop + confidence gate
-Voice I/O: plug-in STT/TTS providers — premium path (Cartesia/Groq-whisper-large-v3)
-           default for calls, free path (whisper.cpp/Kokoro) as fallback
-```
+## Phase 4 — orca-pattern: git worktree isolation for ephemeral agents
 
-## Staged rollout
+**The real bug this fixes:** spawned agents share `process.cwd()` — concurrent BUILDERs can collide on files. Orcca proves worktree-per-agent at fleet scale.
 
-**Phase 0 — Daily-driver dogfooding (now → 30d):**
-- Run daily on own infra; KPIs below; fix what breaks
-- Success = user relies on it unprompted for real tasks
+| Step | File/Action | Detail |
+|---|---|---|
+| 4.1 | SpawnSpec flag | `types.ts`: `SpawnSpec.worktree?: boolean` (default false — opt-in, zero blast radius on existing agents) |
+| 4.2 | Worktree provision | `runtime.ts` spawn path: if `spec.worktree`, `git worktree add .cortex-runtime/worktrees/<agentId> -b agent/<agentId>`; store path on agent state; eventlog `agent.worktree.created` |
+| 4.3 | Path resolution | `workers.ts` ephemeral worker + file tools (`read_file`/`write_file`/`edit_file`/`run_command` cwd): resolve relative paths against agent's worktree when set |
+| 4.4 | Retirement policy | TTL retire: default **discard** worktree (`git worktree remove --force`); merge only via existing proposal→user-approval path (agents never silently merge to main) |
+| 4.5 | Tests | `cortex-worktree.test.ts`: spawn with flag → files land in worktree not main → retire discards → merge proposal path. Integration test uses temp git repo |
 
-**Phase 1 — OSS core + dev beta (30–90d):**
-- One-command installer (`cortex-oracle-install.sh` generalized → `cortex-install.sh` for any VM/local)
-- Public benchmark suite vs OpenClaw+HA baseline — **pilot first** (R2 #6): run with early adopters, refine metric definitions (esp. "proactive-action precision"), publish methodology + sample datasets before any public claims
-- Architecture whitepaper, quickstart, threat model, self-serve troubleshooting KB; confidence-gate logic ships with integration tests + developer docs (R2 #4)
-- Target: 10–50 self-host installs in r/selfhosted + HA communities
-- Free forever for self-hosted
+**Risk:** largest blast radius of the wave — path resolution touches every file tool. Mitigated by opt-in flag + dedicated test suite.
 
-**Phase 2 — Hosted tier (90+d, only if pull exists):**
-- **Brand separation (review #7, hardened R2):** self-hosted "Cortex Home" stays pure sovereign/free-forever. Hosted offering is a DIFFERENT product name ("Cortex Assist") on a **separate domain/URL**, separate FAQ, separate marketing — a style guide rule: the two are never mentioned in the same breath. "Cortex Home" docs never mention paid tiers; "Cortex Assist" docs never claim sovereignty.
-- Free tier (Meta Muse-style) + paid for phone minutes/premium cognition; **transparent pricing published before Phase 2 builds anything** (R2 #3) — usage limits and costs documented up-front, optional support subscription to recoup infra
-- Appliance image later (Pi/mini-PC) — only after hosted pull proven
+## Phase 5 — brigade patterns (reference adoption, no code import)
 
-## Compliance & trust (review #9)
+- **Bloody benchmark → iFixAi windtunnel**: Phase 1's adversarial inspections *are* the expose-to-strangers test, productized. No separate build needed — document the mapping.
+- **Tideline memory lifecycle**: already superseded by Hindsight (retain/consolidate/recall). Note mapping in MEMORY.md; no action.
+- **Channel connectors** (WhatsApp/iMessage/Telegram): Cortex has Discord already; revisit only if user requests a specific channel.
 
-- **Consent before every outbound call** — the bridge prompt states identity + purpose; calls are NOT recorded by default (Telnyx call_recording: none on the profile)
-- Two-party-consent jurisdictions: no recording = compliant by default; if recording is ever added it is opt-in per call with disclosure
-- Edge auth already gates all API spend; publish threat model in docs
-- Memory audit log: vault is git-friendly/Obsidian-visible; every agent memory write is a file diff the user can inspect
+## Phase 6 — PageIndex: DEFERRED
 
-## Infrastructure honesty (review #3)
+Trigger condition: a real workload needing reasoning-retrieval over long complex documents (legal filings, manuals, corpus-scale Q&A). Hindsight covers memory; nothing active needs tree-index document RAG. Documented, not built.
 
-- Oracle Always Free ARM is genuinely free but has **idle-instance reclaim risk** and usage limits — docs state this plainly; installer supports ANY Ubuntu VM (Hetzner ~$4, home server, old laptop)
-- Telnyx costs ~$0.005/min + DID ~$1/mo — documented as the only non-free dependency for phone calls; everything else runs on free tiers
-- Self-hosted path requires zero paid services for core function (chat/voice/memory/proactivity)
-- **Cost transparency (R2 #1):** phone calls are the ONE metered dependency — the UI and docs state "$0.005/min + ~$1/mo DID" plainly at setup; free tier includes a documented call-minute quota; users can swap providers (Twilio, own SIP trunk) since the bridge is provider-pluggable
+## Cross-cutting rules
 
-## Success metrics (concrete, per review #8)
+- Every new service → launchd plist + `~/.cortex/` env/logs (hindsight/magpie pattern)
+- No secrets in repo; `.env`/`~/.config/` only
+- Each phase independently committable; verification gates before next phase
+- LLM-heavy phases (1, 2) respect observed Groq 8000 TPM cap — audits scheduled, gateway spreads load
+- MEMORY.md + `.claude/active-task.md` updated per phase
 
-- **Daily usage:** Cortex Home used unprompted ≥5 days/week by the owner
-- **Autonomous value:** ≥1 successful self-initiated action per week (call, brief, nudge that mattered)
-- **Phone:** ≥1 completed real conversation call/month
-- **Phase 1:** ≥10 external self-host installs, ≥3 retained >2 weeks
-- **Quality gate:** proactive false-positive rate <20% (measured via review log feedback)
+## Suggested execution order
 
-## Open risks remaining
-
-- Cognitive-architecture claims (IIT-Φ etc.) stay **internal until benchmark-validated** (R2 #7) — they may appear in the dev whitepaper as "mechanism coverage," never as consumer-facing proof of superiority
-- Support burden at scale is real; tiered model (KB → community → paid retainer) documented in Phase 1
-- "Sovereign" vs hosted-tier tension resolved by brand separation — must hold in all marketing
+1. **Phase 1 iFixAi** — pip install is fast, mock run proves it, audit endpoint is contained
+2. **Phase 4 worktree isolation** — fixes a real correctness hole while context is fresh
+3. **Phase 2 magpie** — needs interactive account sign-ins for full value; API-key-only mode still useful
+4. **Phase 3 fframes** — independent, can slot anywhere
+5. Phase 5 documentation, Phase 6 stays deferred

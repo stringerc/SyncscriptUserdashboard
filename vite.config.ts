@@ -41,7 +41,7 @@ import { instinctsBlock, listInstincts, promotableInstincts } from './src/lib/co
 import { listEvals, getEval, fileEvalDefinition, runEval, readRuns, evalScorecard, evalComparison, type GraderSpec, type EvalArm } from './src/lib/cortex-agents/evals';
 import { computeCounselScorecard } from './src/lib/cortex-agents/counsel-scorecard';
 import { initEventLog, readEvents, getEventLogStats, verifyEventLog } from './src/lib/cortex-agents/eventlog';
-import { recallCortexMemory, retainCortexMemory } from './src/lib/cortex-memory';
+import { recallCortexMemory, retainCortexMemory, fetchCortexMemoryGraph } from './src/lib/cortex-memory';
 import type { RouteTier } from './src/lib/cortex-agents/types';
 import { normalizeForSpeech } from './src/lib/tts-speech-normalize';
 import {
@@ -11064,6 +11064,29 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
           return;
         }
         next();
+      });
+
+      // GET /api/cortex/memory/graph?view=facts|entities — live knowledge graph for 3D visualizer
+      server.middlewares.use('/api/cortex/memory/graph', async (req: any, res: any, next: any) => {
+        if (req.method === 'OPTIONS') {
+          res.writeHead(204, { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Methods': 'GET, OPTIONS', 'Access-Control-Allow-Headers': 'Content-Type' });
+          return res.end();
+        }
+        if (req.method !== 'GET') return next();
+        agentCors(req, res);
+        try {
+          const u = new URL(req.url || '', 'http://x');
+          const view = (u.searchParams.get('view') as any) || 'facts';
+          const graph = await fetchCortexMemoryGraph({ view, timeoutMs: 5000 });
+          res.setHeader('Content-Type', 'application/json');
+          if (!graph) {
+            return res.end(JSON.stringify({ ok: false, nodes: [], edges: [], total_units: 0 }));
+          }
+          res.end(JSON.stringify({ ok: true, ...graph }));
+        } catch (err: any) {
+          res.setHeader('Content-Type', 'application/json');
+          res.end(JSON.stringify({ ok: false, error: String(err?.message || err), nodes: [], edges: [], total_units: 0 }));
+        }
       });
 
       // GET /api/cortex/events — persisted event replay & query
