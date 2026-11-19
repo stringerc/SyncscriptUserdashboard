@@ -20,6 +20,7 @@ const {
   getCounselSession,
   markCounselDiscordNotified,
   autoClearCounselPolls,
+  detectBeliefClashes,
 } = await import('../cortex-counsel');
 
 const validPos = {
@@ -284,5 +285,40 @@ describe('Discord counsel buttons', () => {
     expect(res2.type).toBe(7);
     expect(String(res2.data.content)).toMatch(/Could not resolve|already/i);
     expect(getCounselSession(session!.id)!.status).toBe('cleared');
+  });
+
+  it('detects belief clashes when members hold opposing high-confidence stances', () => {
+    const { session } = conveneCounsel({
+      question: 'Migrate to SQLite?',
+      members: ['builder', 'sentinel', 'strategist', 'user'],
+    });
+    const p1 = filePosition(session!.id, {
+      member: 'builder',
+      stance: 'go',
+      confidence: 0.9,
+      keyEvidence: ['clean single-file portability'],
+      risks: [],
+      requiredConditions: [],
+      reasoning: 'SQLite reduces operational overhead significantly',
+    });
+    expect(p1.ok).toBe(true);
+
+    const p2 = filePosition(session!.id, {
+      member: 'sentinel',
+      stance: 'no-go',
+      confidence: 0.85,
+      keyEvidence: ['concurrent write contention under burst traffic'],
+      risks: ['database lock timeouts'],
+      requiredConditions: [],
+      reasoning: 'Multi-agent write concurrency causes database lock contention',
+    });
+    expect(p2.ok).toBe(true);
+
+    const clashes = detectBeliefClashes([getCounselSession(session!.id)!]);
+    expect(clashes).toHaveLength(1);
+    expect(clashes[0].memberA).toBe('builder');
+    expect(clashes[0].memberB).toBe('sentinel');
+    expect(clashes[0].severity).toBe('critical');
+    expect(clashes[0].divergenceScore).toBeCloseTo(0.875);
   });
 });

@@ -29,6 +29,8 @@ const MAX_EVIDENCE_ITEMS = 6;
 const POSITION_TIMEOUT_MS = 15 * 60 * 1000;
 const DEFAULT_DAILY_CAP = 3;
 const SESSION_TTL_MS = 72 * 3600 * 1000;
+const MAX_PERSONAS = 5;
+const PERSONA_ID_RE = /^persona:[a-z0-9][a-z0-9_-]{1,40}$/;
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -78,6 +80,22 @@ export interface CounselPosition {
   filedAt: number;
 }
 
+/** Ephemeral persona panel member — the MiroFish-pattern adoption.
+ *  Synthetic, session-scoped advisors generated from the brief; they
+ *  file positions through the same Evidence-or-Silence intake as the
+ *  standing consoles and are retired with the session. */
+export interface CounselPersona {
+  /** Stable member id, e.g. 'persona:skeptical_viewer'. */
+  id: string;
+  callSign: string;
+  /** One-line identity, e.g. 'Skeptical early-adopter evaluating a launch video'. */
+  persona: string;
+  /** The lens they evaluate through — what they fixate on. */
+  axis: string;
+}
+
+export type CounselMode = 'standard' | 'premortem';
+
 export interface CounselSession {
   id: string;
   question: string;
@@ -106,6 +124,12 @@ export interface CounselSession {
   };
   /** Strategy proposal this session deliberates, if convened from one. */
   sourceProposalId?: string;
+  /** Deliberation framing — 'premortem' assumes failure and reconstructs it. */
+  mode?: CounselMode;
+  /** Requested ephemeral persona count at convene time (0 = standing roster only). */
+  personaCount?: number;
+  /** Generated persona panel, attached by counsel_personas worker. */
+  personas?: CounselPersona[];
   /** Set when the poll card was pushed to Discord — notify once. */
   discordNotifiedAt?: number;
   /** Set when auto-clear rules fired — audit distinguishes human vs auto. */
@@ -190,6 +214,8 @@ export function conveneCounsel(opts: {
   lane?: CounselLane;
   members?: string[];
   sourceProposalId?: string;
+  mode?: CounselMode;
+  personaCount?: number;
 }): { session?: CounselSession; error?: string } {
   const question = String(opts.question || '').trim();
   if (!question) return { error: 'question required' };
@@ -220,11 +246,63 @@ export function conveneCounsel(opts: {
     positionDeadline: now + POSITION_TIMEOUT_MS,
     updatedAt: now,
     sourceProposalId: opts.sourceProposalId?.slice(0, 80),
+    mode: opts.mode === 'premortem' ? 'premortem' : 'standard',
+    personaCount: Math.min(MAX_PERSONAS, Math.max(0, Math.floor(Number(opts.personaCount) || 0))),
   };
 
   writeSession(session);
   audit('convened', { id: session.id, lane: session.lane, members });
   return { session };
+}
+
+/** Sanitize an LLM-generated persona spec. Returns null when unusable. */
+export function sanitizePersona(raw: any): CounselPersona | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const slug = String(raw.id || raw.callSign || '')
+    .toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 40);
+  if (!slug) return null;
+  const id = `persona:${slug}`;
+  if (!PERSONA_ID_RE.test(id)) return null;
+  const persona = String(raw.persona || '').trim().slice(0, 240);
+  const axis = String(raw.axis || '').trim().slice(0, 160);
+  if (!persona || !axis) return null;
+  return {
+    id,
+    callSign: String(raw.callSign || slug.replace(/_/g, ' ').toUpperCase()).trim().slice(0, 60),
+    persona,
+    axis,
+  };
+}
+
+/** Attach a generated persona panel to an open session. Persona ids join
+ *  `members` so the existing Evidence-or-Silence intake governs them
+ *  identically to standing consoles. */
+export function attachPersonas(
+  sessionId: string,
+  personas: unknown[],
+): { ok: boolean; error?: string; session?: CounselSession } {
+  const s = readSession(sessionId);
+  if (!s) return { ok: false, error: 'session not found' };
+  if (!['positions', 'rebuttal'].includes(s.status)) {
+    return { ok: false, error: `session is ${s.status} — personas can only attach while deliberating` };
+  }
+  if (s.personas?.length) return { ok: false, error: 'persona panel already attached' };
+  const clean = (personas || []).map(sanitizePersona).filter((p): p is CounselPersona => !!p)
+    .slice(0, MAX_PERSONAS);
+  if (clean.length === 0) return { ok: false, error: 'no valid personas supplied' };
+  const seen = new Set<string>();
+  const deduped = clean.filter((p) => (seen.has(p.id) ? false : (seen.add(p.id), true)));
+  s.personas = deduped;
+  for (const p of deduped) if (!s.members.includes(p.id)) s.members.push(p.id);
+  writeSession(s);
+  audit('personas_attached', { id: s.id, count: deduped.length, mode: s.mode });
+  return { ok: true, session: s };
+}
+
+/** Display label for a member id — persona callSign or console id. */
+export function memberLabel(s: CounselSession, memberId: string): string {
+  const p = s.personas?.find((x) => x.id === memberId);
+  return p ? `${p.callSign} [${p.persona}]` : memberId;
 }
 
 /** File a round-1 or round-2 position. Rejects uncited/invalid positions. */
@@ -430,4 +508,61 @@ export function listCounselSessions(opts?: { status?: CounselSessionStatus }): C
     .filter((s) => !opts?.status || s.status === opts.status)
     .sort((a, b) => b.createdAt - a.createdAt)
     .slice(0, 50);
+}
+
+export interface BeliefClash {
+  id: string;
+  sessionId: string;
+  question: string;
+  memberA: string;
+  memberB: string;
+  stanceA: CounselStance;
+  stanceB: CounselStance;
+  divergenceScore: number;
+  severity: 'warning' | 'critical';
+  clashSummary: string;
+  detectedAt: number;
+}
+
+/**
+ * Detects cross-agent belief clashes and cognitive divergences
+ * across active counsel sessions.
+ */
+export function detectBeliefClashes(sessions?: CounselSession[]): BeliefClash[] {
+  const active = sessions ?? listCounselSessions();
+  const clashes: BeliefClash[] = [];
+
+  for (const s of active) {
+    if (!s.positions || s.positions.length < 2) continue;
+
+    for (let i = 0; i < s.positions.length; i++) {
+      for (let j = i + 1; j < s.positions.length; j++) {
+        const p1 = s.positions[i];
+        const p2 = s.positions[j];
+
+        const isDirectConflict =
+          (p1.stance === 'go' && p2.stance === 'no-go') ||
+          (p1.stance === 'no-go' && p2.stance === 'go');
+
+        if (isDirectConflict && p1.confidence >= 0.6 && p2.confidence >= 0.6) {
+          const divergenceScore = Math.min(1.0, (p1.confidence + p2.confidence) / 2);
+          clashes.push({
+            id: `clash-${s.id}-${p1.member}-${p2.member}`,
+            sessionId: s.id,
+            question: s.question,
+            memberA: p1.member,
+            memberB: p2.member,
+            stanceA: p1.stance,
+            stanceB: p2.stance,
+            divergenceScore,
+            severity: divergenceScore >= 0.85 ? 'critical' : 'warning',
+            clashSummary: `${p1.member.toUpperCase()} (${p1.stance.toUpperCase()}) vs ${p2.member.toUpperCase()} (${p2.stance.toUpperCase()}): "${p1.reasoning.slice(0, 80)}" vs "${p2.reasoning.slice(0, 80)}"`,
+            detectedAt: Date.now(),
+          });
+        }
+      }
+    }
+  }
+
+  return clashes;
 }

@@ -1,7 +1,14 @@
-# Sticky active task (auto)
+# Active task — external capability wave (PLAN.md)
 
-updated: 2026-11-19T13:45:00Z
-cwd: /Users/Apple/syncscript
+STATUS: implementation complete pending final audit result + commit.
 
-DONE: Hindsight memory integrated — commit pending: self-hosted Hindsight 1.2.1 (launchd com.syncscript.hindsight, embedded pg0, Groq gpt-oss-120b, local embeddings+reranker), cortex bank live (retain/recall/MCP verified), src/lib/cortex-memory.ts client + eventlog retain hook + BUILDER prompt recall injection + /api/cortex/memory/recall endpoints, 10/10 vitest, typecheck guard PASSED. iart-ai/motion-skills inspected (19 MIT pack repos); vendored skills/javascript-animation + skills/soundtrack with render pipeline smoke-verified.
-NEXT: optional — install more motion-skills packs on demand; Stage 3 kernels (mitosis visuals, signed manifests, replay export); nexus serverless layer; triage visualizer API 400/404 noise (spawn/approve, tools/execute, initiative/ledger/executed).
+DONE + VERIFIED:
+- iFixAi: fixture config/ifixai/cortex-agent.yaml; endpoints /api/cortex/audit/chat/completions + /api/cortex/audit/ifixai live; audit→Hindsight+incidents wired; judge=anthropic proxy (openrouter 402).
+- magpie: launchd :3425, groups cortex-fast/reason/deep, provider entry + lane heads; pinned route verified.
+- fframes: nightly build OK, smoke MP4 rendered (360f/5.3s).
+- worktree isolation: SpawnSpec.worktree opt-in, provision/cleanup, 3/3 tests.
+- Gates: typecheck PASS, vitest 16/16 + 27/27, eslint clean.
+
+IN FLIGHT: iFixAi audit running via POST /api/cortex/audit/ifixai (minutes; check GET same path). If it fails again, read .cortex-runtime/audit/ + endpoint error field.
+
+NEXT CANDIDATES: magpie unpinned promotion check (sentinel probes → latency win); DISTRIBUTOR render_video tool spec (fframes engine choice); brigade/PageIndex stay deferred per PLAN.md.

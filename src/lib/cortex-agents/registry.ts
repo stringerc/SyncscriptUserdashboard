@@ -26,6 +26,7 @@ export interface AgentPin {
 /** Seed matrix — ordered by preference within each lane. */
 export const SEED_MATRIX: Record<RouteTier, ModelCandidate[]> = {
   fast: [
+    { provider: 'magpie', model: 'group/cortex-fast' },
     { provider: 'groq-fast', model: 'openai/gpt-oss-20b' },
     { provider: 'nvidia-nim', model: 'nvidia/nemotron-3.5-lightning-30b-a3b' },
     { provider: 'nvidia-nim', model: 'nvidia/nemotron-3.5-bolt-e4b' },
@@ -34,12 +35,14 @@ export const SEED_MATRIX: Record<RouteTier, ModelCandidate[]> = {
     { provider: 'openai', model: 'gpt-4o-mini' },
   ],
   reason: [
+    { provider: 'magpie', model: 'group/cortex-reason' },
     { provider: 'nvidia-nim-550b', model: 'nvidia/nemotron-3-ultra-550b-a55b' },
     { provider: 'nvidia-nim', model: 'nvidia/nemotron-3.5-super-vl-120b-a12b' },
     { provider: 'nvidia-nim', model: 'stepfun-ai/step-5-preview' },
     { provider: 'openrouter', model: 'meta-llama/llama-3.3-70b-instruct' },
   ],
   deep: [
+    { provider: 'magpie', model: 'group/cortex-deep' },
     { provider: 'nvidia-nim-550b', model: 'nvidia/nemotron-3-ultra-550b-a55b' },
     { provider: 'deepseek', model: 'deepseek-chat' },
     { provider: 'nvidia-nim', model: 'mistralai/mistral-large-4-1t-a52b' },

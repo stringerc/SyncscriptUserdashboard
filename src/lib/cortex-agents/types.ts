@@ -96,6 +96,8 @@ export interface AgentState {
   modelPin: { tier: RouteTier; excludeProviders?: string[] } | null;
   /** Present only on self-created agents — the birth certificate. */
   spawnSpec?: SpawnSpec;
+  /** Absolute path of this agent's git worktree (spawnSpec.worktree only). */
+  worktreePath?: string;
   spawnedAt?: number;
   lastHeartbeatAt: number | null;
   tasksCompleted: number;
@@ -139,6 +141,10 @@ export interface SpawnSpec {
   maxTasksTotal?: number;
   systemBrief: string;
   doneCriteria: string;
+  /** Opt-in git worktree isolation: agent file/shell work happens in
+   *  .cortex-runtime/worktrees/<agentId> instead of the shared tree.
+   *  Merge back only via the proposal→approval path; retire discards. */
+  worktree?: boolean;
 }
 
 export interface SpawnProposal {

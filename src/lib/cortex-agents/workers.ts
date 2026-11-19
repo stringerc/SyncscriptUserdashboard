@@ -26,6 +26,7 @@ import { makeStrategistWorker } from './strategist';
 import { readArchive, type TaskArchiveRecord } from './archive';
 import { DETERMINISTIC_TASKS } from './lights';
 import { runCounselPosition } from './counsel-position';
+import { runPersonaPosition } from './counsel-personas';
 import { getCortexProactiveInitiative } from '../cortex-proactive-initiative';
 import { cortexObsidianMemory } from '../cortex-obsidian-memory';
 import { relevantRules, rulesBlock, RULES_DIR, vaultFolder, listMd } from './rules';
@@ -1073,6 +1074,7 @@ const scoutWorker: WorkerHandler = async (ctx) => {
   if (kind === 'agent_ideas') return agentIdeasWorker(ctx);
   if (kind === 'social_scan') return socialScanWorker(ctx);
   if (kind === 'radar_sweep') return radarSweep(ctx);
+  if (kind === 'counsel_persona_position') return runPersonaPosition(ctx);
   const query = str(ctx.task.input.query);
   const depth = Math.min(3, Math.max(1, Number(ctx.task.input.depth) || 1));
   if (!query) throw new Error('scout research requires input.query');
@@ -2050,10 +2052,23 @@ const SCOPE_TOOLS: Record<ToolScope, Set<string>> = {
 export function makeEphemeralWorker(spec: SpawnSpec): WorkerHandler {
   const allowed = new Set(spec.tools.flatMap((s) => [...SCOPE_TOOLS[s]]));
   const allowedToolsList = [...allowed].join(', ');
+  // Worktree isolation (orca-pattern): spawned agents with spec.worktree get a
+  // dedicated git worktree provisioned by runtime.approveSpawn. All relative
+  // file args resolve inside it and run_command defaults its cwd there.
+  // Path keys rewritten deterministically — the model can't forget.
+  const WT_PATH_KEYS = ['path', 'filePath', 'filepath', 'targetPath', 'dir', 'cwd'];
 
   return async (ctx) => {
     const instruction = str(ctx.task.input.instruction || ctx.task.input.query || ctx.task.input.task || ctx.task.title);
     if (!instruction) throw new Error(`${spec.callSign}: task requires input.instruction|query|task`);
+
+    const wtPath = spec.worktree
+      ? path.join(process.env.CORTEX_AGENTS_STATE_DIR || path.join(process.cwd(), '.cortex-runtime'), 'worktrees', String(ctx.task.agentId))
+      : null;
+    const wtPrompt = wtPath
+      ? `\n\nWORKSPACE ISOLATION: you are inside git worktree ${wtPath}. All file work and command cwd stay inside it — relative paths resolve there automatically; do not reference the shared tree.`
+      : '';
+    const insideWt = (p: string) => p === wtPath || (wtPath != null && p.startsWith(wtPath + path.sep));
 
     ctx.progress(0.1);
     const distilledRules = relevantRules(instruction);
@@ -2071,7 +2086,7 @@ export function makeEphemeralWorker(spec: SpawnSpec): WorkerHandler {
       messages: [
         {
           role: 'system',
-          content: `${spec.systemBrief}\n\nDONE CRITERIA: ${spec.doneCriteria}\n\nYou are ${spec.callSign}, an ephemeral agent. Given a task, output a JSON array of steps, each {"tool": "<name>", "args": {...}, "why": "..."}. Allowed tools ONLY: ${allowedToolsList}. Prefer read before write. Anything destructive or external becomes {"veto": true, "reason": "..."}. Output ONLY the JSON array.${distilledRules ? `\n\nDISTILLED RULES (constraints learned from accepted agent outcomes — follow unless they conflict with your scope):\n${distilledRules}` : ''}${ENGINEERING_DISCIPLINE}`,
+          content: `${spec.systemBrief}\n\nDONE CRITERIA: ${spec.doneCriteria}\n\nYou are ${spec.callSign}, an ephemeral agent. Given a task, output a JSON array of steps, each {"tool": "<name>", "args": {...}, "why": "..."}. Allowed tools ONLY: ${allowedToolsList}. Prefer read before write. Anything destructive or external becomes {"veto": true, "reason": "..."}. Output ONLY the JSON array.${wtPrompt}${distilledRules ? `\n\nDISTILLED RULES (constraints learned from accepted agent outcomes — follow unless they conflict with your scope):\n${distilledRules}` : ''}${ENGINEERING_DISCIPLINE}`,
         },
         { role: 'user', content: instruction + specBlock(taskSpec) + retryNote(ctx.task.input) + memoryBlock(priorMissions) },
       ],
@@ -2120,6 +2135,31 @@ export function makeEphemeralWorker(spec: SpawnSpec): WorkerHandler {
         results.push({ step: i, tool, vetoed: true, lane, reason: 'hard blast-radius — routed to proposal, never executed' });
         i++;
         continue;
+      }
+      // Worktree containment: relative path args resolve inside the agent's
+      // worktree; `..` escapes and absolute paths outside it are vetoed.
+      // run_command always executes with cwd=worktree.
+      if (wtPath) {
+        let escaped = false;
+        for (const k of WT_PATH_KEYS) {
+          const v = args[k];
+          if (typeof v !== 'string' || !v.trim() || /^https?:\/\//i.test(v) || v.trim() === '~') continue;
+          const raw = v.trim();
+          if (path.isAbsolute(raw)) {
+            if (!insideWt(path.resolve(raw))) { escaped = true; break; }
+            continue; // absolute path already inside — leave as-is
+          }
+          const resolved = path.resolve(wtPath, raw);
+          if (!insideWt(resolved)) { escaped = true; break; }
+          args[k] = resolved;
+        }
+        if (escaped) {
+          results.push({ step: i, tool, vetoed: true, lane: 'hard', reason: 'path escapes agent worktree' });
+          lanes.hard++;
+          i++;
+          continue;
+        }
+        if (tool === 'run_command' || tool === 'exec' || tool === 'execute_command') args.cwd = wtPath;
       }
       const out = await toolExecute(tool, args, 45_000, ctx.telemetry);
       results.push({ step: i, tool, lane, ok: out.ok !== false, output: JSON.stringify(out).slice(0, 800) });

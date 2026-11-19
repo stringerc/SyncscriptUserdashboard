@@ -30,9 +30,10 @@ import { fileStrategyProposals } from './strategy-proposals';
 import { cortexObsidianMemory } from '../cortex-obsidian-memory';
 import {
   conveneCounsel, getCounselSession, openRebuttal, closeRebuttal,
-  recordSynthesis, pollBoard, COUNSEL_CONSOLES,
+  recordSynthesis, pollBoard, COUNSEL_CONSOLES, memberLabel,
 } from '../cortex-counsel';
 import { getWorldState, formatWorldStateHeader } from '../cortex-world-state';
+import { runCounselPersonas } from './counsel-personas';
 
 const STATE_DIR = process.env.CORTEX_AGENTS_STATE_DIR || path.join(process.cwd(), '.cortex-runtime');
 const STRATEGY_DIR = '05 - Strategy';
@@ -479,16 +480,17 @@ async function counselSynthesizeWorker(ctx: AgentContext) {
   }
   const positionDigest = s.members.map((m) => {
     const p = latest.get(m);
+    const label = memberLabel(s, m);
     return p
-      ? { member: m, round: p.round, stance: p.stance, confidence: p.confidence, evidence: p.keyEvidence, risks: p.risks, conditions: p.requiredConditions, reasoning: p.reasoning }
-      : { member: m, stance: 'no-response' };
+      ? { member: label, id: m, round: p.round, stance: p.stance, confidence: p.confidence, evidence: p.keyEvidence, risks: p.risks, conditions: p.requiredConditions, reasoning: p.reasoning }
+      : { member: label, id: m, stance: 'no-response' };
   });
 
   const prompt = [
     `You are STRATEGIST — Flight Director of a Go/No-Go counsel poll.`,
     `Decision under deliberation: "${s.question}"`,
     s.context ? `Brief context:\n${s.context.slice(0, 1500)}` : '',
-    `Lane: ${s.lane}. Poll board: ${JSON.stringify(board.counts)}`,
+    `Lane: ${s.lane}. Mode: ${s.mode || 'standard'}. Poll board: ${JSON.stringify(board.counts)}`,
     `Member positions (latest round each):\n${JSON.stringify(positionDigest, null, 1)}`,
     `Synthesize the poll. Output JSON ONLY: {"stanceTable":[{"member","stance","confidence"}],"agreements":[...],"conflicts":[...],"unresolvedObjections":[...],"recommendation":"go|no-go|conditional","text":"<3-5 sentence poll summary for the human>"}`,
     `Rules: recommendation 'go' only if no member filed 'no-go' without a rebutted revision; 'conditional' if conditions must be met; 'no-go' if objections stand. Cite member stances, not your own opinion.`,
@@ -700,11 +702,12 @@ export function makeStrategistWorker(runtime: AgentRuntime): WorkerHandler {
       case 'propose_agent': return proposeAgentWorker(ctx, runtime);
       case 'counsel_convene': return counselConveneWorker(ctx);
       case 'counsel_synthesize': return counselSynthesizeWorker(ctx);
+      case 'counsel_personas': return runCounselPersonas(ctx, runtime);
       case 'goal_plan': return goalPlanWorker(ctx);
       case 'goal_review': return goalReviewWorker(ctx);
       case 'tune_cycle': return tuneCycleWorker(ctx);
       default:
-        return { error: `unknown strategist kind '${ctx.task.kind}'`, kinds: ['cluster', 'plan', 'manifest', 'regress', 'propose_skill', 'propose_agent', 'counsel_convene', 'counsel_synthesize', 'goal_plan', 'goal_review', 'tune_cycle'] };
+        return { error: `unknown strategist kind '${ctx.task.kind}'`, kinds: ['cluster', 'plan', 'manifest', 'regress', 'propose_skill', 'propose_agent', 'counsel_convene', 'counsel_synthesize', 'counsel_personas', 'goal_plan', 'goal_review', 'tune_cycle'] };
     }
   };
 }

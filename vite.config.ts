@@ -42,6 +42,10 @@ import { listEvals, getEval, fileEvalDefinition, runEval, readRuns, evalScorecar
 import { computeCounselScorecard } from './src/lib/cortex-agents/counsel-scorecard';
 import { initEventLog, readEvents, getEventLogStats, verifyEventLog } from './src/lib/cortex-agents/eventlog';
 import { recallCortexMemory, retainCortexMemory, fetchCortexMemoryGraph } from './src/lib/cortex-memory';
+import { runScenarioSimulation, getSimulationHistory } from './src/lib/cortex-simulation';
+import { probeCompetitorIntelligence, listCompetitorRadar } from './src/lib/cortex-competitor-recon';
+import { detectBeliefClashes } from './src/lib/cortex-counsel';
+import { generateSprintReelManifest } from './src/lib/cortex-sprint-reel';
 import type { RouteTier } from './src/lib/cortex-agents/types';
 import { normalizeForSpeech } from './src/lib/tts-speech-normalize';
 import {
@@ -115,6 +119,12 @@ const DIRECT_AI_PROVIDERS: { name: string; url: string; model: string; keyEnv: s
   // Local free-claude-code proxy on 8082 — Anthropic protocol fallback for reasoning & tools
   { name: 'free-proxy', url: 'http://127.0.0.1:8082/v1/messages', model: 'claude-fable-5-2', keyEnv: 'ANTHROPIC_AUTH_TOKEN', protocol: 'anthropic' },
   { name: 'nvidia-nim-550b', url: 'https://integrate.api.nvidia.com/v1/chat/completions', model: 'nvidia/nemotron-3-ultra-550b-a55b', keyEnv: 'NVIDIA_API_KEY', backupKeyEnv: 'NVIDIA_BACKUP_API_KEY', protocol: 'openai' },
+  // Magpie gateway (launchd com.yetone.magpie.serve, :3425) — pools API keys AND
+  // subscription sign-ins (Claude/ChatGPT/Copilot/Gemini plans) behind one
+  // OpenAI-compatible endpoint with smart routing + quota failover. The `model`
+  // here is only the chat-chain default; matrix lanes send their own
+  // group/cortex-* model ids through the same provider entry.
+  { name: 'magpie', url: 'http://127.0.0.1:3425/v1/chat/completions', model: 'group/cortex-reason', keyEnv: 'MAGPIE_KEY', protocol: 'openai' },
   // Groq LPU fallbacks
   { name: 'groq-fast', url: 'https://api.groq.com/openai/v1/chat/completions', model: 'openai/gpt-oss-20b', keyEnv: 'GROQ_API_KEY', protocol: 'openai' },
   { name: 'groq-oss', url: 'https://api.groq.com/openai/v1/chat/completions', model: 'openai/gpt-oss-120b', keyEnv: 'GROQ_API_KEY', protocol: 'openai' },
@@ -1733,13 +1743,29 @@ function apiProxyPlugin(): Plugin {
       const dispatchCounselPositions = (sessionId: string) => {
         const s = getCounselSession(sessionId);
         if (!s || !['positions', 'rebuttal'].includes(s.status)) return;
+        const round = s.status === 'rebuttal' ? 2 : 1;
         for (const c of COUNSEL_CONSOLES) {
           if (c.adapter !== 'internal' || c.id === 'strategist' || c.id === 'user') continue;
           if (!s.members.includes(c.id)) continue;
-          const round = s.status === 'rebuttal' ? 2 : 1;
           if (s.positions.some((p) => p.member === c.id && p.round === round)) continue;
           agentRuntime.submitTask(c.id as any, 'counsel_position',
             `Counsel ${sessionId} R${round}: ${s.question.slice(0, 80)}`,
+            { sessionId });
+        }
+        // Ephemeral persona panel: each attached persona files through the
+        // SCOUT host. Round-1 dispatch also happens inside counsel_personas
+        // right after attach; this covers the rebuttal round.
+        for (const p of s.personas || []) {
+          if (!s.members.includes(p.id)) continue;
+          if (s.positions.some((x) => x.member === p.id && x.round === round)) continue;
+          agentRuntime.submitTask('scout' as any, 'counsel_persona_position',
+            `Persona ${p.callSign} ${sessionId} R${round}: ${s.question.slice(0, 70)}`,
+            { sessionId, personaId: p.id });
+        }
+        // Persona generation pending: session requested personas but none attached yet.
+        if (!s.personas?.length && (s.personaCount || 0) > 0 && round === 1) {
+          agentRuntime.submitTask('strategist' as any, 'counsel_personas',
+            `Generate persona panel for ${sessionId}: ${s.question.slice(0, 70)}`,
             { sessionId });
         }
       };
@@ -11066,6 +11092,222 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
         next();
       });
 
+      // POST /api/cortex/audit/chat/completions — OpenAI-compatible shim over the
+      // matrix-routed agent brain. Lets external auditors (iFixAi --provider http,
+      // any OpenAI client) probe the SAME governed path workers use, including
+      // server-side defense prefix + instincts injection.
+      server.middlewares.use('/api/cortex/audit/chat/completions', async (req: any, res: any, next: any) => {
+        const origin = req.headers.origin;
+        if (req.method === 'OPTIONS') {
+          res.writeHead(204, { 'Access-Control-Allow-Origin': origin || '*', 'Access-Control-Allow-Methods': 'POST, OPTIONS', 'Access-Control-Allow-Headers': 'Content-Type, Authorization' });
+          return res.end();
+        }
+        if (req.method !== 'POST' || !isAllowedOrigin(origin, req.headers.host)) return next();
+        let body = '';
+        req.on('data', (c: Buffer) => { body += c.toString(); if (body.length > 200000) req.destroy(); });
+        req.on('end', async () => {
+          agentCors(req, res);
+          res.setHeader('Content-Type', 'application/json');
+          let parsed: any = {};
+          try { parsed = JSON.parse(body || '{}'); } catch { }
+          const rawMessages = Array.isArray(parsed.messages) ? parsed.messages : [];
+          if (!rawMessages.length) {
+            res.writeHead(400);
+            return res.end(JSON.stringify({ error: { message: 'messages required', type: 'invalid_request' } }));
+          }
+          // /agents/llm takes system separately and only user/assistant roles —
+          // fold system messages into the system param, drop the rest.
+          const systemParts = rawMessages.filter((m: any) => m?.role === 'system').map((m: any) => String(m.content || ''));
+          const chatMessages = rawMessages
+            .filter((m: any) => m?.role === 'user' || m?.role === 'assistant')
+            .map((m: any) => ({ role: m.role, content: String(m.content || '') }));
+          if (!chatMessages.length) {
+            res.writeHead(400);
+            return res.end(JSON.stringify({ error: { message: 'no user/assistant messages', type: 'invalid_request' } }));
+          }
+          try {
+            const port = process.env.PORT ? parseInt(process.env.PORT) : 5173;
+            const r = await fetch(`http://127.0.0.1:${port}/api/cortex/agents/llm`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                tier: 'reason',
+                messages: chatMessages.slice(-12),
+                maxTokens: Math.min(Number(parsed.max_tokens) || Number(parsed.maxTokens) || 1200, 4096),
+                system: systemParts.join('\n\n') || undefined,
+              }),
+              signal: AbortSignal.timeout(120_000),
+            });
+            const j = await r.json().catch(() => ({}));
+            if (!j?.ok || typeof j.content !== 'string') {
+              res.writeHead(r.status >= 400 ? r.status : 502);
+              return res.end(JSON.stringify({
+                error: { message: j?.error || 'agent brain unavailable', type: 'upstream_error' },
+              }));
+            }
+            res.writeHead(200);
+            return res.end(JSON.stringify({
+              id: `chatcmpl-cortex-${Date.now().toString(36)}`,
+              object: 'chat.completion',
+              created: Math.floor(Date.now() / 1000),
+              model: j.model || 'cortex-agent',
+              choices: [{
+                index: 0,
+                message: { role: 'assistant', content: j.content },
+                finish_reason: 'stop',
+              }],
+              usage: j.usage ? { prompt_tokens: j.usage.tokensIn || 0, completion_tokens: j.usage.tokensOut || 0, total_tokens: (j.usage.tokensIn || 0) + (j.usage.tokensOut || 0) } : undefined,
+            }));
+          } catch (err: any) {
+            res.writeHead(502);
+            return res.end(JSON.stringify({ error: { message: String(err?.message || err), type: 'upstream_error' } }));
+          }
+        });
+      });
+
+      // iFixAi audit runner — POST starts an async audit against the shim above,
+      // GET returns run status + latest parsed scorecard. One audit at a time.
+      const IFIXAI_BIN = process.env.IFIXAI_BIN || `${process.env.HOME}/.local/bin/ifixai`;
+      const auditState: { running: boolean; startedAt?: number; last?: any; error?: string } = { running: false };
+      const AUDIT_OUT_DIR = path.join(process.cwd(), '.cortex-runtime', 'audit');
+      const IFIXAI_FIXTURE = path.join(process.cwd(), 'config', 'ifixai', 'cortex-agent.yaml');
+
+      server.middlewares.use('/api/cortex/audit/ifixai', async (req: any, res: any, next: any) => {
+        const origin = req.headers.origin;
+        if (req.method === 'OPTIONS') {
+          res.writeHead(204, { 'Access-Control-Allow-Origin': origin || '*', 'Access-Control-Allow-Methods': 'GET, POST, OPTIONS', 'Access-Control-Allow-Headers': 'Content-Type' });
+          return res.end();
+        }
+        agentCors(req, res);
+        res.setHeader('Content-Type', 'application/json');
+        const u = new URL(req.url || '', 'http://x');
+
+        if (req.method === 'GET') {
+          const statusFile = path.join(AUDIT_OUT_DIR, 'latest.json');
+          let latest: any = auditState.last || null;
+          try { if (fsSync.existsSync(statusFile)) latest = JSON.parse(fsSync.readFileSync(statusFile, 'utf8')); } catch { }
+          // Lazy catch-up: a detached audit that outlived a vite restart left
+          // its report on disk but nobody parsed it. Adopt the newest report
+          // newer than what we've already recorded.
+          if (!auditState.running && !latest) {
+            try {
+              const reports = fsSync.readdirSync(AUDIT_OUT_DIR)
+                .filter((f: string) => f.endsWith('.json') && f.includes('ifixai-'))
+                .map((f: string) => ({ f, m: fsSync.statSync(path.join(AUDIT_OUT_DIR, f)).mtimeMs }))
+                .sort((a, b) => b.m - a.m);
+              if (reports.length) {
+                const report = JSON.parse(fsSync.readFileSync(path.join(AUDIT_OUT_DIR, reports[0].f), 'utf8'));
+                latest = {
+                  file: reports[0].f,
+                  finishedAt: reports[0].m,
+                  exitCode: null,
+                  grade: report.grade ?? report.summary?.grade,
+                  passed: report.passed ?? report.summary?.passed,
+                  score: report.score ?? report.summary?.score ?? report.summary?.partial_score,
+                  runId: report.run_id ?? report.runId,
+                  adoptedAfterRestart: true,
+                };
+                fsSync.writeFileSync(statusFile, JSON.stringify(latest, null, 2));
+                auditState.last = latest;
+              }
+            } catch { }
+          }
+          return res.end(JSON.stringify({ running: auditState.running, startedAt: auditState.startedAt, error: auditState.error, latest }));
+        }
+
+        if (req.method !== 'POST' || !isAllowedOrigin(origin, req.headers.host)) return next();
+        if (auditState.running) {
+          res.writeHead(409);
+          return res.end(JSON.stringify({ ok: false, error: 'audit already running' }));
+        }
+        if (!fsSync.existsSync(IFIXAI_BIN) && !process.env.IFIXAI_BIN) {
+          // fall through to PATH lookup via spawn shell:false — check PATH too
+        }
+        let body = '';
+        req.on('data', (c: Buffer) => { body += c.toString(); if (body.length > 10000) req.destroy(); });
+        req.on('end', () => {
+          let opts: any = {};
+          try { opts = JSON.parse(body || '{}'); } catch { }
+          const port = process.env.PORT ? parseInt(process.env.PORT) : 5173;
+          const endpoint = `http://127.0.0.1:${port}/api/cortex/audit/chat/completions`;
+          // Judge separation: the SUT is the http shim (no credential), so the
+          // judge must come from a real provider key. Default to the local
+          // Anthropic proxy (subscription-backed); override via env. OpenRouter
+          // is avoided — its key is currently out of credit (HTTP 402).
+          const judgeProvider = process.env.IFIXAI_JUDGE_PROVIDER || 'anthropic';
+          const args = ['run', '--provider', 'http', '--endpoint', endpoint, '--auth-method', 'none',
+            '--eval-mode', 'single', '--judge-provider', judgeProvider,
+            '-f', IFIXAI_FIXTURE, '-o', AUDIT_OUT_DIR];
+          if (opts.full) args.push('--full-run');
+          else if (opts.suite) args.push('--suite', String(opts.suite));
+          fsSync.mkdirSync(AUDIT_OUT_DIR, { recursive: true });
+          auditState.running = true;
+          auditState.startedAt = Date.now();
+          auditState.error = undefined;
+          // detached+unref: audits take minutes and vite restarts whenever a
+          // config-graph file changes — the audit must survive that. The GET
+          // handler lazily parses finished reports, so a restart mid-audit
+          // still yields the scorecard.
+          const child = spawn(IFIXAI_BIN, args, { env: { ...process.env, IFIXAI_HTTP_ENDPOINT: endpoint }, detached: true, stdio: ['ignore', 'pipe', 'pipe'] });
+          child.unref();
+          let stderrTail = '';
+          child.stderr?.on('data', (d: Buffer) => { stderrTail = (stderrTail + d.toString()).slice(-4000); });
+          child.on('error', (err: any) => {
+            auditState.running = false;
+            auditState.error = `spawn failed: ${err.message} — is ifixai installed? (uv tool install ifixai)`;
+          });
+          child.on('close', async (code: number | null) => {
+            auditState.running = false;
+            try {
+              const reports = fsSync.readdirSync(AUDIT_OUT_DIR)
+                .filter((f: string) => f.endsWith('.json') && f.includes('ifixai-'))
+                .map((f: string) => ({ f, m: fsSync.statSync(path.join(AUDIT_OUT_DIR, f)).mtimeMs }))
+                .sort((a, b) => b.m - a.m);
+              if (!reports.length) {
+                auditState.error = `ifixai exited ${code} with no report. stderr: ${stderrTail.slice(-500)}`;
+                return;
+              }
+              const report = JSON.parse(fsSync.readFileSync(path.join(AUDIT_OUT_DIR, reports[0].f), 'utf8'));
+              const summary = {
+                file: reports[0].f,
+                finishedAt: Date.now(),
+                exitCode: code,
+                grade: report.grade ?? report.summary?.grade,
+                passed: report.passed ?? report.summary?.passed,
+                score: report.score ?? report.summary?.score ?? report.summary?.partial_score,
+                runId: report.run_id ?? report.runId,
+              };
+              fsSync.writeFileSync(path.join(AUDIT_OUT_DIR, 'latest.json'), JSON.stringify(summary, null, 2));
+              auditState.last = summary;
+              // Governance feedback loop: grade → memory + incident on failure.
+              const gradeStr = String(summary.grade || '?');
+              const failed = summary.passed === false || ['D', 'F'].includes(gradeStr);
+              await retainCortexMemory(
+                `iFixAi audit of Cortex agent brain finished: grade ${gradeStr}, passed=${summary.passed}, score=${summary.score}. Report: ${summary.file}`,
+                'ifixai-audit',
+              );
+              if (failed) {
+                recordIncidentFailure({
+                  taskId: `ifixai-${summary.runId || Date.now()}`,
+                  agentId: 'cortex-audit',
+                  agentName: 'iFixAi Auditor',
+                  kind: 'ifixai-audit',
+                  title: `iFixAi audit failed governance bar (grade ${gradeStr})`,
+                  failureClass: 'policy',
+                  error: `score=${summary.score} report=${summary.file}`,
+                });
+              } else {
+                resolveIncidentsOnSuccess('cortex-audit', 'ifixai-audit', `ifixai-${summary.runId || Date.now()}`);
+              }
+            } catch (err: any) {
+              auditState.error = `report parse failed: ${String(err?.message || err)}`;
+            }
+          });
+          res.writeHead(202);
+          res.end(JSON.stringify({ ok: true, started: true, endpoint, fixture: IFIXAI_FIXTURE, args }));
+        });
+      });
+
       // GET /api/cortex/memory/graph?view=facts|entities — live knowledge graph for 3D visualizer
       server.middlewares.use('/api/cortex/memory/graph', async (req: any, res: any, next: any) => {
         if (req.method === 'OPTIONS') {
@@ -11087,6 +11329,123 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
           res.setHeader('Content-Type', 'application/json');
           res.end(JSON.stringify({ ok: false, error: String(err?.message || err), nodes: [], edges: [], total_units: 0 }));
         }
+      });
+
+      // GET /api/cortex/simulation/history & POST /api/cortex/simulation/run
+      server.middlewares.use('/api/cortex/simulation', async (req: any, res: any, next: any) => {
+        if (req.method === 'OPTIONS') {
+          res.writeHead(204, { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Methods': 'GET, POST, OPTIONS', 'Access-Control-Allow-Headers': 'Content-Type' });
+          return res.end();
+        }
+        agentCors(req, res);
+        res.setHeader('Content-Type', 'application/json');
+
+        const u = new URL(req.url || '', 'http://localhost');
+        if (req.method === 'GET' && (u.pathname === '/history' || u.pathname === '')) {
+          return res.end(JSON.stringify({ ok: true, history: getSimulationHistory() }));
+        }
+
+        if (req.method === 'POST' && (u.pathname === '/run' || u.pathname === '')) {
+          let body = '';
+          req.on('data', (chunk: any) => { body += chunk; });
+          req.on('end', async () => {
+            try {
+              const data = JSON.parse(body || '{}');
+              const sim = await runScenarioSimulation({ topic: data.topic, context: data.context });
+              res.end(JSON.stringify({ ok: true, simulation: sim }));
+            } catch (err: any) {
+              res.statusCode = 400;
+              res.end(JSON.stringify({ ok: false, error: String(err?.message || err) }));
+            }
+          });
+          return;
+        }
+
+        next();
+      });
+
+      // GET /api/cortex/recon/list & POST /api/cortex/recon/probe
+      server.middlewares.use('/api/cortex/recon', async (req: any, res: any, next: any) => {
+        if (req.method === 'OPTIONS') {
+          res.writeHead(204, { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Methods': 'GET, POST, OPTIONS', 'Access-Control-Allow-Headers': 'Content-Type' });
+          return res.end();
+        }
+        agentCors(req, res);
+        res.setHeader('Content-Type', 'application/json');
+
+        const u = new URL(req.url || '', 'http://localhost');
+        if (req.method === 'GET' && (u.pathname === '/list' || u.pathname === '')) {
+          return res.end(JSON.stringify({ ok: true, radar: listCompetitorRadar() }));
+        }
+
+        if (req.method === 'POST' && (u.pathname === '/probe' || u.pathname === '')) {
+          let body = '';
+          req.on('data', (chunk: any) => { body += chunk; });
+          req.on('end', async () => {
+            try {
+              const data = JSON.parse(body || '{}');
+              const record = await probeCompetitorIntelligence(data.target || data.url || data.domain || '');
+              res.end(JSON.stringify({ ok: true, record }));
+            } catch (err: any) {
+              res.statusCode = 400;
+              res.end(JSON.stringify({ ok: false, error: String(err?.message || err) }));
+            }
+          });
+          return;
+        }
+
+        next();
+      });
+
+      // GET /api/cortex/counsel/clashes — cognitive divergence & belief clash detection
+      server.middlewares.use('/api/cortex/counsel/clashes', (req: any, res: any, next: any) => {
+        if (req.method === 'OPTIONS') {
+          res.writeHead(204, { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Methods': 'GET, OPTIONS', 'Access-Control-Allow-Headers': 'Content-Type' });
+          return res.end();
+        }
+        if (req.method !== 'GET') return next();
+        agentCors(req, res);
+        try {
+          const clashes = detectBeliefClashes();
+          res.setHeader('Content-Type', 'application/json');
+          res.end(JSON.stringify({ ok: true, clashes, count: clashes.length }));
+        } catch (err: any) {
+          res.setHeader('Content-Type', 'application/json');
+          res.end(JSON.stringify({ ok: false, error: String(err?.message || err), clashes: [], count: 0 }));
+        }
+      });
+
+      // GET / POST /api/cortex/reel/manifest — 15s 60fps kinetic motion briefing storyboard
+      server.middlewares.use('/api/cortex/reel/manifest', (req: any, res: any, next: any) => {
+        if (req.method === 'OPTIONS') {
+          res.writeHead(204, { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Methods': 'GET, POST, OPTIONS', 'Access-Control-Allow-Headers': 'Content-Type' });
+          return res.end();
+        }
+        agentCors(req, res);
+        res.setHeader('Content-Type', 'application/json');
+
+        if (req.method === 'GET') {
+          const manifest = generateSprintReelManifest();
+          return res.end(JSON.stringify({ ok: true, manifest }));
+        }
+
+        if (req.method === 'POST') {
+          let body = '';
+          req.on('data', (chunk: any) => { body += chunk; });
+          req.on('end', () => {
+            try {
+              const data = JSON.parse(body || '{}');
+              const manifest = generateSprintReelManifest(data);
+              res.end(JSON.stringify({ ok: true, manifest }));
+            } catch (err: any) {
+              const manifest = generateSprintReelManifest();
+              res.end(JSON.stringify({ ok: true, manifest }));
+            }
+          });
+          return;
+        }
+
+        next();
       });
 
       // GET /api/cortex/events — persisted event replay & query
@@ -12179,6 +12538,8 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
               lane: body.lane,
               members: Array.isArray(body.members) ? body.members : undefined,
               sourceProposalId: typeof body.proposalId === 'string' ? body.proposalId : undefined,
+              mode: body.mode === 'premortem' ? 'premortem' : undefined,
+              personaCount: typeof body.personas === 'number' ? body.personas : undefined,
             });
             if (r.session) dispatchCounselPositions(r.session.id);
             return r.session

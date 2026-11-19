@@ -11,6 +11,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
+import { execFileSync } from 'node:child_process';
 import { ModelMatrix, type AgentPin } from './registry';
 import { ModelSentinel } from './sentinel';
 import { DETERMINISTIC_TASKS } from './lights';
@@ -580,6 +581,40 @@ export class AgentRuntime {
     return { ok: true, proposal };
   }
 
+  /** Provision an isolated git worktree for a spawned agent. Returns the
+   *  absolute path, or null on failure (caller fails the spawn closed —
+   *  an agent that asked for isolation never runs unisolated). */
+  private provisionWorktree(agentId: string): string | null {
+    try {
+      const root = process.cwd();
+      const wtRoot = path.join(process.env.CORTEX_AGENTS_STATE_DIR || path.join(root, '.cortex-runtime'), 'worktrees');
+      const wtPath = path.join(wtRoot, agentId);
+      const branch = `agent/${agentId}`;
+      fs.mkdirSync(wtRoot, { recursive: true });
+      // Branch may already exist from a prior crashed spawn — reuse it.
+      try {
+        execFileSync('git', ['worktree', 'add', wtPath, '-b', branch], { cwd: root, stdio: 'pipe', timeout: 30_000 });
+      } catch {
+        execFileSync('git', ['worktree', 'add', wtPath, branch], { cwd: root, stdio: 'pipe', timeout: 30_000 });
+      }
+      return wtPath;
+    } catch { return null; }
+  }
+
+  /** Best-effort worktree teardown on retire: remove the worktree and its
+   *  branch. Agent work is discarded by design — merges go through the
+   *  proposal→approval path before retirement, never silently here. */
+  private removeWorktree(agentId: string, wtPath?: string) {
+    if (!wtPath) return;
+    try {
+      execFileSync('git', ['worktree', 'remove', '--force', wtPath], { cwd: process.cwd(), stdio: 'pipe', timeout: 30_000 });
+    } catch { /* already gone or locked — prune below catches strays */ }
+    try {
+      execFileSync('git', ['worktree', 'prune'], { cwd: process.cwd(), stdio: 'pipe', timeout: 15_000 });
+      execFileSync('git', ['branch', '-D', `agent/${agentId}`], { cwd: process.cwd(), stdio: 'pipe', timeout: 15_000 });
+    } catch { /* branch may be checked out nowhere / already deleted */ }
+  }
+
   /** Human approval path — called by the Inbox accept flow. */
   approveSpawn(proposalId: string, decidedBy = 'user'): { ok: boolean; agentId?: string; reason?: string } {
     const p = this.proposals.get(proposalId);
@@ -594,6 +629,17 @@ export class AgentRuntime {
 
     const agentId = `spawn-${p.spec.callSign.toLowerCase().replace(/[^a-z0-9]+/g, '-')}-${this.spawnCounter}` as AgentId;
     const spec = p.spec;
+    // Worktree isolation is fail-closed: if provisioning fails the spawn is
+    // rejected rather than silently running unisolated against the shared tree.
+    const worktreePath = spec.worktree ? this.provisionWorktree(agentId) : undefined;
+    if (spec.worktree && !worktreePath) {
+      p.status = 'rejected';
+      p.decidedAt = Date.now();
+      p.decidedBy = decidedBy;
+      p.rejectionReason = 'worktree provisioning failed (git worktree add)';
+      this.persist();
+      return { ok: false, reason: 'worktree provisioning failed' };
+    }
     this.agents.set(agentId, {
       id: agentId,
       name: spec.callSign,
@@ -606,6 +652,7 @@ export class AgentRuntime {
       modelPin: { tier: spec.modelPin.tier, excludeProviders: spec.modelPin.excludeProviders },
       tier: 'enterprise', // self-created agents always fly the satellite deck
       spawnSpec: spec,
+      worktreePath: worktreePath ?? undefined,
       spawnedAt: Date.now(),
       lastHeartbeatAt: Date.now(),
       tasksCompleted: 0,
@@ -651,6 +698,7 @@ export class AgentRuntime {
       if (this.tasks.get(tid)?.agentId === agentId) ac.abort();
     }
     this.emit({ type: 'agent.retired', agentId, reason, at: Date.now() });
+    this.removeWorktree(agentId, agent.worktreePath);
     this.persist();
     return true;
   }
