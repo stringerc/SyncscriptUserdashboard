@@ -80,6 +80,122 @@ export const agentOrbitTier = (a?: AgentClient | null): AgentOrbitTier => {
   return 'support';
 };
 
+export type AgentSectorId = 'command' | 'engineering' | 'intel' | 'governance' | 'gateways' | 'satellite';
+
+export interface SectorDef {
+  id: AgentSectorId;
+  name: string;
+  glyph: string;
+  hudLabel: string;
+  badge: string;
+  color: string;
+  centerAngle: number;
+  span: number;
+}
+
+export const SECTORS: Record<AgentSectorId, SectorDef> = {
+  command: {
+    id: 'command',
+    name: 'Command Apex',
+    glyph: '★',
+    hudLabel: '★ COMMAND APEX',
+    badge: 'CMD',
+    color: '#c084fc',
+    centerAngle: -Math.PI / 2,
+    span: 0.94,
+  },
+  engineering: {
+    id: 'engineering',
+    name: 'Engineering & Execution',
+    glyph: '▲',
+    hudLabel: '▲ NORTH // ENGINEERING & EXECUTION',
+    badge: 'ENG',
+    color: '#38bdf8',
+    centerAngle: -Math.PI / 2,
+    span: 1.08,
+  },
+  intel: {
+    id: 'intel',
+    name: 'Intel & Strategic Memory',
+    glyph: '►',
+    hudLabel: '► EAST // INTEL & MEMORY',
+    badge: 'INTEL',
+    color: '#fbbf24',
+    centerAngle: 0,
+    span: 1.08,
+  },
+  governance: {
+    id: 'governance',
+    name: 'Governance & Integrity',
+    glyph: '▼',
+    hudLabel: '▼ SOUTH // GOVERNANCE & INTEGRITY',
+    badge: 'GOV',
+    color: '#fb7185',
+    centerAngle: Math.PI / 2,
+    span: 0.94,
+  },
+  gateways: {
+    id: 'gateways',
+    name: 'Gateways & Delivery',
+    glyph: '◄',
+    hudLabel: '◄ WEST // GATEWAYS & DELIVERY',
+    badge: 'GTWY',
+    color: '#06b6d4',
+    centerAngle: Math.PI,
+    span: 1.20,
+  },
+  satellite: {
+    id: 'satellite',
+    name: 'Enterprise Satellite Deck',
+    glyph: '✦',
+    hudLabel: 'ENTERPRISE SATELLITE DECK',
+    badge: 'SAT',
+    color: '#a78bfa',
+    centerAngle: 0,
+    span: Math.PI * 2,
+  },
+};
+
+export const SECTOR_ORDER: Record<AgentSectorId, string[]> = {
+  command: ['antigravity', 'strategist'],
+  engineering: ['builder', 'runner', 'devin', 'claudecode'],
+  intel: ['scout', 'librarian', 'curator', 'forecaster'],
+  governance: ['warden', 'sentinel', 'reviewer'],
+  gateways: ['openclaw', 'hermes', 'distributor', 'prep', 'brief', 'debrief'],
+  satellite: [],
+};
+
+export const sectorAgentSort = (sector: AgentSectorId) => (a: AgentClient, b: AgentClient) => {
+  const pref = SECTOR_ORDER[sector] || [];
+  const ia = pref.indexOf(a.id), ib = pref.indexOf(b.id);
+  if (ia >= 0 && ib >= 0) return ia - ib;
+  if (ia >= 0) return -1;
+  if (ib >= 0) return 1;
+  return a.id.localeCompare(b.id);
+};
+
+export const getAgentSector = (a?: AgentClient | null): AgentSectorId => {
+  if (!a) return 'intel';
+  if (a.spawnSpec || (a.tier === 'enterprise' && !['devin', 'claudecode', 'openclaw', 'hermes'].includes(a.id))) {
+    return 'satellite';
+  }
+  const id = (a.id || '').toLowerCase();
+  if (id === 'antigravity' || id === 'strategist') return 'command';
+  if (id === 'builder' || id === 'runner' || id === 'devin' || id === 'claudecode') return 'engineering';
+  if (id === 'scout' || id === 'librarian' || id === 'curator' || id === 'forecaster') return 'intel';
+  if (id === 'warden' || id === 'sentinel' || id === 'reviewer') return 'governance';
+  if (id === 'openclaw' || id === 'hermes' || id === 'distributor' || id === 'prep' || id === 'brief' || id === 'debrief') return 'gateways';
+
+  const role = (a.role || '').toLowerCase();
+  if (/command|guidance|director/.test(role)) return 'command';
+  if (/build|run|code|terminal|engineer/.test(role)) return 'engineering';
+  if (/intel|scout|library|forecast|curat|memory/.test(role)) return 'intel';
+  if (/warden|sentinel|review|surgeon|safety|guard/.test(role)) return 'governance';
+  if (/claw|hermes|portal|distribut|gateway/.test(role)) return 'gateways';
+
+  return 'satellite';
+};
+
 const agentTier = (a?: AgentClient | null): 'enterprise' | 'console' | 'support' =>
   agentOrbitTier(a);
 const INK = '#e0f2fe';
@@ -480,8 +596,8 @@ const AgentDossierPanel: React.FC<{ agent: AgentClient; snap: AgentsSnapshotClie
           <AgentGlyph enterprise={agentOrbitTier(a) === 'enterprise'} color={col} />
           <span style={{ fontSize: 11, letterSpacing: '0.3em', color: col, fontFamily: MONO, fontWeight: 700 }}>
             {a.name}
-            <span style={{ fontSize: 7, letterSpacing: 0.1, color: agentOrbitTier(a) === 'enterprise' ? '#fbbf24' : agentOrbitTier(a) === 'console' ? '#38bdf8' : DIM, marginLeft: 8, verticalAlign: 'middle' }}>
-              {agentOrbitTier(a) === 'enterprise' ? 'ENTERPRISE' : agentOrbitTier(a) === 'console' ? 'FLIGHT CONSOLE' : 'SUPPORT CRAFT'}
+            <span style={{ fontSize: 7, letterSpacing: '0.12em', color: SECTORS[getAgentSector(a)].color, marginLeft: 8, verticalAlign: 'middle', border: `1px solid ${hexA(SECTORS[getAgentSector(a)].color, 0.4)}`, padding: '1px 5px', borderRadius: 2 }}>
+              {SECTORS[getAgentSector(a)].glyph} {SECTORS[getAgentSector(a)].name.toUpperCase()}
             </span>
           </span>
         </span>
@@ -1082,15 +1198,55 @@ export const CortexAgentsScene: React.FC = () => {
     });
 
     const agentPos = (agents: AgentClient[], agent: AgentClient, w: number, h: number, cx: number, cy: number, t: number) => {
+      const sector = getAgentSector(agent);
       const tier = agentOrbitTier(agent);
-      const group = agents.filter((x) => agentOrbitTier(x) === tier);
-      const i = Math.max(0, group.indexOf(agent));
-      const n = Math.max(group.length, 1);
-      const baseA = (i / n) * Math.PI * 2 - Math.PI / 2 + (tier === 'enterprise' ? 0.31 : tier === 'console' ? 0.18 : 0);
-      const wob = reducedMotion.current ? 0 : Math.sin(t * 0.6 + i * 1.9 + (tier === 'enterprise' ? 2.2 : tier === 'console' ? 1.2 : 0)) * 0.05;
-      const k = tier === 'console' ? 0.60 : tier === 'enterprise' ? 1.28 : 1.0;
-      const rx = Math.min(w * 0.37, 580) * k, ry = Math.min(h * 0.32, 320) * k;
-      return { x: cx + Math.cos(baseA + wob) * rx, y: cy + Math.sin(baseA + wob) * ry, a: baseA, tier };
+      const sectorAgents = agents.filter((x) => getAgentSector(x) === sector).sort(sectorAgentSort(sector));
+      const i = Math.max(0, sectorAgents.findIndex((x) => x.id === agent.id));
+      const n = Math.max(sectorAgents.length, 1);
+
+      let baseA = 0;
+      let k = 1.0;
+      let wob = 0;
+
+      if (sector === 'command') {
+        k = 0.45;
+        if (n === 1) {
+          baseA = -Math.PI / 2;
+        } else if (n === 2) {
+          baseA = -Math.PI / 2 + (i === 0 ? -0.42 : 0.42);
+        } else {
+          const span = 1.1;
+          baseA = -Math.PI / 2 - span / 2 + (i / (n - 1)) * span;
+        }
+        wob = reducedMotion.current ? 0 : Math.sin(t * 0.7 + i * 2.1) * 0.035;
+      } else if (sector === 'satellite') {
+        k = 1.28;
+        baseA = (i / n) * Math.PI * 2 - Math.PI / 3 + (reducedMotion.current ? 0 : t * 0.03);
+        wob = reducedMotion.current ? 0 : Math.sin(t * 0.6 + i * 1.7) * 0.04;
+      } else {
+        const sDef = SECTORS[sector];
+        const centerAngle = sDef.centerAngle;
+        const span = sDef.span;
+
+        if (n === 1) {
+          baseA = centerAngle;
+        } else {
+          baseA = centerAngle - span / 2 + (i / (n - 1)) * span;
+        }
+
+        // Staggered echelon radii: ensures neighbor cards & hit-targets never overlap
+        if (n > 1) {
+          k = (i % 2 === 0) ? 0.84 : 1.06;
+        } else {
+          k = 0.94;
+        }
+
+        wob = reducedMotion.current ? 0 : Math.sin(t * 0.55 + i * 1.8 + (sector === 'engineering' ? 0.5 : sector === 'intel' ? 1.2 : sector === 'governance' ? 2.0 : 2.8)) * 0.03;
+      }
+
+      const rx = Math.min(w * 0.37, 580) * k;
+      const ry = Math.min(h * 0.32, 320) * k;
+      return { x: cx + Math.cos(baseA + wob) * rx, y: cy + Math.sin(baseA + wob) * ry, a: baseA, tier, sector };
     };
 
     const draw = (now: number) => {
@@ -1294,58 +1450,101 @@ export const CortexAgentsScene: React.FC = () => {
       const s = snapRef.current;
       const agents = (s.agents || []).slice().sort(agentSort);
 
-      // ── Three Hierarchical Orbital Rings ──
+      // ── Tactical Mission Quadrant Radar Architecture ──
       const baseRx = Math.min(w * 0.37, 580);
       const baseRy = Math.min(h * 0.32, 320);
 
-      // 1. Inner Ring — Flight Consoles (Specialists closest to Cortex Core)
-      const hasConsoles = agents.some((a) => agentOrbitTier(a) === 'console');
-      if (hasConsoles) {
-        ctx.strokeStyle = 'rgba(56,189,248,0.24)';
-        ctx.lineWidth = 1.2;
-        ctx.setLineDash([4, 6]);
+      // 1. Quadrant Dividing Crosshair Rays (45°, 135°, 225°, 315°)
+      ctx.save();
+      ctx.strokeStyle = 'rgba(103,232,249,0.13)';
+      ctx.lineWidth = 1;
+      ctx.setLineDash([4, 6]);
+      const rayAngles = [
+        -Math.PI * 0.75, // NW
+        -Math.PI * 0.25, // NE
+        Math.PI * 0.25,  // SE
+        Math.PI * 0.75,  // SW
+      ];
+      for (const ra of rayAngles) {
+        const cosA = Math.cos(ra);
+        const sinA = Math.sin(ra);
         ctx.beginPath();
-        ctx.ellipse(cx, cy, baseRx * 0.60, baseRy * 0.60, 0, 0, Math.PI * 2);
+        ctx.moveTo(cx + cosA * (baseRx * 0.48), cy + sinA * (baseRy * 0.48));
+        ctx.lineTo(cx + cosA * (baseRx * 1.18), cy + sinA * (baseRy * 1.18));
         ctx.stroke();
 
-        ctx.font = `700 8px ${MONO}`;
-        ctx.textAlign = 'center';
-        ctx.fillStyle = 'rgba(56,189,248,0.75)';
-        ctx.fillText('FLIGHT CONSOLES // SPECIALIST RING', cx, cy - baseRy * 0.60 - 7);
+        // Perimeter crosshair tick
+        const tipX = cx + cosA * (baseRx * 1.18);
+        const tipY = cy + sinA * (baseRy * 1.18);
+        ctx.fillStyle = 'rgba(103,232,249,0.35)';
+        ctx.fillRect(tipX - 1.5, tipY - 1.5, 3, 3);
       }
+      ctx.setLineDash([]);
+      ctx.restore();
 
-      // 2. Mid Ring — Support Craft
-      const hasSupport = agents.some((a) => agentOrbitTier(a) === 'support');
-      if (hasSupport) {
-        ctx.strokeStyle = 'rgba(103,232,249,0.12)';
-        ctx.lineWidth = 1;
-        ctx.setLineDash([2, 7]);
-        ctx.beginPath();
-        ctx.ellipse(cx, cy, baseRx, baseRy, 0, 0, Math.PI * 2);
-        ctx.stroke();
+      // 2. Command Apex Inner Ring (k = 0.45)
+      ctx.strokeStyle = 'rgba(192,132,252,0.26)';
+      ctx.lineWidth = 1.2;
+      ctx.setLineDash([4, 6]);
+      ctx.beginPath();
+      ctx.ellipse(cx, cy, baseRx * 0.45, baseRy * 0.45, 0, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.setLineDash([]);
 
-        ctx.font = `700 8px ${MONO}`;
-        ctx.textAlign = 'center';
-        ctx.fillStyle = 'rgba(103,232,249,0.55)';
-        ctx.fillText('SUPPORT CRAFT // MID ORBIT', cx, cy - baseRy - 8);
-      }
+      // 3. Staggered Echelon Guide Rings (k = 0.84, k = 1.06)
+      ctx.strokeStyle = 'rgba(103,232,249,0.08)';
+      ctx.lineWidth = 0.8;
+      ctx.setLineDash([2, 8]);
+      ctx.beginPath();
+      ctx.ellipse(cx, cy, baseRx * 0.84, baseRy * 0.84, 0, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.ellipse(cx, cy, baseRx * 1.06, baseRy * 1.06, 0, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.setLineDash([]);
 
-      // 3. Outer Ring — Enterprise Satellite Deck (Missions)
-      const hasEnterprise = agents.some((a) => agentOrbitTier(a) === 'enterprise');
-      if (hasEnterprise) {
+      // 4. Outer Satellite Deck Ring (k = 1.28)
+      const hasSatellites = agents.some((a) => getAgentSector(a) === 'satellite');
+      if (hasSatellites) {
         ctx.strokeStyle = 'rgba(251,191,36,0.18)';
         ctx.lineWidth = 1;
         ctx.setLineDash([4, 8]);
         ctx.beginPath();
         ctx.ellipse(cx, cy, baseRx * 1.28, baseRy * 1.28, 0, 0, Math.PI * 2);
         ctx.stroke();
+        ctx.setLineDash([]);
 
         ctx.font = `700 8px ${MONO}`;
         ctx.textAlign = 'center';
         ctx.fillStyle = 'rgba(251,191,36,0.65)';
-        ctx.fillText('ENTERPRISE DECK', cx, cy - baseRy * 1.28 - 8);
+        ctx.fillText('ENTERPRISE SATELLITE DECK', cx, cy - baseRy * 1.28 - 8);
       }
-      ctx.setLineDash([]);
+
+      // 5. Quadrant HUD Perimeter Banners
+      const drawHudBanner = (bx: number, by: number, text: string, color: string, align: CanvasTextAlign = 'center') => {
+        ctx.save();
+        ctx.font = `700 8px ${MONO}`;
+        ctx.textAlign = align;
+        ctx.textBaseline = 'middle';
+        const tw = ctx.measureText(text).width;
+        const padX = 7, bh = 15;
+        const startX = align === 'center' ? bx - tw / 2 - padX : align === 'left' ? bx : bx - tw - padX * 2;
+        ctx.fillStyle = 'rgba(6,10,22,0.85)';
+        ctx.fillRect(startX, by - bh / 2, tw + padX * 2, bh);
+        ctx.strokeStyle = hexA(color, 0.4);
+        ctx.lineWidth = 1;
+        ctx.strokeRect(startX, by - bh / 2, tw + padX * 2, bh);
+        ctx.fillStyle = color;
+        ctx.fillText(text, align === 'center' ? bx : align === 'left' ? bx + padX : bx - padX, by);
+        ctx.restore();
+      };
+
+      drawHudBanner(cx, cy - baseRy * 0.45 - 12, '★ COMMAND APEX', '#c084fc', 'center');
+      drawHudBanner(cx, cy - baseRy * 1.20 - 4, '▲ NORTH // ENGINEERING & EXECUTION', '#38bdf8', 'center');
+      drawHudBanner(cx + baseRx * 1.16 + 8, cy, '► EAST // INTEL & MEMORY', '#fbbf24', 'left');
+      drawHudBanner(cx, cy + baseRy * 1.20 + 8, '▼ SOUTH // GOVERNANCE & INTEGRITY', '#fb7185', 'center');
+      const westX = Math.max(180, cx - baseRx * 1.16 - 8);
+      drawHudBanner(westX, cy, '◄ WEST // GATEWAYS & DELIVERY', '#06b6d4', 'right');
 
       const agentKey = agents.map(a => `${a.id}:${a.status}:${a.currentTaskId}`).join('|');
       if (agentKey !== lastAgentKey) {
@@ -1788,13 +1987,13 @@ export const CortexAgentsScene: React.FC = () => {
         ctx.fillText(a.name, ax, ay + vr * 1.15 + 16);
         ctx.fillStyle = errored ? '#f87171' : isStandupDegraded ? '#fbbf24' : working ? col : DIM;
         ctx.font = `8px ${MONO}`;
-        const tier = agentOrbitTier(a);
-        const tierPrefix = tier === 'enterprise' ? 'SAT·' : tier === 'console' ? 'CON·' : '';
+        const sec = getAgentSector(a);
+        const sDef = SECTORS[sec];
         const statusLabel = isStandupDegraded
-          ? `${tierPrefix}DEGRADED`
+          ? `[${sDef.badge}] DEGRADED`
           : isStandupOffline
-            ? `${tierPrefix}OFFLINE`
-            : `${tierPrefix}${a.status.toUpperCase()}`;
+            ? `[${sDef.badge}] OFFLINE`
+            : `[${sDef.badge}] ${a.status.toUpperCase()}`;
         ctx.fillText(statusLabel, ax, ay + vr * 1.15 + 27);
 
         // Standup status dot indicator

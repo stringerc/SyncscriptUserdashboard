@@ -1217,43 +1217,71 @@ export function CortexFoundryNav({ snap, onSelectAgent, selectedAgent, onOpenTow
           </div>
 
           {([
-            { section: 'THE CREW', col: '#fbbf24', entries: [{ id: null, callSign: 'CREW COMMANDER', desc: 'Holds veto · Final GO/NO-GO', status: 'active' }] },
-            { section: 'FLIGHT DIRECTOR', col: '#38bdf8', entries: [{ id: 'strategist', callSign: 'CORTEX CORE', desc: 'Owns console · Decides, never flies', status: 'idle' }] },
             {
-              section: 'FLIGHT CONSOLES', col: '#67e8f9', entries: [
-                { id: 'antigravity', callSign: 'GUIDANCE', desc: 'Strategy · Vision', status: 'idle' },
-                { id: 'builder', callSign: 'FLT CONTROLS', desc: 'Execute · Builder', status: 'idle' },
-                { id: 'runner', callSign: 'FLT CONTROLS', desc: 'Execute · Runner', status: 'idle' },
-                { id: 'sentinel', callSign: 'EECOM', desc: 'Power/Compute · Model health', status: 'idle' },
-                { id: 'capcom', callSign: 'CAPCOM', desc: 'Voice interface', status: 'idle' },
-                { id: 'forecaster', callSign: 'FDO', desc: 'Trajectory · Forecasts', status: 'idle' },
-                { id: 'warden', callSign: 'SURGEON', desc: 'Quality gate · Safety', status: 'idle' },
+              section: 'COMMAND APEX // CORE DIRECTORS',
+              col: '#c084fc',
+              entries: [
+                { id: null, callSign: 'CREW COMMANDER', desc: 'Holds veto · Final GO/NO-GO', status: 'active' },
+                { id: 'strategist', callSign: 'CORTEX CORE', desc: 'Owns console · Decides, never flies', status: 'idle' },
+                { id: 'antigravity', callSign: 'GUIDANCE', desc: 'Apex Strategy & Vision', status: 'idle' },
+                { id: 'capcom', callSign: 'CAPCOM', desc: 'Voice interface & audio telemetry', status: 'idle' },
               ]
             },
             {
-              section: 'SUPPORT CRAFT', col: '#a78bfa', entries: [
-                { id: 'devin', callSign: 'FLIGHT DYNAMICS', desc: 'Engineering & verification', status: 'idle' },
-                { id: 'scout', callSign: 'SCOUT', desc: 'Recon & web intelligence', status: 'idle' },
-                { id: 'librarian', callSign: 'LIBRARIAN', desc: 'Engram vector archive', status: 'idle' },
-                { id: 'distributor', callSign: 'DISTRIBUTOR', desc: 'Product distribution', status: 'idle' },
-                { id: 'prep', callSign: 'PREP', desc: 'Nightly preparation', status: 'idle' },
-                { id: 'brief', callSign: 'BRIEF', desc: 'Morning brief 06:00', status: 'idle' },
-                { id: 'debrief', callSign: 'DEBRIEF', desc: 'Evening debrief 21:30', status: 'idle' },
-                { id: 'reviewer', callSign: 'REVIEWER', desc: 'Code review', status: 'idle' },
-              ].concat(
-                agents.filter((a) => a.spawnSpec).map((a) => ({ id: a.id, callSign: a.spawnSpec?.callSign || a.id.toUpperCase(), desc: `Spawned · ${a.spawnSpec?.role || ''}`, status: 'idle' }))
-              )
+              section: '▲ NORTH // ENGINEERING & EXECUTION',
+              col: '#38bdf8',
+              entries: [
+                { id: 'builder', callSign: 'FLT CONTROLS', desc: 'Execute · Builder & Scaffold', status: 'idle' },
+                { id: 'runner', callSign: 'FLT CONTROLS', desc: 'Execute · Runner & Tests', status: 'idle' },
+                { id: 'devin', callSign: 'FLIGHT DYNAMICS', desc: 'Engineering & Deep Verification', status: 'idle' },
+                { id: 'claudecode', callSign: 'CLAUDE CODE', desc: 'Terminal Architect & Consensus Auditor', status: 'idle' },
+              ]
             },
             {
-              section: 'SOVEREIGN GATEWAYS & ENTERPRISE FLEET', col: '#ef4444', entries: [
+              section: '► EAST // INTEL & STRATEGIC MEMORY',
+              col: '#fbbf24',
+              entries: [
+                { id: 'scout', callSign: 'SCOUT', desc: 'Recon & Web Intelligence', status: 'idle' },
+                { id: 'librarian', callSign: 'LIBRARIAN', desc: 'Engram Vector Archive', status: 'idle' },
+                { id: 'curator', callSign: 'CURATOR', desc: 'Fleet Intelligence & Dynamic Skills', status: 'idle' },
+                { id: 'forecaster', callSign: 'FDO', desc: 'Trajectory & Predictive Drift', status: 'idle' },
+              ]
+            },
+            {
+              section: '▼ SOUTH // GOVERNANCE & INTEGRITY',
+              col: '#fb7185',
+              entries: [
+                { id: 'warden', callSign: 'SURGEON', desc: 'Quality Gate & Safety Enforcement', status: 'idle' },
+                { id: 'sentinel', callSign: 'EECOM', desc: 'Power/Compute & Model Health', status: 'idle' },
+                { id: 'reviewer', callSign: 'REVIEWER', desc: 'Consensus AST & Code Review', status: 'idle' },
+              ]
+            },
+            {
+              section: '◄ WEST // GATEWAYS & DELIVERY',
+              col: '#06b6d4',
+              entries: [
                 { id: 'hermes', callSign: 'HERMES', desc: 'Sovereign mutating tool host (:18880)', status: 'idle' },
-                { id: 'curator', callSign: 'CURATOR', desc: 'Fleet intelligence & dynamic capabilities', status: 'idle' },
                 { id: 'openclaw', callSign: 'OPENCLAW', desc: 'WebMCP browser copilot (:18789)', status: 'idle' },
-                { id: 'claudecode', callSign: 'CLAUDE CODE', desc: 'Terminal architect & consensus auditor', status: 'idle' },
+                { id: 'distributor', callSign: 'DISTRIBUTOR', desc: 'Storefront & Product Distribution', status: 'idle' },
+                { id: 'prep', callSign: 'PREP', desc: 'Nightly Preparation', status: 'idle' },
+                { id: 'brief', callSign: 'BRIEF', desc: 'Morning Brief 06:00', status: 'idle' },
+                { id: 'debrief', callSign: 'DEBRIEF', desc: 'Evening Debrief 21:30', status: 'idle' },
               ]
             },
+            ...(agents.some((a) => a.spawnSpec) ? [{
+              section: 'ENTERPRISE SATELLITE DECK',
+              col: '#a78bfa',
+              entries: agents.filter((a) => a.spawnSpec).map((a) => ({
+                id: a.id,
+                callSign: a.spawnSpec?.callSign || a.id.toUpperCase(),
+                desc: `Spawned · ${a.spawnSpec?.role || 'Ephemeral Task Agent'}`,
+                status: 'idle',
+              })),
+            }] : []),
             {
-              section: 'GROUND SEGMENT', col: '#34d399', entries: [
+              section: 'GROUND SEGMENT',
+              col: '#34d399',
+              entries: [
                 { id: null, callSign: 'LOCAL TOWER', desc: 'Mac host · voice loop · workspace', status: 'active' },
                 { id: null, callSign: 'TDRS SATELLITE', desc: 'Oracle cloud · always-on node', status: 'idle' },
               ]
