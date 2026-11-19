@@ -1070,7 +1070,7 @@ export default function CortexVisualizerPage() {
           )}
         </div>
       ) : faceMode === 'agents' ? (
-        <div key="face-agents" className="cx-face-transition" style={{ position: 'absolute', inset: 0, zIndex: 4 }}>
+        <div key="face-agents" className="cx-face-transition" style={{ position: 'absolute', inset: 0, zIndex: 25 }}>
           <CortexAgentsScene />
         </div>
       ) : (
@@ -1166,6 +1166,171 @@ export default function CortexVisualizerPage() {
           ))}
         </div>
       </div>
+      )}
+
+      {/* Top-Right: Foundry Strategic Navigation Bar (Core, Foundry, Map, Chat, Voice) */}
+      {faceMode === 'agents' && (
+        <nav
+          aria-label="Cortex Top Navigation"
+          style={{
+            position: 'absolute',
+            top: 20,
+            right: chatOpen ? (narrow ? 16 : 416) : (narrow ? 16 : 32),
+            zIndex: 25,
+            display: 'flex',
+            alignItems: 'center',
+            gap: 6,
+            background: 'rgba(6,10,24,0.85)',
+            padding: '5px 8px',
+            borderRadius: 20,
+            border: '1px solid rgba(103,232,249,0.25)',
+            backdropFilter: 'blur(16px)',
+            boxShadow: '0 4px 24px rgba(0,0,0,0.55), 0 0 16px rgba(103,232,249,0.08)',
+            transition: 'right 0.25s ease',
+          }}
+        >
+          {/* CORE */}
+          <button
+            onClick={() => {
+              setFaceMode('core');
+              try { localStorage.setItem('cortex_visualizer_face', 'core'); } catch {}
+              cortexSpeak('Returning to Sovereign Core.');
+            }}
+            title="Sovereign Core — 3D neural sanctum & memory constellation"
+            style={{
+              padding: '5px 12px',
+              borderRadius: 14,
+              border: '1px solid rgba(148,233,255,0.18)',
+              background: 'rgba(4,8,14,0.5)',
+              color: 'rgba(165,243,252,0.7)',
+              fontFamily: "'IBM Plex Mono', monospace",
+              fontSize: 9.5,
+              fontWeight: 700,
+              letterSpacing: '0.14em',
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              gap: 5,
+              transition: 'all 0.2s',
+            }}
+          >
+            <span style={{ color: '#38bdf8' }}>◈</span>
+            <span>CORE</span>
+          </button>
+
+          {/* FOUNDRY (Active) */}
+          <button
+            title="Nexus Foundry — active tactical holodeck & fleet deck"
+            style={{
+              padding: '5px 12px',
+              borderRadius: 14,
+              border: '1px solid #67e8f9',
+              background: 'rgba(103,232,249,0.18)',
+              color: '#f0f9ff',
+              fontFamily: "'IBM Plex Mono', monospace",
+              fontSize: 9.5,
+              fontWeight: 800,
+              letterSpacing: '0.14em',
+              boxShadow: '0 0 12px rgba(103,232,249,0.4)',
+              cursor: 'default',
+              display: 'flex',
+              alignItems: 'center',
+              gap: 5,
+            }}
+          >
+            <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#67e8f9', boxShadow: '0 0 6px #67e8f9' }} />
+            <span>FOUNDRY</span>
+          </button>
+
+          {/* MAP */}
+          <button
+            onClick={() => {
+              const next = !mapMode;
+              setMapMode(next);
+              cortexSpeak(next ? 'Opening planetary globe.' : 'Returning to command deck.');
+            }}
+            title="Planetary Mission Globe & Q-Map Replay"
+            style={{
+              padding: '5px 12px',
+              borderRadius: 14,
+              border: `1px solid ${mapMode ? '#e879f9' : 'rgba(148,233,255,0.18)'}`,
+              background: mapMode ? 'rgba(232,121,249,0.18)' : 'rgba(4,8,14,0.5)',
+              color: mapMode ? '#f5d0fe' : 'rgba(165,243,252,0.7)',
+              fontFamily: "'IBM Plex Mono', monospace",
+              fontSize: 9.5,
+              fontWeight: 700,
+              letterSpacing: '0.14em',
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              gap: 5,
+              transition: 'all 0.2s',
+            }}
+          >
+            <span style={{ color: '#e879f9' }}>🌍</span>
+            <span>{mapMode ? 'MAP ACTIVE' : 'MAP'}</span>
+          </button>
+
+          {/* CHAT */}
+          <button
+            onClick={() => setChatOpen(v => !v)}
+            title="Toggle Cortex Uplink Chat Drawer (Esc to close)"
+            style={{
+              padding: '5px 12px',
+              borderRadius: 14,
+              border: `1px solid ${chatOpen ? accent : 'rgba(148,233,255,0.18)'}`,
+              background: chatOpen ? `${accent}22` : 'rgba(4,8,14,0.5)',
+              color: chatOpen ? '#f0f9ff' : 'rgba(165,243,252,0.7)',
+              fontFamily: "'IBM Plex Mono', monospace",
+              fontSize: 9.5,
+              fontWeight: 700,
+              letterSpacing: '0.14em',
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              gap: 5,
+              transition: 'all 0.2s',
+            }}
+          >
+            <span style={{ color: accent }}>💬</span>
+            <span>{chatOpen ? 'CHAT (OPEN)' : 'CHAT'}</span>
+          </button>
+
+          {/* VOICE */}
+          <button
+            onClick={() => {
+              const next = !micOn;
+              setMicOn(next);
+              cortexAudioContext.setMic(next);
+              cortexSpeak(next ? 'Voice listening active.' : 'Voice muted.');
+            }}
+            title={!micOn ? 'Microphone muted — click to enable' : 'Voice listening active — click to mute'}
+            style={{
+              padding: '5px 12px',
+              borderRadius: 14,
+              border: `1px solid ${micLive ? '#c084fc' : micOn ? '#34d399' : 'rgba(148,233,255,0.18)'}`,
+              background: micLive ? 'rgba(192,132,252,0.22)' : micOn ? 'rgba(52,211,153,0.18)' : 'rgba(4,8,14,0.5)',
+              color: micLive ? '#f5d0fe' : micOn ? '#bbf7d0' : 'rgba(165,243,252,0.7)',
+              fontFamily: "'IBM Plex Mono', monospace",
+              fontSize: 9.5,
+              fontWeight: 700,
+              letterSpacing: '0.14em',
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              gap: 5,
+              boxShadow: micOn ? '0 0 10px rgba(52,211,153,0.3)' : 'none',
+              transition: 'all 0.2s',
+            }}
+          >
+            <span style={{
+              width: 6, height: 6, borderRadius: '50%',
+              background: micLive ? '#c084fc' : micOn ? '#34d399' : 'rgba(148,163,184,0.4)',
+              boxShadow: micOn ? '0 0 6px #34d399' : 'none',
+            }} />
+            <span>{micLive ? 'SPEAKING' : micOn ? 'VOICE ON' : 'VOICE MUTED'}</span>
+          </button>
+        </nav>
       )}
 
       {/* Proactive Ambient & Vigilance HUD Bar — centered directly under header */}
@@ -1896,7 +2061,8 @@ export default function CortexVisualizerPage() {
         );
       })()}
 
-      {/* Bottom nav command dock: centered to clear left-rail flyouts */}
+      {/* Bottom nav command dock: centered to clear left-rail flyouts. Suppressed on Foundry face */}
+      {faceMode !== 'agents' && (
       <div style={{
         position: 'absolute', bottom: 24, left: '50%', transform: 'translate(-50%, 0)',
         zIndex: 22, display: 'flex', alignItems: 'center', gap: narrow ? 6 : 8,
@@ -2181,6 +2347,7 @@ export default function CortexVisualizerPage() {
               : queueDepth > 0 ? `◌ +${queueDepth} QUEUED` : voiceBusy ? '◌ BUSY · TAP TO QUEUE' : '◉ VOICE ACTIVE · LISTENING'}
         </button>
       </div>
+      )}
 
       {/* Mission Log — always-on feed of real agent tasks, above the nav rail.
           Click expands to a centered full feed. Suppressed on Foundry face where scene renders its own dedicated log. */}
@@ -2648,7 +2815,8 @@ export default function CortexVisualizerPage() {
         </div>
       )}
 
-      {/* Bottom-center: live caption */}
+      {/* Bottom-center: live caption — suppressed on Foundry face to clear 1-Click Sprint Reel */}
+      {faceMode !== 'agents' && (
       <div style={{
         position: 'absolute', bottom: 40, left: '50%', transform: 'translate(-50%, 0)',
         width: 'min(640px, 72vw)', zIndex: 20, textAlign: 'center',
@@ -2664,6 +2832,7 @@ export default function CortexVisualizerPage() {
           <Typewriter text={payload.text ?? ''} accent={accent} />
         </div>
       </div>
+      )}
 
       {/* Screen-reader live region announcing cognitive state transitions & live captions */}
       <div
@@ -2699,8 +2868,10 @@ export default function CortexVisualizerPage() {
         }}
       />
 
-      {/* Dockable generative-UI surface panels (Phase 2) */}
-      <CortexSurfaceLayer drawerOpen={chatOpen} />
+      {/* Dockable generative-UI surface panels (Phase 2) — active in Core view */}
+      {faceMode !== 'agents' && (
+        <CortexSurfaceLayer drawerOpen={chatOpen} />
+      )}
 
       {/* Focus mode chip — visible state + click-to-exit (ESC also exits) */}
       {focusMode && (
@@ -2723,7 +2894,8 @@ export default function CortexVisualizerPage() {
       {/* Perf HUD — toggled with ` (backquote). Real rAF frame timing only. */}
       {showPerfHud && <PerfHud />}
 
-      {/* Bottom-right: sovereignty tag */}
+      {/* Bottom-right: sovereignty tag — suppressed on Foundry face */}
+      {faceMode !== 'agents' && (
       <div style={{ position: 'absolute', bottom: 40, right: narrow ? 16 : 64, zIndex: 20, textAlign: 'right' }} className="cx-hud-in">
         <div style={{ fontSize: 9, letterSpacing: '0.34em', color: 'rgba(148,233,255,0.4)', lineHeight: 2 }}>
           SELF-HOSTED<br />AUDITABLE<br />ALWAYS-ON
@@ -2737,6 +2909,7 @@ export default function CortexVisualizerPage() {
           </div>
         )}
       </div>
+      )}
     </div>
   );
 }
