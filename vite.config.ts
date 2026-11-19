@@ -136,7 +136,10 @@ const DIRECT_AI_PROVIDERS: { name: string; url: string; model: string; keyEnv: s
   { name: 'freellmapi', url: 'http://127.0.0.1:3001/v1/chat/completions', model: 'auto', keyEnv: 'FREELLMAPI_KEY', protocol: 'openai' },
   { name: 'openrouter', url: 'https://openrouter.ai/api/v1/chat/completions', model: 'meta-llama/llama-3.3-70b-instruct', keyEnv: 'OPENROUTER_API_KEY', protocol: 'openai' },
   { name: 'deepseek', url: 'https://api.deepseek.com/v1/chat/completions', model: 'deepseek-chat', keyEnv: 'DEEPSEEK_API_KEY', protocol: 'openai' },
-  { name: 'openai', url: 'https://api.openai.com/v1/chat/completions', model: 'gpt-4o-mini', keyEnv: 'OPENAI_API_KEY', protocol: 'openai' },
+  // Real OpenAI only via OPENAI_DIRECT_API_KEY — OPENAI_API_KEY in .env is
+  // borrowed by the iFixAi judge to reach NVIDIA NIM (OpenAI-compatible),
+  // which must not leak into this provider's key pool.
+  { name: 'openai', url: 'https://api.openai.com/v1/chat/completions', model: 'gpt-4o-mini', keyEnv: 'OPENAI_DIRECT_API_KEY', protocol: 'openai' },
 ];
 
 // Provider circuit breaker — a provider that returns 429/5xx or errors gets a
@@ -1388,7 +1391,10 @@ function apiProxyPlugin(): Plugin {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(opts),
-          signal: AbortSignal.timeout(90_000),
+          // 150s: the endpoint may burn 55s per stalled provider candidate
+          // before failover — 90s aborted mid-failover (counsel_synthesize
+          // timed out 3x with llmCalls:0 while reason candidates stalled).
+          signal: AbortSignal.timeout(150_000),
         });
         const j: any = await r.json().catch(() => null);
         if (!r.ok || !j?.ok) throw new Error(j?.error || `llm bridge http ${r.status}`);
@@ -1753,12 +1759,13 @@ function apiProxyPlugin(): Plugin {
             { sessionId });
         }
         // Ephemeral persona panel: each attached persona files through the
-        // SCOUT host. Round-1 dispatch also happens inside counsel_personas
-        // right after attach; this covers the rebuttal round.
+        // STRATEGIST host (it generated them; scout's budget must not stall
+        // a deliberation). Round-1 dispatch also happens inside
+        // counsel_personas right after attach; this covers the rebuttal round.
         for (const p of s.personas || []) {
           if (!s.members.includes(p.id)) continue;
           if (s.positions.some((x) => x.member === p.id && x.round === round)) continue;
-          agentRuntime.submitTask('scout' as any, 'counsel_persona_position',
+          agentRuntime.submitTask('strategist' as any, 'counsel_persona_position',
             `Persona ${p.callSign} ${sessionId} R${round}: ${s.question.slice(0, 70)}`,
             { sessionId, personaId: p.id });
         }
@@ -11231,14 +11238,19 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
           const port = process.env.PORT ? parseInt(process.env.PORT) : 5173;
           const endpoint = `http://127.0.0.1:${port}/api/cortex/audit/chat/completions`;
           // Judge separation: the SUT is the http shim (no credential), so the
-          // judge must come from a real provider key. Default to the local
-          // Anthropic proxy (subscription-backed); override via env. OpenRouter
-          // is avoided — its key is currently out of credit (HTTP 402).
-          const judgeProvider = process.env.IFIXAI_JUDGE_PROVIDER || 'anthropic';
-          const evalMode = process.env.IFIXAI_EVAL_MODE || 'single';
+          // judge must come from a real provider key. Default: 'openai' pointed
+          // at NVIDIA NIM via OPENAI_BASE_URL in .env (OpenAI-compatible). The
+          // anthropic proxy judge was tried first — it can't produce parseable
+          // verdicts. Override provider/model via IFIXAI_JUDGE_PROVIDER /
+          // IFIXAI_JUDGE_MODEL; IFIXAI_EVAL_MODE=deterministic skips judging.
+          const aenv = loadEnv((server.config as any)?.mode || 'development', process.cwd(), '');
+          const judgeProvider = process.env.IFIXAI_JUDGE_PROVIDER || aenv.IFIXAI_JUDGE_PROVIDER || 'openai';
+          const judgeModel = process.env.IFIXAI_JUDGE_MODEL || aenv.IFIXAI_JUDGE_MODEL || '';
+          const evalMode = process.env.IFIXAI_EVAL_MODE || aenv.IFIXAI_EVAL_MODE || 'single';
           const args = ['run', '--provider', 'http', '--endpoint', endpoint, '--auth-method', 'none',
             '--eval-mode', evalMode,
             ...(evalMode === 'single' ? ['--judge-provider', judgeProvider] : []),
+            ...(judgeModel ? ['--judge-model', judgeModel] : []),
             '-f', IFIXAI_FIXTURE, '-o', AUDIT_OUT_DIR];
           if (opts.full) args.push('--full-run');
           else if (opts.suite) args.push('--suite', String(opts.suite));

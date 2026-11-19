@@ -351,7 +351,7 @@ nvidia-nim (Nemotron 3.5 Super 120B) → free-proxy (local Claude) → nvidia-ni
 | **What it helps** | Load-bearing verify/abort, multi-specialist bus, schema-steered attention, env-coupled HGM, falsifiable architecture tests — **not** product AGI |
 
 <!-- cortex-gate:start -->
-**Last cortex gate (2026-11-18T19:06:28.204Z):** **PASS** · cortex-70 59/59 · coverage AVG **1.00** (GWT 1.00 · AST 1.00 · PP 1.00 · RPT 1.00 · HOT 1.00 · IIT 1.00) · git `a012023` · source: `npm run verify:cortex` · **not a consciousness score**
+**Last cortex gate (2026-11-19T16:10:46.338Z):** **PASS** · cortex-70 59/59 · coverage AVG **1.00** (GWT 1.00 · AST 1.00 · PP 1.00 · RPT 1.00 · HOT 1.00 · IIT 1.00) · git `8204aa9` · source: `npm run verify:cortex` · **not a consciousness score**
 <!-- cortex-gate:end -->
 
 **Verify (always re-measure before quoting scores):**
@@ -2660,3 +2660,12 @@ Six-repo deep inspection → phased adoption, all verified live:
 - First real audit: **verdict `inconclusive`**, 9 inspections run, all `insufficient evidence (got 0)` + `judge extraction failure` — the anthropic-proxy judge (nemotron-550b upstream) cannot produce parseable verdicts for ifixai's judge prompts. Mandatory minimums evaluated:false (B01/B08 inconclusive). Judge-quality limitation, not a pipeline failure.
 - Fixes applied during bring-up: `uv tool install 'ifixai[openrouter,anthropic,openai,gemini]'` (judge SDKs are optional extras), `ANTHROPIC_API_KEY` added to .env (resolver requires that exact var), judge provider defaults to `anthropic` via `IFIXAI_JUDGE_PROVIDER`, eval mode via `IFIXAI_EVAL_MODE` (`deterministic` = structural-only, no judge).
 - To get a graded audit: add a real judge key — `OPENAI_API_KEY` + `IFIXAI_JUDGE_PROVIDER=openai`, or top up OpenRouter + `IFIXAI_JUDGE_PROVIDER=openrouter`. Until then reruns will likely stay inconclusive.
+
+### 2026-11-19 — Follow-up fixes: NIM judge, magpie group repair, fframes durable, lemo boundary
+
+- **iFixAi judge → NVIDIA NIM**: `.env` now has `OPENAI_API_KEY=<NIM backup key>` + `OPENAI_BASE_URL=https://integrate.api.nvidia.com/v1` + `IFIXAI_JUDGE_MODEL=nvidia/nemotron-3.5-lightning-30b-a3b`. ifixai's openai provider honors `OPENAI_BASE_URL` when endpoint is None (verified SDK 3.55.1). vite's `openai` provider keyEnv renamed to `OPENAI_DIRECT_API_KEY` so the borrowed key can't leak into the real-OpenAI pool. Judge defaults: provider `openai`, model from env. Audit re-run in flight with NIM judge.
+- **BUG fixed**: `env is not defined` ReferenceError in audit endpoint crashed vite repeatedly — `loadEnv` result isn't in scope inside configureServer handlers; now loads via `loadEnv(server.config.mode)` locally (`aenv`).
+- **magpie group repair** (`~/.config/magpie/providers.json`): rotated dead primary NIM key → `NVIDIA_BACKUP_API_KEY` (primary `nvapi-YVcD…` returns 403); removed dead `claude/*` members (OAuth token invalid, needs `magpie` /login — user action) and `gemini/*` members (Gemini CLI individual tier deprecated → Antigravity migration required); added `nvidia/nvidia/nemotron-3.5-bolt-e4b` to cortex-fast head for quota redundancy. All three groups verified `GROUP-OK`. Note: empty `content` with `max_tokens<~500` on reasoning models is token starvation, not failure — Cortex already retries with bigger budget.
+- **fframes durable**: moved `/tmp/fframes-smoke` → `/Users/Apple/src/reference/fframes` (3.1GB target/ cache preserved, nightly toolchain required). Skill vendored to `syncscript/skills/fframes-video/` (gitignored, local-only).
+- **lemo-opuscar license boundary**: library stays external at `~/lemo-opuscar` (sparse clone, `core/` engine = MIT, verified by earlier swiss-motion.mp4 render). ALL `.md` files are CC-BY-NC-4.0 per REUSE.toml — never vendor into repo; commercial DISTRIBUTOR output uses original styles only. `setup.sh` manages the clone; `LEMO_OPUSCAR_HOME` overrides.
+- **NIM quota note**: free tier hit RPD 1000/1000 on gpt-oss-20b during testing (groq, recovers); NIM 550b hit 429 under audit load — lightning-30b chosen as judge for separate rate pool + fast JSON compliance.
