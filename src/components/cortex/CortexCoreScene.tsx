@@ -526,9 +526,12 @@ function OrbitRing({ spec, live, index }: { spec: RingSpec; live: React.MutableR
 
     const g = groupRef.current;
     if (g) {
-      g.rotation.z += delta * spec.spin * (0.5 + sig.energy);
+      const phiBoost = 1.0 + (sig.phiS ?? 0) * 0.45;
+      g.rotation.z += delta * spec.spin * (0.5 + sig.energy) * phiBoost;
       g.rotation.x = THREE.MathUtils.degToRad(spec.tiltX) + Math.sin(material.uniforms.uTime.value * 0.3 + index) * 0.05;
       g.rotation.y = THREE.MathUtils.degToRad(spec.tiltZ);
+      const scaleBreathing = 1.0 + (sig.phiS ?? 0) * 0.04 * Math.sin(material.uniforms.uTime.value * 2.0 + index);
+      g.scale.setScalar(scaleBreathing);
     }
     // satellite bead riding the ring
     if (satRef.current) {
@@ -1871,7 +1874,10 @@ function AccretionDisk({ live }: { live: React.MutableRefObject<LiveSignal> }) {
   );
 }
 
-// ── Voice halo (billboard ring that breathes with audio level) ───────────
+// ── Voice Halo & Gravitational Lensing Ring ──────────────────────────────
+// The native billboard ring wrapping the Sovereign Core.
+// Breathes organically with live voice audio level, IIT-Φ Integrated Information,
+// and cognitive thinking envelope with caustic optical deflection.
 
 function VoiceHalo({ live }: { live: React.MutableRefObject<LiveSignal> }) {
   const meshRef = useRef<THREE.Mesh>(null);
@@ -1884,7 +1890,10 @@ function VoiceHalo({ live }: { live: React.MutableRefObject<LiveSignal> }) {
         side: THREE.DoubleSide,
         uniforms: {
           uLevel: { value: 0 },
+          uPhi: { value: 0 },
+          uThink: { value: 0 },
           uColor: { value: c('#38d9f5') },
+          uColorLens: { value: c('#c084fc') },
           uTime: { value: 0 },
         },
         vertexShader: /* glsl */ `
@@ -1896,82 +1905,20 @@ function VoiceHalo({ live }: { live: React.MutableRefObject<LiveSignal> }) {
         `,
         fragmentShader: /* glsl */ `
           uniform float uLevel;
-          uniform float uTime;
-          uniform vec3 uColor;
-          varying vec2 vUv;
-          void main() {
-            float edge = smoothstep(0.0, 0.35, vUv.y) * smoothstep(1.0, 0.65, vUv.y);
-            float pulse = 0.75 + 0.25 * sin(uTime * 5.0);
-            float a = (0.04 + uLevel * 0.5) * edge * pulse;
-            gl_FragColor = vec4(uColor * a * 1.6, a);
-          }
-        `,
-      }),
-    []
-  );
-
-  useFrame((state, delta) => {
-    const sig = live.current;
-    const m = meshRef.current;
-    if (!m) return;
-    material.uniforms.uTime.value += delta;
-    material.uniforms.uLevel.value = sig.level;
-    material.uniforms.uColor.value.copy(sig.colorRim);
-    const s = 1.18 + sig.level * 0.55 + Math.sin(material.uniforms.uTime.value * 1.8) * 0.015;
-    m.scale.setScalar(s);
-    m.quaternion.copy(state.camera.quaternion); // billboard
-  });
-
-  return (
-    <mesh ref={meshRef} material={material}>
-      <ringGeometry args={[0.96, 1.0, 128]} />
-    </mesh>
-  );
-}
-
-// ── Einstein Ring: Physical Gravitational Lensing Refraction Ring ─────
-
-function EinsteinRing({ live }: { live: React.MutableRefObject<LiveSignal> }) {
-  const meshRef = useRef<THREE.Mesh>(null);
-  const material = useMemo(
-    () =>
-      new THREE.ShaderMaterial({
-        transparent: true,
-        depthWrite: false,
-        blending: THREE.AdditiveBlending,
-        side: THREE.DoubleSide,
-        uniforms: {
-          uPhi: { value: 0 },
-          uThink: { value: 0 },
-          uTime: { value: 0 },
-          uColor1: { value: c('#38bdf8') },
-          uColor2: { value: c('#c084fc') },
-        },
-        vertexShader: /* glsl */ `
-          varying vec2 vUv;
-          void main() {
-            vUv = uv;
-            gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-          }
-        `,
-        fragmentShader: /* glsl */ `
           uniform float uPhi;
           uniform float uThink;
           uniform float uTime;
-          uniform vec3 uColor1;
-          uniform vec3 uColor2;
+          uniform vec3 uColor;
+          uniform vec3 uColorLens;
           varying vec2 vUv;
           void main() {
-            float r = distance(vUv, vec2(0.5));
-            float ringWidth = 0.035 + uThink * 0.025;
-            float ringDist = abs(r - 0.36);
-            float flare = smoothstep(ringWidth, 0.0, ringDist);
-            
-            float wave = sin(atan(vUv.y - 0.5, vUv.x - 0.5) * 8.0 + uTime * 2.2);
-            float caustic = 0.8 + 0.2 * wave;
-            
-            float intensity = flare * caustic * (0.15 + (uPhi * 0.45) + (uThink * 0.35));
-            vec3 col = mix(uColor1, uColor2, smoothstep(0.34, 0.38, r));
+            float edge = smoothstep(0.0, 0.4, vUv.y) * smoothstep(1.0, 0.6, vUv.y);
+            float pulse = 0.75 + 0.25 * sin(uTime * 4.5);
+            // Relativistic caustic fringe & gravitational photon oscillation
+            float wave = sin(atan(vUv.y - 0.5, vUv.x - 0.5) * 6.0 + uTime * 2.4);
+            float caustic = 0.85 + 0.15 * wave;
+            float intensity = (0.05 + uLevel * 0.5 + uPhi * 0.45 + uThink * 0.35) * edge * pulse * caustic;
+            vec3 col = mix(uColor, uColorLens, clamp(uPhi * 0.75 + uThink * 0.4, 0.0, 1.0));
             gl_FragColor = vec4(col * intensity * 2.2, intensity);
           }
         `,
@@ -1984,17 +1931,93 @@ function EinsteinRing({ live }: { live: React.MutableRefObject<LiveSignal> }) {
     const m = meshRef.current;
     if (!m) return;
     material.uniforms.uTime.value += delta;
+    material.uniforms.uLevel.value = sig.level;
     material.uniforms.uPhi.value = sig.phiS ?? 0;
     material.uniforms.uThink.value = sig.think ?? 0;
-
-    const s = 1.35 + (sig.phiS ?? 0) * 0.16 + Math.sin(material.uniforms.uTime.value * 1.5) * 0.02;
+    material.uniforms.uColor.value.copy(sig.colorRim);
+    const s = 1.18 + sig.level * 0.55 + (sig.phiS ?? 0) * 0.18 + Math.sin(material.uniforms.uTime.value * 1.8) * 0.015;
     m.scale.setScalar(s);
-    m.quaternion.copy(state.camera.quaternion);
+    m.quaternion.copy(state.camera.quaternion); // billboard
   });
 
   return (
-    <mesh ref={meshRef} position={[0, 0, 0]}>
-      <planeGeometry args={[3.6, 3.6]} />
+    <mesh ref={meshRef} material={material}>
+      <ringGeometry args={[0.95, 1.03, 128]} />
+    </mesh>
+  );
+}
+
+// ── Markov Blanket: Fristonian Bioelectric Statistical Boundary ─────────
+// Geodesic boundary membrane separating internal sovereign cognition from
+// external agent satellites. Ripples with active inference bioelectric polarization.
+
+function MarkovBlanket({ live }: { live: React.MutableRefObject<LiveSignal> }) {
+  const meshRef = useRef<THREE.Mesh>(null);
+  const material = useMemo(
+    () =>
+      new THREE.ShaderMaterial({
+        transparent: true,
+        depthWrite: false,
+        blending: THREE.AdditiveBlending,
+        side: THREE.DoubleSide,
+        uniforms: {
+          uTime: { value: 0 },
+          uEnergy: { value: 0 },
+          uPhi: { value: 0 },
+          uColor: { value: c('#38bdf8') },
+        },
+        vertexShader: /* glsl */ `
+          uniform float uTime;
+          uniform float uEnergy;
+          varying vec3 vNormal;
+          varying vec3 vViewPosition;
+          void main() {
+            vNormal = normalize(normalMatrix * normal);
+            vec3 pos = position;
+            // Bioelectric cellular membrane ripples (Friston FEP / Levin bioelectricity)
+            float ripple = sin(pos.x * 3.5 + uTime * 2.0) * cos(pos.y * 3.5 + uTime * 1.6) * 0.03 * (0.5 + uEnergy);
+            pos += normal * ripple;
+            vec4 mvPosition = modelViewMatrix * vec4(pos, 1.0);
+            vViewPosition = -mvPosition.xyz;
+            gl_Position = projectionMatrix * mvPosition;
+          }
+        `,
+        fragmentShader: /* glsl */ `
+          uniform float uTime;
+          uniform float uEnergy;
+          uniform float uPhi;
+          uniform vec3 uColor;
+          varying vec3 vNormal;
+          varying vec3 vViewPosition;
+          void main() {
+            vec3 normal = normalize(vNormal);
+            vec3 viewDir = normalize(vViewPosition);
+            // Fresnel rim boundary: translucent interior, glowing bioelectric shell
+            float fresnel = pow(1.0 - abs(dot(normal, viewDir)), 3.2);
+            float pulse = 0.82 + 0.18 * sin(uTime * 2.8);
+            float alpha = fresnel * (0.09 + uEnergy * 0.15 + uPhi * 0.12) * pulse;
+            gl_FragColor = vec4(uColor * 1.4, alpha);
+          }
+        `,
+      }),
+    []
+  );
+
+  useFrame((state, delta) => {
+    const sig = live.current;
+    material.uniforms.uTime.value += delta;
+    material.uniforms.uEnergy.value = sig.energy;
+    material.uniforms.uPhi.value = sig.phiS ?? 0;
+    material.uniforms.uColor.value.copy(sig.colorRim);
+    if (meshRef.current) {
+      meshRef.current.rotation.y += delta * 0.06;
+      meshRef.current.rotation.x -= delta * 0.03;
+    }
+  });
+
+  return (
+    <mesh ref={meshRef}>
+      <icosahedronGeometry args={[2.22, 3]} />
       <primitive object={material} attach="material" />
     </mesh>
   );
@@ -2351,8 +2374,8 @@ function CortexCoreInner({
         <Core live={live} />
         <DetailShell live={live} />
         <VoiceHalo live={live} />
-        <EinsteinRing live={live} />
       </group>
+      <MarkovBlanket live={live} />
       {RINGS.map((r, i) => (
         <OrbitRing key={i} spec={r} live={live} index={i} />
       ))}
