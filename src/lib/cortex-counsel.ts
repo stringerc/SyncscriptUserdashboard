@@ -26,7 +26,7 @@ const LOG_FILE = path.join(COUNSEL_DIR, 'counsel-log.jsonl');
 
 const MAX_REASONING_CHARS = 400;
 const MAX_EVIDENCE_ITEMS = 6;
-const POSITION_TIMEOUT_MS = 15 * 60 * 1000;
+export const POSITION_TIMEOUT_MS = 15 * 60 * 1000;
 const DEFAULT_DAILY_CAP = 3;
 const SESSION_TTL_MS = 72 * 3600 * 1000;
 const MAX_PERSONAS = 5;
@@ -50,6 +50,10 @@ export interface CounselConsole {
   callSign: string;
   role: string;
   adapter: 'internal' | 'devin' | 'file-drop' | 'manual';
+  /** True only for consoles with a registered counsel_position worker —
+   *  dispatch and lifecycle advancement must not wait on members that
+   *  have no auto-file path (manual/devin/file-drop adapters). */
+  autoFiles?: boolean;
 }
 
 /** The console roster — Mission Control positions. */
@@ -59,10 +63,10 @@ export const COUNSEL_CONSOLES: CounselConsole[] = [
   { id: 'antigravity', callSign: 'GUIDANCE (ANTIGRAV)', role: 'Strategy & Vision', adapter: 'file-drop' },
   { id: 'builder', callSign: 'FLIGHT CONTROLS (BUILDER)', role: 'Execute · Workspace & code compiler', adapter: 'internal' },
   { id: 'runner', callSign: 'FLIGHT CONTROLS (RUNNER)', role: 'Execute · Rapid process runtime', adapter: 'internal' },
-  { id: 'sentinel', callSign: 'EECOM (SENTINEL)', role: 'Power / Compute (電力/計算) · Models health', adapter: 'internal' },
+  { id: 'sentinel', callSign: 'EECOM (SENTINEL)', role: 'Power / Compute (電力/計算) · Models health', adapter: 'internal', autoFiles: true },
   { id: 'capcom', callSign: 'CAPCOM (VOICE)', role: 'Talk to Crew · Real-time voice stream', adapter: 'internal' },
-  { id: 'forecaster', callSign: 'FDO (TRAJECTORY)', role: 'Predict Orbits & Forecasts', adapter: 'internal' },
-  { id: 'warden', callSign: 'SURGEON (WARDEN)', role: 'Quality Gate & Blast-radius safety', adapter: 'internal' },
+  { id: 'forecaster', callSign: 'FDO (TRAJECTORY)', role: 'Predict Orbits & Forecasts', adapter: 'internal', autoFiles: true },
+  { id: 'warden', callSign: 'SURGEON (WARDEN)', role: 'Quality Gate & Blast-radius safety', adapter: 'internal', autoFiles: true },
   { id: 'devin', callSign: 'SUPPORT CRAFT (DEVIN)', role: 'Engineering verification & execution', adapter: 'devin' },
   { id: 'scout', callSign: 'SUPPORT CRAFT (SCOUT)', role: 'Recon & Web Intelligence', adapter: 'internal' },
   { id: 'librarian', callSign: 'SUPPORT CRAFT (LIBRARIAN)', role: 'Engram Vector Archive', adapter: 'internal' },
@@ -114,6 +118,11 @@ export interface CounselSession {
     recommendation: 'go' | 'no-go' | 'conditional';
     text: string;
     generatedAt: number;
+    /** Provenance: which route tier served the synthesis ('reason' |
+     *  'fast' after fallback) and the model that actually answered
+     *  ('provider:model'). Absent on manually-filed syntheses. */
+    servedBy?: string;
+    model?: string;
   };
   verdict?: {
     decision: 'go' | 'no-go';
@@ -132,6 +141,9 @@ export interface CounselSession {
   personas?: CounselPersona[];
   /** Set when the poll card was pushed to Discord — notify once. */
   discordNotifiedAt?: number;
+  /** Auto-clear sweep counter — bounds automatic counsel_synthesize
+   *  resubmits so a persistently failing synthesis can't burn budget. */
+  synthesisAttempts?: number;
   /** Set when auto-clear rules fired — audit distinguishes human vs auto. */
   autoCleared?: boolean;
   createdAt: number;
@@ -462,6 +474,16 @@ export function reconcileCounselSessions(): number {
     }
   }
   return touched;
+}
+
+/** Record one automatic synthesis resubmit attempt. Returns the updated
+ *  session (with incremented counter) or null when the session is gone. */
+export function noteSynthesisAttempt(sessionId: string): CounselSession | null {
+  const s = readSession(sessionId);
+  if (!s) return null;
+  s.synthesisAttempts = (s.synthesisAttempts || 0) + 1;
+  writeSession(s);
+  return s;
 }
 
 /** Mark a session's poll as Discord-notified (idempotent). */

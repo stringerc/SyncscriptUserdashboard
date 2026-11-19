@@ -33,7 +33,7 @@ import {
   recordSynthesis, pollBoard, COUNSEL_CONSOLES, memberLabel,
 } from '../cortex-counsel';
 import { getWorldState, formatWorldStateHeader } from '../cortex-world-state';
-import { runCounselPersonas, runPersonaPosition } from './counsel-personas';
+import { runCounselPersonas, runPersonaPosition, runPersonaPositionsBatch } from './counsel-personas';
 
 const STATE_DIR = process.env.CORTEX_AGENTS_STATE_DIR || path.join(process.cwd(), '.cortex-runtime');
 const STRATEGY_DIR = '05 - Strategy';
@@ -501,6 +501,7 @@ async function counselSynthesizeWorker(ctx: AgentContext) {
   // bridge timeouts while reason candidates burned 55s each).
   let text = '';
   let llmErr = '';
+  let servedTier = '';
   for (const tier of ['reason', 'fast'] as const) {
     try {
       text = await ctx.llm({
@@ -512,6 +513,7 @@ async function counselSynthesizeWorker(ctx: AgentContext) {
         ],
       });
       llmErr = '';
+      servedTier = tier;
       break;
     } catch (e: any) {
       llmErr = String(e?.message || e);
@@ -532,6 +534,10 @@ async function counselSynthesizeWorker(ctx: AgentContext) {
     unresolvedObjections: Array.isArray(syn.unresolvedObjections) ? syn.unresolvedObjections.map(String) : [],
     recommendation: ['go', 'no-go', 'conditional'].includes(syn.recommendation) ? syn.recommendation : 'conditional',
     text: String(syn.text || '').slice(0, 2000),
+    servedBy: servedTier,
+    // Runtime stamps ctx.task.model with 'provider:model' of the actual
+    // responder — record it so the poll card can name its own provenance.
+    model: ctx.task.model || undefined,
   });
   if (!r.ok) return { error: r.error };
 
@@ -718,11 +724,12 @@ export function makeStrategistWorker(runtime: AgentRuntime): WorkerHandler {
       case 'counsel_synthesize': return counselSynthesizeWorker(ctx);
       case 'counsel_personas': return runCounselPersonas(ctx, runtime);
       case 'counsel_persona_position': return runPersonaPosition(ctx);
+      case 'counsel_persona_positions': return runPersonaPositionsBatch(ctx);
       case 'goal_plan': return goalPlanWorker(ctx);
       case 'goal_review': return goalReviewWorker(ctx);
       case 'tune_cycle': return tuneCycleWorker(ctx);
       default:
-        return { error: `unknown strategist kind '${ctx.task.kind}'`, kinds: ['cluster', 'plan', 'manifest', 'regress', 'propose_skill', 'propose_agent', 'counsel_convene', 'counsel_synthesize', 'counsel_personas', 'counsel_persona_position', 'goal_plan', 'goal_review', 'tune_cycle'] };
+        return { error: `unknown strategist kind '${ctx.task.kind}'`, kinds: ['cluster', 'plan', 'manifest', 'regress', 'propose_skill', 'propose_agent', 'counsel_convene', 'counsel_synthesize', 'counsel_personas', 'counsel_persona_position', 'counsel_persona_positions', 'goal_plan', 'goal_review', 'tune_cycle'] };
     }
   };
 }

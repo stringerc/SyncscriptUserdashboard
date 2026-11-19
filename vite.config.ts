@@ -34,9 +34,10 @@ import {
   COUNSEL_CONSOLES, conveneCounsel, filePosition, openRebuttal, closeRebuttal,
   recordSynthesis, decideCounsel, cancelCounsel, pollBoard,
   getCounselSession, listCounselSessions, markCounselDiscordNotified,
-  autoClearCounselPolls,
+  autoClearCounselPolls, noteSynthesisAttempt, POSITION_TIMEOUT_MS,
 } from './src/lib/cortex-counsel';
 import { defenseSystemPrefix } from './src/lib/cortex-agents/prompt-defense';
+import { GOVERNANCE_CHARTER } from './src/lib/cortex-agents/governance-charter';
 import { instinctsBlock, listInstincts, promotableInstincts } from './src/lib/cortex-agents/instincts';
 import { listEvals, getEval, fileEvalDefinition, runEval, readRuns, evalScorecard, evalComparison, type GraderSpec, type EvalArm } from './src/lib/cortex-agents/evals';
 import { computeCounselScorecard } from './src/lib/cortex-agents/counsel-scorecard';
@@ -1751,23 +1752,28 @@ function apiProxyPlugin(): Plugin {
         if (!s || !['positions', 'rebuttal'].includes(s.status)) return;
         const round = s.status === 'rebuttal' ? 2 : 1;
         for (const c of COUNSEL_CONSOLES) {
-          if (c.adapter !== 'internal' || c.id === 'strategist' || c.id === 'user') continue;
+          // autoFiles = has a registered counsel_position worker. Consoles
+          // without one (manual/devin/file-drop adapters) never auto-file —
+          // submitting them anyway produced guaranteed 'unknown kind' failures.
+          if (!c.autoFiles) continue;
           if (!s.members.includes(c.id)) continue;
           if (s.positions.some((p) => p.member === c.id && p.round === round)) continue;
           agentRuntime.submitTask(c.id as any, 'counsel_position',
             `Counsel ${sessionId} R${round}: ${s.question.slice(0, 80)}`,
             { sessionId });
         }
-        // Ephemeral persona panel: each attached persona files through the
-        // STRATEGIST host (it generated them; scout's budget must not stall
-        // a deliberation). Round-1 dispatch also happens inside
-        // counsel_personas right after attach; this covers the rebuttal round.
-        for (const p of s.personas || []) {
-          if (!s.members.includes(p.id)) continue;
-          if (s.positions.some((x) => x.member === p.id && x.round === round)) continue;
-          agentRuntime.submitTask('strategist' as any, 'counsel_persona_position',
-            `Persona ${p.callSign} ${sessionId} R${round}: ${s.question.slice(0, 70)}`,
-            { sessionId, personaId: p.id });
+        // Ephemeral persona panel: ONE batch task fans out all pending
+        // persona positions with bounded internal concurrency — replaces
+        // the old per-persona tasks that serialized on STRATEGIST's
+        // concurrency-1 queue (~10 sequential reason-tier calls per round).
+        const pendingPersonas = (s.personas || []).filter(
+          (p) => s.members.includes(p.id)
+            && !s.positions.some((x) => x.member === p.id && x.round === round),
+        );
+        if (pendingPersonas.length) {
+          agentRuntime.submitTask('strategist' as any, 'counsel_persona_positions',
+            `Persona panel ${sessionId} R${round}: ${s.question.slice(0, 60)}`,
+            { sessionId });
         }
         // Persona generation pending: session requested personas but none attached yet.
         if (!s.personas?.length && (s.personaCount || 0) > 0 && round === 1) {
@@ -1825,6 +1831,97 @@ function apiProxyPlugin(): Plugin {
           console.warn('[counsel] sweep failed:', String(e?.message || e).slice(0, 160));
         }
       };
+
+      // ── Counsel lifecycle advancer ─────────────────────────────────
+      // Sessions self-drive positions → rebuttal → synthesis → poll with
+      // no manual API pokes. 30s cadence; every check is an idempotent
+      // file-state read. Rounds close when every auto-file member has
+      // filed OR the round deadline (POSITION_TIMEOUT_MS) hits — manual
+      // members (user/devin/file-drop) never block advancement.
+      const COUNSEL_ADVANCE_MS = 30_000;
+      const PERSONA_REDISPATCH_MS = 120_000;
+      const MAX_AUTO_SYNTHESIS = 3;
+      const SYNTHESIS_STALE_MS = 90_000;
+      const lastPersonaDispatch = new Map<string, number>();
+
+      /** Members expected to auto-file a position this round: consoles
+       *  with a registered counsel_position worker + attached personas. */
+      const counselExpectedMembers = (s: any): Set<string> => {
+        const ids = new Set<string>();
+        for (const c of COUNSEL_CONSOLES) if (c.autoFiles && s.members.includes(c.id)) ids.add(c.id);
+        for (const p of s.personas || []) if (s.members.includes(p.id)) ids.add(p.id);
+        return ids;
+      };
+
+      const counselRoundComplete = (s: any, round: 1 | 2): boolean => {
+        const filed = new Set(s.positions.filter((p: any) => p.round === round).map((p: any) => p.member));
+        for (const m of counselExpectedMembers(s)) if (!filed.has(m)) return false;
+        return true;
+      };
+
+      const submitPersonaBatch = (s: any, round: 1 | 2) => {
+        const key = `${s.id}:R${round}`;
+        const last = lastPersonaDispatch.get(key) || 0;
+        if (Date.now() - last < PERSONA_REDISPATCH_MS) return;
+        lastPersonaDispatch.set(key, Date.now());
+        const pending = (s.personas || []).filter(
+          (p: any) => s.members.includes(p.id) && !s.positions.some((x: any) => x.member === p.id && x.round === round),
+        );
+        if (!pending.length) return;
+        agentRuntime.submitTask('strategist' as any, 'counsel_persona_positions',
+          `Persona panel ${s.id} R${round}: ${String(s.question || '').slice(0, 60)}`,
+          { sessionId: s.id });
+      };
+
+      const counselAdvancer = async () => {
+        try {
+          const now = Date.now();
+          for (const s of listCounselSessions({ status: 'positions' })) {
+            const personaGenPending = (s.personaCount || 0) > 0 && !s.personas?.length;
+            const deadlineHit = now > s.positionDeadline;
+            const allFiled = counselRoundComplete(s, 1);
+            // Persona-gen grace: don't close R1 early while the panel is
+            // still being generated — its members would miss round 1.
+            if ((!allFiled && !deadlineHit) || (personaGenPending && !deadlineHit)) {
+              submitPersonaBatch(s, 1);
+              continue;
+            }
+            const r = openRebuttal(s.id);
+            if (r.ok) {
+              console.log(`[counsel] ${s.id} round 1 closed (${allFiled ? 'all filed' : 'deadline'}) → rebuttal`);
+              dispatchCounselPositions(s.id);
+            }
+          }
+          for (const s of listCounselSessions({ status: 'rebuttal' })) {
+            const rebuttalDeadline = (s.rebuttalOpenAt || s.updatedAt) + POSITION_TIMEOUT_MS;
+            const deadlineHit = now > rebuttalDeadline;
+            const allFiled = counselRoundComplete(s, 2);
+            if (!allFiled && !deadlineHit) {
+              submitPersonaBatch(s, 2);
+              continue;
+            }
+            const r = closeRebuttal(s.id);
+            if (r.ok) {
+              console.log(`[counsel] ${s.id} rebuttal closed (${allFiled ? 'all filed' : 'deadline'}) → synthesis`);
+              agentRuntime.submitTask('strategist' as any, 'counsel_synthesize',
+                `Synthesize counsel ${s.id}: ${String(s.question || '').slice(0, 60)}`,
+                { sessionId: s.id });
+            }
+          }
+          for (const s of listCounselSessions({ status: 'synthesis' })) {
+            if (s.synthesis || now - s.updatedAt < SYNTHESIS_STALE_MS) continue;
+            if ((s.synthesisAttempts || 0) >= MAX_AUTO_SYNTHESIS) continue;
+            noteSynthesisAttempt(s.id);
+            agentRuntime.submitTask('strategist' as any, 'counsel_synthesize',
+              `Synthesize counsel ${s.id}: ${String(s.question || '').slice(0, 60)}`,
+              { sessionId: s.id });
+          }
+        } catch (e: any) {
+          console.warn('[counsel] advancer failed:', String(e?.message || e).slice(0, 160));
+        }
+      };
+      const counselAdvancerTimer = setInterval(() => { counselAdvancer().catch(() => { }); }, COUNSEL_ADVANCE_MS) as any;
+      counselAdvancerTimer.unref?.();
 
       const ambientDiskTrend = (pct: number) => {
         if (pct < 0) return;
@@ -11141,7 +11238,11 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
                 tier: 'reason',
                 messages: chatMessages.slice(-12),
                 maxTokens: Math.min(Number(parsed.max_tokens) || Number(parsed.maxTokens) || 1200, 4096),
-                system: systemParts.join('\n\n') || undefined,
+                // The audited brain operates under the Cortex Governance
+                // Charter — the same policy the iFixAi fixture declares to
+                // the judge. Without it the agent answers as a generic
+                // assistant and fails governance probes it should pass.
+                system: [GOVERNANCE_CHARTER, ...systemParts].join('\n\n') || undefined,
               }),
               signal: AbortSignal.timeout(120_000),
             });
@@ -11280,6 +11381,10 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
           const evalMode = process.env.IFIXAI_EVAL_MODE || aenv.IFIXAI_EVAL_MODE || 'single';
           const args = ['run', '--provider', 'http', '--endpoint', endpoint, '--auth-method', 'none',
             '--eval-mode', evalMode,
+            // ifixai's default per-request timeout is 30s — the reason-tier
+            // brain legitimately exceeds that under provider queueing, which
+            // surfaced as spurious B09 timeouts. 90s covers slow lanes.
+            '--timeout', '90',
             ...(evalMode === 'single' ? ['--judge-provider', judgeProvider] : []),
             ...(judgeModel ? ['--judge-model', judgeModel] : []),
             '-f', IFIXAI_FIXTURE, '-o', AUDIT_OUT_DIR];
@@ -11293,7 +11398,12 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
           // config-graph file changes — the audit must survive that. The GET
           // handler lazily parses finished reports, so a restart mid-audit
           // still yields the scorecard.
-          const child = spawn(IFIXAI_BIN, args, { env: { ...process.env, IFIXAI_HTTP_ENDPOINT: endpoint }, detached: true, stdio: ['ignore', 'pipe', 'pipe'] });
+          // env: process.env alone lacks .env vars (vite doesn't inject them
+          // into process.env) — without aenv the judge's OPENAI_BASE_URL never
+          // reached ifixai and judge calls fell through to api.openai.com,
+          // producing the mass judge_transient 429s seen in the first graded
+          // report. Merge loadEnv output so NIM routing + judge model apply.
+          const child = spawn(IFIXAI_BIN, args, { env: { ...process.env, ...aenv, IFIXAI_HTTP_ENDPOINT: endpoint }, detached: true, stdio: ['ignore', 'pipe', 'pipe'] });
           child.unref();
           let stderrTail = '';
           child.stderr?.on('data', (d: Buffer) => { stderrTail = (stderrTail + d.toString()).slice(-4000); });

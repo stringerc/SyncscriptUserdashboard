@@ -36,6 +36,7 @@ import {
   filePosition,
   getCounselSession,
   memberLabel,
+  type CounselPersona,
   type CounselSession,
 } from '../cortex-counsel';
 
@@ -169,15 +170,13 @@ export async function runCounselPersonas(ctx: AgentContext, runtime: AgentRuntim
   // personas (it generated them; scout's small daily budget must not be
   // able to stall a deliberation mid-session).
   const round = attached.session.status === 'rebuttal' ? 2 : 1;
-  let dispatched = 0;
-  for (const p of attached.session.personas || []) {
-    const already = attached.session.positions.some((x) => x.member === p.id && x.round === round);
-    if (already) continue;
-    const sub = runtime.submitTask('strategist' as AgentId, 'counsel_persona_position',
-      `Persona ${p.callSign} on ${sessionId}: ${s.question.slice(0, 70)}`,
-      { sessionId, personaId: p.id });
-    if (sub.ok) dispatched++;
-  }
+  const pending = (attached.session.personas || []).filter(
+    (p) => !attached.session!.positions.some((x) => x.member === p.id && x.round === round),
+  );
+  const sub = runtime.submitTask('strategist' as AgentId, 'counsel_persona_positions',
+    `Persona panel ${sessionId} R${round}: ${s.question.slice(0, 60)}`,
+    { sessionId });
+  const dispatched = sub.ok ? pending.length : 0;
 
   ctx.progress(1);
   return {
@@ -209,27 +208,15 @@ function extractJson(text: string): any | null {
   try { return JSON.parse(raw); } catch { return null; }
 }
 
-/** SCOUT worker kind 'counsel_persona_position': one ephemeral persona
- *  files one Evidence-or-Silence position. Round semantics identical to
- *  runCounselPosition — independent R1, anonymized rebuttal R2. */
-export async function runPersonaPosition(ctx: AgentContext) {
-  const sessionId = String(ctx.task.input.sessionId || '');
-  const personaId = String(ctx.task.input.personaId || '');
-  const s = getCounselSession(sessionId);
-  if (!s) return { error: `counsel session ${sessionId} not found` };
-  if (!['positions', 'rebuttal'].includes(s.status)) {
-    return { error: `session ${sessionId} is ${s.status} — not collecting positions`, sessionStatus: s.status };
-  }
-  const persona = (s.personas || []).find((p) => p.id === personaId);
-  if (!persona) return { error: `persona ${personaId} not attached to session ${sessionId}` };
-  if (!s.members.includes(personaId)) return { error: `${personaId} is not a member of session ${sessionId}` };
-
-  const round: 1 | 2 = s.status === 'rebuttal' ? 2 : 1;
-  if (s.positions.filter((p) => p.member === personaId && p.round === round).length >= 1) {
-    return { error: `${personaId} already filed round-${round}` };
-  }
-
-  ctx.progress(0.2);
+/** One persona, one position attempt: grounding recall → prompt → LLM →
+ *  parse → filePosition. Shared by the single-task worker and the batch
+ *  fan-out. Returns a result object; never throws on LLM/parse failure. */
+async function personaPositionAttempt(
+  ctx: AgentContext,
+  s: CounselSession,
+  persona: CounselPersona,
+  round: 1 | 2,
+): Promise<{ ok: boolean; error?: string; stance?: string; confidence?: number; premortem?: boolean; raw?: string }> {
   const isRebuttal = round === 2;
   const premortem = s.mode === 'premortem';
 
@@ -264,7 +251,6 @@ export async function runPersonaPosition(ctx: AgentContext) {
     `Rules: keyEvidence MUST cite real, checkable facts from the brief, project memory, or your persona's domain knowledge — never invent. If evidence is thin, vote conditional or no-go. reasoning ≤400 chars.`,
   ].filter(Boolean).join('\n');
 
-  ctx.progress(0.5);
   const text = await ctx.llm({
     tier: 'reason',
     maxTokens: 1400,
@@ -273,13 +259,12 @@ export async function runPersonaPosition(ctx: AgentContext) {
       { role: 'user', content: prompt },
     ],
   });
-  ctx.progress(0.85);
 
   const parsed = extractJson(text);
-  if (!parsed) return { error: 'LLM returned no JSON position', raw: text.slice(0, 300) };
+  if (!parsed) return { ok: false, error: 'LLM returned no JSON position', raw: text.slice(0, 300), premortem };
 
-  const res = filePosition(sessionId, {
-    member: personaId,
+  const res = filePosition(s.id, {
+    member: persona.id,
     stance: parsed.stance,
     confidence: typeof parsed.confidence === 'number' ? parsed.confidence : 0.5,
     keyEvidence: Array.isArray(parsed.keyEvidence) ? parsed.keyEvidence.map(String) : [],
@@ -287,20 +272,110 @@ export async function runPersonaPosition(ctx: AgentContext) {
     requiredConditions: Array.isArray(parsed.requiredConditions) ? parsed.requiredConditions.map(String) : [],
     reasoning: String(parsed.reasoning || ''),
   });
+  if (!res.ok) return { ok: false, error: res.error, premortem };
+  return { ok: true, stance: parsed.stance, confidence: parsed.confidence, premortem };
+}
 
+/** SCOUT worker kind 'counsel_persona_position': one ephemeral persona
+ *  files one Evidence-or-Silence position. Round semantics identical to
+ *  runCounselPosition — independent R1, anonymized rebuttal R2. */
+export async function runPersonaPosition(ctx: AgentContext) {
+  const sessionId = String(ctx.task.input.sessionId || '');
+  const personaId = String(ctx.task.input.personaId || '');
+  const s = getCounselSession(sessionId);
+  if (!s) return { error: `counsel session ${sessionId} not found` };
+  if (!['positions', 'rebuttal'].includes(s.status)) {
+    return { error: `session ${sessionId} is ${s.status} — not collecting positions`, sessionStatus: s.status };
+  }
+  const persona = (s.personas || []).find((p) => p.id === personaId);
+  if (!persona) return { error: `persona ${personaId} not attached to session ${sessionId}` };
+  if (!s.members.includes(personaId)) return { error: `${personaId} is not a member of session ${sessionId}` };
+
+  const round: 1 | 2 = s.status === 'rebuttal' ? 2 : 1;
+  if (s.positions.filter((p) => p.member === personaId && p.round === round).length >= 1) {
+    return { error: `${personaId} already filed round-${round}` };
+  }
+
+  ctx.progress(0.2);
+  const r = await personaPositionAttempt(ctx, s, persona, round);
   ctx.progress(1);
-  if (!res.ok) return { error: res.error };
+  if (!r.ok) return { error: r.error, raw: r.raw };
   return {
     filed: true,
     sessionId,
     round,
     member: personaId,
     persona: memberLabel(s, personaId),
-    stance: parsed.stance,
-    confidence: parsed.confidence,
-    premortem,
+    stance: r.stance,
+    confidence: r.confidence,
+    premortem: r.premortem,
     next: round === 1
       ? 'round 1 filed — session advances to rebuttal when standing positions are in or timeout hits'
       : 'rebuttal filed — session ready for STRATEGIST synthesis',
+  };
+}
+
+// ── Batch fan-out (STRATEGIST: counsel_persona_positions) ───────────────────
+// One task files every pending persona position for the current round.
+// Persona calls run with bounded concurrency inside the task — the
+// per-agent queue stays at concurrency 1, but the LLM calls themselves
+// overlap. This replaces the old N-tasks-on-strategist pattern that
+// serialized a 5-persona panel into ~10 sequential reason-tier calls.
+
+const BATCH_CONCURRENCY = 3;
+const BATCH_MAX_ATTEMPTS = 2;
+
+export async function runPersonaPositionsBatch(ctx: AgentContext) {
+  const sessionId = String(ctx.task.input.sessionId || '');
+  const s = getCounselSession(sessionId);
+  if (!s) return { error: `counsel session ${sessionId} not found` };
+  if (!['positions', 'rebuttal'].includes(s.status)) {
+    return { error: `session ${sessionId} is ${s.status} — not collecting positions`, sessionStatus: s.status };
+  }
+  const round: 1 | 2 = s.status === 'rebuttal' ? 2 : 1;
+  const pending = (s.personas || []).filter(
+    (p) => s.members.includes(p.id)
+      && !s.positions.some((x) => x.member === p.id && x.round === round),
+  );
+  if (!pending.length) return { skipped: true, reason: `no pending persona positions for round ${round}` };
+
+  const results: { persona: string; ok: boolean; error?: string; stance?: string }[] = [];
+  let cursor = 0;
+  const worker = async () => {
+    while (cursor < pending.length) {
+      const persona = pending[cursor++];
+      let lastErr = '';
+      for (let attempt = 1; attempt <= BATCH_MAX_ATTEMPTS; attempt++) {
+        try {
+          const r = await personaPositionAttempt(ctx, s, persona, round);
+          if (r.ok) {
+            results.push({ persona: persona.id, ok: true, stance: r.stance });
+            lastErr = '';
+            break;
+          }
+          lastErr = r.error || 'unknown';
+          // Session advanced mid-flight or member rejected — retrying is pointless.
+          if (/already filed|not collecting|not a member|session is/i.test(lastErr)) break;
+        } catch (e: any) {
+          lastErr = String(e?.message || e);
+        }
+      }
+      if (lastErr) results.push({ persona: persona.id, ok: false, error: lastErr.slice(0, 160) });
+      ctx.progress(Math.min(0.95, results.length / pending.length));
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(BATCH_CONCURRENCY, pending.length) }, worker));
+
+  const filed = results.filter((r) => r.ok).length;
+  ctx.progress(1);
+  return {
+    sessionId,
+    round,
+    filed,
+    failed: results.length - filed,
+    results,
+    next: filed === pending.length
+      ? 'all persona positions filed'
+      : 'partial filing — sweep will re-dispatch missing personas until deadline',
   };
 }
