@@ -44,7 +44,9 @@ async function createEngine(): Promise<EouEngine | null> {
       import('onnxruntime-web'),
       import('@huggingface/transformers'),
     ]);
-    ort.env.wasm.wasmPaths = 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.22.0/dist/';
+    // Local WASM served from public/vad/wasm — version-matched to the
+    // installed onnxruntime-web, no CDN dependency.
+    ort.env.wasm.wasmPaths = '/vad/wasm/';
     const session = await ort.InferenceSession.create(MODEL_URL, {
       executionProviders: ['wasm'],
       graphOptimizationLevel: 'all',

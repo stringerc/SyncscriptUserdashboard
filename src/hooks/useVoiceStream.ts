@@ -24,6 +24,7 @@ import { reportTtsRum } from '../utils/tts-rum-beacon';
 import { stepVuEnvelope } from '../utils/audio-vu-envelope';
 import { voiceLatencyMark, voiceLatencyMeasure } from '../utils/voice-latency-debug';
 import { createPcmFeeder, getEouEngine } from '../lib/voice/semantic-eou';
+import { MicVAD } from '@ricky0123/vad-web';
 import type {
   VoiceEngineState,
   VoiceEngineStatus,
@@ -215,6 +216,7 @@ export function useVoiceStream(options: UseVoiceStreamOptions = {}) {
   const vadTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const vadAudioCtxRef = useRef<AudioContext | null>(null);
   const vadFeederStopRef = useRef<(() => void) | null>(null);
+  const vadNeuralRef = useRef<MicVAD | null>(null);
   const synthRef = useRef<SpeechSynthesis | null>(null);
   const currentUtteranceRef = useRef<SpeechSynthesisUtterance | null>(null);
   const isListeningRef = useRef(false);
@@ -470,6 +472,9 @@ export function useVoiceStream(options: UseVoiceStreamOptions = {}) {
     vadFeederStopRef.current = null;
     try { vadAudioCtxRef.current?.close(); } catch {}
     vadAudioCtxRef.current = null;
+    const neural = vadNeuralRef.current;
+    vadNeuralRef.current = null;
+    if (neural) void neural.destroy().catch(() => {});
   }, []);
 
   const startEnergyVAD = useCallback((stream: MediaStream) => {
@@ -493,35 +498,73 @@ export function useVoiceStream(options: UseVoiceStreamOptions = {}) {
       let ambientFloor = 0.008;
       let eouScoring = false;
       let eouExtended = false;
-      vadTimerRef.current = setInterval(() => {
-        analyser.getFloatTimeDomainData(floatBuf);
-        let sum = 0;
-        for (let i = 0; i < floatBuf.length; i++) {
-          const v = floatBuf[i];
-          sum += v * v;
-        }
-        const rms = Math.sqrt(sum / floatBuf.length);
-
-        // Adaptive noise floor tracking during quiet windows
-        if (rms < 0.02) {
-          ambientFloor = ambientFloor * 0.95 + rms * 0.05;
-        }
-        const speechThreshold = Math.max(0.012, ambientFloor * 2.0);
-
-        // Speech energy detected: reset silence counter + EOU state.
-        // After a real pause, clear the smart-turn window so stale audio
-        // from the previous utterance can't bias the next score.
-        if (rms > speechThreshold) {
-          if (silenceMs >= 250) {
-            void getEouEngine().then((eng) => eng?.reset());
-          }
-          silenceMs = 0;
+      // Neural VAD (Silero v5, AudioWorklet) — once frames flow it becomes the
+      // authoritative speech/silence clock; the RMS analyser above remains as
+      // the automatic fallback if the model/worklet never comes up.
+      let neuralLive = false;
+      let neuralLastSpeechAt = 0;
+      const NEURAL_SPEECH_ON = 0.25;
+      void MicVAD.new({
+        model: 'v5',
+        baseAssetPath: '/vad/',
+        onnxWASMBasePath: '/vad/wasm/',
+        startOnLoad: false,
+        onSpeechStart: () => {
+          neuralLastSpeechAt = performance.now();
           eouExtended = false;
           vadPauseFiredRef.current = false;
-          return;
-        }
+          void getEouEngine().then((eng) => eng?.reset());
+        },
+        onFrameProcessed: (probs) => {
+          neuralLive = true;
+          if (probs.isSpeech > NEURAL_SPEECH_ON) {
+            neuralLastSpeechAt = performance.now();
+          }
+        },
+      }).then(async (vad) => {
+        vadNeuralRef.current = vad;
+        await vad.start();
+      }).catch(() => { /* neural VAD unavailable — RMS path continues */ });
+      vadTimerRef.current = setInterval(() => {
+        if (neuralLive) {
+          // Neural clock: silence = ms since last speech-probable frame.
+          silenceMs = performance.now() - neuralLastSpeechAt;
+          if (silenceMs < 300) {
+            // Fresh speech — cancel a pending semantic extension and
+            // unsuppress commits, mirroring the RMS speech branch.
+            eouExtended = false;
+            vadPauseFiredRef.current = false;
+          }
+        } else {
+          analyser.getFloatTimeDomainData(floatBuf);
+          let sum = 0;
+          for (let i = 0; i < floatBuf.length; i++) {
+            const v = floatBuf[i];
+            sum += v * v;
+          }
+          const rms = Math.sqrt(sum / floatBuf.length);
 
-        silenceMs += 50;
+          // Adaptive noise floor tracking during quiet windows
+          if (rms < 0.02) {
+            ambientFloor = ambientFloor * 0.95 + rms * 0.05;
+          }
+          const speechThreshold = Math.max(0.012, ambientFloor * 2.0);
+
+          // Speech energy detected: reset silence counter + EOU state.
+          // After a real pause, clear the smart-turn window so stale audio
+          // from the previous utterance can't bias the next score.
+          if (rms > speechThreshold) {
+            if (silenceMs >= 250) {
+              void getEouEngine().then((eng) => eng?.reset());
+            }
+            silenceMs = 0;
+            eouExtended = false;
+            vadPauseFiredRef.current = false;
+            return;
+          }
+
+          silenceMs += 50;
+        }
         const t = latestInterimRef.current;
         const hasText = t && t.length >= 3;
         // Semantic gate: at ~600ms silence ask smart-turn whether the turn is
