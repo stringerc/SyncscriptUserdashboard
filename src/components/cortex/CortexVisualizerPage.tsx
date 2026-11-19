@@ -324,7 +324,7 @@ export default function CortexVisualizerPage() {
       const s = localStorage.getItem('cortex_core_quality') as CoreQualityMode | null;
       if (s === 'ultra' || s === 'smooth' || s === 'cinematic') return s;
     }
-    return 'ultra';
+    return 'cinematic';
   });
   const [initiativeCount, setInitiativeCount] = useState(0);
   const initiativeAutoOpenedRef = useRef(false);

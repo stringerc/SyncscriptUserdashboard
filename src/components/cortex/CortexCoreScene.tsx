@@ -3175,13 +3175,13 @@ export type CoreQualityMode = 'ultra' | 'smooth' | 'cinematic';
 
 function PostFX({
   live,
-  qualityMode = 'ultra',
+  qualityMode = 'cinematic',
 }: {
   live: React.MutableRefObject<LiveSignal>;
   qualityMode?: CoreQualityMode;
 }) {
   if (qualityMode === 'ultra') {
-    return null; // DIRECT HARDWARE BLIT: 0 post-processing passes, 0 offscreen buffers, native 120 FPS
+    return null; // Direct native WebGL pass-through
   }
 
   const smooth = useRef(0);
@@ -3385,7 +3385,7 @@ function CortexCoreInner({
   replayTrack,
   holoParallax,
   headParallax,
-  qualityMode = 'ultra',
+  qualityMode = 'cinematic',
 }: {
   fx: React.MutableRefObject<{ shocks: Shock[] }>;
   selectedAgentId?: string | null;
@@ -3482,7 +3482,7 @@ function SceneWithInput({
   replayTrack,
   holoParallax,
   headParallax,
-  qualityMode = 'ultra',
+  qualityMode = 'cinematic',
 }: {
   selectedAgentId?: string | null;
   onSelectAgent?: (id: string | null) => void;
@@ -3569,7 +3569,7 @@ export const CortexCoreScene: React.FC<CortexCoreSceneProps> = ({
       const saved = localStorage.getItem('cortex_core_quality') as CoreQualityMode | null;
       if (saved === 'ultra' || saved === 'smooth' || saved === 'cinematic') return saved;
     }
-    return 'ultra';
+    return 'cinematic';
   });
 
   const qualityMode = externalPerfMode ?? internalQuality;
