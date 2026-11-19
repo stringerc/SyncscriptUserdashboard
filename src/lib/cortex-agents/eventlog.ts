@@ -147,6 +147,53 @@ export function recoverNextSeq(): number {
   return max + 1;
 }
 
+const SEQ_LOCK = '.seq.lock';
+const SEQ_HEAD = '.seq-head';
+const LOCK_STALE_MS = 10_000;
+const LOCK_WAIT_MS = 2_000;
+
+function seqHeadPath(): string { return path.join(getLogDir(), SEQ_HEAD); }
+function seqLockPath(): string { return path.join(getLogDir(), SEQ_LOCK); }
+
+function readSeqHead(): number {
+  try {
+    const n = parseInt(fs.readFileSync(seqHeadPath(), 'utf8').trim(), 10);
+    return Number.isFinite(n) ? n : 0;
+  } catch { return 0; }
+}
+
+function writeSeqHead(n: number): void {
+  const tmp = seqHeadPath() + '.tmp';
+  fs.writeFileSync(tmp, String(n), 'utf8');
+  fs.renameSync(tmp, seqHeadPath());
+}
+
+/** Cross-process mutex for seq allocation. Stale locks (>10s) are broken so a
+ *  crashed writer can never wedge the log. Returns false if it cannot be
+ *  acquired in time — callers degrade to unlocked append rather than drop
+ *  the event. */
+function acquireSeqLock(): (() => void) | null {
+  const lockPath = seqLockPath();
+  const deadline = Date.now() + LOCK_WAIT_MS;
+  for (;;) {
+    try {
+      const fd = fs.openSync(lockPath, 'wx');
+      fs.writeFileSync(fd, `${process.pid} ${Date.now()}`);
+      fs.closeSync(fd);
+      return () => { try { fs.unlinkSync(lockPath); } catch { /* already gone */ } };
+    } catch (err: any) {
+      if (err?.code !== 'EEXIST') return null;
+      try {
+        const st = fs.statSync(lockPath);
+        if (Date.now() - st.mtimeMs > LOCK_STALE_MS) { fs.unlinkSync(lockPath); continue; }
+      } catch { continue; }
+      if (Date.now() > deadline) return null;
+      const wait = new Int32Array(new SharedArrayBuffer(4));
+      Atomics.wait(wait, 0, 0, 25);
+    }
+  }
+}
+
 export function appendEvent(e: AgentEvent): PersistedEvent | null {
   const logDir = getLogDir();
   try {
@@ -156,9 +203,22 @@ export function appendEvent(e: AgentEvent): PersistedEvent | null {
     if (!initialized) {
       nextSeq = recoverNextSeq();
       lastHash = recoverLastHash();
+      // Seed the shared high-water mark so a second boot cannot re-issue seqs.
+      if (readSeqHead() < nextSeq - 1) writeSeqHead(nextSeq - 1);
       initialized = true;
     }
-    const seq = nextSeq++;
+    // Allocate seq under the cross-process lock: the .seq-head file is the
+    // authoritative high-water mark, so concurrent writers can never issue
+    // the same sequence number.
+    const release = acquireSeqLock();
+    let seq: number;
+    try {
+      seq = Math.max(nextSeq, readSeqHead() + 1);
+      writeSeqHead(seq);
+      nextSeq = seq + 1;
+    } finally {
+      release?.();
+    }
     const record: PersistedEvent = {
       seq,
       prevHash: lastHash,
@@ -278,11 +338,11 @@ export function readEvents(opts: ReadEventsOptions = {}): PersistedEvent[] {
  *  tampering and fails the audit. */
 export function verifyEventLog(): {
   ok: boolean; checked: number; chained: number; legacy: number; linkBreaks: number;
-  altScheme: number; writers: number;
+  altScheme: number; writers: number; duplicateSeqs: number;
   firstBreak: { file: string; seq?: number; reason: string } | null;
 } {
   const result = {
-    ok: true, checked: 0, chained: 0, legacy: 0, linkBreaks: 0, altScheme: 0, writers: 0,
+    ok: true, checked: 0, chained: 0, legacy: 0, linkBreaks: 0, altScheme: 0, writers: 0, duplicateSeqs: 0,
     firstBreak: null as { file: string; seq?: number; reason: string } | null,
   };
   const logDir = getLogDir();
@@ -295,6 +355,7 @@ export function verifyEventLog(): {
     // writer id so interleaved appends from concurrent processes verify
     // independently. Unlabeled legacy-era chained records share '_unlabeled'.
     const expectedPrev = new Map<string, string>();
+    const seenSeqs = new Set<number>();
     for (const file of files) {
       const lines = fs.readFileSync(path.join(logDir, file), 'utf8').split('\n');
       for (const line of lines) {
@@ -303,6 +364,10 @@ export function verifyEventLog(): {
         let rec: Record<string, unknown>;
         try { rec = JSON.parse(line); } catch {
           result.ok = false; result.firstBreak = { file, reason: 'unparseable line' }; return result;
+        }
+        if (typeof rec.seq === 'number' && Number.isFinite(rec.seq)) {
+          if (seenSeqs.has(rec.seq)) result.duplicateSeqs++;
+          else seenSeqs.add(rec.seq);
         }
         if (typeof rec.hash !== 'string') {
           result.legacy++;

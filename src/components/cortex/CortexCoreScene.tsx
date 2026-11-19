@@ -2412,38 +2412,6 @@ function CameraRig({
 
 // ── Post FX with level-reactive params & relativistic IIT-Φ warping ────
 
-function PostFX({ live }: { live: React.MutableRefObject<LiveSignal> }) {
-  const [bucket, setBucket] = React.useState(0);
-  const smooth = useRef(0);
-  const smoothPhi = useRef(0);
-  const smoothThink = useRef(0);
-  const lensing = React.useMemo(() => new LensingEffect(), []);
-  const lensCenter = useRef(new THREE.Vector3());
-
-  useFrame((state, delta) => {
-    // Decay displayed level and smooth IIT-Phi and cognitive load
-    smooth.current += (live.current.rawLevel - smooth.current) * Math.min(1, delta * 6);
-    smoothPhi.current += ((live.current.phiS ?? 0) - smoothPhi.current) * Math.min(1, delta * 3.5);
-    smoothThink.current += ((live.current.think ?? 0) - smoothThink.current) * Math.min(1, delta * 4.0);
-    const b = Math.round(smooth.current * 4);
-    setBucket((prev) => (prev === b ? prev : b));
-
-    // Track the Sovereign Core's projected screen position so the lens stays
-    // glued to it while the camera orbits or chases agents.
-    lensCenter.current.set(0, 0, 0).project(state.camera);
-    lensing.center.set((lensCenter.current.x + 1) / 2, (lensCenter.current.y + 1) / 2);
-    lensing.aspect = state.size.width / Math.max(1, state.size.height);
-    // Mass proxy: integrated information + cognitive load bend spacetime.
-    lensing.strength = Math.min(0.012, smoothPhi.current * 0.004 + smoothThink.current * 0.003 + smooth.current * 0.002);
-    lensing.updateUniforms();
-  });
-
-  const lvl = bucket / 4;
-  // Relativistic spacetime warping: chromatic aberration & Einstein-radius contraction
-  const phiDisp = smoothPhi.current * 0.0016 + smoothThink.current * 0.0012;
-  const vigDarkness = 0.52 + lvl * 0.16 + smoothThink.current * 0.14;
-  const vigOffset = Math.max(0.12, 0.28 - phiDisp * 15);
-
 // ── Stylized gravitational lensing ──────────────────────────────────────
 // A custom postprocessing effect that refracts the frame around the projected
 // position of the Sovereign Core: a radial UV bend that magnifies toward the
@@ -2504,6 +2472,39 @@ class LensingEffect extends Effect {
     this.uAspect.value = this.aspect;
   }
 }
+
+
+function PostFX({ live }: { live: React.MutableRefObject<LiveSignal> }) {
+  const [bucket, setBucket] = React.useState(0);
+  const smooth = useRef(0);
+  const smoothPhi = useRef(0);
+  const smoothThink = useRef(0);
+  const lensing = React.useMemo(() => new LensingEffect(), []);
+  const lensCenter = useRef(new THREE.Vector3());
+
+  useFrame((state, delta) => {
+    // Decay displayed level and smooth IIT-Phi and cognitive load
+    smooth.current += (live.current.rawLevel - smooth.current) * Math.min(1, delta * 6);
+    smoothPhi.current += ((live.current.phiS ?? 0) - smoothPhi.current) * Math.min(1, delta * 3.5);
+    smoothThink.current += ((live.current.think ?? 0) - smoothThink.current) * Math.min(1, delta * 4.0);
+    const b = Math.round(smooth.current * 4);
+    setBucket((prev) => (prev === b ? prev : b));
+
+    // Track the Sovereign Core's projected screen position so the lens stays
+    // glued to it while the camera orbits or chases agents.
+    lensCenter.current.set(0, 0, 0).project(state.camera);
+    lensing.center.set((lensCenter.current.x + 1) / 2, (lensCenter.current.y + 1) / 2);
+    lensing.aspect = state.size.width / Math.max(1, state.size.height);
+    // Mass proxy: integrated information + cognitive load bend spacetime.
+    lensing.strength = Math.min(0.012, smoothPhi.current * 0.004 + smoothThink.current * 0.003 + smooth.current * 0.002);
+    lensing.updateUniforms();
+  });
+
+  const lvl = bucket / 4;
+  // Relativistic spacetime warping: chromatic aberration & Einstein-radius contraction
+  const phiDisp = smoothPhi.current * 0.0016 + smoothThink.current * 0.0012;
+  const vigDarkness = 0.52 + lvl * 0.16 + smoothThink.current * 0.14;
+  const vigOffset = Math.max(0.12, 0.28 - phiDisp * 15);
 
   return (
     <EffectComposer multisampling={0}>
