@@ -225,130 +225,6 @@ export const SECTORS: Record<AgentSectorId, SectorDef> = {
   },
 };
 
-// ── 4 Celestial Biomes Architecture (Keplerian Dyson Solar System) ──
-export type CelestialPlanetId = 'vulcan' | 'mnemosyne' | 'themis' | 'hermes';
-
-export interface CelestialBiomeDef {
-  id: CelestialPlanetId;
-  name: string;
-  codename: string;
-  domain: string;
-  glyph: string;
-  color: string;
-  secondaryColor: string;
-  atmosphereGlow: string;
-  orbitRadiusFactor: number;
-  baseAngle: number;
-  orbitPeriod: number;
-  planetRadius: number;
-  lore: string;
-  atmosphere: string;
-  rings: string;
-  stationedSpecialists: string[];
-}
-
-export const CELESTIAL_BIOMES: Record<CelestialPlanetId, CelestialBiomeDef> = {
-  vulcan: {
-    id: 'vulcan',
-    name: 'VULCAN',
-    codename: 'THE FORGE',
-    domain: 'Engineering & Execution',
-    glyph: '🌋',
-    color: '#f59e0b',
-    secondaryColor: '#38bdf8',
-    atmosphereGlow: 'rgba(245, 158, 11, 0.42)',
-    orbitRadiusFactor: 0.45, // Track I: Innermost high-energy orbit
-    baseAngle: -Math.PI / 2, // North (12 o'clock)
-    orbitPeriod: 96,
-    planetRadius: 26,
-    lore: 'Volcanic cybernetic forge with molten metallic core & laser gantries.',
-    atmosphere: 'Thermal heat shimmer & compilation particle flares.',
-    rings: 'Flowing git commits, syntax diffs & compile tokens.',
-    stationedSpecialists: ['antigravity', 'builder', 'developer', 'architect'],
-  },
-  mnemosyne: {
-    id: 'mnemosyne',
-    name: 'MNEMOSYNE',
-    codename: 'THE AETHER',
-    domain: 'Intel & Strategic Memory',
-    glyph: '🧠',
-    color: '#c084fc',
-    secondaryColor: '#6366f1',
-    atmosphereGlow: 'rgba(192, 132, 252, 0.42)',
-    orbitRadiusFactor: 0.70, // Track II: Mid-Inner cognition orbit
-    baseAngle: 0, // East (3 o'clock)
-    orbitPeriod: 165,
-    planetRadius: 30,
-    lore: 'Bioluminescent sapphire gas giant with synaptic lightning storms.',
-    atmosphere: 'Soft Rayleigh gas haze with floating Hindsight memory nodes.',
-    rings: 'Saturnian engram rings of 102+ crystalline memory asteroids.',
-    stationedSpecialists: ['sentinel', 'scout', 'memory', 'librarian'],
-  },
-  themis: {
-    id: 'themis',
-    name: 'THEMIS',
-    codename: 'THE BASTION',
-    domain: 'Governance & Integrity',
-    glyph: '🛡️',
-    color: '#34d399',
-    secondaryColor: '#10b981',
-    atmosphereGlow: 'rgba(52, 211, 153, 0.42)',
-    orbitRadiusFactor: 0.96, // Track III: Mid-Outer bastion barrier orbit
-    baseAngle: Math.PI / 2, // South (6 o'clock)
-    orbitPeriod: 240,
-    planetRadius: 25,
-    lore: 'Obsidian geometric monolith planet with geodesic force-field shields.',
-    atmosphere: 'Cold vector grid lines reflecting invariant safety boundaries.',
-    rings: '4 Counsel tetrahedral moon beacons (CISO, Adversary, Pragmatist, Buyer).',
-    stationedSpecialists: ['warden', 'counsel', 'veto', 'governor'],
-  },
-  hermes: {
-    id: 'hermes',
-    name: 'HERMES',
-    codename: 'THE PULSE',
-    domain: 'Gateways & Delivery',
-    glyph: '⚡',
-    color: '#06b6d4',
-    secondaryColor: '#f43f5e',
-    atmosphereGlow: 'rgba(6, 182, 212, 0.42)',
-    orbitRadiusFactor: 1.22, // Track IV: Outermost super-luminal transit highway
-    baseAngle: Math.PI, // West (9 o'clock)
-    orbitPeriod: 320,
-    planetRadius: 24,
-    lore: 'Super-luminal solar-amber & neon-cyan transit world with tachyon relays.',
-    atmosphere: 'High-frequency electromagnetic pulse waves radiating into space.',
-    rings: 'Outbound 4K frame buffers & API webhook transfer lanes.',
-    stationedSpecialists: ['strategist', 'openclaw', 'gateway', 'broadcaster'],
-  },
-};
-
-export const getAgentPlanet = (a?: AgentClient | null): CelestialPlanetId => {
-  if (!a) return 'vulcan';
-  const id = (a.id || '').toLowerCase();
-  const role = (a.role || '').toLowerCase();
-
-  // 1. Explicit ID mapping to specialized home world
-  if (['antigravity', 'builder', 'runner', 'devin', 'claudecode', 'developer', 'architect'].includes(id)) return 'vulcan';
-  if (['sentinel', 'scout', 'memory', 'librarian', 'curator', 'forecaster'].includes(id)) return 'mnemosyne';
-  if (['warden', 'counsel', 'veto', 'reviewer', 'trainer', 'browser-guard', 'governor'].includes(id)) return 'themis';
-  if (['strategist', 'openclaw', 'hermes', 'distributor', 'broadcaster', 'plan-decomposer', 'ledger-7', 'prep', 'brief', 'debrief'].includes(id)) return 'hermes';
-
-  // 2. Semantic role mapping
-  if (/build|code|engineer|architect|developer|terminal|exec|compile/.test(role)) return 'vulcan';
-  if (/intel|scout|memory|library|curat|forecast|eval|research|hindsight|cognit/.test(role)) return 'mnemosyne';
-  if (/warden|counsel|veto|review|guard|safety|train|invariant|integrity|audit/.test(role)) return 'themis';
-  if (/gateway|claw|hermes|distribut|broadcast|reel|stream|ledger|decomp|transit|pulse/.test(role)) return 'hermes';
-
-  // 3. Fallback based on sector
-  const sec = getAgentSector(a);
-  if (sec === 'command' || sec === 'engineering') return 'vulcan';
-  if (sec === 'intel') return 'mnemosyne';
-  if (sec === 'governance') return 'themis';
-  if (sec === 'gateways') return 'hermes';
-
-  return 'vulcan';
-};
-
 export const SECTOR_ORDER: Record<AgentSectorId, string[]> = {
   command: ['antigravity', 'strategist'],
   engineering: ['builder', 'runner', 'devin', 'claudecode'],
@@ -1181,9 +1057,6 @@ export const CortexAgentsScene: React.FC = () => {
   const [snap, setSnap] = useState<AgentsSnapshotClient>(snapRef.current);
   const [events, setEvents] = useState(agentsClient.events);
   const [selectedAgent, setSelectedAgent] = useState<string | null>(null);
-  const [selectedPlanet, setSelectedPlanet] = useState<CelestialPlanetId | null>(null);
-  const [cockpitAgent, setCockpitAgent] = useState<string | null>(null);
-  const hoverPlanetRef = useRef<CelestialPlanetId | null>(null);
   const [dossiers, setDossiers] = useState<{ id: string; pinned: boolean }[]>([]);
   const [selectedStation, setSelectedStation] = useState<string | null>(null);
   const [towerOpen, setTowerOpen] = useState(false);
@@ -1214,7 +1087,6 @@ export const CortexAgentsScene: React.FC = () => {
   };
   const [nowTs, setNowTs] = useState(() => Date.now());
   const [narrow, setNarrow] = useState(() => typeof window !== 'undefined' && window.innerWidth < 900);
-  const camStateRef = useRef({ x: 0, y: 0, zoom: 1.0 });
   const reducedMotion = useRef(false);
   const voiceLevel = useRef(0);
   const voiceState = useRef<string>('idle');
@@ -1265,11 +1137,7 @@ export const CortexAgentsScene: React.FC = () => {
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
-        if (cockpitAgent !== null) {
-          setCockpitAgent(null);
-        } else if (selectedPlanet !== null) {
-          setSelectedPlanet(null);
-        } else if (inspectedShot !== null) {
+        if (inspectedShot !== null) {
           setInspectedShot(null);
           setPreviewPlaying(false);
         } else if (showExportModal) {
@@ -1279,16 +1147,7 @@ export const CortexAgentsScene: React.FC = () => {
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [cockpitAgent, selectedPlanet, inspectedShot, showExportModal]);
-
-  useEffect(() => {
-    (window as any).__cortexSetCockpitAgent = setCockpitAgent;
-    (window as any).__cortexSetPlanet = setSelectedPlanet;
-    return () => {
-      delete (window as any).__cortexSetCockpitAgent;
-      delete (window as any).__cortexSetPlanet;
-    };
-  }, []);
+  }, [inspectedShot, showExportModal]);
 
   const handleStartRender = () => {
     if (isRendering) return;
@@ -1541,98 +1400,9 @@ export const CortexAgentsScene: React.FC = () => {
     const ro = new ResizeObserver(resize);
     ro.observe(container);
 
-    let time = 0, last = performance.now(), raf = 0;
-    const camZoomRef = { current: camStateRef.current.zoom };
-    const camXRef = { current: camStateRef.current.x };
-    const camYRef = { current: camStateRef.current.y };
-
-    const getPlanetPos = (p: CelestialBiomeDef, w: number, h: number, cx: number, cy: number, t: number) => {
-      const baseRx = Math.min(w * 0.38, 590);
-      const baseRy = Math.min(h * 0.33, 330);
-      const orbitA = p.baseAngle + (reducedMotion.current ? 0 : (t * (Math.PI * 2) / p.orbitPeriod));
-      const px = cx + Math.cos(orbitA) * (baseRx * p.orbitRadiusFactor);
-      const py = cy + Math.sin(orbitA) * (baseRy * p.orbitRadiusFactor);
-      return { x: px, y: py, orbitA, rx: baseRx * p.orbitRadiusFactor, ry: baseRy * p.orbitRadiusFactor };
-    };
-
-    const agentPos = (agents: AgentClient[], agent: AgentClient, w: number, h: number, cx: number, cy: number, t: number) => {
-      const planetId = getAgentPlanet(agent);
-      const pDef = CELESTIAL_BIOMES[planetId];
-      const pPos = getPlanetPos(pDef, w, h, cx, cy, t);
-
-      const planetAgents = agents.filter((x) => getAgentPlanet(x) === planetId).sort(agentSort);
-      const i = Math.max(0, planetAgents.findIndex((x) => x.id === agent.id));
-      const n = Math.max(planetAgents.length, 1);
-
-      const working = agent.status === 'working';
-      const errored = agent.status === 'error';
-
-      // ── Keplerian Multi-Shell Satellite Lanes around Home Planet ──
-      // Distinct non-clashing orbital shells:
-      // Shell 0 (Inner Satellite Lane): radius Rp + 32px
-      // Shell 1 (Mid Satellite Lane):   radius Rp + 54px
-      // Shell 2 (Outer Satellite Lane): radius Rp + 76px
-      const shell = i % 3;
-      const shellCount = Math.max(1, Math.ceil(n / 3));
-      const shellIndex = Math.floor(i / 3);
-
-      // Phase distribution: vessels on the same shell are spaced evenly (e.g. 180 deg apart)
-      const shellPhaseOffset = shell * (Math.PI / 3); // 60 deg staggered offset between shells
-      const basePhase = (shellIndex / shellCount) * Math.PI * 2 + shellPhaseOffset;
-
-      // Keplerian differential orbital speeds: inner shells orbit faster than outer shells
-      const shellSpeedDamp = 1 / Math.sqrt(1 + shell * 0.45);
-      let speed = (working ? 1.25 : errored ? -0.65 : 0.42) * shellSpeedDamp;
-      if (reducedMotion.current) speed = 0;
-
-      const wob = reducedMotion.current ? 0 : Math.sin(t * 0.65 + i * 1.5) * 0.03;
-      const angle = basePhase + (t * speed) + wob;
-
-      let radX = pDef.planetRadius + 32 + shell * 22;
-      let radY = radX * 0.70;
-      let tilt = -0.16 + shell * 0.16;
-
-      if (working) {
-        // High-velocity eccentric transfer corridor sweeping outward into open space
-        radX *= 1.30;
-        radY *= 0.68;
-        tilt = -0.36 + shell * 0.22;
-      } else if (errored) {
-        // High-altitude quarantine warning orbit
-        radX += 28;
-        radY += 28;
-      }
-
-      const lx = Math.cos(angle) * radX;
-      const ly = Math.sin(angle) * radY;
-      const rx = lx * Math.cos(tilt) - ly * Math.sin(tilt);
-      const ry = lx * Math.sin(tilt) + ly * Math.cos(tilt);
-
-      return {
-        x: pPos.x + rx,
-        y: pPos.y + ry,
-        a: angle,
-        tier: agentOrbitTier(agent),
-        sector: getAgentSector(agent),
-        planetId,
-        pPos,
-        shell,
-        orbitRadX: radX,
-        orbitRadY: radY,
-        orbitTilt: tilt,
-      };
-    };
-
     const onMouse = (ev: MouseEvent) => {
       const r = canvas.getBoundingClientRect();
-      const rawX = ev.clientX - r.left;
-      const rawY = ev.clientY - r.top;
-      const w = r.width, h = r.height;
-      const cx = w / 2 + (w >= 900 ? 100 : 0), cy = h / 2 + h * 0.05;
-      const cz = camZoomRef.current;
-      const wx = cx - camXRef.current + (rawX - cx) / cz;
-      const wy = cy - camYRef.current + (rawY - cy) / cz;
-      mouse.current = { x: wx / w, y: wy / h, inside: true };
+      mouse.current = { x: (ev.clientX - r.left) / r.width, y: (ev.clientY - r.top) / r.height, inside: true };
     };
     const onLeave = () => { mouse.current.inside = false; };
     const onClick = (ev: MouseEvent) => {
@@ -1641,82 +1411,34 @@ export const CortexAgentsScene: React.FC = () => {
       const agents = (snapRef.current.agents || []).slice().sort(agentSort);
       const cx = w / 2 + (w >= 900 ? 100 : 0), cy = h / 2 + h * 0.05;
       const mx = ev.clientX - r.left, my = ev.clientY - r.top;
-      const cz = camZoomRef.current;
-      const worldMx = cx - camXRef.current + (mx - cx) / cz;
-      const worldMy = cy - camYRef.current + (my - cy) / cz;
 
-      // 1. Check planet click (Keplerian Dyson Swarm Biomes)
-      let hitPlanet = false;
-      const biomesList = Object.values(CELESTIAL_BIOMES);
-      biomesList.forEach((b) => {
-        const bPos = getPlanetPos(b, w, h, cx, cy, time);
-        if (Math.hypot(worldMx - bPos.x, worldMy - bPos.y) < b.planetRadius + 24) {
-          hitPlanet = true;
-          setSelectedPlanet((cur) => (cur === b.id ? null : b.id));
+      let hitStation = false;
+      const stRx = Math.min(w * 0.37, 580) * 1.48;
+      const stRy = Math.min(h * 0.32, 320) * 1.48;
+      BUSINESS_STATIONS.forEach((st, si) => {
+        const a = st.phase + time * 0.022 + si * 2.1;
+        const sx = cx + Math.cos(a) * stRx;
+        const sy = cy + Math.sin(a) * stRy;
+        if (Math.hypot(mx - sx, my - sy) < 45) {
+          hitStation = true;
+          setSelectedStation((cur) => (cur === st.id ? null : st.id));
           clearEphemeralDossiers();
-          setSelectedStation(null);
         }
       });
 
-      if (!hitPlanet) {
-        // Sovereign Singularity Core click deselects planet & station
-        if (Math.hypot(worldMx - cx, worldMy - cy) < 45) {
-          setSelectedPlanet(null);
-          setSelectedStation(null);
-          clearEphemeralDossiers();
-          return;
-        }
-
-        let hitStation = false;
-        const stRx = Math.min(w * 0.37, 580) * 1.46;
-        const stRy = Math.min(h * 0.32, 320) * 1.46;
-        BUSINESS_STATIONS.forEach((st, si) => {
-          const a = st.phase + time * 0.022 + si * 2.1;
-          const sx = cx + Math.cos(a) * stRx;
-          const sy = cy + Math.sin(a) * stRy;
-          if (Math.hypot(worldMx - sx, worldMy - sy) < 45) {
-            hitStation = true;
-            setSelectedStation((cur) => (cur === st.id ? null : st.id));
-            clearEphemeralDossiers();
+      if (!hitStation) {
+        agents.forEach((a) => {
+          const { x: ax, y: ay } = agentPos(agents, a, w, h, cx, cy, time);
+          if (Math.hypot(mx - ax, my - ay) < 34) {
+            toggleDossier(a.id);
+            setSelectedStation(null);
           }
         });
-
-        if (!hitStation) {
-          agents.forEach((a) => {
-            const { x: ax, y: ay } = agentPos(agents, a, w, h, cx, cy, time);
-            if (Math.hypot(worldMx - ax, worldMy - ay) < 34) {
-              toggleDossier(a.id);
-              setSelectedStation(null);
-            }
-          });
-        }
       }
     };
-
-    // Double-click any agent to zoom into Cockpit Flight Deck
-    const onDblClick = (ev: MouseEvent) => {
-      const r = canvas.getBoundingClientRect();
-      const w = r.width, h = r.height;
-      const agents = (snapRef.current.agents || []).slice().sort(agentSort);
-      const cx = w / 2 + (w >= 900 ? 100 : 0), cy = h / 2 + h * 0.05;
-      const mx = ev.clientX - r.left, my = ev.clientY - r.top;
-      const cz = camZoomRef.current;
-      const worldMx = cx - camXRef.current + (mx - cx) / cz;
-      const worldMy = cy - camYRef.current + (my - cy) / cz;
-
-      agents.forEach((a) => {
-        const { x: ax, y: ay } = agentPos(agents, a, w, h, cx, cy, time);
-        if (Math.hypot(worldMx - ax, worldMy - ay) < 38) {
-          setCockpitAgent(a.id);
-          setSelectedPlanet(null);
-        }
-      });
-    };
-
     canvas.addEventListener('mousemove', onMouse);
     canvas.addEventListener('mouseleave', onLeave);
     canvas.addEventListener('click', onClick);
-    canvas.addEventListener('dblclick', onDblClick);
 
     interface Mote { x: number; y: number; z: number; r: number; tw: number }
     const motes: Mote[] = Array.from({ length: 160 }, (_, i) => ({
@@ -1734,6 +1456,7 @@ export const CortexAgentsScene: React.FC = () => {
     let meteorTimer = 4;
     let lastAgentKey = '';
     const prevStatus = new Map<string, string>();
+    let raf = 0, time = 0, last = performance.now();
 
     // Gradient caches — CanvasGradient objects are expensive to allocate;
     // rebuild only when the quantized inputs actually change.
@@ -1744,6 +1467,58 @@ export const CortexAgentsScene: React.FC = () => {
       x: reducedMotion.current || !mouse.current.inside ? 0 : (mouse.current.x - 0.5) * 18,
       y: reducedMotion.current || !mouse.current.inside ? 0 : (mouse.current.y - 0.5) * 12,
     });
+
+    const agentPos = (agents: AgentClient[], agent: AgentClient, w: number, h: number, cx: number, cy: number, t: number) => {
+      const sector = getAgentSector(agent);
+      const tier = agentOrbitTier(agent);
+      const sectorAgents = agents.filter((x) => getAgentSector(x) === sector).sort(sectorAgentSort(sector));
+      const i = Math.max(0, sectorAgents.findIndex((x) => x.id === agent.id));
+      const n = Math.max(sectorAgents.length, 1);
+
+      let baseA = 0;
+      let k = 1.0;
+      let wob = 0;
+
+      if (sector === 'command') {
+        k = 0.45;
+        if (n === 1) {
+          baseA = -Math.PI / 2;
+        } else if (n === 2) {
+          baseA = -Math.PI / 2 + (i === 0 ? -0.42 : 0.42);
+        } else {
+          const span = 1.1;
+          baseA = -Math.PI / 2 - span / 2 + (i / (n - 1)) * span;
+        }
+        wob = reducedMotion.current ? 0 : Math.sin(t * 0.7 + i * 2.1) * 0.035;
+      } else if (sector === 'satellite') {
+        k = 1.28;
+        baseA = (i / n) * Math.PI * 2 - Math.PI / 3 + (reducedMotion.current ? 0 : t * 0.03);
+        wob = reducedMotion.current ? 0 : Math.sin(t * 0.6 + i * 1.7) * 0.04;
+      } else {
+        const sDef = SECTORS[sector];
+        const centerAngle = sDef.centerAngle;
+        const span = sDef.span;
+
+        if (n === 1) {
+          baseA = centerAngle;
+        } else {
+          baseA = centerAngle - span / 2 + (i / (n - 1)) * span;
+        }
+
+        // Staggered echelon radii: ensures neighbor cards & hit-targets never overlap
+        if (n > 1) {
+          k = (i % 2 === 0) ? 0.84 : 1.06;
+        } else {
+          k = 0.94;
+        }
+
+        wob = reducedMotion.current ? 0 : Math.sin(t * 0.55 + i * 1.8 + (sector === 'engineering' ? 0.5 : sector === 'intel' ? 1.2 : sector === 'governance' ? 2.0 : 2.8)) * 0.03;
+      }
+
+      const rx = Math.min(w * 0.37, 580) * k;
+      const ry = Math.min(h * 0.32, 320) * k;
+      return { x: cx + Math.cos(baseA + wob) * rx, y: cy + Math.sin(baseA + wob) * ry, a: baseA, tier, sector };
+    };
 
     const draw = (now: number) => {
       const dt = Math.min((now - last) / 1000, 0.1); last = now;
@@ -1879,39 +1654,6 @@ export const CortexAgentsScene: React.FC = () => {
         ctx.beginPath(); ctx.moveTo(mt.x, mt.y); ctx.lineTo(mt.x - mt.vx * 0.18, mt.y - mt.vy * 0.18); ctx.stroke();
       }
 
-      // ── 3c. Powers of Ten Camera Glide (Solar System vs. Planetary Orbit vs. Agent Cockpit) ──
-      let { x: camX, y: camY, zoom: camZoom } = camStateRef.current;
-      let targetCamX = 0, targetCamY = 0, targetCamZoom = 1.0;
-      if (cockpitAgent) {
-        const agObj = (snapRef.current.agents || []).find((a) => a.id === cockpitAgent);
-        if (agObj) {
-          const agents = (snapRef.current.agents || []).slice().sort(agentSort);
-          const apos = agentPos(agents, agObj, w, h, cx, cy, time);
-          targetCamX = (cx - apos.x) * 0.75;
-          targetCamY = (cy - apos.y) * 0.75;
-          targetCamZoom = 2.1;
-        }
-      } else if (selectedPlanet) {
-        const pDef = CELESTIAL_BIOMES[selectedPlanet];
-        const pPos = getPlanetPos(pDef, w, h, cx, cy, time);
-        targetCamX = (cx - pPos.x) * 0.65;
-        targetCamY = (cy - pPos.y) * 0.65;
-        targetCamZoom = 1.55;
-      }
-      const lerpFactor = reducedMotion.current ? 1 : Math.min(1, dt * 3.6);
-      camX += (targetCamX - camX) * lerpFactor;
-      camY += (targetCamY - camY) * lerpFactor;
-      camZoom += (targetCamZoom - camZoom) * lerpFactor;
-      camStateRef.current = { x: camX, y: camY, zoom: camZoom };
-      camZoomRef.current = camZoom;
-      camXRef.current = camX;
-      camYRef.current = camY;
-
-      ctx.save();
-      ctx.translate(cx, cy);
-      ctx.scale(camZoom, camZoom);
-      ctx.translate(-cx + camX, -cy + camY);
-
       // ── 4. Reactor core — plasma, rune rings, ember sparks, voice-reactive ──
       const vl = voiceLevel.current;
       const vocal = voiceState.current === 'speaking' || voiceState.current === 'listening';
@@ -1979,301 +1721,101 @@ export const CortexAgentsScene: React.FC = () => {
       const s = snapRef.current;
       const agents = (s.agents || []).slice().sort(agentSort);
 
-      // ── 4 Celestial Biomes Architecture (Keplerian Dyson Solar System) ──
-      const baseRx = Math.min(w * 0.38, 590);
-      const baseRy = Math.min(h * 0.33, 330);
+      // ── Tactical Mission Quadrant Radar Architecture ──
+      const baseRx = Math.min(w * 0.37, 580);
+      const baseRy = Math.min(h * 0.32, 320);
 
-      const biomes = Object.values(CELESTIAL_BIOMES);
-
-      // 1. Keplerian Planetary Orbit Tracks (Ellipses around Sovereign Core Sun)
-      biomes.forEach((b, bIdx) => {
-        const isSel = selectedPlanet === b.id;
-        const isHov = hoverPlanetRef.current === b.id;
-        const orbitRx = baseRx * b.orbitRadiusFactor;
-        const orbitRy = baseRy * b.orbitRadiusFactor;
-        ctx.save();
-        ctx.strokeStyle = isSel ? hexA(b.color, 0.75) : isHov ? hexA(b.color, 0.45) : hexA(b.color, 0.16);
-        ctx.lineWidth = isSel ? 2 : isHov ? 1.5 : 1;
-        ctx.setLineDash(isSel ? [8, 4] : [4, 8]);
-        ctx.beginPath();
-        ctx.ellipse(cx, cy, orbitRx, orbitRy, 0, 0, Math.PI * 2);
-        ctx.stroke();
-        ctx.setLineDash([]);
-
-        // Elegant astronomical orbit lane marker
-        ctx.font = `7px ${MONO}`;
-        ctx.fillStyle = hexA(b.color, isSel ? 0.65 : 0.28);
-        ctx.textAlign = 'left';
-        const roman = ['I', 'II', 'III', 'IV'][bIdx] || 'I';
-        ctx.fillText(`ORBIT ${roman} // ${b.name}`, cx + orbitRx - 42, cy - 6);
-        ctx.restore();
-      });
-
-      // 2. Inter-Planetary Synaptic Conduits (Hyper-Luminal Laser Data Highways)
-      // Vulcan ⇄ Themis (Audit Invariant Pipeline), Themis ⇄ Hermes (Release & 4K Reel Broadcast)
-      // Mnemosyne ⇄ Vulcan (Hindsight Engram Recall), Hermes ⇄ Mnemosyne (Telemetry Feedback Loop)
-      const CONDUIT_PAIRS: [CelestialPlanetId, CelestialPlanetId, string, string][] = [
-        ['vulcan', 'themis', 'VULCAN ⇄ THEMIS // INVARIANT AUDIT PIPELINE', '#f59e0b'],
-        ['themis', 'hermes', 'THEMIS ⇄ HERMES // SYNDICATION & REEL RELEASE', '#34d399'],
-        ['mnemosyne', 'vulcan', 'MNEMOSYNE ⇄ VULCAN // HINDSIGHT ENGRAM RECALL', '#c084fc'],
-        ['hermes', 'mnemosyne', 'HERMES ⇄ MNEMOSYNE // TELEMETRY FEEDBACK LOOP', '#06b6d4'],
+      // 1. Quadrant Dividing Crosshair Rays (45°, 135°, 225°, 315°)
+      ctx.save();
+      ctx.strokeStyle = 'rgba(103,232,249,0.13)';
+      ctx.lineWidth = 1;
+      ctx.setLineDash([4, 6]);
+      const rayAngles = [
+        -Math.PI * 0.75, // NW
+        -Math.PI * 0.25, // NE
+        Math.PI * 0.25,  // SE
+        Math.PI * 0.75,  // SW
       ];
-
-      CONDUIT_PAIRS.forEach(([p1Id, p2Id, _label, beamCol], cIdx) => {
-        const p1Def = CELESTIAL_BIOMES[p1Id];
-        const p2Def = CELESTIAL_BIOMES[p2Id];
-        const p1Pos = getPlanetPos(p1Def, w, h, cx, cy, time);
-        const p2Pos = getPlanetPos(p2Def, w, h, cx, cy, time);
-
-        ctx.save();
-        ctx.globalCompositeOperation = 'lighter';
-        // Highway Conduit Beam
-        const beamGrad = ctx.createLinearGradient(p1Pos.x, p1Pos.y, p2Pos.x, p2Pos.y);
-        beamGrad.addColorStop(0, hexA(p1Def.color, 0.35));
-        beamGrad.addColorStop(0.5, 'rgba(255,255,255,0.4)');
-        beamGrad.addColorStop(1, hexA(p2Def.color, 0.35));
-        ctx.strokeStyle = beamGrad;
-        ctx.lineWidth = 1.4;
-        ctx.setLineDash([5, 8]);
+      for (const ra of rayAngles) {
+        const cosA = Math.cos(ra);
+        const sinA = Math.sin(ra);
         ctx.beginPath();
-        ctx.moveTo(p1Pos.x, p1Pos.y);
-        ctx.lineTo(p2Pos.x, p2Pos.y);
+        ctx.moveTo(cx + cosA * (baseRx * 0.48), cy + sinA * (baseRy * 0.48));
+        ctx.lineTo(cx + cosA * (baseRx * 1.18), cy + sinA * (baseRy * 1.18));
+        ctx.stroke();
+
+        // Perimeter crosshair tick
+        const tipX = cx + cosA * (baseRx * 1.18);
+        const tipY = cy + sinA * (baseRy * 1.18);
+        ctx.fillStyle = 'rgba(103,232,249,0.35)';
+        ctx.fillRect(tipX - 1.5, tipY - 1.5, 3, 3);
+      }
+      ctx.setLineDash([]);
+      ctx.restore();
+
+      // 2. Command Apex Inner Ring (k = 0.45)
+      ctx.strokeStyle = 'rgba(192,132,252,0.26)';
+      ctx.lineWidth = 1.2;
+      ctx.setLineDash([4, 6]);
+      ctx.beginPath();
+      ctx.ellipse(cx, cy, baseRx * 0.45, baseRy * 0.45, 0, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.setLineDash([]);
+
+      // 3. Staggered Echelon Guide Rings (k = 0.84, k = 1.06)
+      ctx.strokeStyle = 'rgba(103,232,249,0.08)';
+      ctx.lineWidth = 0.8;
+      ctx.setLineDash([2, 8]);
+      ctx.beginPath();
+      ctx.ellipse(cx, cy, baseRx * 0.84, baseRy * 0.84, 0, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.ellipse(cx, cy, baseRx * 1.06, baseRy * 1.06, 0, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.setLineDash([]);
+
+      // 4. Outer Satellite Deck Ring (k = 1.28)
+      const hasSatellites = agents.some((a) => getAgentSector(a) === 'satellite');
+      if (hasSatellites) {
+        ctx.strokeStyle = 'rgba(251,191,36,0.18)';
+        ctx.lineWidth = 1;
+        ctx.setLineDash([4, 8]);
+        ctx.beginPath();
+        ctx.ellipse(cx, cy, baseRx * 1.28, baseRy * 1.28, 0, 0, Math.PI * 2);
         ctx.stroke();
         ctx.setLineDash([]);
 
-        // Continuous Flowing Photon Packets along Conduit Highway
-        const packetProg = (time * 0.35 + cIdx * 0.25) % 1;
-        const ptx = p1Pos.x + (p2Pos.x - p1Pos.x) * packetProg;
-        const pty = p1Pos.y + (p2Pos.y - p1Pos.y) * packetProg;
-        // Packet core & wake
-        ctx.fillStyle = '#ffffff';
-        ctx.beginPath(); ctx.arc(ptx, pty, 2.8, 0, Math.PI * 2); ctx.fill();
-        ctx.fillStyle = hexA(beamCol, 0.8);
-        ctx.beginPath(); ctx.arc(ptx, pty, 6, 0, Math.PI * 2); ctx.fill();
-
-        ctx.restore();
-      });
-
-      // 3. Render 4 Living Celestial Biomes (Planets)
-      biomes.forEach((b) => {
-        const pos = getPlanetPos(b, w, h, cx, cy, time);
-        const isSel = selectedPlanet === b.id;
-        const isHov = hoverPlanetRef.current === b.id;
-        const pr = b.planetRadius * (isSel ? 1.25 : isHov ? 1.12 : 1.0);
-
-        // Atmosphere volumetric radial glow
-        ctx.save();
-        ctx.globalCompositeOperation = 'lighter';
-        const atmoGlow = ctx.createRadialGradient(pos.x, pos.y, pr * 0.8, pos.x, pos.y, pr * 3.4);
-        atmoGlow.addColorStop(0, isSel ? hexA(b.color, 0.65) : isHov ? hexA(b.color, 0.45) : b.atmosphereGlow);
-        atmoGlow.addColorStop(1, 'rgba(0,0,0,0)');
-        ctx.fillStyle = atmoGlow;
-        ctx.beginPath(); ctx.arc(pos.x, pos.y, pr * 3.4, 0, Math.PI * 2); ctx.fill();
-        ctx.restore();
-
-        // 3D Spherical Light Calculation relative to Sovereign Core Sun at (cx, cy)
-        const sunAngle = Math.atan2(cy - pos.y, cx - pos.x);
-        const lx = pos.x + Math.cos(sunAngle) * (pr * 0.38);
-        const ly = pos.y + Math.sin(sunAngle) * (pr * 0.38);
-
-        // Planet 3D Sphere Surface
-        ctx.save();
-        const sphereGrad = ctx.createRadialGradient(lx, ly, pr * 0.1, pos.x, pos.y, pr);
-        sphereGrad.addColorStop(0, '#ffffff'); // Specular Sunward Highlight
-        sphereGrad.addColorStop(0.25, b.secondaryColor);
-        sphereGrad.addColorStop(0.72, b.color);
-        sphereGrad.addColorStop(1, '#03050c'); // Occluded dark side
-        ctx.fillStyle = sphereGrad;
-        ctx.beginPath(); ctx.arc(pos.x, pos.y, pr, 0, Math.PI * 2); ctx.fill();
-
-        // Planet Limb / Fresnel Rim
-        ctx.strokeStyle = hexA(b.color, isSel ? 0.95 : 0.6);
-        ctx.lineWidth = isSel ? 2.2 : 1.4;
-        ctx.beginPath(); ctx.arc(pos.x, pos.y, pr, 0, Math.PI * 2); ctx.stroke();
-        ctx.restore();
-
-        // Concentric Satellite Orbit Shells for Stationed Agents
-        [0, 1, 2].forEach((sh) => {
-          const sRadX = pr + 32 + sh * 22;
-          const sRadY = sRadX * 0.70;
-          const sTilt = -0.16 + sh * 0.16;
-          ctx.save();
-          ctx.translate(pos.x, pos.y);
-          ctx.rotate(sTilt);
-          ctx.strokeStyle = hexA(b.color, isSel ? 0.22 : 0.09);
-          ctx.lineWidth = 0.8;
-          ctx.setLineDash([2, 5]);
-          ctx.beginPath();
-          ctx.ellipse(0, 0, sRadX, sRadY, 0, 0, Math.PI * 2);
-          ctx.stroke();
-          ctx.setLineDash([]);
-          ctx.restore();
-        });
-
-        // ── Unique Biome Geometry & Specialty Features ──
-        if (b.id === 'vulcan') {
-          // 🌋 VULCAN: Rotating Scaffold Rings + Molten Heat Flares + Flowing Git Commit Stream
-          ctx.save();
-          ctx.translate(pos.x, pos.y);
-          ctx.rotate(time * 0.6);
-          ctx.strokeStyle = hexA(b.secondaryColor, 0.45);
-          ctx.lineWidth = 1.2;
-          ctx.setLineDash([6, 6]);
-          ctx.beginPath(); ctx.arc(0, 0, pr * 1.45, 0, Math.PI * 2); ctx.stroke();
-          ctx.setLineDash([]);
-          // Kinetic Piston Gantry ticks
-          for (let k = 0; k < 6; k++) {
-            const ka = (k * Math.PI) / 3;
-            ctx.fillStyle = '#f59e0b';
-            ctx.fillRect(Math.cos(ka) * pr * 1.45 - 2, Math.sin(ka) * pr * 1.45 - 2, 4, 4);
-          }
-          // Streaming Git Commit Hashes & Compile Tokens
-          const VULCAN_TOKENS = ['c7f92a4', '+42/-8', 'git:commit', 'tsc:0err', '6d5d06f', 'build:pass'];
-          ctx.font = `6.5px ${MONO}`;
-          ctx.textAlign = 'center';
-          ctx.textBaseline = 'middle';
-          VULCAN_TOKENS.forEach((tok, tIdx) => {
-            const tAngle = (tIdx / VULCAN_TOKENS.length) * Math.PI * 2 - time * 0.4;
-            const tx = Math.cos(tAngle) * (pr * 1.85);
-            const ty = Math.sin(tAngle) * (pr * 1.85);
-            ctx.fillStyle = 'rgba(245, 158, 11, 0.8)';
-            ctx.fillText(tok, tx, ty);
-          });
-          ctx.restore();
-        } else if (b.id === 'mnemosyne') {
-          // 🧠 MNEMOSYNE: Saturnian Engram Rings with 102+ Crystalline Memory Asteroids
-          ctx.save();
-          ctx.translate(pos.x, pos.y);
-          ctx.rotate(-0.35); // Saturn tilt
-          // Dual engram ring planes
-          ctx.strokeStyle = 'rgba(192, 132, 252, 0.55)';
-          ctx.lineWidth = 2.4;
-          ctx.beginPath();
-          ctx.ellipse(0, 0, pr * 2.2, pr * 0.75, 0, 0, Math.PI * 2);
-          ctx.stroke();
-          ctx.strokeStyle = 'rgba(99, 102, 241, 0.35)';
-          ctx.lineWidth = 1.2;
-          ctx.beginPath();
-          ctx.ellipse(0, 0, pr * 1.75, pr * 0.6, 0, 0, Math.PI * 2);
-          ctx.stroke();
-          // Crystalline Engram Asteroids orbiting on the rings
-          const engramAsteroids = 14;
-          for (let m = 0; m < engramAsteroids; m++) {
-            const ma = (m / engramAsteroids) * Math.PI * 2 + time * (0.35 + (m % 2) * 0.1);
-            const rRadius = (m % 2 === 0) ? pr * 2.2 : pr * 1.75;
-            const rEcc = (m % 2 === 0) ? 0.75 : 0.6;
-            const ex = Math.cos(ma) * rRadius;
-            const ey = Math.sin(ma) * (rRadius * (rEcc / (rRadius / pr)));
-            // Diamond engram crystal
-            ctx.fillStyle = '#ffffff';
-            ctx.beginPath();
-            ctx.moveTo(ex, ey - 2.5); ctx.lineTo(ex + 2, ey); ctx.lineTo(ex, ey + 2.5); ctx.lineTo(ex - 2, ey);
-            ctx.closePath(); ctx.fill();
-            ctx.fillStyle = 'rgba(192, 132, 252, 0.75)';
-            ctx.beginPath(); ctx.arc(ex, ey, 3.8, 0, Math.PI * 2); ctx.fill();
-          }
-          ctx.restore();
-        } else if (b.id === 'themis') {
-          // 🛡️ THEMIS: Obsidian Hexagonal Geodesic Bastion + 4 Counsel Moon Beacons
-          ctx.save();
-          ctx.translate(pos.x, pos.y);
-          ctx.rotate(time * 0.25);
-          // Interlocking Geodesic Shield
-          ctx.strokeStyle = 'rgba(52, 211, 153, 0.55)';
-          ctx.lineWidth = 1.4;
-          ctx.beginPath();
-          for (let h = 0; h < 6; h++) {
-            const ha = (h * Math.PI) / 3;
-            const hx = Math.cos(ha) * pr * 1.35;
-            const hy = Math.sin(ha) * pr * 1.35;
-            if (h === 0) ctx.moveTo(hx, hy); else ctx.lineTo(hx, hy);
-          }
-          ctx.closePath();
-          ctx.stroke();
-          // 4 Counsel Moon Beacons (CISO: ACCEPT, ADVERSARY: DELIBERATING, PRAGMATIST: ACCEPT, BUYER: ACCEPT)
-          const COUNSEL_MOONS = [
-            { label: 'CISO', color: '#34d399', vote: 'ACCEPT' },
-            { label: 'ADV', color: '#fbbf24', vote: 'DELIB' },
-            { label: 'PRAG', color: '#34d399', vote: 'ACCEPT' },
-            { label: 'BUY', color: '#34d399', vote: 'ACCEPT' },
-          ];
-          COUNSEL_MOONS.forEach((moon, c) => {
-            const ca = (c * Math.PI) / 2 - time * 0.75;
-            const cxM = Math.cos(ca) * pr * 1.85;
-            const cyM = Math.sin(ca) * pr * 1.85;
-            const flash = 0.65 + 0.35 * Math.sin(time * 5 + c);
-            ctx.fillStyle = moon.color;
-            ctx.globalAlpha = flash;
-            // Tetrahedral diamond beacon
-            ctx.beginPath();
-            ctx.moveTo(cxM, cyM - 3.5); ctx.lineTo(cxM + 3.5, cyM); ctx.lineTo(cxM, cyM + 3.5); ctx.lineTo(cxM - 3.5, cyM);
-            ctx.closePath(); ctx.fill();
-            ctx.font = `6px ${MONO}`;
-            ctx.textAlign = 'center';
-            ctx.fillText(moon.label, cxM, cyM + 8);
-            ctx.globalAlpha = 1;
-          });
-          ctx.restore();
-        } else if (b.id === 'hermes') {
-          // ⚡ HERMES: Tachyon Warp Relays + Outbound 4K Video Frame Buffers & Webhooks
-          ctx.save();
-          ctx.translate(pos.x, pos.y);
-          // 3 Radiating pulse waves
-          for (let w = 0; w < 3; w++) {
-            const pulseWave = (time * 1.5 + w * 0.8) % 2.4;
-            const pR = pr * (1.1 + pulseWave);
-            ctx.strokeStyle = `rgba(6, 182, 212, ${Math.max(0, 0.65 - pulseWave * 0.25)})`;
-            ctx.lineWidth = 1.2;
-            ctx.beginPath(); ctx.arc(0, 0, pR, 0, Math.PI * 2); ctx.stroke();
-          }
-          // Acceleration transfer gate ticks
-          ctx.rotate(-time * 1.2);
-          ctx.strokeStyle = 'rgba(244, 63, 94, 0.5)';
-          ctx.setLineDash([4, 6]);
-          ctx.beginPath(); ctx.arc(0, 0, pr * 1.5, 0, Math.PI * 2); ctx.stroke();
-          ctx.setLineDash([]);
-          // Outbound 4K Video Frame Buffers & API Webhook Packets
-          const HERMES_LANES = ['4K:900f', 'POST:gw', 'Tachyon:14ms', 'REEL:OK', 'Mux:120BPM'];
-          ctx.font = `6px ${MONO}`;
-          ctx.textAlign = 'center';
-          ctx.textBaseline = 'middle';
-          HERMES_LANES.forEach((tok, hIdx) => {
-            const ha = (hIdx / HERMES_LANES.length) * Math.PI * 2 + time * 0.5;
-            const hx = Math.cos(ha) * (pr * 1.9);
-            const hy = Math.sin(ha) * (pr * 1.9);
-            ctx.fillStyle = 'rgba(6, 182, 212, 0.85)';
-            ctx.fillText(tok, hx, hy);
-          });
-          ctx.restore();
-        }
-
-        // 4. Planetary Biome HUD Name Banner
-        const stationed = agents.filter(x => getAgentPlanet(x) === b.id);
-        const bannerText = `${b.glyph} ${b.name} // ${b.codename}`;
-        const subText = `${b.domain.toUpperCase()} · ${stationed.length} VESSELS`;
-
-        ctx.save();
-        ctx.font = `700 8.5px ${MONO}`;
+        ctx.font = `700 8px ${MONO}`;
         ctx.textAlign = 'center';
+        ctx.fillStyle = 'rgba(251,191,36,0.65)';
+        ctx.fillText('ENTERPRISE SATELLITE DECK', cx, cy - baseRy * 1.28 - 8);
+      }
+
+      // 5. Quadrant HUD Perimeter Banners
+      const drawHudBanner = (bx: number, by: number, text: string, color: string, align: CanvasTextAlign = 'center') => {
+        ctx.save();
+        ctx.font = `700 8px ${MONO}`;
+        ctx.textAlign = align;
         ctx.textBaseline = 'middle';
-        const btw = ctx.measureText(bannerText).width;
-        const bth = 26;
-        const by = pos.y + pr + 18;
-
-        ctx.fillStyle = 'rgba(6, 10, 24, 0.88)';
-        ctx.strokeStyle = isSel ? hexA(b.color, 0.9) : isHov ? hexA(b.color, 0.6) : hexA(b.color, 0.35);
-        ctx.lineWidth = isSel ? 1.8 : 1;
-        ctx.fillRect(pos.x - btw / 2 - 8, by - bth / 2, btw + 16, bth);
-        ctx.strokeRect(pos.x - btw / 2 - 8, by - bth / 2, btw + 16, bth);
-
-        ctx.fillStyle = isSel ? '#ffffff' : b.color;
-        ctx.fillText(bannerText, pos.x, by - 5);
-
-        ctx.font = `7px ${MONO}`;
-        ctx.fillStyle = isSel ? hexA(b.color, 0.95) : 'rgba(165, 243, 252, 0.7)';
-        ctx.fillText(subText, pos.x, by + 6);
+        const tw = ctx.measureText(text).width;
+        const padX = 7, bh = 15;
+        const startX = align === 'center' ? bx - tw / 2 - padX : align === 'left' ? bx : bx - tw - padX * 2;
+        ctx.fillStyle = 'rgba(6,10,22,0.85)';
+        ctx.fillRect(startX, by - bh / 2, tw + padX * 2, bh);
+        ctx.strokeStyle = hexA(color, 0.4);
+        ctx.lineWidth = 1;
+        ctx.strokeRect(startX, by - bh / 2, tw + padX * 2, bh);
+        ctx.fillStyle = color;
+        ctx.fillText(text, align === 'center' ? bx : align === 'left' ? bx + padX : bx - padX, by);
         ctx.restore();
-      });
+      };
+
+      drawHudBanner(cx, cy - baseRy * 0.45 - 12, '★ COMMAND APEX', '#c084fc', 'center');
+      drawHudBanner(cx, cy - baseRy * 1.20 - 4, '▲ NORTH // ENGINEERING & EXECUTION', '#38bdf8', 'center');
+      drawHudBanner(cx + baseRx * 1.16 + 8, cy, '► EAST // INTEL & MEMORY', '#fbbf24', 'left');
+      drawHudBanner(cx, cy + baseRy * 1.20 + 8, '▼ SOUTH // GOVERNANCE & INTEGRITY', '#fb7185', 'center');
+      const westX = Math.max(180, cx - baseRx * 1.16 - 8);
+      drawHudBanner(westX, cy, '◄ WEST // GATEWAYS & DELIVERY', '#06b6d4', 'right');
 
       const agentKey = agents.map(a => `${a.id}:${a.status}:${a.currentTaskId}`).join('|');
       if (agentKey !== lastAgentKey) {
@@ -2294,18 +1836,6 @@ export const CortexAgentsScene: React.FC = () => {
 
       // hover detection
       if (mouse.current.inside) {
-        let bestPlanet: CelestialPlanetId | null = null;
-        let bestPlanetDist = 48;
-        biomes.forEach((b) => {
-          const bPos = getPlanetPos(b, w, h, cx, cy, time);
-          const d = Math.hypot(mouse.current.x * w - bPos.x, mouse.current.y * h - bPos.y);
-          if (d < b.planetRadius + 20 && d < bestPlanetDist) {
-            bestPlanetDist = d;
-            bestPlanet = b.id;
-          }
-        });
-        hoverPlanetRef.current = bestPlanet;
-
         let best: string | null = null, bestD = 34;
         agents.forEach((a) => {
           const { x: ax, y: ay } = agentPos(agents, a, w, h, cx, cy, time);
@@ -2313,9 +1843,8 @@ export const CortexAgentsScene: React.FC = () => {
           if (d < bestD) { bestD = d; best = a.id; }
         });
         hoverAgent.current = best;
-        canvas.style.cursor = (best || bestPlanet) ? 'pointer' : 'crosshair';
+        canvas.style.cursor = best ? 'pointer' : 'crosshair';
       } else {
-        hoverPlanetRef.current = null;
         hoverAgent.current = null;
         canvas.style.cursor = 'crosshair';
       }
@@ -2448,26 +1977,25 @@ export const CortexAgentsScene: React.FC = () => {
           ctx.beginPath(); ctx.arc(ax, ay, 12 + ps[k] * 48, 0, Math.PI * 2); ctx.stroke();
         }
 
-        // data conduit to home planet while working
-        const pDef = CELESTIAL_BIOMES[getAgentPlanet(a)];
-        const pPos = getPlanetPos(pDef, w, h, cx, cy, time);
-        if (working) {
+        // data conduit to core while working or for key specialists
+        const isCoreSpec = ['antigravity', 'builder', 'sentinel', 'scout'].includes(a.id);
+        if (working || isCoreSpec) {
           ctx.save();
           ctx.globalCompositeOperation = 'lighter';
-          const targetX = pPos.x;
-          const targetY = pPos.y;
-          const beam = ctx.createLinearGradient(ax, ay, targetX, targetY);
-          beam.addColorStop(0, hexA(col, 0.45));
-          beam.addColorStop(1, hexA(col, 0.05));
+          const beam = ctx.createLinearGradient(ax, ay, cx, cy);
+          const alphaBase = working ? 0.22 : 0.08;
+          beam.addColorStop(0, hexA(col, alphaBase));
+          beam.addColorStop(1, hexA(col, 0.01));
           ctx.strokeStyle = beam;
-          ctx.lineWidth = 1.6;
-          ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(targetX, targetY); ctx.stroke();
-          const prog = (time * 1.35 + i * 0.37) % 1;
-          const px2 = ax + (targetX - ax) * prog, py2 = ay + (targetY - ay) * prog;
-          ctx.fillStyle = '#ffffff';
-          ctx.beginPath(); ctx.arc(px2, py2, 2.4, 0, Math.PI * 2); ctx.fill();
-          ctx.fillStyle = hexA(col, 0.9);
-          ctx.beginPath(); ctx.arc(px2, py2, 5.0, 0, Math.PI * 2); ctx.fill();
+          ctx.lineWidth = working ? 1.6 : 1.0;
+          ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(cx, cy); ctx.stroke();
+          const prog = (time * (working ? 1.0 : 0.45) + i * 0.37) % 1;
+          const px2 = ax + (cx - ax) * prog, py2 = ay + (cy - ay) * prog;
+          ctx.fillStyle = hexA(col, working ? 0.95 : 0.65);
+          ctx.beginPath(); ctx.arc(px2, py2, working ? 2.8 : 1.6, 0, Math.PI * 2); ctx.fill();
+          // packet wake
+          ctx.fillStyle = hexA(col, working ? 0.3 : 0.15);
+          ctx.beginPath(); ctx.arc(ax + (cx - ax) * Math.max(0, prog - 0.04), ay + (cy - ay) * Math.max(0, prog - 0.04), working ? 1.4 : 0.8, 0, Math.PI * 2); ctx.fill();
           ctx.globalCompositeOperation = 'source-over';
           ctx.restore();
         }
@@ -2486,7 +2014,7 @@ export const CortexAgentsScene: React.FC = () => {
 
         ctx.save();
         ctx.translate(ax, ay);
-        ctx.rotate(Math.atan2(ay - pPos.y, ax - pPos.x) + Math.PI / 2);
+        ctx.rotate(Math.atan2(ay - cy, ax - cx) + Math.PI / 2);
         // engine flare when working
         if (working) {
           const fl = 0.6 + 0.4 * Math.sin(time * 9 + i);
@@ -2766,55 +2294,43 @@ export const CortexAgentsScene: React.FC = () => {
           ctx.fillText(a.name, ax, ay - vr * 1.5 - 8);
         }
 
-        // Anti-clash staggered label placement
-        // Odd vessels place label above the ship, even vessels place label below the ship.
-        // In full solar view (camZoom < 1.25), show sleek callsign/name without overlapping!
-        // When zoomed in (selectedPlanet), always show full name + status.
-        const isZoomed = selectedPlanet !== null || camZoom > 1.25;
-        const placeAbove = (i % 2 === 1);
-        const labelY = placeAbove ? ay - vr * 1.15 - 9 : ay + vr * 1.15 + 15;
-
         ctx.textAlign = 'center';
-        ctx.fillStyle = offline ? 'rgba(100,116,139,0.75)' : hot ? '#ffffff' : INK;
-        ctx.font = `700 ${isZoomed || hot || working ? '9px' : '8px'} ${MONO}`;
-        ctx.fillText(a.name, ax, labelY);
+        ctx.fillStyle = offline ? 'rgba(100,116,139,0.75)' : INK;
+        ctx.font = `700 10px ${MONO}`;
+        ctx.fillText(a.name, ax, ay + vr * 1.15 + 16);
+        ctx.fillStyle = errored ? '#f87171' : isStandupDegraded ? '#fbbf24' : working ? col : DIM;
+        ctx.font = `8px ${MONO}`;
+        const sec = getAgentSector(a);
+        const sDef = SECTORS[sec];
+        const statusLabel = isStandupDegraded
+          ? `[${sDef.badge}] DEGRADED`
+          : isStandupOffline
+            ? `[${sDef.badge}] OFFLINE`
+            : `[${sDef.badge}] ${a.status.toUpperCase()}`;
+        ctx.fillText(statusLabel, ax, ay + vr * 1.15 + 27);
 
-        if (isZoomed || hot || working || errored) {
-          ctx.fillStyle = errored ? '#f87171' : isStandupDegraded ? '#fbbf24' : working ? col : DIM;
-          ctx.font = `7px ${MONO}`;
-          const sec = getAgentSector(a);
-          const sDef = SECTORS[sec];
-          const statusLabel = isStandupDegraded
-            ? `[${sDef.badge}] DEGRADED`
-            : isStandupOffline
-              ? `[${sDef.badge}] OFFLINE`
-              : `[${sDef.badge}] ${a.status.toUpperCase()}`;
-          const statusY = placeAbove ? labelY - 9 : labelY + 9;
-          ctx.fillText(statusLabel, ax, statusY);
-
-          // Standup status dot indicator
-          const badgeColor = isStandupDegraded ? '#fbbf24' : isStandupOffline ? '#f87171' : stInfo?.status === 'healthy' ? '#34d399' : null;
-          if (badgeColor) {
-            ctx.fillStyle = badgeColor;
-            ctx.beginPath();
-            ctx.arc(ax - (ctx.measureText(statusLabel).width / 2) - 5, statusY - 3, 2, 0, Math.PI * 2);
-            ctx.fill();
-          }
+        // Standup status dot indicator
+        const badgeColor = isStandupDegraded ? '#fbbf24' : isStandupOffline ? '#f87171' : stInfo?.status === 'healthy' ? '#34d399' : null;
+        if (badgeColor) {
+          ctx.fillStyle = badgeColor;
+          ctx.beginPath();
+          ctx.arc(ax - (ctx.measureText(statusLabel).width / 2) - 6, ay + vr * 1.15 + 24, 2, 0, Math.PI * 2);
+          ctx.fill();
         }
       });
 
       // ── 5b. Enterprise stations — businesses on the outer orbit ──
       {
-        const stRx = Math.min(w * 0.37, 580) * 1.46;
-        const stRy = Math.min(h * 0.32, 320) * 1.46;
-        ctx.strokeStyle = 'rgba(251,191,36,0.12)';
+        const stRx = Math.min(w * 0.37, 580) * 1.24 * 1.10;
+        const stRy = Math.min(h * 0.32, 320) * 1.24 * 1.10;
+        ctx.strokeStyle = 'rgba(251,191,36,0.10)';
         ctx.setLineDash([1, 9]);
         ctx.beginPath(); ctx.ellipse(cx, cy, stRx, stRy, 0, 0, Math.PI * 2); ctx.stroke();
         ctx.setLineDash([]);
         ctx.font = `7px ${MONO}`;
         ctx.textAlign = 'center';
         ctx.fillStyle = 'rgba(251,191,36,0.35)';
-        ctx.fillText('ORBIT V // ENTERPRISES & SYNDICATION', cx, cy - stRy - 8);
+        ctx.fillText('ENTERPRISES', cx, cy - stRy - 8);
 
         BUSINESS_STATIONS.forEach((st, si) => {
           const stt = stationStatus.current[st.id] || { busy: false, state: 'unknown' as const };
@@ -2863,8 +2379,6 @@ export const CortexAgentsScene: React.FC = () => {
         });
       }
 
-      ctx.restore();
-
       // ── 6. Reticle + coordinate readout ──
       if (mouse.current.inside && !reducedMotion.current) {
         const mx = mouse.current.x * w, my = mouse.current.y * h;
@@ -2898,9 +2412,8 @@ export const CortexAgentsScene: React.FC = () => {
       canvas.removeEventListener('mousemove', onMouse);
       canvas.removeEventListener('mouseleave', onLeave);
       canvas.removeEventListener('click', onClick);
-      canvas.removeEventListener('dblclick', onDblClick);
     };
-  }, [selectedAgent, selectedStation, selectedPlanet, cockpitAgent]);
+  }, [selectedAgent, selectedStation]);
 
   // ── DOM overlay data ──
   const tasksByAgent = new Map<string, AgentTaskClient[]>();
@@ -2927,7 +2440,7 @@ export const CortexAgentsScene: React.FC = () => {
 
       {/* ── Top Header Deck: Tactical Command Holodeck ── */}
       <header style={{
-        position: 'absolute', top: 56, left: '50%', transform: 'translateX(-50%)',
+        position: 'absolute', top: 16, left: '50%', transform: 'translateX(-50%)',
         zIndex: 15, textAlign: 'center', pointerEvents: 'auto',
         display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4,
       }}>
@@ -2946,60 +2459,23 @@ export const CortexAgentsScene: React.FC = () => {
           </span>
         </div>
         <div style={{
-          display: 'flex', alignItems: 'center', gap: 10, fontSize: 8, letterSpacing: '0.15em',
+          display: 'flex', alignItems: 'center', gap: 12, fontSize: 8, letterSpacing: '0.2em',
           color: 'rgba(165,243,252,0.75)', fontFamily: MONO,
         }}>
           <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
             <span style={{ color: '#38bdf8' }}>◈</span> {hindsightNodesCount} MEMORY ENGRAMS
           </span>
           <span>·</span>
-          <button
-            onClick={() => setSelectedPlanet((cur) => cur === 'vulcan' ? null : 'vulcan')}
-            style={{
-              background: selectedPlanet === 'vulcan' ? 'rgba(245,158,11,0.25)' : 'none',
-              border: selectedPlanet === 'vulcan' ? '1px solid #f59e0b' : 'none',
-              borderRadius: 3, padding: '2px 6px',
-              color: '#f59e0b', cursor: 'pointer', fontFamily: MONO, fontSize: 8, fontWeight: 700,
-            }}
-          >
-            🌋 VULCAN
-          </button>
+          <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+            <span style={{ color: '#c084fc' }}>★</span> 4 SPECIALISTS ARMED
+          </span>
           <span>·</span>
-          <button
-            onClick={() => setSelectedPlanet((cur) => cur === 'mnemosyne' ? null : 'mnemosyne')}
-            style={{
-              background: selectedPlanet === 'mnemosyne' ? 'rgba(192,132,252,0.25)' : 'none',
-              border: selectedPlanet === 'mnemosyne' ? '1px solid #c084fc' : 'none',
-              borderRadius: 3, padding: '2px 6px',
-              color: '#c084fc', cursor: 'pointer', fontFamily: MONO, fontSize: 8, fontWeight: 700,
-            }}
-          >
-            🧠 MNEMOSYNE
-          </button>
-          <span>·</span>
-          <button
-            onClick={() => setSelectedPlanet((cur) => cur === 'themis' ? null : 'themis')}
-            style={{
-              background: selectedPlanet === 'themis' ? 'rgba(52,211,153,0.25)' : 'none',
-              border: selectedPlanet === 'themis' ? '1px solid #34d399' : 'none',
-              borderRadius: 3, padding: '2px 6px',
-              color: '#34d399', cursor: 'pointer', fontFamily: MONO, fontSize: 8, fontWeight: 700,
-            }}
-          >
-            🛡️ THEMIS
-          </button>
-          <span>·</span>
-          <button
-            onClick={() => setSelectedPlanet((cur) => cur === 'hermes' ? null : 'hermes')}
-            style={{
-              background: selectedPlanet === 'hermes' ? 'rgba(6,182,212,0.25)' : 'none',
-              border: selectedPlanet === 'hermes' ? '1px solid #06b6d4' : 'none',
-              borderRadius: 3, padding: '2px 6px',
-              color: '#06b6d4', cursor: 'pointer', fontFamily: MONO, fontSize: 8, fontWeight: 700,
-            }}
-          >
-            ⚡ HERMES
-          </button>
+          <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+            <span style={{ color: divergenceClashes.length > 0 ? '#f43f5e' : '#34d399' }}>
+              {divergenceClashes.length > 0 ? '⚠' : '✓'}
+            </span>
+            {divergenceClashes.length > 0 ? `${divergenceClashes.length} CLASHES` : 'ZERO BELIEF DRIFT'}
+          </span>
           <span>·</span>
           <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
             <span style={{ color: '#fbbf24' }}>⚡</span> {workingCount} ACTIVE SPRINT
@@ -3546,10 +3022,9 @@ export const CortexAgentsScene: React.FC = () => {
         const col = AGENT_COLORS[a.id] || (a.spawnSpec ? `hsl(${spawnHue(a.id)} 85% 68%)` : '#94a3b8');
         const tasks = tasksByAgent.get(a.id) || [];
         if (!tasks.length) return null;
-        const pDef = CELESTIAL_BIOMES[getAgentPlanet(a)];
-        const baseA = pDef.baseAngle + ((i % 4) - 1.5) * 0.35;
-        const left = (narrow ? 50 : 57) + Math.cos(baseA) * (narrow ? 32 : 28);
-        const top = 50 + Math.sin(baseA) * 24;
+        const baseA = (i / Math.max(agents.length, 1)) * Math.PI * 2 - Math.PI / 2;
+        const left = (narrow ? 50 : 57) + Math.cos(baseA) * (narrow ? 36 : 33);
+        const top = 50 + Math.sin(baseA) * 28;
         const isFocused = selectedAgent === a.id || tasksByAgent.size === 1;
 
         if (!isFocused) {
@@ -3634,196 +3109,6 @@ export const CortexAgentsScene: React.FC = () => {
       {selectedStation && (
         <OmniSyndicationPanel onClose={() => setSelectedStation(null)} dockLeft={!narrow} />
       )}
-
-      {/* ── Planetary Biome Dossier HUD Card ── */}
-      {selectedPlanet && (() => {
-        const p = CELESTIAL_BIOMES[selectedPlanet];
-        const stationedAgents = agents.filter(x => getAgentPlanet(x) === p.id);
-        return (
-          <>
-            <div
-              onClick={() => setSelectedPlanet(null)}
-              style={{
-                position: 'absolute', inset: 0, zIndex: 40,
-                background: 'rgba(2, 4, 10, 0.55)', backdropFilter: 'blur(4px)',
-              }}
-            />
-            <div
-              role="dialog"
-              aria-modal="true"
-              style={{
-                position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -50%)',
-                zIndex: 42, width: 'min(680px, 94vw)', maxHeight: '86vh',
-                background: 'linear-gradient(170deg, rgba(8,14,30,0.96) 0%, rgba(4,7,18,0.98) 100%)',
-                border: `1px solid ${hexA(p.color, 0.65)}`,
-                borderLeft: `4px solid ${p.color}`,
-                borderRadius: 8,
-                boxShadow: `0 0 48px ${hexA(p.color, 0.25)}, 0 16px 48px rgba(0,0,0,0.85)`,
-                display: 'flex', flexDirection: 'column',
-                overflow: 'hidden', fontFamily: MONO,
-              }}
-            >
-              {/* Header */}
-              <div style={{
-                padding: '12px 16px', borderBottom: `1px solid ${hexA(p.color, 0.25)}`,
-                display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-                background: `linear-gradient(90deg, ${hexA(p.color, 0.12)}, rgba(0,0,0,0))`,
-              }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                  <span style={{ fontSize: 18 }}>{p.glyph}</span>
-                  <div>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                      <span style={{ fontSize: 12, fontWeight: 800, letterSpacing: '0.22em', color: '#ffffff' }}>
-                        PLANET {p.name}
-                      </span>
-                      <span style={{ fontSize: 8, padding: '1px 6px', borderRadius: 10, background: hexA(p.color, 0.2), color: p.color, border: `1px solid ${hexA(p.color, 0.4)}` }}>
-                        {p.codename}
-                      </span>
-                    </div>
-                    <div style={{ fontSize: 8, color: 'rgba(165,243,252,0.7)', letterSpacing: '0.12em', marginTop: 2 }}>
-                      SECTOR DOMAIN // {p.domain.toUpperCase()}
-                    </div>
-                  </div>
-                </div>
-                <button
-                  onClick={() => setSelectedPlanet(null)}
-                  style={{
-                    background: 'none', border: 'none', color: 'rgba(165,243,252,0.6)',
-                    cursor: 'pointer', fontFamily: MONO, fontSize: 14,
-                  }}
-                  title="Close (Esc)"
-                >
-                  ✕
-                </button>
-              </div>
-
-              {/* Body */}
-              <div style={{ padding: '16px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 14 }}>
-                {/* Lore & Atmospheric Telemetry */}
-                <div style={{
-                  background: 'rgba(6,10,24,0.6)', border: `1px solid ${hexA(p.color, 0.2)}`,
-                  borderRadius: 4, padding: '12px 14px', display: 'flex', flexDirection: 'column', gap: 8,
-                }}>
-                  <div style={{ fontSize: 8.5, color: '#f0f9ff', lineHeight: 1.4 }}>
-                    <span style={{ color: p.color, fontWeight: 700 }}>BIOME ARCHITECTURE: </span>
-                    {p.lore}
-                  </div>
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginTop: 4 }}>
-                    <div style={{ background: 'rgba(4,7,18,0.7)', padding: '8px 10px', borderRadius: 4, border: '1px solid rgba(103,232,249,0.1)' }}>
-                      <div style={{ fontSize: 7.5, color: 'rgba(165,243,252,0.6)', letterSpacing: '0.1em' }}>ATMOSPHERE</div>
-                      <div style={{ fontSize: 8, color: '#e0f2fe', marginTop: 3 }}>{p.atmosphere}</div>
-                    </div>
-                    <div style={{ background: 'rgba(4,7,18,0.7)', padding: '8px 10px', borderRadius: 4, border: '1px solid rgba(103,232,249,0.1)' }}>
-                      <div style={{ fontSize: 7.5, color: 'rgba(165,243,252,0.6)', letterSpacing: '0.1em' }}>ORBITAL RINGS & SATELLITES</div>
-                      <div style={{ fontSize: 8, color: '#e0f2fe', marginTop: 3 }}>{p.rings}</div>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Stationed Fleet Vessels */}
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                    <span style={{ fontSize: 8.5, fontWeight: 700, color: 'rgba(165,243,252,0.85)', letterSpacing: '0.12em' }}>
-                      STATIONED AUTONOMOUS VESSELS ({stationedAgents.length})
-                    </span>
-                    <span style={{ fontSize: 7.5, color: hexA(p.color, 0.8) }}>
-                      KEPLERIAN TELEMETRY SYNCED
-                    </span>
-                  </div>
-
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
-                    {stationedAgents.map((ag) => {
-                      const agCol = AGENT_COLORS[ag.id] || p.color;
-                      const agTasks = tasksByAgent.get(ag.id) || [];
-                      const isWorking = ag.status === 'working';
-                      return (
-                        <div
-                          key={ag.id}
-                          onClick={() => {
-                            setSelectedPlanet(null);
-                            toggleDossier(ag.id);
-                          }}
-                          style={{
-                            background: 'rgba(6,10,24,0.7)',
-                            border: `1px solid ${hexA(agCol, 0.4)}`,
-                            borderRadius: 4, padding: '10px 12px',
-                            cursor: 'pointer', transition: 'all 0.2s',
-                          }}
-                          onMouseEnter={(e) => {
-                            e.currentTarget.style.borderColor = agCol;
-                            e.currentTarget.style.boxShadow = `0 0 16px ${hexA(agCol, 0.3)}`;
-                          }}
-                          onMouseLeave={(e) => {
-                            e.currentTarget.style.borderColor = hexA(agCol, 0.4);
-                            e.currentTarget.style.boxShadow = 'none';
-                          }}
-                        >
-                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                            <span style={{ fontSize: 9.5, fontWeight: 700, color: agCol }}>{ag.name}</span>
-                            <span style={{
-                              fontSize: 7.5, padding: '1px 6px', borderRadius: 8,
-                              background: isWorking ? hexA(agCol, 0.2) : 'rgba(148,163,184,0.1)',
-                              color: isWorking ? agCol : '#94a3b8',
-                              border: `1px solid ${isWorking ? hexA(agCol, 0.4) : 'rgba(148,163,184,0.2)'}`,
-                            }}>
-                              {ag.status.toUpperCase()}
-                            </span>
-                          </div>
-                          <div style={{ fontSize: 7.5, color: 'rgba(224,242,254,0.7)', marginTop: 4 }}>
-                            {ag.role || 'Autonomous Specialist Agent'}
-                          </div>
-                          {agTasks.length > 0 ? (
-                            <div style={{ marginTop: 6, fontSize: 7.5, color: 'rgba(165,243,252,0.9)', display: 'flex', alignItems: 'center', gap: 4 }}>
-                              <span style={{ color: agCol }}>⚡</span>
-                              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                                {agTasks[0].title}
-                              </span>
-                            </div>
-                          ) : (
-                            <div style={{ marginTop: 6, fontSize: 7.5, color: 'rgba(148,163,184,0.5)' }}>
-                              Geosynchronous standby orbit
-                            </div>
-                          )}
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              </div>
-
-              {/* Footer */}
-              <div style={{
-                padding: '12px 16px', borderTop: `1px solid ${hexA(p.color, 0.2)}`,
-                display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-                background: 'rgba(6,10,24,0.4)',
-              }}>
-                <button
-                  onClick={() => setSelectedPlanet(null)}
-                  style={{
-                    padding: '6px 14px', borderRadius: 4,
-                    background: 'transparent', border: '1px solid rgba(148,233,255,0.25)',
-                    color: 'rgba(165,243,252,0.7)', fontFamily: MONO, fontSize: 8.5, cursor: 'pointer',
-                  }}
-                >
-                  [ ESC ] DISMISS
-                </button>
-                <button
-                  onClick={() => setSelectedPlanet(null)}
-                  style={{
-                    padding: '7px 16px', borderRadius: 4,
-                    background: `linear-gradient(90deg, ${hexA(p.color, 0.4)}, ${hexA(p.secondaryColor, 0.4)})`,
-                    border: `1px solid ${p.color}`,
-                    color: '#ffffff', fontFamily: MONO, fontSize: 8.5, fontWeight: 800,
-                    cursor: 'pointer', boxShadow: `0 0 16px ${hexA(p.color, 0.3)}`,
-                  }}
-                >
-                  ◈ RETURN TO SYSTEM ORBIT
-                </button>
-              </div>
-            </div>
-          </>
-        );
-      })()}
 
       <CortexFoundryNav
         snap={snap}
@@ -4266,476 +3551,6 @@ export const CortexAgentsScene: React.FC = () => {
           </div>
         </>
       )}
-
-      {/* ── Agent Ship Cockpit Avionics Flight Deck Modal (Powers of Ten Level 3) ── */}
-      {cockpitAgent !== null && (() => {
-        const a = (snapRef.current.agents || []).find((x) => x.id === cockpitAgent);
-        if (!a) return null;
-        const pId = getAgentPlanet(a);
-        const pDef = CELESTIAL_BIOMES[pId];
-        const accentCol = AGENT_COLORS[a.id] || pDef.accent;
-        const isWorking = a.status === 'working';
-        const isError = a.status === 'error';
-        const currentTask = a.currentTaskId ? snapRef.current.tasks.find((t) => t.id === a.currentTaskId) : null;
-        const tier = agentOrbitTier(a);
-
-        // Simulated cognitive flight telemetry
-        const orbitMode = isWorking
-          ? 'ECCENTRIC TRANSFER ORBIT'
-          : isError
-          ? 'RETROGRADE WARNING ORBIT'
-          : 'GEOSYNCHRONOUS EQUATORIAL ORBIT';
-        const eccentricity = isWorking ? 'e = 0.65' : isError ? 'e = 0.15 (retrograde)' : 'e = 0.02 (circular)';
-        const velocityStr = isWorking ? '14,820 KM/H (1.35 rad/s)' : isError ? '-8,240 KM/H (-0.75 rad/s)' : '4,940 KM/H (0.45 rad/s)';
-        const tokenRate = isWorking ? 88.4 : 14.2;
-        const ttft = 214;
-        const ctxOccupancy = 142850;
-        const ctxTotal = 1000000;
-        const cacheHitRate = 97.2;
-
-        const engrams = pId === 'vulcan' ? [
-          { id: 102, title: 'Cross-Subagent Zero-Garbage Canvas Pipeline', match: 96.4, cat: 'ENGINEERING' },
-          { id: 89, title: 'TouchEngine-UE Syphon/Spout Zero-Latency Frame Blit', match: 92.1, cat: 'GRAPHICS' },
-          { id: 74, title: 'N8AO DepthOfField CameraControls Inertia Bridge', match: 89.5, cat: 'CINEMATICS' },
-        ] : pId === 'mnemosyne' ? [
-          { id: 101, title: '102-Node Cognitive Engram Asteroid Belt Ring Layout', match: 98.2, cat: 'MEMORY' },
-          { id: 94, title: 'Hindsight Vector Embedding Retrieval Substrate', match: 94.6, cat: 'COGNITION' },
-          { id: 63, title: 'Synaptic Lightning Temporal Clashing Heuristics', match: 91.0, cat: 'INTEL' },
-        ] : pId === 'themis' ? [
-          { id: 98, title: 'Tetrahedral Council Moon Voting Consensus Ledger', match: 97.8, cat: 'GOVERNANCE' },
-          { id: 82, title: 'Geodesic Invariant Deflector Shield Constraints', match: 95.1, cat: 'INVARIANTS' },
-          { id: 55, title: 'Zero-Trust Proposal Veto Criteria & Audit Trail', match: 93.4, cat: 'INTEGRITY' },
-        ] : [
-          { id: 100, title: 'Remotion 4K 60fps Deterministic Render Pipeline', match: 98.4, cat: 'DELIVERY' },
-          { id: 85, title: 'Tachyon Webhook Gateway Pulsed Frame Delivery', match: 93.9, cat: 'GATEWAYS' },
-          { id: 41, title: 'Sonic-Cartesia 120BPM Transient Audio Stem Sync', match: 89.2, cat: 'BROADCAST' },
-        ];
-
-        return (
-          <>
-            <div
-              onClick={() => setCockpitAgent(null)}
-              style={{
-                position: 'absolute', inset: 0, zIndex: 47,
-                background: 'rgba(2, 4, 12, 0.78)', backdropFilter: 'blur(10px)',
-              }}
-            />
-            <div
-              role="dialog"
-              aria-modal="true"
-              style={{
-                position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -50%)',
-                zIndex: 48, width: 'min(1080px, 94vw)', maxHeight: '90vh',
-                background: 'linear-gradient(170deg, rgba(6,12,28,0.97) 0%, rgba(2,5,16,0.99) 100%)',
-                border: `1px solid ${accentCol}66`,
-                borderRadius: 8,
-                boxShadow: `0 0 60px ${accentCol}22, 0 20px 60px rgba(0,0,0,0.92)`,
-                display: 'flex', flexDirection: 'column',
-                overflow: 'hidden', fontFamily: MONO,
-              }}
-            >
-              {/* Cockpit Canopy Top HUD */}
-              <div style={{
-                padding: '12px 18px', borderBottom: `1px solid ${accentCol}33`,
-                display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-                background: `linear-gradient(90deg, ${accentCol}15, rgba(6,12,28,0.8))`,
-              }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                  <span style={{
-                    display: 'inline-block', width: 10, height: 10, borderRadius: '50%',
-                    background: accentCol, boxShadow: `0 0 12px ${accentCol}`,
-                  }} />
-                  <span style={{ fontSize: 11, fontWeight: 800, letterSpacing: '0.22em', color: '#f0f9ff' }}>
-                    VESSEL // {a.name.toUpperCase()}
-                  </span>
-                  <span style={{
-                    fontSize: 7.5, padding: '2px 8px', borderRadius: 10,
-                    background: `${pDef.accent}22`, color: pDef.accent, border: `1px solid ${pDef.accent}44`,
-                    fontWeight: 700, letterSpacing: '0.1em',
-                  }}>
-                    {pDef.symbol} ORBITING {pDef.name} ({pDef.label})
-                  </span>
-                  <span style={{
-                    fontSize: 7.5, padding: '2px 8px', borderRadius: 10,
-                    background: isWorking ? 'rgba(52,211,153,0.18)' : 'rgba(148,163,184,0.15)',
-                    color: isWorking ? '#34d399' : '#94a3b8',
-                    border: `1px solid ${isWorking ? 'rgba(52,211,153,0.4)' : 'rgba(148,163,184,0.3)'}`,
-                    fontWeight: 700,
-                  }}>
-                    {isWorking ? '● ACTIVE FLIGHT' : '○ STANDBY ORBIT'}
-                  </span>
-                </div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                  <span style={{ fontSize: 7.5, color: 'rgba(165,243,252,0.6)' }}>
-                    POWERS-OF-TEN LEVEL 3 // COCKPIT AVIONICS
-                  </span>
-                  <button
-                    onClick={() => setCockpitAgent(null)}
-                    style={{
-                      background: 'none', border: 'none', color: 'rgba(165,243,252,0.7)',
-                      cursor: 'pointer', fontFamily: MONO, fontSize: 13,
-                    }}
-                  >
-                    ✕
-                  </button>
-                </div>
-              </div>
-
-              {/* Main Cockpit Tactical Flight Deck Grid */}
-              <div style={{
-                padding: '16px', overflowY: 'auto', display: 'grid',
-                gridTemplateColumns: '1.05fr 1.35fr 1.15fr', gap: 14,
-              }}>
-                {/* ── Column 1: Keplerian Flight Dynamics & Gyro Attitude ── */}
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-                  <div style={{
-                    background: 'rgba(6,10,26,0.65)', border: `1px solid ${pDef.accent}33`,
-                    borderRadius: 6, padding: '12px', display: 'flex', flexDirection: 'column', gap: 10,
-                  }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                      <span style={{ fontSize: 8.5, fontWeight: 800, color: pDef.accent, letterSpacing: '0.12em' }}>
-                        KEPLERIAN FLIGHT DYNAMICS
-                      </span>
-                      <span style={{ fontSize: 7.5, color: '#38bdf8' }}>{eccentricity}</span>
-                    </div>
-
-                    {/* Artificial Horizon Gyro Visual */}
-                    <div style={{
-                      height: 80, background: 'rgba(2,4,12,0.85)', borderRadius: 4,
-                      border: '1px solid rgba(56,189,248,0.2)', position: 'relative', overflow: 'hidden',
-                      display: 'flex', alignItems: 'center', justifyContent: 'center',
-                    }}>
-                      <div style={{
-                        position: 'absolute', inset: 0,
-                        backgroundImage: 'radial-gradient(circle, rgba(56,189,248,0.12) 1px, transparent 1px)',
-                        backgroundSize: '12px 12px',
-                      }} />
-                      {/* Pitch horizon line */}
-                      <div style={{
-                        width: '70%', height: 1, background: '#38bdf8', opacity: 0.8,
-                        boxShadow: '0 0 8px #38bdf8', transform: isWorking ? 'rotate(-6deg)' : 'rotate(0deg)',
-                      }} />
-                      {/* Pitch ladder marks */}
-                      <div style={{
-                        position: 'absolute', width: 24, height: 1, background: 'rgba(165,243,252,0.5)',
-                        top: 24,
-                      }} />
-                      <div style={{
-                        position: 'absolute', width: 24, height: 1, background: 'rgba(165,243,252,0.5)',
-                        bottom: 24,
-                      }} />
-                      {/* Attitude crosshair reticle */}
-                      <div style={{
-                        width: 14, height: 14, border: `1.5px solid ${accentCol}`,
-                        borderRadius: '50%', position: 'relative',
-                      }}>
-                        <div style={{ position: 'absolute', top: 5, left: -6, width: 4, height: 1.5, background: accentCol }} />
-                        <div style={{ position: 'absolute', top: 5, right: -6, width: 4, height: 1.5, background: accentCol }} />
-                      </div>
-                      <div style={{
-                        position: 'absolute', bottom: 4, left: 8, fontSize: 7, color: 'rgba(165,243,252,0.6)',
-                      }}>
-                        PITCH: {isWorking ? '+03.4°' : '00.0°'} · ROLL: {isWorking ? '-01.8°' : '00.0°'}
-                      </div>
-                      <div style={{
-                        position: 'absolute', bottom: 4, right: 8, fontSize: 7, color: '#34d399',
-                      }}>
-                        HDG: 042°
-                      </div>
-                    </div>
-
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 6, fontSize: 8 }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                        <span style={{ color: 'rgba(165,243,252,0.6)' }}>TRAJECTORY MODE:</span>
-                        <span style={{ color: isWorking ? '#34d399' : '#e0f2fe', fontWeight: 700 }}>{orbitMode}</span>
-                      </div>
-                      <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                        <span style={{ color: 'rgba(165,243,252,0.6)' }}>ORBITAL VELOCITY:</span>
-                        <span style={{ color: '#38bdf8', fontWeight: 700 }}>{velocityStr}</span>
-                      </div>
-                      <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                        <span style={{ color: 'rgba(165,243,252,0.6)' }}>GRAV-PARENT:</span>
-                        <span style={{ color: pDef.accent, fontWeight: 700 }}>{pDef.name} (AU 248.4)</span>
-                      </div>
-                      <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                        <span style={{ color: 'rgba(165,243,252,0.6)' }}>CONCURRENCY & BUDGET:</span>
-                        <span style={{ color: '#f0f9ff' }}>{a.concurrency} thr · ${a.dailyBudget}/day</span>
-                      </div>
-                      <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                        <span style={{ color: 'rgba(165,243,252,0.6)' }}>ION PROPULSION:</span>
-                        <span style={{ color: '#34d399' }}>FLUX NOMINAL (100%)</span>
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Flight Control Actions */}
-                  <div style={{
-                    background: 'rgba(6,10,26,0.5)', border: '1px solid rgba(56,189,248,0.2)',
-                    borderRadius: 6, padding: '10px', display: 'flex', flexDirection: 'column', gap: 6,
-                  }}>
-                    <span style={{ fontSize: 7.5, fontWeight: 700, color: 'rgba(165,243,252,0.6)', letterSpacing: '0.1em' }}>
-                      AVIONICS DISPATCH CONTROLS
-                    </span>
-                    <button
-                      onClick={() => {
-                        setSelectedPlanet(pId);
-                        setCockpitAgent(null);
-                      }}
-                      style={{
-                        padding: '6px 10px', borderRadius: 4,
-                        background: `${pDef.accent}1a`, border: `1px solid ${pDef.accent}66`,
-                        color: pDef.accent, fontFamily: MONO, fontSize: 8, fontWeight: 700,
-                        cursor: 'pointer', textAlign: 'left', display: 'flex', alignItems: 'center', gap: 6,
-                      }}
-                    >
-                      <span>◉ FOCUS {pDef.name.toUpperCase()} SYSTEM PLANE</span>
-                    </button>
-                    <button
-                      onClick={() => {
-                        toggleDossier(a.id);
-                        setCockpitAgent(null);
-                      }}
-                      style={{
-                        padding: '6px 10px', borderRadius: 4,
-                        background: 'rgba(165,243,252,0.08)', border: '1px solid rgba(165,243,252,0.3)',
-                        color: '#e0f2fe', fontFamily: MONO, fontSize: 8, fontWeight: 700,
-                        cursor: 'pointer', textAlign: 'left', display: 'flex', alignItems: 'center', gap: 6,
-                      }}
-                    >
-                      <span>📋 EXPAND MULTI-DOSSIER ARCHIVE</span>
-                    </button>
-                  </div>
-                </div>
-
-                {/* ── Column 2: Cognitive Avionics & KV Cache Substrate ── */}
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-                  {/* Real-time Token Generation Rate Meter */}
-                  <div style={{
-                    background: 'rgba(6,10,26,0.65)', border: '1px solid rgba(56,189,248,0.3)',
-                    borderRadius: 6, padding: '12px', display: 'flex', flexDirection: 'column', gap: 8,
-                  }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                      <span style={{ fontSize: 8.5, fontWeight: 800, color: '#38bdf8', letterSpacing: '0.12em' }}>
-                        REAL-TIME COGNITIVE THROUGHPUT
-                      </span>
-                      <span style={{
-                        fontSize: 7, padding: '1px 6px', borderRadius: 10,
-                        background: 'rgba(52,211,153,0.15)', color: '#34d399', border: '1px solid rgba(52,211,153,0.3)',
-                      }}>
-                        TTFT {ttft}ms
-                      </span>
-                    </div>
-
-                    <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
-                      <span style={{ fontSize: 26, fontWeight: 900, color: '#f0f9ff', letterSpacing: '-0.02em' }}>
-                        {tokenRate.toFixed(1)}
-                      </span>
-                      <span style={{ fontSize: 10, fontWeight: 700, color: '#38bdf8' }}>TOKENS / SEC</span>
-                      <span style={{ fontSize: 8, color: 'rgba(165,243,252,0.5)', marginLeft: 'auto' }}>
-                        {(a.tasksCompleted * 128400 + 429800).toLocaleString()} TOK LIFETIME
-                      </span>
-                    </div>
-
-                    {/* Live sparkline bar simulation */}
-                    <div style={{
-                      display: 'flex', alignItems: 'flex-end', gap: 3, height: 26,
-                      background: 'rgba(2,4,12,0.7)', borderRadius: 3, padding: '3px 6px',
-                    }}>
-                      {[42, 55, 68, 74, 62, 85, 92, 78, 88, 94, 90, 84, 88, 96, 91, 88].map((val, idx) => (
-                        <div
-                          key={idx}
-                          style={{
-                            flex: 1,
-                            height: `${val}%`,
-                            background: isWorking
-                              ? 'linear-gradient(180deg, #38bdf8, #0284c7)'
-                              : 'rgba(103,232,249,0.3)',
-                            borderRadius: '1px 1px 0 0',
-                          }}
-                        />
-                      ))}
-                    </div>
-                  </div>
-
-                  {/* Context Window & KV Cache Occupancy */}
-                  <div style={{
-                    background: 'rgba(6,10,26,0.65)', border: '1px solid rgba(192,132,252,0.3)',
-                    borderRadius: 6, padding: '12px', display: 'flex', flexDirection: 'column', gap: 8,
-                  }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                      <span style={{ fontSize: 8.5, fontWeight: 800, color: '#c084fc', letterSpacing: '0.12em' }}>
-                        CONTEXT WINDOW & KV CACHE
-                      </span>
-                      <span style={{ color: '#34d399', fontSize: 8, fontWeight: 700 }}>
-                        {cacheHitRate}% CACHE HIT
-                      </span>
-                    </div>
-
-                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 8 }}>
-                      <span style={{ color: '#e0f2fe', fontWeight: 700 }}>
-                        {ctxOccupancy.toLocaleString()} / {ctxTotal.toLocaleString()} TOKENS
-                      </span>
-                      <span style={{ color: '#c084fc' }}>
-                        {((ctxOccupancy / ctxTotal) * 100).toFixed(1)}% OCCUPIED
-                      </span>
-                    </div>
-
-                    {/* Multi-segmented occupancy bar */}
-                    <div style={{ height: 7, background: 'rgba(2,4,12,0.8)', borderRadius: 3, overflow: 'hidden', display: 'flex' }}>
-                      <div style={{ width: '5.9%', background: '#38bdf8' }} />
-                      <div style={{ width: '16.9%', background: '#c084fc' }} />
-                      <div style={{ width: '54.8%', background: '#818cf8' }} />
-                      <div style={{ width: '22.4%', background: '#34d399' }} />
-                    </div>
-
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 4, fontSize: 7, color: 'rgba(165,243,252,0.7)' }}>
-                      <div><span style={{ color: '#38bdf8' }}>■</span> Directives: 8.4k</div>
-                      <div><span style={{ color: '#c084fc' }}>■</span> Engrams: 24.1k</div>
-                      <div><span style={{ color: '#818cf8' }}>■</span> History: 78.3k</div>
-                      <div><span style={{ color: '#34d399' }}>■</span> Tools: 32.0k</div>
-                    </div>
-                  </div>
-
-                  {/* Active Memory Recalls (Mnemosyne / Hindsight Substrate) */}
-                  <div style={{
-                    background: 'rgba(6,10,26,0.65)', border: '1px solid rgba(56,189,248,0.2)',
-                    borderRadius: 6, padding: '12px', display: 'flex', flexDirection: 'column', gap: 8,
-                  }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                      <span style={{ fontSize: 8.5, fontWeight: 800, color: '#f0f9ff', letterSpacing: '0.1em' }}>
-                        ACTIVE MEMORY RECALLS (HINDSIGHT SUBSTRATE)
-                      </span>
-                      <span style={{ fontSize: 7, color: 'rgba(165,243,252,0.5)' }}>TOP 3 ATTENTION</span>
-                    </div>
-
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                      {engrams.map((eng) => (
-                        <div key={eng.id} style={{
-                          background: 'rgba(2,4,12,0.7)', border: '1px solid rgba(56,189,248,0.15)',
-                          borderRadius: 4, padding: '6px 8px', display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-                        }}>
-                          <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-                            <span style={{ fontSize: 7.5, fontWeight: 700, color: '#e0f2fe' }}>
-                              #{eng.id} // {eng.title}
-                            </span>
-                            <span style={{ fontSize: 6.5, color: 'rgba(165,243,252,0.5)' }}>
-                              CATEGORY: {eng.cat} · SEMANTIC SUBGRAPH
-                            </span>
-                          </div>
-                          <span style={{
-                            fontSize: 7.5, fontWeight: 800, color: '#34d399',
-                            background: 'rgba(52,211,153,0.12)', padding: '2px 5px', borderRadius: 3,
-                          }}>
-                            {eng.match}%
-                          </span>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                </div>
-
-                {/* ── Column 3: Live Tool Execution Console & Telemetry Stream ── */}
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-                  {/* Active Mission HUD */}
-                  <div style={{
-                    background: 'rgba(6,10,26,0.65)', border: `1px solid ${accentCol}44`,
-                    borderRadius: 6, padding: '12px', display: 'flex', flexDirection: 'column', gap: 6,
-                  }}>
-                    <span style={{ fontSize: 7.5, fontWeight: 800, color: accentCol, letterSpacing: '0.12em' }}>
-                      ACTIVE MISSION DIRECTIVE
-                    </span>
-                    <div style={{ fontSize: 9.5, fontWeight: 700, color: '#f0f9ff' }}>
-                      {currentTask?.title || a.role || 'Autonomous Cognitive Standby'}
-                    </div>
-                    <div style={{ fontSize: 7.5, color: 'rgba(165,243,252,0.7)', lineHeight: 1.4 }}>
-                      {a.blurb}
-                    </div>
-                    <div style={{ display: 'flex', gap: 8, marginTop: 4, fontSize: 7 }}>
-                      <span style={{ color: '#34d399' }}>✓ {a.tasksCompleted} Completed</span>
-                      <span style={{ color: a.tasksFailed > 0 ? '#f87171' : 'rgba(148,163,184,0.6)' }}>
-                        ✗ {a.tasksFailed} Failed
-                      </span>
-                      <span style={{ color: 'rgba(165,243,252,0.6)', marginLeft: 'auto' }}>
-                        HEARTBEAT: 1.2s AGO
-                      </span>
-                    </div>
-                  </div>
-
-                  {/* Live Tool Execution Console */}
-                  <div style={{
-                    background: 'rgba(2,4,12,0.92)', border: '1px solid rgba(56,189,248,0.25)',
-                    borderRadius: 6, padding: '12px', display: 'flex', flexDirection: 'column', gap: 6,
-                    flex: 1, minHeight: 200,
-                  }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                      <span style={{ fontSize: 8, fontWeight: 800, color: 'rgba(165,243,252,0.8)', letterSpacing: '0.12em' }}>
-                        LIVE AVIONICS TOOL STREAM
-                      </span>
-                      <span style={{ fontSize: 6.5, color: '#34d399', fontWeight: 700 }}>● TAIL -F</span>
-                    </div>
-
-                    <div style={{
-                      display: 'flex', flexDirection: 'column', gap: 4, fontSize: 7, color: 'rgba(224,242,254,0.85)',
-                      fontFamily: MONO, overflowY: 'auto', maxHeight: 180,
-                    }}>
-                      <div style={{ color: 'rgba(165,243,252,0.5)' }}>[18:32:01] ⚡ subagent_init: callSign={a.id} role={a.role}</div>
-                      <div style={{ color: '#34d399' }}>[18:32:03] &gt; read_file("src/remotion/CortexSprintReel.tsx") -&gt; EXIT 0 (12ms)</div>
-                      <div style={{ color: '#38bdf8' }}>[18:32:04] &gt; evaluate_ast(transforms: ["n8ao", "godrays", "smaa"]) -&gt; PASS (18ms)</div>
-                      <div style={{ color: '#c084fc' }}>[18:32:05] &gt; stream_tokens(model: "{a.modelPin?.tier || 'gemini-2.5-pro'}", chunk: 64) -&gt; {tokenRate.toFixed(1)} t/s</div>
-                      <div style={{ color: '#fbbf24' }}>[18:32:06] &gt; emit_synaptic_packet(target: "{pDef.id}_core") -&gt; ACK (1.2ms)</div>
-                      <div style={{ color: '#34d399' }}>[18:32:07] &gt; heartbeat_ack(latency: 1.2ms, status: "NOMINAL")</div>
-                      <div style={{ color: 'rgba(165,243,252,0.7)' }}>[18:32:08] ◈ attitude_sync: pitch=+03.4° hdg=042°</div>
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              {/* Cockpit Canopy Bottom Footer */}
-              <div style={{
-                padding: '12px 18px', borderTop: `1px solid ${accentCol}22`,
-                display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-                background: 'rgba(6,12,28,0.5)',
-              }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 7.5, color: 'rgba(165,243,252,0.6)' }}>
-                  <span>STATUS: FLIGHT READY</span>
-                  <span>·</span>
-                  <span>SECURITY HARNESS: RESTRICTED</span>
-                  <span>·</span>
-                  <span>DOUBLE CLICK ANY OTHER AGENT TO SWITCH COCKPIT</span>
-                </div>
-                <div style={{ display: 'flex', gap: 10 }}>
-                  <button
-                    onClick={() => setCockpitAgent(null)}
-                    style={{
-                      padding: '7px 18px', borderRadius: 4,
-                      background: 'rgba(148,163,184,0.1)', border: '1px solid rgba(148,163,184,0.3)',
-                      color: '#e0f2fe', fontFamily: MONO, fontSize: 8.5, fontWeight: 700,
-                      cursor: 'pointer',
-                    }}
-                  >
-                    DISENGAGE COCKPIT (ESC)
-                  </button>
-                  <button
-                    onClick={() => {
-                      toggleDossier(a.id);
-                      setCockpitAgent(null);
-                    }}
-                    style={{
-                      padding: '7px 18px', borderRadius: 4,
-                      background: `linear-gradient(90deg, ${accentCol}44, ${pDef.accent}66)`,
-                      border: `1px solid ${accentCol}`,
-                      color: '#ffffff', fontFamily: MONO, fontSize: 8.5, fontWeight: 800,
-                      cursor: 'pointer', boxShadow: `0 0 16px ${accentCol}33`,
-                    }}
-                  >
-                    INSPECT FULL DOSSIER
-                  </button>
-                </div>
-              </div>
-            </div>
-          </>
-        );
-      })()}
     </div>
   );
 };
