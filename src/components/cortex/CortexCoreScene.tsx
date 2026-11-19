@@ -686,6 +686,8 @@ function Satellites({ live }: { live: React.MutableRefObject<LiveSignal> }) {
   const satCoronaRefs = useRef<(THREE.Sprite | null)[]>([]);
   const satMitosisRefs = useRef<(THREE.Mesh | null)[]>([]);
   const satMitosisMatRefs = useRef<(THREE.MeshStandardMaterial | null)[]>([]);
+  const satLatticeRefs = useRef<(THREE.Mesh | null)[][]>([]);
+  const satLatticeMatRefs = useRef<(THREE.MeshBasicMaterial | null)[][]>([]);
   const tmpW = useMemo(() => new THREE.Vector3(), []);
   const tmpT = useMemo(() => new THREE.Vector3(), []);
   const basisMat = useMemo(() => new THREE.Matrix4(), []);
@@ -1098,12 +1100,28 @@ function Satellites({ live }: { live: React.MutableRefObject<LiveSignal> }) {
             tm.opacity = 0.3 * pfade;
             trail.scale.setScalar(0.13);
           }
+          // Cryptographic Proof Lattice — rotating zero-trust geometric cage
+          const lattice = (satLatticeRefs.current[i] || [])[p];
+          if (lattice) {
+            lattice.visible = true;
+            lattice.position.copy(packet ? packet.position : tmpV);
+            lattice.rotation.x = t * 3.5 + p;
+            lattice.rotation.y = t * 4.2 + p * 2;
+            const lscale = (p === 0 ? 0.09 : 0.065) + 0.02 * Math.sin(t * 8.0 + p);
+            lattice.scale.setScalar(lscale);
+            const lm = (satLatticeMatRefs.current[i] || [])[p];
+            if (lm) {
+              lm.opacity = (p === 0 ? 0.85 : 0.45) * pfade;
+              lm.color.copy(col).lerp(c('#34d399'), 0.7);
+            }
+          }
         }
       } else {
         // Offline/retired/ambient — hide the whole current.
         for (const em of emberRefs.current[i] || []) if (em) em.visible = false;
         for (const pk of packetRefs.current[i] || []) if (pk) pk.visible = false;
         for (const tr of trailRefs.current[i] || []) if (tr) tr.visible = false;
+        for (const lt of satLatticeRefs.current[i] || []) if (lt) lt.visible = false;
       }
       // Core impact flash — fires when the packet arrives.
       const impact = impactRefs.current[i];
@@ -1417,6 +1435,32 @@ function Satellites({ live }: { live: React.MutableRefObject<LiveSignal> }) {
                 blending={THREE.AdditiveBlending}
               />
             </sprite>
+          ))}
+          {/* Cryptographic Proof Lattice Cages */}
+          {[0, 1, 2].map((p) => (
+            <mesh
+              key={`lattice${p}`}
+              ref={(el) => {
+                if (!satLatticeRefs.current[i]) satLatticeRefs.current[i] = [];
+                satLatticeRefs.current[i][p] = el;
+              }}
+              visible={false}
+              renderOrder={7}
+            >
+              <icosahedronGeometry args={[1, 0]} />
+              <meshBasicMaterial
+                ref={(el) => {
+                  if (!satLatticeMatRefs.current[i]) satLatticeMatRefs.current[i] = [];
+                  satLatticeMatRefs.current[i][p] = el;
+                }}
+                wireframe
+                color="#34d399"
+                transparent
+                opacity={0}
+                depthWrite={false}
+                blending={THREE.AdditiveBlending}
+              />
+            </mesh>
           ))}
           <sprite ref={(el) => { impactRefs.current[i] = el; }} visible={false} renderOrder={7} position={[0, 0, 0]}>
             <spriteMaterial
@@ -1885,6 +1929,77 @@ function VoiceHalo({ live }: { live: React.MutableRefObject<LiveSignal> }) {
   );
 }
 
+// ── Einstein Ring: Physical Gravitational Lensing Refraction Ring ─────
+
+function EinsteinRing({ live }: { live: React.MutableRefObject<LiveSignal> }) {
+  const meshRef = useRef<THREE.Mesh>(null);
+  const material = useMemo(
+    () =>
+      new THREE.ShaderMaterial({
+        transparent: true,
+        depthWrite: false,
+        blending: THREE.AdditiveBlending,
+        side: THREE.DoubleSide,
+        uniforms: {
+          uPhi: { value: 0 },
+          uThink: { value: 0 },
+          uTime: { value: 0 },
+          uColor1: { value: c('#38bdf8') },
+          uColor2: { value: c('#c084fc') },
+        },
+        vertexShader: /* glsl */ `
+          varying vec2 vUv;
+          void main() {
+            vUv = uv;
+            gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+          }
+        `,
+        fragmentShader: /* glsl */ `
+          uniform float uPhi;
+          uniform float uThink;
+          uniform float uTime;
+          uniform vec3 uColor1;
+          uniform vec3 uColor2;
+          varying vec2 vUv;
+          void main() {
+            float r = distance(vUv, vec2(0.5));
+            float ringWidth = 0.035 + uThink * 0.025;
+            float ringDist = abs(r - 0.36);
+            float flare = smoothstep(ringWidth, 0.0, ringDist);
+            
+            float wave = sin(atan(vUv.y - 0.5, vUv.x - 0.5) * 8.0 + uTime * 2.2);
+            float caustic = 0.8 + 0.2 * wave;
+            
+            float intensity = flare * caustic * (0.15 + (uPhi * 0.45) + (uThink * 0.35));
+            vec3 col = mix(uColor1, uColor2, smoothstep(0.34, 0.38, r));
+            gl_FragColor = vec4(col * intensity * 2.2, intensity);
+          }
+        `,
+      }),
+    []
+  );
+
+  useFrame((state, delta) => {
+    const sig = live.current;
+    const m = meshRef.current;
+    if (!m) return;
+    material.uniforms.uTime.value += delta;
+    material.uniforms.uPhi.value = sig.phiS ?? 0;
+    material.uniforms.uThink.value = sig.think ?? 0;
+
+    const s = 1.35 + (sig.phiS ?? 0) * 0.16 + Math.sin(material.uniforms.uTime.value * 1.5) * 0.02;
+    m.scale.setScalar(s);
+    m.quaternion.copy(state.camera.quaternion);
+  });
+
+  return (
+    <mesh ref={meshRef} position={[0, 0, 0]}>
+      <planeGeometry args={[3.6, 3.6]} />
+      <primitive object={material} attach="material" />
+    </mesh>
+  );
+}
+
 // ── Thought swarm (cognitive-load accretion) ─────────────────────────────
 // ~900 GPU particles on tilted orbital shells. Each has a lifecycle: spawn
 // at outer radius → spiral inward → absorbed by the core → respawn. The
@@ -1989,11 +2104,13 @@ function CameraRig({
   selectedAgentId: selectedProp,
   chronoTime,
   holoParallax = true,
+  headParallax,
 }: {
   live: React.MutableRefObject<LiveSignal>;
   selectedAgentId?: string | null;
   chronoTime?: number | null;
   holoParallax?: boolean;
+  headParallax?: { x: number; y: number } | null;
 }) {
   const [selectedAgentId, setSelectedAgentId] = React.useState<string | null>(selectedProp ?? null);
   const targetLookAt = useRef(new THREE.Vector3(0, 0, 0));
@@ -2088,15 +2205,18 @@ function CameraRig({
     } else {
       // ── 3. HOLOGRAPHIC WINDOW MACRO PARALLAX ──────────────────────────────
       targetLookAt.current.lerp(new THREE.Vector3(0, 0, 0), Math.min(1, delta * 2.4));
-      const pFactor = holoParallax ? 0.92 : 0.6;
-      const tx = pointer.x * pFactor;
-      const ty = 0.3 + pointer.y * (pFactor * 0.7) + Math.sin(t * 0.35) * 0.06;
+      const hasHead = !!headParallax;
+      const inputX = hasHead ? headParallax.x : pointer.x;
+      const inputY = hasHead ? headParallax.y : pointer.y;
+      const pFactor = hasHead ? 1.35 : holoParallax ? 0.92 : 0.6;
+      const tx = inputX * pFactor;
+      const ty = 0.3 + inputY * (pFactor * 0.7) + Math.sin(t * 0.35) * 0.06;
       const tz = baseZ - sig.level * 0.22 - sig.energy * 0.15;
       targetCamPos.current.set(tx + sx, ty + sy, tz);
 
       // Subtle holographic perspective banking
-      if (holoParallax) {
-        camera.rotation.z = -pointer.x * 0.035;
+      if (holoParallax || hasHead) {
+        camera.rotation.z = -inputX * (hasHead ? 0.055 : 0.035);
       }
     }
 
@@ -2186,11 +2306,13 @@ function CortexCoreInner({
   selectedAgentId,
   chronoTime,
   holoParallax,
+  headParallax,
 }: {
   fx: React.MutableRefObject<{ shocks: Shock[] }>;
   selectedAgentId?: string | null;
   chronoTime?: number | null;
   holoParallax?: boolean;
+  headParallax?: { x: number; y: number } | null;
 }) {
   const live = useRef<LiveSignal>(makeLive());
 
@@ -2229,6 +2351,7 @@ function CortexCoreInner({
         <Core live={live} />
         <DetailShell live={live} />
         <VoiceHalo live={live} />
+        <EinsteinRing live={live} />
       </group>
       {RINGS.map((r, i) => (
         <OrbitRing key={i} spec={r} live={live} index={i} />
@@ -2240,7 +2363,7 @@ function CortexCoreInner({
       <ThoughtSwarm live={live} />
       <Shockwaves fx={fx} />
 
-      <CameraRig live={live} selectedAgentId={selectedAgentId} chronoTime={chronoTime} holoParallax={holoParallax} />
+      <CameraRig live={live} selectedAgentId={selectedAgentId} chronoTime={chronoTime} holoParallax={holoParallax} headParallax={headParallax} />
       <PostFX live={live} />
     </>
   );
@@ -2251,11 +2374,13 @@ function SceneWithInput({
   onSelectAgent,
   chronoTime,
   holoParallax,
+  headParallax,
 }: {
   selectedAgentId?: string | null;
   onSelectAgent?: (id: string | null) => void;
   chronoTime?: number | null;
   holoParallax?: boolean;
+  headParallax?: { x: number; y: number } | null;
 }) {
   const fx = useRef<{ shocks: Shock[] }>({ shocks: [] });
   const { gl, clock } = useThree();
@@ -2272,7 +2397,7 @@ function SceneWithInput({
     return () => el.removeEventListener('pointerdown', onDown);
   }, [gl, clock]);
 
-  return <CortexCoreInner fx={fx} selectedAgentId={selectedAgentId} chronoTime={chronoTime} holoParallax={holoParallax} />;
+  return <CortexCoreInner fx={fx} selectedAgentId={selectedAgentId} chronoTime={chronoTime} holoParallax={holoParallax} headParallax={headParallax} />;
 }
 
 // Under prefers-reduced-motion the Canvas renders on demand: ambient
@@ -2292,6 +2417,7 @@ export interface CortexCoreSceneProps {
   onSelectAgent?: (id: string | null) => void;
   chronoTime?: number | null;
   holoParallax?: boolean;
+  headParallax?: { x: number; y: number } | null;
 }
 
 export const CortexCoreScene: React.FC<CortexCoreSceneProps> = ({
@@ -2299,6 +2425,7 @@ export const CortexCoreScene: React.FC<CortexCoreSceneProps> = ({
   onSelectAgent,
   chronoTime,
   holoParallax = true,
+  headParallax,
 }) => {
   const [reduced, setReduced] = React.useState(() =>
     typeof window !== 'undefined' && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
@@ -2358,7 +2485,7 @@ export const CortexCoreScene: React.FC<CortexCoreSceneProps> = ({
             }}
           />
         )}
-        <SceneWithInput selectedAgentId={selectedAgentId} onSelectAgent={onSelectAgent} chronoTime={chronoTime} holoParallax={holoParallax} />
+        <SceneWithInput selectedAgentId={selectedAgentId} onSelectAgent={onSelectAgent} chronoTime={chronoTime} holoParallax={holoParallax} headParallax={headParallax} />
         {reduced && <InvalidateBridge />}
       </Canvas>
       {contextLost && (

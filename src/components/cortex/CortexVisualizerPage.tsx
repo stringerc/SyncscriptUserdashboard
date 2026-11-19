@@ -14,6 +14,7 @@ import { agentsClient } from '../../lib/cortex-agents-client';
 import { cortexSpeak } from '../../lib/cortex-speech';
 import { getGlobeEmbedUrl, configureGlobeBase, GLOBE_MODE_EVENT, setGlobeAvailable } from '../../lib/cortex-globe';
 import { neuroAudio } from '../../lib/cortex-neuro-audio';
+import { cortexWebcamParallax } from '../../lib/cortex-webcam-parallax';
 import { CORTEX_COLORS, CORTEX_STATE_THEME, CORTEX_TYPOGRAPHY, CORTEX_ANIMATION } from '../../lib/cortex-design-tokens';
 
 export type ActiveScene = 'core' | 'agents' | VisualizerFace;
@@ -209,6 +210,8 @@ export default function CortexVisualizerPage() {
   const [chronoActive, setChronoActive] = useState(false);
   const [chronoTime, setChronoTime] = useState(0.0);
   const [chronoPlaying, setChronoPlaying] = useState(true);
+  const [holoCamActive, setHoloCamActive] = useState(false);
+  const [headParallax, setHeadParallax] = useState<{ x: number; y: number } | null>(null);
   const [hoveredPacket, setHoveredPacket] = useState<{
     agentId: string;
     agentName: string;
@@ -471,6 +474,21 @@ export default function CortexVisualizerPage() {
     };
     window.addEventListener('cortex-packet-hover', onPacketHover);
     return () => window.removeEventListener('cortex-packet-hover', onPacketHover);
+  }, []);
+
+  // Optical webcam head-tracking listener for holographic window cockpit parallax
+  useEffect(() => {
+    const unsub = cortexWebcamParallax.subscribe((coords) => {
+      if (coords.active) {
+        setHeadParallax({ x: coords.x, y: coords.y });
+      } else {
+        setHeadParallax(null);
+      }
+    });
+    return () => {
+      unsub();
+      cortexWebcamParallax.stop();
+    };
   }, []);
 
   // Tier-1 forecast markers: poll the agent snapshot's forecast ledger and
@@ -878,7 +896,12 @@ export default function CortexVisualizerPage() {
         </>
       ) : faceMode === 'core' ? (
         <div key="face-core" className="cx-face-transition" style={{ position: 'absolute', inset: 0, zIndex: 4 }}>
-          <CortexCoreScene selectedAgentId={selectedAgentId} onSelectAgent={setSelectedAgentId} chronoTime={chronoActive ? chronoTime : null} />
+          <CortexCoreScene
+            selectedAgentId={selectedAgentId}
+            onSelectAgent={setSelectedAgentId}
+            chronoTime={chronoActive ? chronoTime : null}
+            headParallax={headParallax}
+          />
         </div>
       ) : faceMode === 'agents' ? (
         <div key="face-agents" className="cx-face-transition" style={{ position: 'absolute', inset: 0, zIndex: 4 }}>
@@ -1619,6 +1642,34 @@ export default function CortexVisualizerPage() {
           }}
         >
           {chronoActive ? '◉ CHRONO ACTIVE' : '◈ 4D CHRONO'}
+        </button>
+        <button
+          onClick={async () => {
+            if (holoCamActive) {
+              cortexWebcamParallax.stop();
+              setHoloCamActive(false);
+              cortexSpeak('Head tracking disabled.');
+            } else {
+              const ok = await cortexWebcamParallax.start();
+              if (ok) {
+                setHoloCamActive(true);
+                cortexSpeak('Holographic head tracking active.');
+              } else {
+                cortexSpeak('Camera access was not available.');
+              }
+            }
+          }}
+          title="Holographic Window Parallax — optical head-tracking cockpit depth (runs 100% locally)"
+          style={{
+            textDecoration: 'none', padding: narrow ? '7px 12px' : '9px 18px', cursor: 'pointer',
+            border: `1px solid ${holoCamActive ? '#10b981' : 'rgba(148,233,255,0.18)'}`, borderRadius: 2,
+            color: holoCamActive ? '#34d399' : 'rgba(148,233,255,0.6)', fontSize: narrow ? 9 : 11, fontWeight: 600, letterSpacing: narrow ? '0.18em' : '0.24em',
+            fontFamily: "'IBM Plex Mono', monospace",
+            background: holoCamActive ? 'rgba(16,185,129,0.14)' : 'rgba(4,8,14,0.4)', backdropFilter: 'blur(10px)',
+            transition: 'all 0.25s',
+          }}
+        >
+          {holoCamActive ? '◉ HOLO-CAM: ON' : '📷 HOLO-CAM'}
         </button>
         <button
           onClick={() => {
