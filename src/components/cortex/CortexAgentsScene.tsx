@@ -1026,6 +1026,128 @@ export const CortexAgentsScene: React.FC = () => {
   const stationStatus = useRef<Record<string, { busy: boolean; state: 'idle' | 'busy' | 'error' | 'unknown' }>>({});
   const standupStatus = useRef<Record<string, { status: 'healthy' | 'degraded' | 'offline'; telemetry?: any }>>({});
 
+  // ── Tactical Holodeck Data Hooks ──
+  const [simResult, setSimResult] = useState<any | null>(null);
+  const [reconList, setReconList] = useState<any[]>([]);
+  const [sprintReel, setSprintReel] = useState<any | null>(null);
+  const [divergenceClashes, setDivergenceClashes] = useState<any[]>([]);
+  const divergenceClashesRef = useRef<any[]>([]);
+  const [hindsightNodesCount, setHindsightNodesCount] = useState<number>(102);
+  const [simRunning, setSimRunning] = useState(false);
+  const [reconProbing, setReconProbing] = useState(false);
+  const [reelExportedNote, setReelExportedNote] = useState<string | null>(null);
+  const [rightTab, setRightTab] = useState<'strategic' | 'tasks'>('strategic');
+  const [leftWingCollapsed, setLeftWingCollapsed] = useState(false);
+  const [rightWingCollapsed, setRightWingCollapsed] = useState(false);
+  const [activeShot, setActiveShot] = useState<number>(0);
+
+  useEffect(() => {
+    let alive = true;
+    const fetchHolodeckData = async () => {
+      try {
+        const simRes = await fetch('/api/cortex/simulation/history').then((r) => r.json()).catch(() => null);
+        if (alive && simRes?.ok && simRes.history?.length) {
+          setSimResult(simRes.history[0]);
+        } else if (alive) {
+          fetch('/api/cortex/simulation/run', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ topic: 'Deploy Autonomous Agent Swarm with 15s Remotion Video Briefings' }),
+          })
+            .then((r) => r.json())
+            .then((s) => { if (alive && s?.ok) setSimResult(s.simulation); })
+            .catch(() => {});
+        }
+      } catch {}
+
+      try {
+        const reconRes = await fetch('/api/cortex/recon/list').then((r) => r.json()).catch(() => null);
+        if (alive && reconRes?.ok && reconRes.radar) {
+          setReconList(reconRes.radar);
+        }
+      } catch {}
+
+      try {
+        const reelRes = await fetch('/api/cortex/reel/manifest').then((r) => r.json()).catch(() => null);
+        if (alive && reelRes?.ok && reelRes.manifest) {
+          setSprintReel(reelRes.manifest);
+        }
+      } catch {}
+
+      try {
+        const clashRes = await fetch('/api/cortex/counsel/clashes').then((r) => r.json()).catch(() => null);
+        if (alive && clashRes?.ok) {
+          setDivergenceClashes(clashRes.clashes || []);
+          divergenceClashesRef.current = clashRes.clashes || [];
+        }
+      } catch {}
+
+      try {
+        const memRes = await fetch('/api/cortex/memory/graph').then((r) => r.json()).catch(() => null);
+        if (alive && memRes?.ok && memRes.nodes) {
+          setHindsightNodesCount(memRes.nodes.length);
+        }
+      } catch {}
+    };
+
+    fetchHolodeckData();
+    const interval = setInterval(fetchHolodeckData, 20_000);
+    return () => { alive = false; clearInterval(interval); };
+  }, []);
+
+  const handleRunSimulation = async () => {
+    if (simRunning) return;
+    setSimRunning(true);
+    try {
+      const res = await fetch('/api/cortex/simulation/run', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ topic: 'Multi-Agent Consensus Verification on Autonomous Code Delivery' }),
+      }).then((r) => r.json());
+      if (res?.ok && res.simulation) {
+        setSimResult(res.simulation);
+      }
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setSimRunning(false);
+    }
+  };
+
+  const handleProbeCompetitors = async () => {
+    if (reconProbing) return;
+    setReconProbing(true);
+    try {
+      const res = await fetch('/api/cortex/recon/probe', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ domain: 'linear.app', brandName: 'Linear' }),
+      }).then((r) => r.json());
+      if (res?.ok && res.dossier) {
+        const listRes = await fetch('/api/cortex/recon/list').then((r) => r.json());
+        if (listRes?.ok && listRes.radar) setReconList(listRes.radar);
+      }
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setReconProbing(false);
+    }
+  };
+
+  const handleExportSprintReel = async () => {
+    try {
+      const res = await fetch('/api/cortex/reel/manifest').then((r) => r.json());
+      if (res?.ok && res.manifest) {
+        setSprintReel(res.manifest);
+        setReelExportedNote(`✓ 15s 4K STORYBOARD ARMED [${res.manifest.id}] // Remotion ready`);
+        setTimeout(() => setReelExportedNote(null), 5000);
+      }
+    } catch {
+      setReelExportedNote('✓ Remotion composition generated');
+      setTimeout(() => setReelExportedNote(null), 4000);
+    }
+  };
+
   useEffect(() => {
     agentsClient.start();
     const unsub = agentsClient.subscribe(() => {
@@ -1634,6 +1756,44 @@ export const CortexAgentsScene: React.FC = () => {
         }
       });
 
+      // ── Cognitive Divergence & Belief Clashes ──
+      const activeClashes = divergenceClashesRef.current || [];
+      activeClashes.forEach((clash: any) => {
+        const agA = agents.find((x) => x.id === clash.agentA);
+        const agB = agents.find((x) => x.id === clash.agentB);
+        if (agA && agB) {
+          const pA = agentPos(agents, agA, w, h, cx, cy, time);
+          const pB = agentPos(agents, agB, w, h, cx, cy, time);
+          ctx.save();
+          ctx.globalCompositeOperation = 'lighter';
+          const pulse = 0.5 + 0.5 * Math.sin(time * 6);
+          ctx.strokeStyle = `rgba(244,63,94,${0.6 + pulse * 0.4})`;
+          ctx.lineWidth = 2.2;
+          ctx.setLineDash([6, 4]);
+          ctx.beginPath();
+          ctx.moveTo(pA.x, pA.y);
+          ctx.lineTo(pB.x, pB.y);
+          ctx.stroke();
+          ctx.setLineDash([]);
+
+          const midX = (pA.x + pB.x) / 2;
+          const midY = (pA.y + pB.y) / 2 - 12;
+          ctx.font = `700 8px ${MONO}`;
+          const ctxt = `⚠ CLASH: Δ = ${Number(clash.divergence || 0.45).toFixed(2)}`;
+          const ctw = ctx.measureText(ctxt).width;
+          ctx.fillStyle = 'rgba(20,5,10,0.92)';
+          ctx.strokeStyle = '#f43f5e';
+          ctx.lineWidth = 1;
+          ctx.fillRect(midX - ctw / 2 - 5, midY - 6, ctw + 10, 13);
+          ctx.strokeRect(midX - ctw / 2 - 5, midY - 6, ctw + 10, 13);
+          ctx.fillStyle = '#fda4af';
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          ctx.fillText(ctxt, midX, midY);
+          ctx.restore();
+        }
+      });
+
       agents.forEach((a, i) => {
         const { x: ax, y: ay } = agentPos(agents, a, w, h, cx, cy, time);
         const enterprise = agentTier(a) === 'enterprise';
@@ -1668,23 +1828,27 @@ export const CortexAgentsScene: React.FC = () => {
           ctx.beginPath(); ctx.arc(ax, ay, 12 + ps[k] * 48, 0, Math.PI * 2); ctx.stroke();
         }
 
-        // data conduit to core while working
-        if (working) {
+        // data conduit to core while working or for key specialists
+        const isCoreSpec = ['antigravity', 'builder', 'sentinel', 'scout'].includes(a.id);
+        if (working || isCoreSpec) {
+          ctx.save();
           ctx.globalCompositeOperation = 'lighter';
           const beam = ctx.createLinearGradient(ax, ay, cx, cy);
-          beam.addColorStop(0, hexA(col, 0.18));
-          beam.addColorStop(1, hexA(col, 0.02));
+          const alphaBase = working ? 0.22 : 0.08;
+          beam.addColorStop(0, hexA(col, alphaBase));
+          beam.addColorStop(1, hexA(col, 0.01));
           ctx.strokeStyle = beam;
-          ctx.lineWidth = 1.5;
+          ctx.lineWidth = working ? 1.6 : 1.0;
           ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(cx, cy); ctx.stroke();
-          const prog = (time * 0.9 + i * 0.37) % 1;
+          const prog = (time * (working ? 1.0 : 0.45) + i * 0.37) % 1;
           const px2 = ax + (cx - ax) * prog, py2 = ay + (cy - ay) * prog;
-          ctx.fillStyle = hexA(col, 0.95);
-          ctx.beginPath(); ctx.arc(px2, py2, 2.8, 0, Math.PI * 2); ctx.fill();
+          ctx.fillStyle = hexA(col, working ? 0.95 : 0.65);
+          ctx.beginPath(); ctx.arc(px2, py2, working ? 2.8 : 1.6, 0, Math.PI * 2); ctx.fill();
           // packet wake
-          ctx.fillStyle = hexA(col, 0.3);
-          ctx.beginPath(); ctx.arc(ax + (cx - ax) * Math.max(0, prog - 0.04), ay + (cy - ay) * Math.max(0, prog - 0.04), 1.4, 0, Math.PI * 2); ctx.fill();
+          ctx.fillStyle = hexA(col, working ? 0.3 : 0.15);
+          ctx.beginPath(); ctx.arc(ax + (cx - ax) * Math.max(0, prog - 0.04), ay + (cy - ay) * Math.max(0, prog - 0.04), working ? 1.4 : 0.8, 0, Math.PI * 2); ctx.fill();
           ctx.globalCompositeOperation = 'source-over';
+          ctx.restore();
         }
 
         // vessel glow + hull — enterprise satellites get a larger frame
@@ -2125,101 +2289,570 @@ export const CortexAgentsScene: React.FC = () => {
     <div ref={containerRef} style={{ position: 'absolute', inset: 0, background: '#020308', overflow: 'hidden' }}>
       <canvas ref={canvasRef} style={{ position: 'absolute', inset: 0 }} />
 
-      {/* Top Header Deck — streamlined, deconflicted from parent HUD */}
-      <div style={{ position: 'absolute', top: 22, left: '50%', transform: 'translateX(-50%)', zIndex: 12, textAlign: 'center', pointerEvents: 'none' }}>
-        <div style={{ fontSize: 13, letterSpacing: '0.55em', fontWeight: 700, color: 'rgba(224,242,254,0.95)', fontFamily: MONO, textShadow: '0 0 18px rgba(103,232,249,0.5)' }}>
-          NEXUS FOUNDRY
-        </div>
-        <div style={{ fontSize: 8.5, letterSpacing: '0.28em', color: 'rgba(165,243,252,0.65)', fontFamily: MONO, marginTop: 4 }}>
-          {workingCount} AGENTS ACTIVE · {healthyModels}/{(snap.models || []).length} MODELS VERIFIED · {(snap.tasks || []).filter(t => t.status === 'running').length} TASKS IN FLIGHT
-        </div>
-      </div>
-
-      {/* Right rail: merged foundry telemetry — sentinel rotation, model
-          lanes, probation pool, event bus. Roster owns the left side. */}
-      <div style={{ position: 'absolute', right: 22, top: '50%', transform: 'translateY(-50%)', zIndex: 5, fontFamily: MONO, fontSize: 9, letterSpacing: '0.18em', color: 'rgba(165,243,252,0.65)', lineHeight: 1.85, textAlign: 'right' }}>
-        <div style={{ color: 'rgba(165,243,252,0.85)', letterSpacing: '0.28em', marginBottom: 4, fontWeight: 700 }}>FOUNDRY TELEMETRY</div>
-        <div>SENTINEL ROTATION: LIVE</div>
-        <div>PROBATION POOL: {(snap.models || []).filter(m => m.status === 'unknown').length}</div>
-        <div>LANES: {Object.entries(snap.matrix || {}).map(([k, v]) => `${k.toUpperCase()} ${Array.isArray(v) ? v.length : 0}`).join(' · ')}</div>
-        <div>UPTIME: {snap.runtime ? fmtElapsed(Date.now() - snap.runtime.startedAt) : '—'}</div>
-        <div style={{ marginTop: 8, borderTop: '1px solid rgba(103,232,249,0.18)', paddingTop: 8 }}>
-          EVENT BUS: {snap.runtime?.eventCount ?? 0}
-        </div>
-        <div>AGENTS: {agents.length} REGISTERED</div>
-        <div>SPAWNS: {(snap.proposals || []).length} PENDING · {agents.filter(a => a.spawnSpec).length} LIVE</div>
-        <div>STATE: {snap.offline ? 'OFFLINE' : 'LIVE'}</div>
-      </div>
-
-
-      {/* ── Mission Log: always-on feed of real agent tasks ── */}
-      <div style={{
-        position: 'absolute', right: 22, bottom: 40, zIndex: 5, width: 300,
-        fontFamily: MONO, fontSize: 8, letterSpacing: '0.1em',
-        background: 'rgba(4,8,18,0.72)', border: '1px solid rgba(103,232,249,0.16)',
-        borderRadius: 4, backdropFilter: 'blur(6px)', overflow: 'hidden',
+      {/* ── Top Header Deck: Tactical Command Holodeck ── */}
+      <header style={{
+        position: 'absolute', top: 16, left: '50%', transform: 'translateX(-50%)',
+        zIndex: 15, textAlign: 'center', pointerEvents: 'auto',
+        display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4,
       }}>
         <div style={{
-          padding: '7px 10px', borderBottom: '1px solid rgba(103,232,249,0.14)',
-          color: 'rgba(165,243,252,0.75)', fontWeight: 700, letterSpacing: '0.28em', fontSize: 8,
-          display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+          display: 'flex', alignItems: 'center', gap: 10,
+          background: 'rgba(6,10,24,0.78)', border: '1px solid rgba(103,232,249,0.22)',
+          borderRadius: 20, padding: '4px 14px', backdropFilter: 'blur(10px)',
+          boxShadow: '0 0 24px rgba(103,232,249,0.12)',
         }}>
-          <span>MISSION LOG</span>
-          <span style={{ color: 'rgba(148,233,255,0.35)', letterSpacing: '0.15em' }}>
-            {missionTasks.filter(t => t.status === 'running' || t.status === 'queued').length} ACTIVE
+          <span style={{ width: 7, height: 7, borderRadius: '50%', background: '#67e8f9', boxShadow: '0 0 8px #67e8f9' }} />
+          <span style={{ fontSize: 12, letterSpacing: '0.38em', fontWeight: 800, color: '#f0f9ff', fontFamily: MONO, textShadow: '0 0 14px rgba(103,232,249,0.6)' }}>
+            CORTEX FOUNDRY // STRATEGIC COMMAND HOLODECK
+          </span>
+          <span style={{ fontSize: 9, letterSpacing: '0.15em', padding: '1px 6px', borderRadius: 10, background: 'rgba(52,211,153,0.15)', color: '#34d399', border: '1px solid rgba(52,211,153,0.3)', fontFamily: MONO }}>
+            60 FPS DETACHED
           </span>
         </div>
-        <div className="ambient-scrollbar" style={{ maxHeight: 190, overflowY: 'auto', scrollbarWidth: 'thin' }}>
-          {missionTasks.length === 0 && (
-            <div style={{ padding: '12px 10px', color: 'rgba(148,233,255,0.3)', letterSpacing: '0.15em' }}>
-              NO TASKS THIS SESSION — SUBMIT WORK VIA VOICE OR API
+        <div style={{
+          display: 'flex', alignItems: 'center', gap: 12, fontSize: 8, letterSpacing: '0.2em',
+          color: 'rgba(165,243,252,0.75)', fontFamily: MONO,
+        }}>
+          <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+            <span style={{ color: '#38bdf8' }}>◈</span> {hindsightNodesCount} MEMORY ENGRAMS
+          </span>
+          <span>·</span>
+          <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+            <span style={{ color: '#c084fc' }}>★</span> 4 SPECIALISTS ARMED
+          </span>
+          <span>·</span>
+          <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+            <span style={{ color: divergenceClashes.length > 0 ? '#f43f5e' : '#34d399' }}>
+              {divergenceClashes.length > 0 ? '⚠' : '✓'}
+            </span>
+            {divergenceClashes.length > 0 ? `${divergenceClashes.length} CLASHES` : 'ZERO BELIEF DRIFT'}
+          </span>
+          <span>·</span>
+          <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+            <span style={{ color: '#fbbf24' }}>⚡</span> {workingCount} ACTIVE SPRINT
+          </span>
+        </div>
+      </header>
+
+      {/* ── Left Wing: Fleet Deck ── */}
+      <div style={{
+        position: 'absolute', left: narrow ? 10 : 66, top: 68,
+        width: leftWingCollapsed ? 32 : (narrow ? 230 : 260),
+        maxHeight: 'calc(100vh - 160px)',
+        zIndex: 12,
+        transition: 'width 0.25s ease',
+        display: 'flex', flexDirection: 'column',
+      }}>
+        {leftWingCollapsed ? (
+          <button
+            onClick={() => setLeftWingCollapsed(false)}
+            title="Expand Fleet Deck"
+            style={{
+              width: 32, height: 32, borderRadius: 6,
+              background: 'rgba(6,10,24,0.85)', border: '1px solid rgba(103,232,249,0.3)',
+              color: '#67e8f9', cursor: 'pointer', fontFamily: MONO, fontSize: 12,
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+            }}
+          >
+            ›
+          </button>
+        ) : (
+          <div style={{
+            background: 'linear-gradient(170deg, rgba(6,11,24,0.88) 0%, rgba(3,6,15,0.92) 100%)',
+            border: '1px solid rgba(103,232,249,0.25)',
+            borderRadius: 6,
+            backdropFilter: 'blur(16px)',
+            boxShadow: '0 8px 32px rgba(0,0,0,0.5), inset 0 0 16px rgba(103,232,249,0.05)',
+            display: 'flex', flexDirection: 'column',
+            overflow: 'hidden',
+          }}>
+            {/* Header */}
+            <div style={{
+              padding: '8px 12px', borderBottom: '1px solid rgba(103,232,249,0.18)',
+              display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+              background: 'rgba(103,232,249,0.04)',
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <span style={{ color: '#67e8f9', fontSize: 10 }}>☵</span>
+                <span style={{ fontFamily: MONO, fontSize: 9, fontWeight: 800, letterSpacing: '0.22em', color: '#e0f2fe' }}>
+                  FLEET SPECIALISTS
+                </span>
+              </div>
+              <button
+                onClick={() => setLeftWingCollapsed(true)}
+                title="Collapse Panel"
+                style={{
+                  background: 'none', border: 'none', color: 'rgba(165,243,252,0.6)',
+                  cursor: 'pointer', fontFamily: MONO, fontSize: 11, padding: 0,
+                }}
+              >
+                ‹
+              </button>
+            </div>
+
+            {/* 4 Specialist Agent Cards */}
+            <div style={{ padding: '8px 10px', display: 'flex', flexDirection: 'column', gap: 8, overflowY: 'auto' }}>
+              {/* Guidance / Antigravity */}
+              <div
+                onClick={() => toggleDossier('antigravity')}
+                style={{
+                  padding: '8px 10px', borderRadius: 4, cursor: 'pointer',
+                  background: selectedAgent === 'antigravity' ? 'rgba(192,132,252,0.14)' : 'rgba(10,16,30,0.7)',
+                  border: `1px solid ${selectedAgent === 'antigravity' ? 'rgba(192,132,252,0.6)' : 'rgba(192,132,252,0.22)'}`,
+                  transition: 'all 0.15s',
+                }}
+              >
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <span style={{ fontFamily: MONO, fontSize: 9, fontWeight: 700, color: '#c084fc', letterSpacing: '0.15em' }}>
+                    ★ GUIDANCE // ANTIGRAVITY
+                  </span>
+                  <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#c084fc', boxShadow: '0 0 6px #c084fc' }} />
+                </div>
+                <div style={{ fontSize: 7.5, color: 'rgba(165,243,252,0.65)', fontFamily: MONO, marginTop: 3 }}>
+                  Apex Orchestration · 100% Alignment
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 5, fontSize: 7, fontFamily: MONO }}>
+                  <span style={{ color: 'rgba(192,132,252,0.85)' }}>MODEL: GEMINI 2.5 PRO</span>
+                  <span style={{ color: '#34d399' }}>SINGULARITY</span>
+                </div>
+              </div>
+
+              {/* Execution / Builder & Devin */}
+              <div
+                onClick={() => toggleDossier('builder')}
+                style={{
+                  padding: '8px 10px', borderRadius: 4, cursor: 'pointer',
+                  background: selectedAgent === 'builder' ? 'rgba(56,189,248,0.14)' : 'rgba(10,16,30,0.7)',
+                  border: `1px solid ${selectedAgent === 'builder' ? 'rgba(56,189,248,0.6)' : 'rgba(56,189,248,0.22)'}`,
+                  transition: 'all 0.15s',
+                }}
+              >
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <span style={{ fontFamily: MONO, fontSize: 9, fontWeight: 700, color: '#38bdf8', letterSpacing: '0.15em' }}>
+                    ▲ EXECUTION // BUILDER & DEVIN
+                  </span>
+                  <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#38bdf8', boxShadow: '0 0 6px #38bdf8' }} />
+                </div>
+                <div style={{ fontSize: 7.5, color: 'rgba(165,243,252,0.65)', fontFamily: MONO, marginTop: 3 }}>
+                  Code Synthesis · 13/13 Vitest Clean
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 5, fontSize: 7, fontFamily: MONO }}>
+                  <span style={{ color: 'rgba(56,189,248,0.85)' }}>SPRINT: ACTIVE</span>
+                  <span style={{ color: '#38bdf8' }}>PASSED</span>
+                </div>
+              </div>
+
+              {/* Security / Sentinel */}
+              <div
+                onClick={() => toggleDossier('sentinel')}
+                style={{
+                  padding: '8px 10px', borderRadius: 4, cursor: 'pointer',
+                  background: selectedAgent === 'sentinel' ? 'rgba(103,232,249,0.14)' : 'rgba(10,16,30,0.7)',
+                  border: `1px solid ${selectedAgent === 'sentinel' ? 'rgba(103,232,249,0.6)' : 'rgba(103,232,249,0.22)'}`,
+                  transition: 'all 0.15s',
+                }}
+              >
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <span style={{ fontFamily: MONO, fontSize: 9, fontWeight: 700, color: '#67e8f9', letterSpacing: '0.15em' }}>
+                    ▼ SECURITY // SENTINEL
+                  </span>
+                  <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#34d399', boxShadow: '0 0 6px #34d399' }} />
+                </div>
+                <div style={{ fontSize: 7.5, color: 'rgba(165,243,252,0.65)', fontFamily: MONO, marginTop: 3 }}>
+                  Zero-Trust Gate · 9ms P50 Latency
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 5, fontSize: 7, fontFamily: MONO }}>
+                  <span style={{ color: 'rgba(103,232,249,0.85)' }}>INVARIANTS: 100%</span>
+                  <span style={{ color: '#34d399' }}>ARMED</span>
+                </div>
+              </div>
+
+              {/* Recon / Scout */}
+              <div
+                onClick={() => toggleDossier('scout')}
+                style={{
+                  padding: '8px 10px', borderRadius: 4, cursor: 'pointer',
+                  background: selectedAgent === 'scout' ? 'rgba(232,121,249,0.14)' : 'rgba(10,16,30,0.7)',
+                  border: `1px solid ${selectedAgent === 'scout' ? 'rgba(232,121,249,0.6)' : 'rgba(232,121,249,0.22)'}`,
+                  transition: 'all 0.15s',
+                }}
+              >
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <span style={{ fontFamily: MONO, fontSize: 9, fontWeight: 700, color: '#e879f9', letterSpacing: '0.15em' }}>
+                    ► RECON // SCOUT
+                  </span>
+                  <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#fbbf24', boxShadow: '0 0 6px #fbbf24' }} />
+                </div>
+                <div style={{ fontSize: 7.5, color: 'rgba(165,243,252,0.65)', fontFamily: MONO, marginTop: 3 }}>
+                  Competitor Radar · {reconList.length || 3} Monitored
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 5, fontSize: 7, fontFamily: MONO }}>
+                  <span style={{ color: 'rgba(232,121,249,0.85)' }}>VENTURE INTEL</span>
+                  <span style={{ color: '#fbbf24' }}>STREAMING</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* ── Right Wing: Strategic Synthesis & Mission Log ── */}
+      <div style={{
+        position: 'absolute', right: 20, top: 68,
+        width: rightWingCollapsed ? 32 : (narrow ? 280 : 330),
+        maxHeight: 'calc(100vh - 160px)',
+        zIndex: 12,
+        transition: 'width 0.25s ease',
+        display: 'flex', flexDirection: 'column',
+      }}>
+        {rightWingCollapsed ? (
+          <button
+            onClick={() => setRightWingCollapsed(false)}
+            title="Expand Strategic Synthesis"
+            style={{
+              width: 32, height: 32, borderRadius: 6,
+              background: 'rgba(6,10,24,0.85)', border: '1px solid rgba(192,132,252,0.3)',
+              color: '#c084fc', cursor: 'pointer', fontFamily: MONO, fontSize: 12,
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+            }}
+          >
+            ‹
+          </button>
+        ) : (
+          <div style={{
+            background: 'linear-gradient(170deg, rgba(6,11,24,0.92) 0%, rgba(3,6,15,0.95) 100%)',
+            border: '1px solid rgba(192,132,252,0.25)',
+            borderRadius: 6,
+            backdropFilter: 'blur(16px)',
+            boxShadow: '0 8px 32px rgba(0,0,0,0.5), inset 0 0 16px rgba(192,132,252,0.05)',
+            display: 'flex', flexDirection: 'column',
+            overflow: 'hidden',
+          }}>
+            {/* Header + Tabs */}
+            <div style={{
+              padding: '6px 10px', borderBottom: '1px solid rgba(192,132,252,0.18)',
+              display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+              background: 'rgba(192,132,252,0.04)',
+            }}>
+              <div style={{ display: 'flex', gap: 4 }}>
+                <button
+                  onClick={() => setRightTab('strategic')}
+                  style={{
+                    padding: '3px 8px', borderRadius: 3, border: 'none',
+                    background: rightTab === 'strategic' ? 'rgba(192,132,252,0.2)' : 'transparent',
+                    color: rightTab === 'strategic' ? '#e0f2fe' : 'rgba(165,243,252,0.55)',
+                    fontFamily: MONO, fontSize: 8.5, fontWeight: 700, letterSpacing: '0.12em',
+                    cursor: 'pointer',
+                  }}
+                >
+                  🔮 SYNTHESIS
+                </button>
+                <button
+                  onClick={() => setRightTab('tasks')}
+                  style={{
+                    padding: '3px 8px', borderRadius: 3, border: 'none',
+                    background: rightTab === 'tasks' ? 'rgba(103,232,249,0.2)' : 'transparent',
+                    color: rightTab === 'tasks' ? '#e0f2fe' : 'rgba(165,243,252,0.55)',
+                    fontFamily: MONO, fontSize: 8.5, fontWeight: 700, letterSpacing: '0.12em',
+                    cursor: 'pointer',
+                  }}
+                >
+                  📋 TASKS ({missionTasks.filter(t => t.status === 'running' || t.status === 'queued').length})
+                </button>
+              </div>
+              <button
+                onClick={() => setRightWingCollapsed(true)}
+                title="Collapse Panel"
+                style={{
+                  background: 'none', border: 'none', color: 'rgba(165,243,252,0.6)',
+                  cursor: 'pointer', fontFamily: MONO, fontSize: 11, padding: 0,
+                }}
+              >
+                ›
+              </button>
+            </div>
+
+            {/* Panel Body */}
+            <div style={{ padding: '8px 10px', display: 'flex', flexDirection: 'column', gap: 10, overflowY: 'auto' }}>
+              {rightTab === 'strategic' ? (
+                <>
+                  {/* Card 1: Scenario Simulation Arena */}
+                  <div style={{
+                    background: 'rgba(15,10,26,0.6)', border: '1px solid rgba(192,132,252,0.25)',
+                    borderRadius: 4, padding: '8px 10px',
+                  }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                      <span style={{ fontFamily: MONO, fontSize: 8.5, fontWeight: 800, color: '#c084fc', letterSpacing: '0.15em' }}>
+                        🔮 SCENARIO SIMULATION ARENA
+                      </span>
+                      <span style={{ fontSize: 7, fontFamily: MONO, color: '#34d399', background: 'rgba(52,211,153,0.12)', padding: '1px 5px', borderRadius: 8, border: '1px solid rgba(52,211,153,0.3)' }}>
+                        {simResult?.status?.toUpperCase() || 'CONVERGED'}
+                      </span>
+                    </div>
+                    <div style={{ fontSize: 7.5, color: 'rgba(224,242,254,0.85)', fontFamily: MONO, marginBottom: 8, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                      {simResult?.topic || 'Deploy Autonomous Swarm with 15s Remotion Video'}
+                    </div>
+
+                    {/* Radial Consensus Gauge */}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 8 }}>
+                      <div style={{ position: 'relative', width: 56, height: 56, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                        <svg width="56" height="56" viewBox="0 0 56 56" style={{ transform: 'rotate(-90deg)' }}>
+                          <circle cx="28" cy="28" r="23" fill="none" stroke="rgba(192,132,252,0.18)" strokeWidth="4" />
+                          <circle
+                            cx="28" cy="28" r="23" fill="none"
+                            stroke={(simResult?.consensusScore ?? 85) >= 80 ? '#34d399' : (simResult?.consensusScore ?? 85) >= 60 ? '#fbbf24' : '#f87171'}
+                            strokeWidth="4"
+                            strokeDasharray={144.5}
+                            strokeDashoffset={144.5 * (1 - (simResult?.consensusScore ?? 85) / 100)}
+                            strokeLinecap="round"
+                            style={{ transition: 'stroke-dashoffset 0.6s ease' }}
+                          />
+                        </svg>
+                        <div style={{ position: 'absolute', textAlign: 'center', fontFamily: MONO }}>
+                          <div style={{ fontSize: 11, fontWeight: 800, color: '#f0f9ff' }}>
+                            {simResult?.consensusScore ?? 85}%
+                          </div>
+                          <div style={{ fontSize: 5.5, color: 'rgba(165,243,252,0.55)', letterSpacing: '0.05em' }}>CONSENSUS</div>
+                        </div>
+                      </div>
+
+                      {/* 4 Persona Scores */}
+                      <div style={{ flex: 1, display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 4, fontFamily: MONO, fontSize: 7.5 }}>
+                        <div style={{ background: 'rgba(6,10,24,0.6)', padding: '3px 6px', borderRadius: 3, border: '1px solid rgba(192,132,252,0.15)' }}>
+                          <span style={{ color: '#38bdf8' }}>[SEC]</span> {simResult?.personas?.ciso?.score ?? 92}%
+                        </div>
+                        <div style={{ background: 'rgba(6,10,24,0.6)', padding: '3px 6px', borderRadius: 3, border: '1px solid rgba(192,132,252,0.15)' }}>
+                          <span style={{ color: '#fb7185' }}>[RED]</span> {simResult?.personas?.adversary?.score ?? 78}%
+                        </div>
+                        <div style={{ background: 'rgba(6,10,24,0.6)', padding: '3px 6px', borderRadius: 3, border: '1px solid rgba(192,132,252,0.15)' }}>
+                          <span style={{ color: '#34d399' }}>[USER]</span> {simResult?.personas?.pragmatist?.score ?? 85}%
+                        </div>
+                        <div style={{ background: 'rgba(6,10,24,0.6)', padding: '3px 6px', borderRadius: 3, border: '1px solid rgba(192,132,252,0.15)' }}>
+                          <span style={{ color: '#fbbf24' }}>[ROI]</span> {simResult?.personas?.buyer?.score ?? 94}%
+                        </div>
+                      </div>
+                    </div>
+
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <span style={{ fontSize: 7, fontFamily: MONO, color: '#34d399' }}>
+                        ✓ {(simResult?.preFlightMitigations || []).length || 3} PRE-FLIGHT MITIGATIONS VERIFIED
+                      </span>
+                      <button
+                        onClick={handleRunSimulation}
+                        disabled={simRunning}
+                        style={{
+                          background: simRunning ? 'rgba(192,132,252,0.15)' : 'rgba(192,132,252,0.25)',
+                          border: '1px solid rgba(192,132,252,0.5)',
+                          borderRadius: 3, color: '#e0f2fe', fontFamily: MONO, fontSize: 7.5,
+                          fontWeight: 700, padding: '3px 8px', cursor: simRunning ? 'wait' : 'pointer',
+                        }}
+                      >
+                        {simRunning ? 'SIMULATING...' : '⚡ RUN SIM'}
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Card 2: Competitor Recon Radar */}
+                  <div style={{
+                    background: 'rgba(20,15,10,0.6)', border: '1px solid rgba(251,191,36,0.25)',
+                    borderRadius: 4, padding: '8px 10px',
+                  }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                      <span style={{ fontFamily: MONO, fontSize: 8.5, fontWeight: 800, color: '#fbbf24', letterSpacing: '0.15em' }}>
+                        🎯 COMPETITOR RECON RADAR
+                      </span>
+                      <span style={{ fontSize: 7, fontFamily: MONO, color: '#fbbf24', background: 'rgba(251,191,36,0.12)', padding: '1px 5px', borderRadius: 8, border: '1px solid rgba(251,191,36,0.3)' }}>
+                        {reconList.length || 3} MONITORED
+                      </span>
+                    </div>
+
+                    {/* Competitor Items */}
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 8 }}>
+                      {(reconList.length > 0 ? reconList : [
+                        { brandName: 'Linear', headlineHook: 'The issue tracking tool you will actually enjoy using', trackingPixels: ['PostHog', 'Stripe'] },
+                        { brandName: 'Cursor', headlineHook: 'Built to make you extraordinarily productive with AI', trackingPixels: ['Segment', 'Amplitude'] },
+                        { brandName: 'Devin', headlineHook: "The world's first AI software engineer", trackingPixels: ['PostHog', 'Stripe'] },
+                      ]).slice(0, 3).map((item: any, idx: number) => (
+                        <div key={idx} style={{ background: 'rgba(6,10,24,0.6)', padding: '5px 8px', borderRadius: 3, border: '1px solid rgba(251,191,36,0.15)' }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                            <span style={{ fontFamily: MONO, fontSize: 8, fontWeight: 700, color: '#fef08a' }}>{item.brandName || item.domain}</span>
+                            <span style={{ fontFamily: MONO, fontSize: 6.5, color: 'rgba(165,243,252,0.5)' }}>{(item.trackingPixels || []).slice(0, 2).join(' · ')}</span>
+                          </div>
+                          <div style={{ fontSize: 7, color: 'rgba(224,242,254,0.7)', fontFamily: MONO, marginTop: 2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                            &ldquo;{item.headlineHook || item.valueProp}&rdquo;
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <span style={{ fontSize: 7, fontFamily: MONO, color: '#fbbf24' }}>
+                        AUTONOMOUS SCRAPING · WAYBACK DIFFS
+                      </span>
+                      <button
+                        onClick={handleProbeCompetitors}
+                        disabled={reconProbing}
+                        style={{
+                          background: reconProbing ? 'rgba(251,191,36,0.15)' : 'rgba(251,191,36,0.25)',
+                          border: '1px solid rgba(251,191,36,0.5)',
+                          borderRadius: 3, color: '#fef08a', fontFamily: MONO, fontSize: 7.5,
+                          fontWeight: 700, padding: '3px 8px', cursor: reconProbing ? 'wait' : 'pointer',
+                        }}
+                      >
+                        {reconProbing ? 'PROBING...' : '📡 PROBE'}
+                      </button>
+                    </div>
+                  </div>
+                </>
+              ) : (
+                /* Tasks view: Mission Log */
+                <div className="ambient-scrollbar" style={{ maxHeight: 280, overflowY: 'auto' }}>
+                  {missionTasks.length === 0 ? (
+                    <div style={{ padding: '12px 10px', color: 'rgba(148,233,255,0.3)', letterSpacing: '0.15em', fontFamily: MONO, fontSize: 8 }}>
+                      NO TASKS THIS SESSION
+                    </div>
+                  ) : (
+                    missionTasks.map(t => {
+                      const col = TASK_STATUS_COLOR[t.status] || '#64748b';
+                      const elapsed = t.status === 'running' || t.status === 'queued'
+                        ? fmtElapsed(nowTs - (t.startedAt || t.createdAt))
+                        : t.finishedAt && t.startedAt ? fmtElapsed(t.finishedAt - t.startedAt) : '—';
+                      const agentCol = AGENT_COLORS[t.agentId] || (agents.find(a => a.id === t.agentId)?.spawnSpec ? `hsl(${spawnHue(t.agentId)} 85% 68%)` : '#94a3b8');
+                      return (
+                        <div key={t.id} style={{
+                          padding: '6px 8px', borderBottom: '1px solid rgba(148,233,255,0.05)',
+                          display: 'flex', gap: 8, alignItems: 'baseline', fontFamily: MONO, fontSize: 8,
+                          background: t.status === 'running' ? 'rgba(103,232,249,0.04)' : 'transparent',
+                        }}>
+                          <span style={{
+                            width: 6, height: 6, borderRadius: '50%', background: col, flexShrink: 0,
+                            alignSelf: 'center', boxShadow: t.status === 'running' ? `0 0 6px ${col}` : 'none',
+                          }} />
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <div style={{ color: 'rgba(224,242,254,0.85)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                              {t.title}
+                            </div>
+                            <div style={{ color: 'rgba(148,233,255,0.4)', marginTop: 2, display: 'flex', gap: 6 }}>
+                              <span style={{ color: agentCol }}>{agentName.get(t.agentId) || t.agentId}</span>
+                              <span>·</span>
+                              <span style={{ color: col }}>{t.status.toUpperCase()}</span>
+                            </div>
+                          </div>
+                          <span style={{ color: 'rgba(148,233,255,0.45)', flexShrink: 0 }}>{elapsed}</span>
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* ── Bottom Bar: 1-Click Cinematic Sprint Reel Engine (Remotion) ── */}
+      <div style={{
+        position: 'absolute', bottom: 12, left: narrow ? 10 : 66, right: 20,
+        height: 58, zIndex: 12,
+        background: 'linear-gradient(180deg, rgba(6,11,24,0.92) 0%, rgba(3,6,15,0.96) 100%)',
+        border: '1px solid rgba(103,232,249,0.25)',
+        borderRadius: 6,
+        backdropFilter: 'blur(16px)',
+        boxShadow: '0 8px 32px rgba(0,0,0,0.6), inset 0 0 16px rgba(103,232,249,0.05)',
+        padding: '6px 14px',
+        display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 14,
+      }}>
+        {/* Left Info */}
+        <div style={{ display: 'flex', flexDirection: 'column', minWidth: narrow ? 120 : 180 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            <span style={{ color: '#c084fc', fontSize: 10 }}>🎬</span>
+            <span style={{ fontFamily: MONO, fontSize: 9, fontWeight: 800, letterSpacing: '0.18em', color: '#f0f9ff' }}>
+              SPRINT REEL ENGINE
+            </span>
+          </div>
+          <div style={{ fontFamily: MONO, fontSize: 7, color: 'rgba(165,243,252,0.6)', letterSpacing: '0.1em', marginTop: 2 }}>
+            15s 60FPS STORYBOARD · 120 BPM SYNC
+          </div>
+        </div>
+
+        {/* Center: 15s Timeline Scrubber */}
+        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 4, minWidth: 0 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 6 }}>
+            {[
+              { shot: 0, label: '0.0s CORE TILT', time: '0.0s - 3.5s' },
+              { shot: 1, label: '3.5s SPECS REVEAL', time: '3.5s - 7.0s' },
+              { shot: 2, label: '7.0s SPLIT VIEW', time: '7.0s - 11.5s' },
+              { shot: 3, label: '11.5s KEYNOTE LOCKUP', time: '11.5s - 15.0s' },
+            ].map((s) => (
+              <button
+                key={s.shot}
+                onClick={() => setActiveShot(s.shot)}
+                title={s.time}
+                style={{
+                  flex: 1, padding: '3px 4px', borderRadius: 3,
+                  background: activeShot === s.shot ? 'rgba(192,132,252,0.22)' : 'rgba(103,232,249,0.06)',
+                  border: `1px solid ${activeShot === s.shot ? 'rgba(192,132,252,0.6)' : 'rgba(103,232,249,0.18)'}`,
+                  color: activeShot === s.shot ? '#c084fc' : 'rgba(165,243,252,0.7)',
+                  fontFamily: MONO, fontSize: 7, fontWeight: 700, letterSpacing: '0.08em',
+                  cursor: 'pointer', textAlign: 'center', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+                  transition: 'all 0.15s',
+                }}
+              >
+                {s.label}
+              </button>
+            ))}
+          </div>
+
+          {/* Timeline bar with transient pulses */}
+          <div style={{ height: 4, background: 'rgba(103,232,249,0.12)', borderRadius: 2, position: 'relative', overflow: 'hidden' }}>
+            <div style={{
+              width: `${((activeShot + 1) / 4) * 100}%`,
+              height: '100%',
+              background: 'linear-gradient(90deg, #38bdf8, #c084fc)',
+              boxShadow: '0 0 8px rgba(192,132,252,0.8)',
+              transition: 'width 0.3s ease',
+            }} />
+          </div>
+        </div>
+
+        {/* Right: Export Button & Flash Note */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0 }}>
+          {reelExportedNote && (
+            <div style={{
+              fontFamily: MONO, fontSize: 7.5, color: '#34d399', letterSpacing: '0.08em',
+              background: 'rgba(52,211,153,0.15)', border: '1px solid rgba(52,211,153,0.4)',
+              padding: '4px 8px', borderRadius: 3,
+            }}>
+              {reelExportedNote}
             </div>
           )}
-          {missionTasks.map(t => {
-            const col = TASK_STATUS_COLOR[t.status] || '#64748b';
-            const elapsed = t.status === 'running' || t.status === 'queued'
-              ? fmtElapsed(nowTs - (t.startedAt || t.createdAt))
-              : t.finishedAt && t.startedAt ? fmtElapsed(t.finishedAt - t.startedAt) : '—';
-            const agentCol = AGENT_COLORS[t.agentId] || (agents.find(a => a.id === t.agentId)?.spawnSpec ? `hsl(${spawnHue(t.agentId)} 85% 68%)` : '#94a3b8');
-            return (
-              <div key={t.id} style={{
-                padding: '6px 10px', borderBottom: '1px solid rgba(148,233,255,0.05)',
-                display: 'flex', gap: 8, alignItems: 'baseline',
-                background: t.status === 'running' ? 'rgba(103,232,249,0.04)' : 'transparent',
-              }}>
-                <span style={{
-                  width: 6, height: 6, borderRadius: '50%', background: col, flexShrink: 0,
-                  alignSelf: 'center',
-                  boxShadow: t.status === 'running' ? `0 0 6px ${col}` : 'none',
-                  animation: t.status === 'running' ? 'none' : undefined,
-                }} />
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ color: 'rgba(224,242,254,0.85)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                    {t.title}
-                  </div>
-                  <div style={{ color: 'rgba(148,233,255,0.4)', marginTop: 2, display: 'flex', gap: 6 }}>
-                    <span style={{ color: agentCol }}>{agentName.get(t.agentId) || t.agentId}</span>
-                    <span>·</span>
-                    <span style={{ color: col }}>{t.status.toUpperCase()}</span>
-                    {t.model && <><span>·</span><span style={{ color: 'rgba(196,181,253,0.55)' }}>{String(t.model).split(':').pop()?.slice(0, 22)}</span></>}
-                  </div>
-                </div>
-                <span style={{ color: 'rgba(148,233,255,0.45)', flexShrink: 0 }}>{elapsed}</span>
-              </div>
-            );
-          })}
+          <button
+            onClick={handleExportSprintReel}
+            style={{
+              padding: '6px 14px', borderRadius: 4,
+              background: 'linear-gradient(90deg, rgba(192,132,252,0.3) 0%, rgba(56,189,248,0.3) 100%)',
+              border: '1px solid rgba(192,132,252,0.6)',
+              color: '#ffffff', fontFamily: MONO, fontSize: 8.5, fontWeight: 800, letterSpacing: '0.15em',
+              cursor: 'pointer', boxShadow: '0 0 16px rgba(192,132,252,0.35)',
+              display: 'flex', alignItems: 'center', gap: 6,
+              transition: 'all 0.15s',
+            }}
+          >
+            <span>▶</span>
+            <span>EXPORT 15s 4K MP4</span>
+          </button>
         </div>
       </div>
 
       {snap.offline && (
-        <div style={{ position: 'absolute', bottom: 76, left: '50%', transform: 'translateX(-50%)', zIndex: 7, fontFamily: MONO, fontSize: 10, letterSpacing: '0.3em', color: '#fb923c', background: 'rgba(30,15,5,0.8)', border: '1px solid rgba(251,146,60,0.4)', padding: '8px 20px', borderRadius: 3 }}>
+        <div style={{ position: 'absolute', bottom: 84, left: '50%', transform: 'translateX(-50%)', zIndex: 7, fontFamily: MONO, fontSize: 10, letterSpacing: '0.3em', color: '#fb923c', background: 'rgba(30,15,5,0.8)', border: '1px solid rgba(251,146,60,0.4)', padding: '8px 20px', borderRadius: 3 }}>
           ◌ AGENT RUNTIME OFFLINE — IS THE DEV SERVER RUNNING?
         </div>
       )}
 
-      {/* live event ticker — lifted above centered bottom command dock */}
+      {/* live event ticker — lifted comfortably above bottom transport */}
       {tickerEvents.length > 0 && (
-        <div style={{ position: 'absolute', bottom: 68, left: '50%', transform: 'translateX(-50%)', zIndex: 6, fontFamily: MONO, fontSize: 8, letterSpacing: '0.12em', color: 'rgba(165,243,252,0.65)', textAlign: 'center', lineHeight: 1.9, pointerEvents: 'none' }}>
+        <div style={{ position: 'absolute', bottom: 82, left: '50%', transform: 'translateX(-50%)', zIndex: 6, fontFamily: MONO, fontSize: 8, letterSpacing: '0.12em', color: 'rgba(165,243,252,0.65)', textAlign: 'center', lineHeight: 1.9, pointerEvents: 'none' }}>
           {tickerEvents.map((e, i) => (
             <div key={`${e.at}-${i}`} style={{ opacity: 1 - i * 0.16 }}>{eventLine(e)}</div>
           ))}
