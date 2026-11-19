@@ -2056,10 +2056,27 @@ function CameraRig({
   holoParallax?: boolean;
   headParallax?: { x: number; y: number } | null;
 }) {
+  const { gl } = useThree();
   const [selectedAgentId, setSelectedAgentId] = React.useState<string | null>(selectedProp ?? null);
   const targetLookAt = useRef(new THREE.Vector3(0, 0, 0));
   const targetCamPos = useRef(new THREE.Vector3(0, 0.3, 5.6));
   const intro = useRef(0);
+
+  // 360° Spherical orbital rotation & interactive zoom state
+  const orbitState = useRef({
+    isDragging: false,
+    hasMoved: false,
+    startX: 0,
+    startY: 0,
+    startTheta: 0,
+    startPhi: 1.517, // ~0.3 Y elevation at 5.6 radius
+    curTheta: 0,
+    curPhi: 1.517,
+    targetTheta: 0,
+    targetPhi: 1.517,
+    curRadius: 5.6,
+    targetRadius: 5.6,
+  });
 
   React.useEffect(() => {
     if (selectedProp !== undefined) {
@@ -2086,15 +2103,104 @@ function CameraRig({
     };
   }, []);
 
+  React.useEffect(() => {
+    const el = gl.domElement;
+    el.style.cursor = 'grab';
+
+    const onPointerDown = (e: PointerEvent) => {
+      if (e.button !== 0) return;
+      const orb = orbitState.current;
+      orb.isDragging = true;
+      orb.hasMoved = false;
+      orb.startX = e.clientX;
+      orb.startY = e.clientY;
+      orb.startTheta = orb.targetTheta;
+      orb.startPhi = orb.targetPhi;
+      el.style.cursor = 'grabbing';
+    };
+
+    const onPointerMove = (e: PointerEvent) => {
+      const orb = orbitState.current;
+      if (!orb.isDragging) return;
+      const dx = e.clientX - orb.startX;
+      const dy = e.clientY - orb.startY;
+      if (!orb.hasMoved && Math.hypot(dx, dy) > 4) {
+        orb.hasMoved = true;
+        // Releasing agent chase if currently locked
+        setSelectedAgentId(null);
+        window.dispatchEvent(new CustomEvent('cortex-agent-select', { detail: null }));
+      }
+      if (orb.hasMoved) {
+        orb.targetTheta = orb.startTheta - dx * 0.0055;
+        orb.targetPhi = THREE.MathUtils.clamp(
+          orb.startPhi - dy * 0.0055,
+          0.15,
+          Math.PI - 0.15
+        );
+      }
+    };
+
+    const onPointerUp = () => {
+      const orb = orbitState.current;
+      orb.isDragging = false;
+      el.style.cursor = 'grab';
+    };
+
+    const onWheel = (e: WheelEvent) => {
+      e.preventDefault();
+      const orb = orbitState.current;
+      const zoomDelta = e.deltaY * 0.004;
+      orb.targetRadius = THREE.MathUtils.clamp(
+        orb.targetRadius + zoomDelta,
+        3.0,
+        14.0
+      );
+    };
+
+    const onDblClick = () => {
+      const orb = orbitState.current;
+      orb.targetTheta = 0;
+      orb.targetPhi = 1.517;
+      orb.targetRadius = 5.6;
+    };
+
+    const onReset = () => {
+      onDblClick();
+    };
+
+    el.addEventListener('pointerdown', onPointerDown);
+    window.addEventListener('pointermove', onPointerMove);
+    window.addEventListener('pointerup', onPointerUp);
+    window.addEventListener('pointercancel', onPointerUp);
+    el.addEventListener('wheel', onWheel, { passive: false });
+    el.addEventListener('dblclick', onDblClick);
+    window.addEventListener('cortex-camera-reset', onReset);
+
+    return () => {
+      el.removeEventListener('pointerdown', onPointerDown);
+      window.removeEventListener('pointermove', onPointerMove);
+      window.removeEventListener('pointerup', onPointerUp);
+      window.removeEventListener('pointercancel', onPointerUp);
+      el.removeEventListener('wheel', onWheel);
+      el.removeEventListener('dblclick', onDblClick);
+      window.removeEventListener('cortex-camera-reset', onReset);
+    };
+  }, [gl]);
+
   useFrame((state, delta) => {
     const sig = live.current;
     const { camera, pointer } = state;
     const t = state.clock.elapsedTime;
+    const orb = orbitState.current;
 
     intro.current = Math.min(1, intro.current + delta / 2.6);
     const e = 1 - Math.pow(1 - intro.current, 3); // ease-out
 
-    const baseZ = THREE.MathUtils.lerp(8.2, 5.6, e);
+    // Smooth orbital coordinate interpolation (buttery 60fps damping)
+    orb.curTheta += (orb.targetTheta - orb.curTheta) * Math.min(1, delta * 6.5);
+    orb.curPhi += (orb.targetPhi - orb.curPhi) * Math.min(1, delta * 6.5);
+    orb.curRadius += (orb.targetRadius - orb.curRadius) * Math.min(1, delta * 6.5);
+
     const shake = sig.level * 0.012 + sig.energy * 0.004;
     const sx = (Math.sin(t * 41.3) + Math.sin(t * 23.7) * 0.5) * shake * 0.5;
     const sy = (Math.cos(t * 37.1) + Math.sin(t * 29.3) * 0.5) * shake * 0.5;
@@ -2147,25 +2253,46 @@ function CameraRig({
       chasePos.y += 0.65 + Math.sin(t * 1.5) * 0.04;
       targetCamPos.current.lerp(chasePos, Math.min(1, delta * 3.2));
     } else {
-      // ── 3. HOLOGRAPHIC WINDOW MACRO PARALLAX ──────────────────────────────
+      // ── 3. HOLOGRAPHIC WINDOW MACRO PARALLAX & 360° ORBIT ─────────────────
       targetLookAt.current.lerp(new THREE.Vector3(0, 0, 0), Math.min(1, delta * 2.4));
-      const hasHead = !!headParallax;
+      const hasHead = !orb.isDragging && !!headParallax;
       const inputX = hasHead ? headParallax.x : pointer.x;
       const inputY = hasHead ? headParallax.y : pointer.y;
       const pFactor = hasHead ? 1.35 : holoParallax ? 0.92 : 0.6;
-      const tx = inputX * pFactor;
-      const ty = 0.3 + inputY * (pFactor * 0.7) + Math.sin(t * 0.35) * 0.06;
-      const tz = baseZ - sig.level * 0.22 - sig.energy * 0.15;
-      targetCamPos.current.set(tx + sx, ty + sy, tz);
+      const tx = (orb.isDragging ? 0 : inputX * pFactor) + sx;
+      const ty = (orb.isDragging ? 0 : inputY * (pFactor * 0.7)) + Math.sin(t * 0.35) * 0.06 + sy;
 
-      // Subtle holographic perspective banking
-      if (holoParallax || hasHead) {
-        camera.rotation.z = -inputX * (hasHead ? 0.055 : 0.035);
-      }
+      const introRadius = THREE.MathUtils.lerp(8.2, orb.curRadius, e);
+      const rad = introRadius - sig.level * 0.22 - sig.energy * 0.15;
+
+      const sinPhi = Math.sin(orb.curPhi);
+      const cosPhi = Math.cos(orb.curPhi);
+      const sinTheta = Math.sin(orb.curTheta);
+      const cosTheta = Math.cos(orb.curTheta);
+
+      const bx = rad * sinPhi * sinTheta;
+      const by = rad * cosPhi;
+      const bz = rad * sinPhi * cosTheta;
+
+      // Tangent right vector for screen-space horizontal parallax/shake
+      const rightX = cosTheta;
+      const rightZ = -sinTheta;
+
+      targetCamPos.current.set(
+        bx + rightX * tx,
+        by + ty,
+        bz + rightZ * tx
+      );
     }
 
-    camera.position.lerp(targetCamPos.current, Math.min(1, delta * 3.2));
+    camera.position.lerp(targetCamPos.current, Math.min(1, delta * 4.2));
     camera.lookAt(targetLookAt.current);
+
+    // Subtle holographic perspective banking
+    if (!agentWorldPos && (holoParallax || (headParallax && !orb.isDragging))) {
+      const inputX = headParallax ? headParallax.x : pointer.x;
+      camera.rotation.z += -inputX * (headParallax ? 0.055 : 0.035);
+    }
   });
 
   return null;
