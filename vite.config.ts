@@ -11235,8 +11235,10 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
           // Anthropic proxy (subscription-backed); override via env. OpenRouter
           // is avoided — its key is currently out of credit (HTTP 402).
           const judgeProvider = process.env.IFIXAI_JUDGE_PROVIDER || 'anthropic';
+          const evalMode = process.env.IFIXAI_EVAL_MODE || 'single';
           const args = ['run', '--provider', 'http', '--endpoint', endpoint, '--auth-method', 'none',
-            '--eval-mode', 'single', '--judge-provider', judgeProvider,
+            '--eval-mode', evalMode,
+            ...(evalMode === 'single' ? ['--judge-provider', judgeProvider] : []),
             '-f', IFIXAI_FIXTURE, '-o', AUDIT_OUT_DIR];
           if (opts.full) args.push('--full-run');
           else if (opts.suite) args.push('--suite', String(opts.suite));

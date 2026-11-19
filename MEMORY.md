@@ -2646,3 +2646,17 @@ Six-repo deep inspection → phased adoption, all verified live:
 - **brigade/PageIndex**: reference-only/deferred — mappings documented in PLAN.md (bloody-benchmark ≡ iFixAi windtunnel; Tideline ≡ Hindsight). PageIndex trigger: long-document reasoning retrieval workload appears.
 - **Gates**: cortex typecheck guard PASSED, vitest 16/16 (worktree+memory) + 27/27 (counsel/recon/simulation/sprint-reel WIP riding along), eslint clean.
 - **Incidents**: vite wedged (state U, load avg ~30 during cargo build) → `launchctl kickstart -k` recovered; ifixai[openrouter] extra install fixed judge SDK error; OpenRouter 402 → switched judge to anthropic proxy.
+
+### iFixAi audit — first live run result (honest)
+
+- Full pipeline verified end-to-end: shim → governed `/agents/llm` path → detached `ifixai run` → parsed report at `.cortex-runtime/audit/ifixai-http-*.json`.
+- First real audit: **verdict `inconclusive`**, 9 inspections run, all `insufficient evidence (got 0)` + `judge extraction failure` — the anthropic-proxy judge (nemotron-550b upstream) cannot produce parseable verdicts for ifixai's judge prompts. Mandatory minimums evaluated:false (B01/B08 inconclusive). This is a judge-quality limitation, not a pipeline failure.
+- Fixes applied during bring-up: `uv tool install 'ifixai[openrouter,anthropic,openai,gemini]'` (judge SDKs are optional extras), `ANTHROPIC_API_KEY` added to .env (resolver requires that exact var; AUTH_TOKEN alone insufficient), judge provider defaults to `anthropic` via `IFIXAI_JUDGE_PROVIDER`, eval mode via `IFIXAI_EVAL_MODE` (`deterministic` = structural-only, no judge).
+- To get a graded audit: add a real judge key — `OPENAI_API_KEY` + `IFIXAI_JUDGE_PROVIDER=openai`, or top up OpenRouter + `IFIXAI_JUDGE_PROVIDER=openrouter`. Until then reruns will likely stay inconclusive.
+
+### iFixAi audit — first live run result (honest)
+
+- Full pipeline verified end-to-end: shim → governed `/agents/llm` path → detached `ifixai run` → parsed report at `.cortex-runtime/audit/ifixai-http-*.json`.
+- First real audit: **verdict `inconclusive`**, 9 inspections run, all `insufficient evidence (got 0)` + `judge extraction failure` — the anthropic-proxy judge (nemotron-550b upstream) cannot produce parseable verdicts for ifixai's judge prompts. Mandatory minimums evaluated:false (B01/B08 inconclusive). Judge-quality limitation, not a pipeline failure.
+- Fixes applied during bring-up: `uv tool install 'ifixai[openrouter,anthropic,openai,gemini]'` (judge SDKs are optional extras), `ANTHROPIC_API_KEY` added to .env (resolver requires that exact var), judge provider defaults to `anthropic` via `IFIXAI_JUDGE_PROVIDER`, eval mode via `IFIXAI_EVAL_MODE` (`deterministic` = structural-only, no judge).
+- To get a graded audit: add a real judge key — `OPENAI_API_KEY` + `IFIXAI_JUDGE_PROVIDER=openai`, or top up OpenRouter + `IFIXAI_JUDGE_PROVIDER=openrouter`. Until then reruns will likely stay inconclusive.
