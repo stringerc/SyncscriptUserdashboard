@@ -2591,3 +2591,23 @@ Court date: August 18th (past). User confirmed they do not have court on Monday,
 
 ### 2026-11-17 — Cortex Conscious Entry
 Govee API key: Dab9261f-d5cf-4607-81fb-d4ff6f63974e — configured for physical Govee RGBIC lights (TV backlight & LED strip) control via cortex_lights tool.
+
+
+### 2026-11-19 — Stage 2+ Cortex: tamper-evident ledger, DVR scrubber, token photons, lensing (commit `ab2f033`)
+
+- **Hash-chained audit ledger** (`src/lib/cortex-agents/eventlog.ts`): every appended record carries `prevHash`/`hash` (sha256 over canonical preimage) plus a `writer` epoch id (pid+boot+nonce). The verifier (`verifyEventLog`, served at `GET /api/cortex/events/verify`) checks each writer's sub-chain independently, so concurrent appenders interleave safely; legacy records and the writer-preimage migration window verify under a documented alternate scheme (`altScheme` count). Live audit: `ok:true`, 17k+ records, 10 writer epochs.
+- **Honest semantics**: `linkBreaks` = chain-epoch boundaries/interleaving (informational, non-fatal); `ok:false` only on content-hash mismatch or unparseable line — real tamper evidence, not a vanity check.
+- **DVR scrubber** (`CortexVisualizerPage.tsx`): chrono scrubber/slider and jump stages now bound to the real event track (`replayDuration = track.length * 1.4`) with event-derived `SEQ n: type · agent` waypoints; canned 8s reel constants only when no events exist.
+- **Inter-agent token photons** (`CortexCoreScene.tsx`): `agent.comm` events spawn world-space sprites that fly satellite→satellite (or →core) along live `agentWorldPositions` with eased arc; 10-slot pool, 1.15s flight.
+- **Stylized gravitational lensing**: custom `LensingEffect` (postprocessing `Effect` subclass) refracts the frame around the core's projected screen position; strength driven by live phi/think signal. Explicitly a visualization, not a physical simulation.
+- **Verification**: 8/8 eventlog vitest (clean chain, tamper detection, legacy tolerance), cortex typecheck guard PASSED, eslint 0 errors, live `/api/cortex/events/verify` returns ok:true, visualizer serves 200.
+- **Residual**: duplicate `seq` values can still occur across concurrent writers (seq recovery is max+1 per boot); per-writer chains remain intact. Writer field is epoch metadata, not hash-covered.
+
+
+### 2026-11-19 — Boundary hardening + disk-full incident (commit `43d037a`)
+
+- **Root cause of visualizer error**: disk hit 100% (210MB free) — vite config load failures, ENOSPC eventlog append failures. Freed ~6.9GB by deleting unused assets: halo1/halo3 cortana RVC voice models (active voice is halo2 only, confirmed via cortana_tts_server.py), 448MB dead launchd.err.log, three old app DMGs, stale canvas screenshots, brew cleanup.
+- **Visualizer crash fix**: `LensingEffect` class was declared inside `PostFX` after the `useMemo` that instantiates it → TDZ ReferenceError crashing the core face. Moved to module scope; verified via playwright-cli (0 React errors, canvas live 1280x720).
+- **Duplicate seq fix**: `.seq-head` high-water mark + `.seq.lock` mutex (O_EXCL create, 10s stale-break, 2s wait) makes seq allocation atomic across processes. Live-verified: new appends seq 20275–20281 unique and hash-chained.
+- **Verifier metric**: `duplicateSeqs` now reported (8,711 historical — immutable pre-lock era; new appends add zero).
+- **Verification**: 8/8 eventlog vitest, cortex typecheck guard PASSED, eslint clean, `/api/cortex/events/verify` ok:true (28,991 records, 21 writers).

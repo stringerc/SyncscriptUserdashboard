@@ -1,0 +1,34 @@
+name: tts-slo-probe
+
+# External synthetic probe for the production TTS health endpoint.
+# Vercel Hobby crons cannot run sub-daily, so GitHub Actions schedule is
+# the external SLO probe: GET /api/ai/tts?probe=1 must report Kokoro
+# reachable (kokoroConfigured + upstream health) within the SLO window.
+
+on:
+  schedule:
+    - cron: '*/30 * * * *'
+  workflow_dispatch:
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Probe production TTS health endpoint
+        run: |
+          set -euo pipefail
+          url="https://www.syncscript.app/api/ai/tts?probe=1"
+          echo "GET $url"
+          body=$(curl -fsS --max-time 20 "$url")
+          echo "$body"
+          echo "$body" | grep -q '"ok"[[:space:]]*:[[:space:]]*true' || {
+            echo "::error::TTS probe returned ok!=true"
+            exit 1
+          }
+          echo "$body" | grep -qiE 'kokoro(Configured|UpstreamReachable|DirectOrigin)' || {
+            echo "::error::TTS probe missing kokoro health fields"
+            exit 1
+          }
+      - name: Notify on failure
+        if: failure()
+        run: echo "::error::TTS SLO probe failed — check KOKORO_TTS_URL tunnel and Kokoro daemon on :8880"
