@@ -1168,79 +1168,97 @@ export default function CortexVisualizerPage() {
       </div>
       )}
 
-      {/* Top-Right: Foundry Strategic Navigation Bar (Core, Foundry, Map, Chat, Voice) */}
-      {faceMode === 'agents' && (
-        <nav
-          aria-label="Cortex Top Navigation"
+      {/* Top-Right: Strategic Navigation Bar (Core, Foundry, Map, Chat, Voice) */}
+      <nav
+        aria-label="Cortex Top Navigation"
+        style={{
+          position: 'absolute',
+          top: 20,
+          right: chatOpen ? (narrow ? 16 : 416) : (narrow ? 16 : 32),
+          zIndex: 35,
+          display: 'flex',
+          alignItems: 'center',
+          gap: 6,
+          background: 'rgba(6,10,24,0.85)',
+          padding: '5px 8px',
+          borderRadius: 20,
+          border: '1px solid rgba(103,232,249,0.25)',
+          backdropFilter: 'blur(16px)',
+          boxShadow: '0 4px 24px rgba(0,0,0,0.55), 0 0 16px rgba(103,232,249,0.08)',
+          transition: 'right 0.25s ease',
+        }}
+      >
+        {/* CORE */}
+        <button
+          onClick={() => {
+            if (mapMode) setMapMode(false);
+            if (faceMode === 'core') return;
+            setFaceMode('core');
+            try { localStorage.setItem('cortex_visualizer_face', 'core'); } catch {}
+            cortexSpeak('Transitioning to Sovereign Quantum Core.');
+          }}
+          title={faceMode === 'core' && !mapMode ? 'Sovereign Core — active neural sanctum & memory constellation' : 'Switch to Sovereign Core'}
           style={{
-            position: 'absolute',
-            top: 20,
-            right: chatOpen ? (narrow ? 16 : 416) : (narrow ? 16 : 32),
-            zIndex: 25,
+            padding: '5px 12px',
+            borderRadius: 14,
+            border: faceMode === 'core' && !mapMode ? '1px solid #38bdf8' : '1px solid rgba(148,233,255,0.18)',
+            background: faceMode === 'core' && !mapMode ? 'rgba(56,189,248,0.18)' : 'rgba(4,8,14,0.5)',
+            color: faceMode === 'core' && !mapMode ? '#f0f9ff' : 'rgba(165,243,252,0.7)',
+            fontFamily: "'IBM Plex Mono', monospace",
+            fontSize: 9.5,
+            fontWeight: 800,
+            letterSpacing: '0.14em',
+            boxShadow: faceMode === 'core' && !mapMode ? '0 0 12px rgba(56,189,248,0.4)' : 'none',
+            cursor: faceMode === 'core' && !mapMode ? 'default' : 'pointer',
             display: 'flex',
             alignItems: 'center',
-            gap: 6,
-            background: 'rgba(6,10,24,0.85)',
-            padding: '5px 8px',
-            borderRadius: 20,
-            border: '1px solid rgba(103,232,249,0.25)',
-            backdropFilter: 'blur(16px)',
-            boxShadow: '0 4px 24px rgba(0,0,0,0.55), 0 0 16px rgba(103,232,249,0.08)',
-            transition: 'right 0.25s ease',
+            gap: 5,
+            transition: 'all 0.2s',
           }}
         >
-          {/* CORE */}
-          <button
-            onClick={() => {
-              setFaceMode('core');
-              try { localStorage.setItem('cortex_visualizer_face', 'core'); } catch {}
-              cortexSpeak('Returning to Sovereign Core.');
-            }}
-            title="Sovereign Core — 3D neural sanctum & memory constellation"
-            style={{
-              padding: '5px 12px',
-              borderRadius: 14,
-              border: '1px solid rgba(148,233,255,0.18)',
-              background: 'rgba(4,8,14,0.5)',
-              color: 'rgba(165,243,252,0.7)',
-              fontFamily: "'IBM Plex Mono', monospace",
-              fontSize: 9.5,
-              fontWeight: 700,
-              letterSpacing: '0.14em',
-              cursor: 'pointer',
-              display: 'flex',
-              alignItems: 'center',
-              gap: 5,
-              transition: 'all 0.2s',
-            }}
-          >
+          {faceMode === 'core' && !mapMode ? (
+            <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#38bdf8', boxShadow: '0 0 6px #38bdf8' }} />
+          ) : (
             <span style={{ color: '#38bdf8' }}>◈</span>
-            <span>CORE</span>
-          </button>
+          )}
+          <span>CORE</span>
+        </button>
 
-          {/* FOUNDRY (Active) */}
-          <button
-            title="Nexus Foundry — active tactical holodeck & fleet deck"
-            style={{
-              padding: '5px 12px',
-              borderRadius: 14,
-              border: '1px solid #67e8f9',
-              background: 'rgba(103,232,249,0.18)',
-              color: '#f0f9ff',
-              fontFamily: "'IBM Plex Mono', monospace",
-              fontSize: 9.5,
-              fontWeight: 800,
-              letterSpacing: '0.14em',
-              boxShadow: '0 0 12px rgba(103,232,249,0.4)',
-              cursor: 'default',
-              display: 'flex',
-              alignItems: 'center',
-              gap: 5,
-            }}
-          >
+        {/* FOUNDRY */}
+        <button
+          onClick={() => {
+            if (mapMode) setMapMode(false);
+            if (faceMode === 'agents') return;
+            setFaceMode('agents');
+            try { localStorage.setItem('cortex_visualizer_face', 'agents'); } catch {}
+            cortexSpeak('Entering the Nexus Foundry.');
+          }}
+          title={faceMode === 'agents' && !mapMode ? 'Nexus Foundry — active tactical holodeck & fleet deck' : 'Switch to Nexus Foundry'}
+          style={{
+            padding: '5px 12px',
+            borderRadius: 14,
+            border: faceMode === 'agents' && !mapMode ? '1px solid #67e8f9' : '1px solid rgba(148,233,255,0.18)',
+            background: faceMode === 'agents' && !mapMode ? 'rgba(103,232,249,0.18)' : 'rgba(4,8,14,0.5)',
+            color: faceMode === 'agents' && !mapMode ? '#f0f9ff' : 'rgba(165,243,252,0.7)',
+            fontFamily: "'IBM Plex Mono', monospace",
+            fontSize: 9.5,
+            fontWeight: 800,
+            letterSpacing: '0.14em',
+            boxShadow: faceMode === 'agents' && !mapMode ? '0 0 12px rgba(103,232,249,0.4)' : 'none',
+            cursor: faceMode === 'agents' && !mapMode ? 'default' : 'pointer',
+            display: 'flex',
+            alignItems: 'center',
+            gap: 5,
+            transition: 'all 0.2s',
+          }}
+        >
+          {faceMode === 'agents' && !mapMode ? (
             <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#67e8f9', boxShadow: '0 0 6px #67e8f9' }} />
-            <span>FOUNDRY</span>
-          </button>
+          ) : (
+            <span style={{ color: '#67e8f9' }}>◈</span>
+          )}
+          <span>FOUNDRY</span>
+        </button>
 
           {/* MAP */}
           <button
@@ -1331,7 +1349,6 @@ export default function CortexVisualizerPage() {
             <span>{micLive ? 'SPEAKING' : micOn ? 'VOICE ON' : 'VOICE MUTED'}</span>
           </button>
         </nav>
-      )}
 
       {/* Proactive Ambient & Vigilance HUD Bar — centered directly under header */}
       <div style={{

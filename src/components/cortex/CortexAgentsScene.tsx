@@ -1134,6 +1134,21 @@ export const CortexAgentsScene: React.FC = () => {
     return () => clearInterval(interval);
   }, [previewPlaying]);
 
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        if (inspectedShot !== null) {
+          setInspectedShot(null);
+          setPreviewPlaying(false);
+        } else if (showExportModal) {
+          setShowExportModal(false);
+        }
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [inspectedShot, showExportModal]);
+
   const handleStartRender = () => {
     if (isRendering) return;
     setIsRendering(true);
