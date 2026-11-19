@@ -1040,6 +1040,18 @@ export const CortexAgentsScene: React.FC = () => {
   const [leftWingCollapsed, setLeftWingCollapsed] = useState(false);
   const [rightWingCollapsed, setRightWingCollapsed] = useState(false);
   const [activeShot, setActiveShot] = useState<number>(0);
+  const [chatDrawerOpen, setChatDrawerOpen] = useState(false);
+
+  useEffect(() => {
+    const checkDrawer = () => {
+      const el = document.querySelector('[data-cortex-chat-drawer]');
+      setChatDrawerOpen(!!el);
+    };
+    checkDrawer();
+    const obs = new MutationObserver(checkDrawer);
+    obs.observe(document.body, { childList: true, subtree: true });
+    return () => obs.disconnect();
+  }, []);
 
   useEffect(() => {
     let alive = true;
@@ -2336,11 +2348,11 @@ export const CortexAgentsScene: React.FC = () => {
 
       {/* ── Left Wing: Fleet Deck ── */}
       <div style={{
-        position: 'absolute', left: narrow ? 10 : 66, top: 68,
+        position: 'absolute', left: narrow ? 10 : 66, top: 104,
         width: leftWingCollapsed ? 32 : (narrow ? 230 : 260),
-        maxHeight: 'calc(100vh - 160px)',
+        maxHeight: 'calc(100vh - 188px)',
         zIndex: 12,
-        transition: 'width 0.25s ease',
+        transition: 'width 0.25s ease, left 0.25s ease',
         display: 'flex', flexDirection: 'column',
       }}>
         {leftWingCollapsed ? (
@@ -2498,11 +2510,11 @@ export const CortexAgentsScene: React.FC = () => {
 
       {/* ── Right Wing: Strategic Synthesis & Mission Log ── */}
       <div style={{
-        position: 'absolute', right: 20, top: 68,
+        position: 'absolute', right: chatDrawerOpen ? (narrow ? 10 : 416) : 20, top: 104,
         width: rightWingCollapsed ? 32 : (narrow ? 280 : 330),
-        maxHeight: 'calc(100vh - 160px)',
+        maxHeight: 'calc(100vh - 188px)',
         zIndex: 12,
-        transition: 'width 0.25s ease',
+        transition: 'width 0.25s ease, right 0.25s ease',
         display: 'flex', flexDirection: 'column',
       }}>
         {rightWingCollapsed ? (
@@ -2752,8 +2764,9 @@ export const CortexAgentsScene: React.FC = () => {
 
       {/* ── Bottom Bar: 1-Click Cinematic Sprint Reel Engine (Remotion) ── */}
       <div style={{
-        position: 'absolute', bottom: 12, left: narrow ? 10 : 66, right: 20,
+        position: 'absolute', bottom: 12, left: narrow ? 10 : 66, right: chatDrawerOpen ? (narrow ? 10 : 416) : 20,
         height: 58, zIndex: 12,
+        transition: 'right 0.25s ease',
         background: 'linear-gradient(180deg, rgba(6,11,24,0.92) 0%, rgba(3,6,15,0.96) 100%)',
         border: '1px solid rgba(103,232,249,0.25)',
         borderRadius: 6,
