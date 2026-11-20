@@ -497,10 +497,13 @@ interface RingSpec {
   phase: number;
 }
 
+// tiltX ≈ 90 puts a ring flat in the equatorial plane — keep all three
+// well below that so the gyroscope reads as meridians/mid-latitudes
+// distributed around the sphere instead of a single equator band.
 const RINGS: RingSpec[] = [
-  { radius: 1.62, tube: 0.008, tiltX: 78, tiltZ: 0, speed: 2.2, beads: 3, spin: 0.16, phase: 0 },
-  { radius: 2.05, tube: 0.006, tiltX: 64, tiltZ: 38, speed: -1.6, beads: 5, spin: -0.11, phase: 2.1 },
-  { radius: 2.5, tube: 0.005, tiltX: 88, tiltZ: -52, speed: 1.1, beads: 2, spin: 0.07, phase: 4.2 },
+  { radius: 1.62, tube: 0.008, tiltX: 14, tiltZ: 0, speed: 2.2, beads: 3, spin: 0.16, phase: 0 },
+  { radius: 2.05, tube: 0.006, tiltX: 38, tiltZ: 38, speed: -1.6, beads: 5, spin: -0.11, phase: 2.1 },
+  { radius: 2.5, tube: 0.005, tiltX: 58, tiltZ: -52, speed: 1.1, beads: 2, spin: 0.07, phase: 4.2 },
 ];
 
 function OrbitRing({ spec, live, index }: { spec: RingSpec; live: React.MutableRefObject<LiveSignal>; index: number }) {
