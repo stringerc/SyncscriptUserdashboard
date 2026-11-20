@@ -3525,6 +3525,68 @@ function SceneWithInput({
   );
 }
 
+const QUALITY_ORDER: CoreQualityMode[] = ['ultra', 'smooth', 'cinematic'];
+const QUALITY_RANK: Record<CoreQualityMode, number> = { ultra: 0, smooth: 1, cinematic: 2 };
+
+/**
+ * Closed-loop render governor: measures real frame time and steps quality
+ * down under sustained load, recovering slowly when the GPU has headroom.
+ * The user's chosen mode acts as a ceiling — the governor can only ever
+ * downgrade from it, never upgrade past it.
+ */
+function AutoQualityGovernor({
+  level,
+  onLevel,
+}: {
+  level: CoreQualityMode;
+  onLevel: (m: CoreQualityMode) => void;
+}) {
+  const ema = useRef(16.7);
+  const badMs = useRef(0);
+  const goodMs = useRef(0);
+  const lastShift = useRef(0);
+  const levelRef = useRef(level);
+  levelRef.current = level;
+
+  useFrame((_, delta) => {
+    const ms = Math.min(100, delta * 1000);
+    ema.current = ema.current * 0.92 + ms * 0.08;
+    const now = performance.now();
+    if (now - lastShift.current < 5000) {
+      badMs.current = 0;
+      goodMs.current = 0;
+      return;
+    }
+    if (ema.current > 20) {
+      badMs.current += ms;
+      goodMs.current = 0;
+      if (badMs.current > 2500) {
+        const idx = QUALITY_RANK[levelRef.current];
+        if (idx > 0) {
+          onLevel(QUALITY_ORDER[idx - 1]);
+          lastShift.current = now;
+          badMs.current = 0;
+        }
+      }
+    } else if (ema.current < 13.5) {
+      goodMs.current += ms;
+      badMs.current = 0;
+      if (goodMs.current > 9000) {
+        const idx = QUALITY_RANK[levelRef.current];
+        if (idx < QUALITY_ORDER.length - 1) {
+          onLevel(QUALITY_ORDER[idx + 1]);
+          lastShift.current = now;
+          goodMs.current = 0;
+        }
+      }
+    } else {
+      badMs.current = 0;
+      goodMs.current = 0;
+    }
+  });
+  return null;
+}
+
 // Under prefers-reduced-motion the Canvas renders on demand: ambient
 // animation stops, but every signal-bus publish still triggers a frame so
 // state colors/labels stay truthful.
@@ -3551,7 +3613,7 @@ export interface CortexCoreSceneProps {
   onTogglePerfMode?: (mode: CoreQualityMode) => void;
 }
 
-export const CortexCoreScene: React.FC<CortexCoreSceneProps> = ({
+const CortexCoreSceneBase: React.FC<CortexCoreSceneProps> = ({
   selectedAgentId,
   onSelectAgent,
   selectedMemoryId,
@@ -3573,6 +3635,12 @@ export const CortexCoreScene: React.FC<CortexCoreSceneProps> = ({
   });
 
   const qualityMode = externalPerfMode ?? internalQuality;
+  const [autoLevel, setAutoLevel] = React.useState<CoreQualityMode>('cinematic');
+  const effectiveQuality: CoreQualityMode =
+    QUALITY_RANK[autoLevel] < QUALITY_RANK[qualityMode] ? autoLevel : qualityMode;
+  React.useEffect(() => {
+    (window as unknown as { __cortexAutoLevel?: string }).__cortexAutoLevel = effectiveQuality;
+  }, [effectiveQuality]);
 
   const handleToggleQuality = () => {
     const next: CoreQualityMode =
@@ -3587,7 +3655,7 @@ export const CortexCoreScene: React.FC<CortexCoreSceneProps> = ({
   const [reduced, setReduced] = React.useState(() =>
     typeof window !== 'undefined' && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
   const [dpr, setDpr] = React.useState<number | [number, number]>(() =>
-    (qualityMode === 'ultra' || qualityMode === 'smooth' || reduced ? 1 : [1, 1.25]));
+    (effectiveQuality === 'ultra' || effectiveQuality === 'smooth' || reduced ? 1 : [1, 1.25]));
   const [contextLost, setContextLost] = React.useState(false);
   const [restoreCount, setRestoreCount] = React.useState(0);
   const [docHidden, setDocHidden] = React.useState(() =>
@@ -3599,12 +3667,12 @@ export const CortexCoreScene: React.FC<CortexCoreSceneProps> = ({
   const effectiveReplayTrack = useChronoReplayTrack(chronoActive, replayTrack);
 
   React.useEffect(() => {
-    if (qualityMode === 'ultra' || qualityMode === 'smooth' || reduced) {
+    if (effectiveQuality === 'ultra' || effectiveQuality === 'smooth' || reduced) {
       setDpr(1);
     } else {
       setDpr([1, 1.25]);
     }
-  }, [qualityMode, reduced]);
+  }, [effectiveQuality, reduced]);
 
   React.useEffect(() => {
     const mq = window.matchMedia('(prefers-reduced-motion: reduce)');
@@ -3632,6 +3700,7 @@ export const CortexCoreScene: React.FC<CortexCoreSceneProps> = ({
         style={{ position: 'absolute', inset: 0 }}
         onCreated={({ gl }) => {
           const domCanvas = gl.domElement;
+          (window as unknown as { __cortexRenderer?: unknown }).__cortexRenderer = gl;
           const onLost = (e: Event) => {
             e.preventDefault(); // Informs browser WebGL runtime that application handles recovery
             setContextLost(true);
@@ -3657,10 +3726,11 @@ export const CortexCoreScene: React.FC<CortexCoreSceneProps> = ({
               setDpr(1);
             }}
             onIncline={() => {
-              if (qualityMode === 'cinematic') setDpr([1, 1.25]);
+              if (effectiveQuality === 'cinematic') setDpr([1, 1.25]);
             }}
           />
         )}
+        <AutoQualityGovernor level={autoLevel} onLevel={setAutoLevel} />
         <SceneWithInput
           selectedAgentId={selectedAgentId}
           onSelectAgent={onSelectAgent}
@@ -3671,7 +3741,7 @@ export const CortexCoreScene: React.FC<CortexCoreSceneProps> = ({
           replayTrack={effectiveReplayTrack}
           holoParallax={holoParallax}
           headParallax={headParallax}
-          qualityMode={qualityMode}
+          qualityMode={effectiveQuality}
         />
         {reduced && <InvalidateBridge />}
       </Canvas>
@@ -3763,3 +3833,12 @@ export const CortexCoreScene: React.FC<CortexCoreSceneProps> = ({
     </div>
   );
 };
+
+// Memoized: parent pages re-render on every signal-bus publish (~10Hz) and
+// agentsClient SSE event. Without this, each publish re-reconciles the entire
+// ~20-component WebGL scene tree on the main thread — the primary source of
+// interaction jank on the core face. Props are all stable references or
+// primitives except during active chrono playback (chronoTime), where a
+// re-render is required anyway.
+export const CortexCoreScene = React.memo(CortexCoreSceneBase);
+CortexCoreScene.displayName = 'CortexCoreScene';

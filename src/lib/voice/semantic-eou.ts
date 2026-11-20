@@ -125,8 +125,11 @@ export function getEouEngine(): Promise<EouEngine | null> {
   return enginePromise;
 }
 
-/** Feed audio from any MediaStream at native rate — resamples to 16kHz mono. */
-export function createPcmFeeder(stream: MediaStream, onPcm?: (engine: EouEngine) => void): () => void {
+/** Feed audio from any MediaStream at native rate — resamples to 16kHz mono.
+ *  onPcm receives the EOU engine (null until it finishes loading) plus the
+ *  resampled frame so other consumers (smart-turn detector) share the same
+ *  PCM stream without a second audio graph. */
+export function createPcmFeeder(stream: MediaStream, onPcm?: (engine: EouEngine | null, samples: Float32Array) => void): () => void {
   const Ctx = window.AudioContext || (window as any).webkitAudioContext;
   const ctx = new Ctx();
   const src = ctx.createMediaStreamSource(stream);
@@ -142,7 +145,8 @@ export function createPcmFeeder(stream: MediaStream, onPcm?: (engine: EouEngine)
       out[i] = input[Math.min(input.length - 1, Math.floor(i * ratio))];
     }
     void getEouEngine().then((eng) => {
-      if (eng) { eng.push(out); onPcm?.(eng); }
+      if (eng) eng.push(out);
+      onPcm?.(eng, out);
     });
   };
   src.connect(proc);

@@ -2773,4 +2773,6 @@ export function useVisualizerVoice(enabled: boolean, onState: (speaking: boolean
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [enabled]);
+
+  return { turnDetectorState: voiceStream.turnDetectorState };
 }

@@ -1,6 +1,6 @@
 
 import { defineConfig, loadEnv, type Plugin, type PluginOption } from 'vite';
-import react from '@vitejs/plugin-react-swc';
+import react from '@vitejs/plugin-react';
 import { VitePWA } from 'vite-plugin-pwa';
 import { z } from 'zod';
 // vite-plugin-prerender uses require() internally which crashes in ESM scope.
@@ -37,6 +37,8 @@ import {
   autoClearCounselPolls, noteSynthesisAttempt, POSITION_TIMEOUT_MS,
 } from './src/lib/cortex-counsel';
 import { defenseSystemPrefix } from './src/lib/cortex-agents/prompt-defense';
+import { runSandboxed, sandboxStatus } from './src/lib/cortex-sandbox';
+import { traceSummary, traceRows, eventSummary } from './src/lib/cortex-analytics';
 import { GOVERNANCE_CHARTER } from './src/lib/cortex-agents/governance-charter';
 import { instinctsBlock, listInstincts, promotableInstincts } from './src/lib/cortex-agents/instincts';
 import { listEvals, getEval, fileEvalDefinition, runEval, readRuns, evalScorecard, evalComparison, type GraderSpec, type EvalArm } from './src/lib/cortex-agents/evals';
@@ -1117,6 +1119,34 @@ function apiProxyPlugin(): Plugin {
       }
     },
     configureServer(server) {
+      // ── /vad/* static assets with query-string tolerance ──
+      // onnxruntime-web's Emscripten glue arrives as `/vad/wasm/*.mjs?import`
+      // (vite appends ?import to dynamic imports). Vite's transform middleware
+      // rejects public-dir files with that query ("cannot be imported"), so
+      // neural VAD/EOU wasm died with a 500 in dev. Serve the files directly.
+      server.middlewares.use((req: any, res: any, next: any) => {
+        if (req.method !== 'GET' || !req.url) return next();
+        const clean = req.url.split('?')[0];
+        if (!clean.startsWith('/vad/')) return next();
+        const rel = decodeURIComponent(clean.slice('/vad/'.length));
+        if (rel.includes('..')) return next();
+        const filePath = path.join(process.cwd(), 'public', 'vad', rel);
+        if (!filePath.startsWith(path.join(process.cwd(), 'public', 'vad'))) return next();
+        fsSync.stat(filePath, (err: any, st: any) => {
+          if (err || !st.isFile()) return next();
+          const ext = path.extname(filePath).toLowerCase();
+          const types: Record<string, string> = {
+            '.wasm': 'application/wasm', '.mjs': 'text/javascript',
+            '.js': 'text/javascript', '.onnx': 'application/octet-stream',
+          };
+          res.writeHead(200, {
+            'Content-Type': types[ext] || 'application/octet-stream',
+            'Content-Length': st.size,
+            'Cache-Control': 'public, max-age=3600',
+          });
+          fsSync.createReadStream(filePath).pipe(res);
+        });
+      });
       // ── Shared health/security state (ambient watchdog + edge gate) ──
       const HEALTH_FILE = path.join(process.cwd(), '.cache', 'cortex-health.json');
       const healthState: {
@@ -3145,6 +3175,15 @@ function apiProxyPlugin(): Plugin {
           durationSeconds: z.number().positive().max(600).optional(),
           props: z.record(z.unknown()).optional(),
         }).passthrough(),
+        run_sandboxed: z.object({
+          image: z.string().optional(),
+          command: z.string(),
+          args: z.array(z.string()).optional(),
+          timeoutMs: z.number().positive().max(120000).optional(),
+          workdir: z.string().optional(),
+          env: z.record(z.string()).optional(),
+        }).passthrough(),
+        sandbox_status: z.object({}).passthrough(),
       };
 
       const cortexToolsHandler = (req: any, res: any, next: any) => {
@@ -3212,6 +3251,8 @@ function apiProxyPlugin(): Plugin {
             { name: 'fetch_url', description: 'Fetch a web page as clean markdown (keyless reader)', parameters: { url: 'string' } },
             { name: 'create_document', description: 'Create real document files (md/html always; pdf via Chrome; docx via textutil; csv)', parameters: { format: 'string?', title: 'string?', content: 'string?' } },
             { name: 'render_video', description: 'Render a video composition via the governed Remotion pipeline (tools/remotion). Writes an .mp4 under .cortex-runtime/renders/ and returns the verified output path.', parameters: { composition: 'string? (default CortexPromo)', outputName: 'string? (.mp4, sanitized)', durationSeconds: 'number? (<=600)', props: 'object? (e.g. {title, subtitle})' } },
+            { name: 'run_sandboxed', description: 'Run a command inside a hardware-isolated microsandbox microVM (CONTAINED lane). Returns stdout/stderr/exitCode. Use for untrusted or destructive-capable agent code.', parameters: { image: 'string? (default python:3.12-alpine)', command: 'string (binary, no shell)', args: 'string[]?', timeoutMs: 'number? (<=120000)', workdir: 'string?', env: 'object?' } },
+            { name: 'sandbox_status', description: 'Probe microsandbox runtime availability (msb binary, SDK, VM round-trip).', parameters: {} },
           ];
           res.writeHead(200, {
             'Content-Type': 'application/json',
@@ -8552,6 +8593,29 @@ function triggerQuickAction() {
               }));
             }
 
+            // 29b. sandbox_status — probe the microsandbox microVM runtime.
+            if (tool === 'sandbox_status') {
+              const status = await sandboxStatus();
+              res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+              return res.end(JSON.stringify({ ok: true, tool: 'sandbox_status', ...status, durationMs: Date.now() - startMs }));
+            }
+
+            // 29c. run_sandboxed — CONTAINED lane: execute a command inside a
+            // hardware-isolated microsandbox microVM. Even hostile code cannot
+            // touch the host; the sandbox is always destroyed afterwards.
+            if (tool === 'run_sandboxed') {
+              const result = await runSandboxed({
+                image: args?.image ? String(args.image) : undefined,
+                command: String(args?.command || ''),
+                args: Array.isArray(args?.args) ? args.args.map(String) : undefined,
+                timeoutMs: args?.timeoutMs != null ? Number(args.timeoutMs) : undefined,
+                workdir: args?.workdir ? String(args.workdir) : undefined,
+                env: args?.env && typeof args.env === 'object' ? args.env : undefined,
+              });
+              res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+              return res.end(JSON.stringify({ ...result, tool: 'run_sandboxed', durationMs: Date.now() - startMs }));
+            }
+
             // 30. render_video — governed Remotion render via the verified
             // tools/remotion spike. Writes an .mp4 under
             // .cortex-runtime/renders/, streams the CLI log to disk, and only
@@ -8560,12 +8624,13 @@ function triggerQuickAction() {
               const remotionDir = path.resolve(workspaceRoot, 'tools', 'remotion');
               const rendersDir = path.resolve(workspaceRoot, '.cortex-runtime', 'renders');
               const composition = String(args?.composition || 'CortexPromo').trim() || 'CortexPromo';
-              if (composition !== 'CortexPromo') {
+              const ALLOWED_COMPOSITIONS = new Set(['CortexPromo', 'CortexCoreRender']);
+              if (!ALLOWED_COMPOSITIONS.has(composition)) {
                 res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
                 return res.end(JSON.stringify({
                   ok: false,
                   tool: 'render_video',
-                  error: `Unknown composition '${composition}' — v1 supports only 'CortexPromo' (tools/remotion).`,
+                  error: `Unknown composition '${composition}' — supported: ${[...ALLOWED_COMPOSITIONS].join(', ')} (tools/remotion).`,
                   durationMs: Date.now() - startMs,
                 }));
               }
@@ -8586,14 +8651,29 @@ function triggerQuickAction() {
                 }));
               }
               await fs.mkdir(rendersDir, { recursive: true });
-              const cliArgs = ['remotion', 'render', 'src/index.ts', composition, outputPath, '--overwrite'];
-              if (args?.durationSeconds != null) cliArgs.push('--duration', String(Number(args.durationSeconds)));
+              // Prefer the programmatic @remotion/renderer entrypoint
+              // (render-video.mjs) once the remotion spike ships it; fall back
+              // to the Remotion CLI meanwhile.
+              const renderScript = path.join(remotionDir, 'render-video.mjs');
+              const useProgrammatic = fsSync.existsSync(renderScript);
+              const cliArgs = useProgrammatic
+                ? ['render-video.mjs', '--composition', composition, '--out', outputPath]
+                : ['remotion', 'render', 'src/index.ts', composition, outputPath, '--overwrite'];
+              if (useProgrammatic) {
+                // render-video.mjs speaks frames, not seconds: cap at duration*30fps.
+                if (args?.durationSeconds != null) {
+                  const lastFrame = Math.max(0, Math.round(Number(args.durationSeconds) * 30) - 1);
+                  cliArgs.push('--frames', `0-${lastFrame}`);
+                }
+              } else if (args?.durationSeconds != null) {
+                cliArgs.push('--duration', String(Number(args.durationSeconds)));
+              }
               if (args?.props && typeof args.props === 'object') cliArgs.push('--props', JSON.stringify(args.props));
               const logStream = fsSync.createWriteStream(logPath);
               const renderStart = Date.now();
               const renderTimeoutMs = 600_000; // ~10min — Remotion renders run ~1min cold
               const exitCode = await new Promise<number>((resolve) => {
-                const child = cp.spawn('npx', cliArgs, {
+                const child = cp.spawn(useProgrammatic ? process.execPath : 'npx', cliArgs, {
                   cwd: remotionDir,
                   env: { ...process.env, CI: '1', npm_config_yes: 'true' },
                   stdio: ['ignore', 'pipe', 'pipe'],
@@ -8679,6 +8759,36 @@ function triggerQuickAction() {
       // 404'd in production. Prefix mount covers /api/cortex/tools and
       // /api/cortex/tools/execute.
       server.middlewares.use('/api/cortex/tools', cortexToolsHandler);
+
+      // ── Cortex analytics: SQL over llm-traces + eventlog JSONL via DuckDB ──
+      // GET /api/cortex/analytics?dataset=traces|events&view=summary|rows&since=<ms>&limit=<n>
+      server.middlewares.use('/api/cortex/analytics', (req: any, res: any, next: any) => {
+        const origin = req.headers.origin;
+        const send = (code: number, payload: unknown) => {
+          res.writeHead(code, {
+            'Content-Type': 'application/json',
+            'Access-Control-Allow-Origin': origin || '*',
+            'Access-Control-Allow-Methods': 'GET, OPTIONS',
+            'Access-Control-Allow-Headers': 'Content-Type',
+            'Vary': 'Origin',
+          });
+          // DuckDB returns BIGINT as JS BigInt — stringify would throw and
+          // crash the dev server, so coerce to Number on the way out.
+          res.end(JSON.stringify(payload, (_k, v) => (typeof v === 'bigint' ? Number(v) : v)));
+        };
+        if (req.method === 'OPTIONS') return send(204, {});
+        if (req.method !== 'GET') return next();
+        const url = new URL(req.url || '/', 'http://localhost');
+        const dataset = url.searchParams.get('dataset') || 'traces';
+        const view = url.searchParams.get('view') || 'summary';
+        const sinceParam = url.searchParams.get('since');
+        const sinceMs = sinceParam != null ? Number(sinceParam) : undefined;
+        const limit = Number(url.searchParams.get('limit') || '50') || 50;
+        const run = dataset === 'events'
+          ? eventSummary(sinceMs, limit)
+          : (view === 'rows' ? traceRows(sinceMs, limit) : traceSummary(sinceMs, limit));
+        run.then((result) => send(result.ok ? 200 : 500, result));
+      });
 
       // ── TTS proxy: browser → Kokoro EC2 / VoiceStudio MLX / Pocket TTS ────────────────
       const ttsHandler = (req: any, res: any, next: any) => {
@@ -11020,6 +11130,223 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
             launchLogTail: readTail(path.join(sf, 'GUMROAD_LAUNCH_LOG.md')),
             browserShot: readTail(path.join(sf, 'browser', 'latest.txt'), 200),
           }));
+        } catch (e: any) {
+          res.writeHead(500, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ ok: false, error: String(e?.message || e) }));
+        }
+      });
+
+      // GET /api/cortex/campaigns — campaign registry merged with live queue
+      // state. Campaigns live in storefront/campaigns.json; queue items join
+      // via payload.campaignId or item.campaignId. Metrics are explicit
+      // agent/Crew-updated fields — never inferred.
+      server.middlewares.use('/api/cortex/campaigns', (req: any, res: any, next: any) => {
+        if (req.method === 'OPTIONS') {
+          res.writeHead(204, { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Methods': 'GET, OPTIONS', 'Access-Control-Allow-Headers': 'Content-Type' });
+          return res.end();
+        }
+        if (req.method !== 'GET') return next();
+        agentCors(req, res);
+        try {
+          const sf = path.join(process.cwd(), 'storefront');
+          const readJson = (p: string) => { try { return JSON.parse(fsSync.readFileSync(p, 'utf8')); } catch { return null; } };
+          const registry = readJson(path.join(sf, 'campaigns.json')) || { campaigns: [] };
+          const queue = readJson(path.join(sf, 'distribution-queue.json')) || { items: [] };
+          const campaigns = (registry.campaigns || []).map((c: any) => {
+            const items = (queue.items || []).filter((i: any) =>
+              i.campaignId === c.id || (i.payload && i.payload.campaignId === c.id));
+            const funnel = { queued: 0, running: 0, done: 0, failed: 0, pending: 0 };
+            const verifiedUrls: string[] = [];
+            for (const i of items) {
+              const st = i.status === 'done' ? 'done' : i.status === 'failed' ? 'failed' : i.status === 'running' ? 'running' : 'pending';
+              funnel[st] = (funnel[st] || 0) + 1;
+              const r = i.result;
+              if (r && typeof r === 'object') {
+                if (Array.isArray(r.pins)) verifiedUrls.push(...r.pins.filter((u: any) => typeof u === 'string'));
+                else if (typeof r.url === 'string') verifiedUrls.push(r.url);
+                else if (typeof r.permalink === 'string' && r.posted) verifiedUrls.push(`https://www.reddit.com${r.permalink}`);
+              }
+            }
+            const m = c.metrics || {};
+            const kill = c.killSwitch || null;
+            const killStatus = kill && typeof m.clicks === 'number'
+              ? (m.clicks >= kill.threshold && !(m.sales > 0) ? 'TRIPPED' : m.clicks >= kill.threshold ? 'AT-RISK' : 'ARMED')
+              : 'UNMEASURED';
+            return { ...c, funnel, verifiedUrls: [...new Set(verifiedUrls)], killStatus };
+          });
+          res.end(JSON.stringify({ ok: true, checkedAt: new Date().toISOString(), campaigns }));
+        } catch (e: any) {
+          res.writeHead(500, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ ok: false, error: String(e?.message || e) }));
+        }
+      });
+
+      // POST /api/cortex/campaigns — create a campaign registry entry.
+      // {id?, name, product, productUrl, price?, niche?, counselSession?,
+      //  upsellTarget?, killSwitch?, channels?} — internal registry write,
+      //  NOT an external publish (that stays Hard-lane).
+      server.middlewares.use('/api/cortex/campaigns', (req: any, res: any, next: any) => {
+        if (req.method === 'OPTIONS') {
+          res.writeHead(204, { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Methods': 'GET, POST, OPTIONS', 'Access-Control-Allow-Headers': 'Content-Type' });
+          return res.end();
+        }
+        if (req.method === 'GET') return next();
+        if (req.method !== 'POST') return next();
+        // '/api/cortex/campaigns' prefix-matches '/campaigns/metrics' —
+        // yield so the dedicated metrics handler below can take it.
+        if (req.url && req.url.startsWith('/metrics')) return next();
+        let body = '';
+        req.on('data', (c: any) => { body += c; if (body.length > 64_000) req.destroy(); });
+        req.on('end', () => {
+          try {
+            const sf = path.join(process.cwd(), 'storefront');
+            const regPath = path.join(sf, 'campaigns.json');
+            const registry = (() => { try { return JSON.parse(fsSync.readFileSync(regPath, 'utf8')); } catch { return { campaigns: [] }; } })();
+            const b = JSON.parse(body || '{}');
+            if (!b.name || !b.productUrl) throw new Error('name + productUrl required');
+            const id = String(b.id || b.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')).slice(0, 60);
+            if ((registry.campaigns || []).some((c: any) => c.id === id)) throw new Error(`campaign '${id}' already exists`);
+            registry.campaigns = registry.campaigns || [];
+            registry.campaigns.push({
+              id, name: String(b.name).slice(0, 140), product: String(b.product || b.name).slice(0, 200),
+              productUrl: String(b.productUrl), price: b.price ? String(b.price) : null,
+              niche: b.niche ? String(b.niche) : null, counselSession: b.counselSession || null,
+              upsellTarget: b.upsellTarget || null, status: 'draft',
+              createdAt: Date.now(), channels: Array.isArray(b.channels) ? b.channels : [],
+              killSwitch: b.killSwitch || null,
+              metrics: { clicks: null, sales: null, upsells: null },
+            });
+            fsSync.writeFileSync(regPath, JSON.stringify(registry, null, 2));
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ ok: true, id }));
+          } catch (e: any) {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ ok: false, error: String(e?.message || e) }));
+          }
+        });
+      });
+
+      // POST /api/cortex/campaigns/metrics — Crew/agent metric update.
+      // {campaignId, clicks?, sales?, upsells?, revenue?} — merges into
+      // campaigns.json, evaluates kill-switch, Discord-alerts once on TRIP.
+      server.middlewares.use('/api/cortex/campaigns/metrics', async (req: any, res: any, next: any) => {
+        if (req.method === 'OPTIONS') {
+          res.writeHead(204, { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Methods': 'POST, OPTIONS', 'Access-Control-Allow-Headers': 'Content-Type' });
+          return res.end();
+        }
+        if (req.method !== 'POST') return next();
+        let body = '';
+        req.on('data', (c: any) => { body += c; if (body.length > 64_000) req.destroy(); });
+        req.on('end', async () => {
+          try {
+            const sf = path.join(process.cwd(), 'storefront');
+            const regPath = path.join(sf, 'campaigns.json');
+            const registry = (() => { try { return JSON.parse(fsSync.readFileSync(regPath, 'utf8')); } catch { return { campaigns: [] }; } })();
+            const b = JSON.parse(body || '{}');
+            const c = (registry.campaigns || []).find((x: any) => x.id === b.campaignId);
+            if (!c) throw new Error(`campaign '${b.campaignId}' not found`);
+            c.metrics = c.metrics || {};
+            for (const k of ['clicks', 'sales', 'upsells', 'impressions', 'saves']) {
+              if (typeof b[k] === 'number') c.metrics[k] = b[k];
+            }
+            if (typeof b.revenue === 'number') {
+              c.metrics.gumroad = { ...(c.metrics.gumroad || {}), totalEarnings: b.revenue, manualAt: new Date().toISOString() };
+            }
+            c.metrics.metricsUpdatedAt = new Date().toISOString();
+            c.metrics.metricsSource = 'manual-api';
+
+            // Kill-switch eval — alert once per campaign (killAlertedAt dedupe)
+            const trippedAlerts: any[] = [];
+            const ks = c.killSwitch;
+            let killStatus = 'UNMEASURED';
+            if (ks && typeof c.metrics.clicks === 'number') {
+              const noSales = !(typeof c.metrics.sales === 'number' && c.metrics.sales > 0)
+                && !((c.metrics.gumroad?.totalEarnings || 0) > 0) && c.metrics.sales !== 'see-gumroad';
+              killStatus = c.metrics.clicks >= (ks.threshold || Infinity)
+                ? (noSales ? 'TRIPPED' : 'AT-RISK')
+                : 'ARMED';
+              c.killStatus = killStatus;
+              if (killStatus === 'TRIPPED' && !c.killAlertedAt) {
+                c.killAlertedAt = new Date().toISOString();
+                trippedAlerts.push({ name: c.name, clicks: c.metrics.clicks, threshold: ks.threshold, rule: ks.rule, productUrl: c.productUrl });
+              }
+            }
+            // Persist BEFORE alerting — a slow/hung Discord call must never
+            // lose the metric update or the TRIPPED state.
+            fsSync.writeFileSync(regPath, JSON.stringify(registry, null, 2));
+            for (const a of trippedAlerts) {
+              const token = process.env.DISCORD_BOT_TOKEN;
+              const channel = process.env.DISCORD_CHANNEL_ALERTS || process.env.DISCORD_CHANNEL_BRIEFS || process.env.DISCORD_CHANNEL_ID;
+              if (!token || !channel) break;
+              try {
+                await Promise.race([
+                  discordApi('POST', `/channels/${channel}/messages`, {
+                    token,
+                    body: { content: `⚠️ **CAMPAIGN KILL-SWITCH TRIPPED** — ${a.name}\n${a.clicks} clicks ≥ ${a.threshold} with 0 sales.\nRule: ${a.rule || 'kill SKU'}\n${a.productUrl || ''}`.slice(0, 1900) },
+                  }),
+                  new Promise((_, rej) => setTimeout(() => rej(new Error('discord timeout')), 10_000)),
+                ]);
+              } catch (e: any) { console.warn('[campaigns] discord alert failed:', String(e?.message || e).slice(0, 160)); }
+            }
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ ok: true, campaignId: c.id, metrics: c.metrics, killStatus }));
+          } catch (e: any) {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ ok: false, error: String(e?.message || e) }));
+          }
+        });
+      });
+
+      // GET /api/cortex/videos — rendered video library. Scans storefront for
+      // *.mp4 under promo/render output dirs; returns servable /@fs/ URLs.
+      server.middlewares.use('/api/cortex/videos', (req: any, res: any, next: any) => {
+        if (req.method === 'OPTIONS') {
+          res.writeHead(204, { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Methods': 'GET, OPTIONS', 'Access-Control-Allow-Headers': 'Content-Type' });
+          return res.end();
+        }
+        if (req.method !== 'GET') return next();
+        agentCors(req, res);
+        try {
+          const sf = path.join(process.cwd(), 'storefront');
+          const videos: any[] = [];
+          const walk = (dir: string, depth: number) => {
+            if (depth > 4 || videos.length > 200) return;
+            let ents: fsSync.Dirent[] = [];
+            try { ents = fsSync.readdirSync(dir, { withFileTypes: true }); } catch { return; }
+            for (const ent of ents) {
+              if (ent.name === 'node_modules' || ent.name.startsWith('.')) continue;
+              const full = path.join(dir, ent.name);
+              if (ent.isDirectory()) walk(full, depth + 1);
+              else if (ent.name.toLowerCase().endsWith('.mp4')) {
+                try {
+                  const st = fsSync.statSync(full);
+                  const projDir = path.dirname(full);
+                  // campaign.json in the render dir or project root links a
+                  // render to a campaign.
+                  let campaignId: string | null = null;
+                  for (const d of [projDir, path.dirname(projDir)]) {
+                    try {
+                      const cj = JSON.parse(fsSync.readFileSync(path.join(d, 'campaign.json'), 'utf8'));
+                      campaignId = cj.campaignId || null;
+                      if (campaignId) break;
+                    } catch { /* no marker at this level */ }
+                  }
+                  videos.push({
+                    name: ent.name,
+                    path: full,
+                    url: '/@fs' + full,
+                    sizeBytes: st.size,
+                    modifiedAt: st.mtimeMs,
+                    project: path.relative(sf, projDir),
+                    campaignId,
+                  });
+                } catch { /* skip unreadable */ }
+              }
+            }
+          };
+          walk(sf, 0);
+          videos.sort((a, b) => b.modifiedAt - a.modifiedAt);
+          res.end(JSON.stringify({ ok: true, checkedAt: new Date().toISOString(), videos }));
         } catch (e: any) {
           res.writeHead(500, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ ok: false, error: String(e?.message || e) }));
@@ -14510,7 +14837,11 @@ export default defineConfig({
     'import.meta.env.VITE_BUILD_SHA': JSON.stringify(SYNCSCRIPT_BUILD_SHA),
   },
   plugins: [
-    react(),
+    react({
+      babel: {
+        plugins: [['babel-plugin-react-compiler', { target: '18' }]],
+      },
+    }),
     {
       name: 'syncscript-build-html-comment',
       transformIndexHtml(html: string) {

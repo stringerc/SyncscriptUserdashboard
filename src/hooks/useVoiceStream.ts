@@ -24,6 +24,13 @@ import { reportTtsRum } from '../utils/tts-rum-beacon';
 import { stepVuEnvelope } from '../utils/audio-vu-envelope';
 import { voiceLatencyMark, voiceLatencyMeasure } from '../utils/voice-latency-debug';
 import { createPcmFeeder, getEouEngine } from '../lib/voice/semantic-eou';
+import {
+  getSmartTurnDetector,
+  smartTurnFlagOff,
+  SMART_TURN_COMMIT_THRESHOLD,
+  type SmartTurnDetector,
+  type SmartTurnDetectorState,
+} from '../lib/voice/turn-detector';
 import { MicVAD } from '@ricky0123/vad-web';
 import type {
   VoiceEngineState,
@@ -206,6 +213,8 @@ export function useVoiceStream(options: UseVoiceStreamOptions = {}) {
   const [transcript, setTranscript] = useState('');
   const [interimText, setInterimText] = useState('');
   const [isSpeaking, setIsSpeaking] = useState(false);
+  const [turnDetectorState, setTurnDetectorState] = useState<SmartTurnDetectorState>(() =>
+    smartTurnFlagOff() ? 'off' : 'idle');
   const [availableVoices, setAvailableVoices] = useState<SpeechSynthesisVoice[]>([]);
 
   // Refs
@@ -217,6 +226,7 @@ export function useVoiceStream(options: UseVoiceStreamOptions = {}) {
   const vadAudioCtxRef = useRef<AudioContext | null>(null);
   const vadFeederStopRef = useRef<(() => void) | null>(null);
   const vadNeuralRef = useRef<MicVAD | null>(null);
+  const smartTurnRef = useRef<SmartTurnDetector | null>(null);
   const synthRef = useRef<SpeechSynthesis | null>(null);
   const currentUtteranceRef = useRef<SpeechSynthesisUtterance | null>(null);
   const isListeningRef = useRef(false);
@@ -475,15 +485,29 @@ export function useVoiceStream(options: UseVoiceStreamOptions = {}) {
     const neural = vadNeuralRef.current;
     vadNeuralRef.current = null;
     if (neural) void neural.destroy().catch(() => {});
+    smartTurnRef.current = null;
   }, []);
 
   const startEnergyVAD = useCallback((stream: MediaStream) => {
     if (!onSpeechPause || vadTimerRef.current) return;
     try {
+      // Smart-turn detector (worker ONNX): preload lazily once the mic stream
+      // exists; shares the feeder's 16kHz PCM — no second audio graph.
+      const smartTurn = getSmartTurnDetector();
+      smartTurnRef.current = smartTurn;
+      if (smartTurn) {
+        smartTurn.onStateChange = (s) => setTurnDetectorState(s);
+        void smartTurn.preload();
+        setTurnDetectorState(smartTurn.state);
+      } else {
+        setTurnDetectorState(smartTurnFlagOff() ? 'off' : 'unavailable');
+      }
       // Semantic EOU: feed 16kHz PCM into the smart-turn ring buffer so the
       // silence path can ask "is the speaker actually done?" instead of
       // committing on a fixed timer. Best-effort — null engine → legacy path.
-      const eouFeederStop = createPcmFeeder(stream);
+      const eouFeederStop = createPcmFeeder(stream, (_eng, samples) => {
+        try { smartTurn?.pushAudio(samples); } catch { /* best-effort */ }
+      });
       vadFeederStopRef.current = eouFeederStop;
       const Ctx = window.AudioContext || (window as any).webkitAudioContext;
       const ctx = new Ctx();
@@ -498,6 +522,12 @@ export function useVoiceStream(options: UseVoiceStreamOptions = {}) {
       let ambientFloor = 0.008;
       let eouScoring = false;
       let eouExtended = false;
+      // Smart-turn (worker ONNX) early-commit state: judged once per pause,
+      // speechRunMs = duration of the speech run that just ended (min-speech
+      // gate so sub-500ms blips can't trigger a semantic verdict).
+      let smartTurnJudged = false;
+      let smartTurnScoring = false;
+      let speechRunMs = 0;
       // Neural VAD (Silero v5, AudioWorklet) — once frames flow it becomes the
       // authoritative speech/silence clock; the RMS analyser above remains as
       // the automatic fallback if the model/worklet never comes up.
@@ -513,7 +543,9 @@ export function useVoiceStream(options: UseVoiceStreamOptions = {}) {
           neuralLastSpeechAt = performance.now();
           eouExtended = false;
           vadPauseFiredRef.current = false;
+          smartTurnJudged = false;
           void getEouEngine().then((eng) => eng?.reset());
+          smartTurnRef.current?.reset();
         },
         onFrameProcessed: (probs) => {
           neuralLive = true;
@@ -556,8 +588,11 @@ export function useVoiceStream(options: UseVoiceStreamOptions = {}) {
           if (rms > speechThreshold) {
             if (silenceMs >= 250) {
               void getEouEngine().then((eng) => eng?.reset());
+              smartTurnRef.current?.reset();
             }
             silenceMs = 0;
+            speechRunMs += 50;
+            smartTurnJudged = false;
             eouExtended = false;
             vadPauseFiredRef.current = false;
             return;
@@ -565,14 +600,58 @@ export function useVoiceStream(options: UseVoiceStreamOptions = {}) {
 
           silenceMs += 50;
         }
+        // Speech-run accounting: neural path reaches here every tick; the
+        // RMS path returns early on speech ticks (handled above), so only
+        // silence-side bookkeeping lives here. speechRunMs freezes during a
+        // pause (it measured the run that just ended) and resets at 600ms.
+        if (silenceMs < 300) {
+          speechRunMs += 50;
+          smartTurnJudged = false;
+        } else if (silenceMs >= 600) {
+          speechRunMs = 0;
+        }
         const t = latestInterimRef.current;
         const hasText = t && t.length >= 3;
+        // Smart-turn early verdict: ~400ms into a pause, score the audio
+        // window directly — a confident "done" commits before the 850ms
+        // finish window; "not done" buys the same single extension the
+        // semantic-EOU path uses. Silent no-op until the worker is ready.
+        if (
+          silenceMs >= 400 && silenceMs < 2000 && !smartTurnJudged &&
+          !smartTurnScoring && !eouScoring && !eouExtended &&
+          !vadPauseFiredRef.current && !isSpeakingRef.current && hasText &&
+          speechRunMs >= 450
+        ) {
+          const det = smartTurnRef.current;
+          if (det && det.state === 'ready') {
+            smartTurnJudged = true;
+            smartTurnScoring = true;
+            void det.score().then((prob) => {
+              smartTurnScoring = false;
+              // silenceMs < 300 means the user already resumed — the verdict
+              // is stale and must not cut them off.
+              if (prob === null || vadPauseFiredRef.current || isSpeakingRef.current || silenceMs < 300) return;
+              if (prob >= SMART_TURN_COMMIT_THRESHOLD) {
+                const latest = latestInterimRef.current;
+                const finalText = latest && latest.length >= 3 ? latest : t;
+                if (!vadPauseFiredRef.current && !isSpeakingRef.current) {
+                  vadPauseFiredRef.current = true;
+                  onSpeechPause(finalText);
+                }
+              } else {
+                // Model says the turn is NOT complete — extend once.
+                eouExtended = true;
+                silenceMs = Math.min(silenceMs, 400);
+              }
+            });
+          }
+        }
         // Semantic gate: at ~600ms silence ask smart-turn whether the turn is
         // actually complete. "Still speaking" (thinking pause) buys one
         // extension to ~1.6s, then a final score; hard cap ~2.4s regardless.
         if (silenceMs >= 600 && !vadPauseFiredRef.current && !isSpeakingRef.current && hasText) {
           const scoreAt = eouExtended ? 1600 : 600;
-          if (silenceMs >= scoreAt && !eouScoring) {
+          if (silenceMs >= scoreAt && !eouScoring && !smartTurnScoring) {
             eouScoring = true;
             void getEouEngine().then(async (eng) => {
               eouScoring = false;
@@ -592,7 +671,9 @@ export function useVoiceStream(options: UseVoiceStreamOptions = {}) {
             });
             return; // wait for async verdict this tick
           }
-          if (eouScoring) return; // never commit while a verdict is in flight
+          // Never commit while a verdict is in flight — but the 2.4s hard
+          // cap below must still fire even if a score promise is stuck.
+          if ((eouScoring || smartTurnScoring) && silenceMs < 2400) return;
           // Hard cap — no path may listen past ~2.4s of silence.
           if (silenceMs >= 2400) {
             vadPauseFiredRef.current = true;
@@ -1414,6 +1495,8 @@ export function useVoiceStream(options: UseVoiceStreamOptions = {}) {
     ttsOutputLevel,
     sttReady: state.sttReady,
     ttsReady: state.ttsReady,
+    /** Smart-turn detector lifecycle: off | idle | loading | ready | unavailable. */
+    turnDetectorState,
     
     // Transcript
     transcript,

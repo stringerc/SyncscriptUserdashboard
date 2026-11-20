@@ -68,17 +68,26 @@ if (!existsSync('tsconfig.json')) {
 }
 
 let raw = '';
+// Prefer tsgo (native TypeScript, ~10x faster) when available; fall back to tsc.
+const TSGO = 'node_modules/@typescript/native-preview/bin/tsgo';
+const useTsgo = existsSync(TSGO);
 try {
-  // tsc exits non-zero when it reports errors, which is the expected path here.
-  raw = execFileSync('npx', ['tsc', '--noEmit', '-p', 'tsconfig.json'], {
-    encoding: 'utf8',
-    stdio: ['ignore', 'pipe', 'pipe'],
-    maxBuffer: 32 * 1024 * 1024,
-  });
+  // tsc/tsgo exits non-zero when it reports errors, which is the expected path here.
+  raw = useTsgo
+    ? execFileSync('node', [TSGO, '--noEmit', '-p', 'tsconfig.json'], {
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'pipe'],
+        maxBuffer: 32 * 1024 * 1024,
+      })
+    : execFileSync('npx', ['tsc', '--noEmit', '-p', 'tsconfig.json'], {
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'pipe'],
+        maxBuffer: 32 * 1024 * 1024,
+      });
 } catch (err) {
   raw = `${err.stdout ?? ''}${err.stderr ?? ''}`;
   if (!raw.trim()) {
-    fail(`could not run tsc: ${err.message}`);
+    fail(`could not run ${useTsgo ? 'tsgo' : 'tsc'}: ${err.message}`);
     process.exit(1);
   }
 }
