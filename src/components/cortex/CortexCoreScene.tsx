@@ -3244,9 +3244,11 @@ export type CoreQualityMode = 'ultra' | 'smooth' | 'cinematic';
 function PostFX({
   live,
   qualityMode = 'cinematic',
+  nightMode = false,
 }: {
   live: React.MutableRefObject<LiveSignal>;
   qualityMode?: CoreQualityMode;
+  nightMode?: boolean;
 }) {
   if (qualityMode === 'ultra') {
     return null; // Direct native WebGL pass-through
@@ -3350,7 +3352,7 @@ function PostFX({
     // Mass proxy: integrated information + cognitive load bend spacetime.
     // Φ is capped for postfx — raw spikes to 2.5 used to drop the bloom
     // threshold to 0.2 and crush the scene into "neon core on black".
-    const phiFx = Math.min(smoothPhi.current, 1.2);
+    const phiFx = Math.min(smoothPhi.current, nightMode ? 2.5 : 1.2);
     lensing.strength = Math.min(0.012, phiFx * 0.004 + smoothThink.current * 0.003 + smooth.current * 0.002);
     lensing.updateUniforms();
 
@@ -3361,10 +3363,10 @@ function PostFX({
   });
 
   const lvl = smooth.current;
-  const phiFx = Math.min(smoothPhi.current, 1.2);
+  const phiFx = Math.min(smoothPhi.current, nightMode ? 2.5 : 1.2);
   // Relativistic spacetime warping: chromatic aberration & Einstein-radius contraction
   const phiDisp = phiFx * 0.0016 + smoothThink.current * 0.0012;
-  const vigDarkness = 0.52 + lvl * 0.16 + smoothThink.current * 0.14;
+  const vigDarkness = (nightMode ? 0.60 : 0.52) + lvl * 0.16 + smoothThink.current * 0.14;
   const vigOffset = Math.max(0.12, 0.28 - phiDisp * 15);
 
   if (qualityMode === 'smooth') {
@@ -3372,15 +3374,15 @@ function PostFX({
       <EffectComposer multisampling={0}>
         <Bloom
           mipmapBlur
-          intensity={0.80 + lvl * 0.55 + phiFx * 0.45}
-          luminanceThreshold={Math.max(0.2, 0.42 - phiFx * 0.08)}
+          intensity={(nightMode ? 1.0 : 0.80) + lvl * 0.55 + phiFx * (nightMode ? 0.55 : 0.45)}
+          luminanceThreshold={Math.max(nightMode ? 0.15 : 0.2, (nightMode ? 0.40 : 0.42) - phiFx * (nightMode ? 0.09 : 0.08))}
           luminanceSmoothing={0.25}
           radius={0.70 + smoothThink.current * 0.15}
         />
         <ChromaticAberration
           offset={chromaOffset}
           radialModulation
-          modulationOffset={Math.max(0.1, 0.35 - phiFx * 0.12)}
+          modulationOffset={Math.max(nightMode ? 0.05 : 0.1, 0.35 - phiFx * (nightMode ? 0.14 : 0.12))}
         />
         <primitive object={lensing} />
         <Vignette
@@ -3399,15 +3401,15 @@ function PostFX({
       {dof && <primitive object={dof} />}
       <Bloom
         mipmapBlur
-        intensity={0.80 + lvl * 0.55 + phiFx * 0.45}
-        luminanceThreshold={Math.max(0.2, 0.42 - phiFx * 0.08)}
+        intensity={(nightMode ? 1.0 : 0.80) + lvl * 0.55 + phiFx * (nightMode ? 0.55 : 0.45)}
+        luminanceThreshold={Math.max(nightMode ? 0.15 : 0.2, (nightMode ? 0.40 : 0.42) - phiFx * (nightMode ? 0.09 : 0.08))}
         luminanceSmoothing={0.25}
         radius={0.70 + smoothThink.current * 0.15}
       />
       <ChromaticAberration
         offset={chromaOffset}
         radialModulation
-        modulationOffset={Math.max(0.1, 0.35 - phiFx * 0.12)}
+        modulationOffset={Math.max(nightMode ? 0.05 : 0.1, 0.35 - phiFx * (nightMode ? 0.14 : 0.12))}
       />
       <primitive object={lensing} />
       <Vignette
@@ -3458,6 +3460,7 @@ function CortexCoreInner({
   holoParallax,
   headParallax,
   qualityMode = 'cinematic',
+  nightMode,
 }: {
   fx: React.MutableRefObject<{ shocks: Shock[] }>;
   selectedAgentId?: string | null;
@@ -3468,6 +3471,7 @@ function CortexCoreInner({
   holoParallax?: boolean;
   headParallax?: { x: number; y: number } | null;
   qualityMode?: CoreQualityMode;
+  nightMode?: boolean;
 }) {
   const live = useRef<LiveSignal>(makeLive());
 
@@ -3548,7 +3552,7 @@ function CortexCoreInner({
         holoParallax={holoParallax}
         headParallax={headParallax}
       />
-      {!hide.has('postfx') && <PostFX live={live} qualityMode={qualityMode} />}
+      {!hide.has('postfx') && <PostFX live={live} qualityMode={qualityMode} nightMode={nightMode} />}
     </>
   );
 }
@@ -3564,6 +3568,7 @@ function SceneWithInput({
   holoParallax,
   headParallax,
   qualityMode = 'cinematic',
+  nightMode,
 }: {
   selectedAgentId?: string | null;
   onSelectAgent?: (id: string | null) => void;
@@ -3575,6 +3580,7 @@ function SceneWithInput({
   holoParallax?: boolean;
   headParallax?: { x: number; y: number } | null;
   qualityMode?: CoreQualityMode;
+  nightMode?: boolean;
 }) {
   const fx = useRef<{ shocks: Shock[] }>({ shocks: [] });
   const { gl, clock } = useThree();
@@ -3602,6 +3608,7 @@ function SceneWithInput({
       holoParallax={holoParallax}
       headParallax={headParallax}
       qualityMode={qualityMode}
+      nightMode={nightMode}
     />
   );
 }
@@ -3692,6 +3699,7 @@ export interface CortexCoreSceneProps {
   headParallax?: { x: number; y: number } | null;
   perfMode?: CoreQualityMode;
   onTogglePerfMode?: (mode: CoreQualityMode) => void;
+  nightMode?: boolean;
 }
 
 const CortexCoreSceneBase: React.FC<CortexCoreSceneProps> = ({
@@ -3705,6 +3713,7 @@ const CortexCoreSceneBase: React.FC<CortexCoreSceneProps> = ({
   holoParallax = true,
   headParallax,
   perfMode: externalPerfMode,
+  nightMode,
 }) => {
   const [internalQuality] = React.useState<CoreQualityMode>(() => {
     if (typeof window !== 'undefined') {
@@ -3812,6 +3821,7 @@ const CortexCoreSceneBase: React.FC<CortexCoreSceneProps> = ({
           holoParallax={holoParallax}
           headParallax={headParallax}
           qualityMode={effectiveQuality}
+          nightMode={nightMode}
         />
         {reduced && <InvalidateBridge />}
       </Canvas>

@@ -349,6 +349,17 @@ export default function CortexVisualizerPage() {
     }
     return 'smooth';
   });
+  // Day/night aesthetic toggle: night = deliberate neon (uncapped phi,
+  // aggressive bloom, boosted orb glow). Persisted per browser.
+  const [nightMode, setNightMode] = useState(() => {
+    try { return localStorage.getItem('cortex_night_mode') === '1'; } catch { return false; }
+  });
+  const toggleNightMode = () => {
+    setNightMode((n) => {
+      try { localStorage.setItem('cortex_night_mode', n ? '0' : '1'); } catch {}
+      return !n;
+    });
+  };
   // Core scene: V1 (full equatorial rig) or V2 (clean-slate hero core).
   // ?scene=v1|v2 seeds the pick once; the nav toggle persists the choice.
   const [coreScene, setCoreScene] = useState<'v1' | 'v2'>(() => {
@@ -1148,6 +1159,7 @@ export default function CortexVisualizerPage() {
               headParallax={effectiveParallax}
               perfMode={coreQuality}
               onTogglePerfMode={setCoreQuality}
+              nightMode={nightMode}
             />
           ) : (
           <CortexCoreScene
@@ -1161,6 +1173,7 @@ export default function CortexVisualizerPage() {
             headParallax={effectiveParallax}
             perfMode={coreQuality}
             onTogglePerfMode={setCoreQuality}
+            nightMode={nightMode}
           />
           )}
           {chronoActive && chronoNowUi && (
@@ -1332,6 +1345,34 @@ export default function CortexVisualizerPage() {
           )}
           <span>CORE</span>
         </button>
+
+        {/* DAY / NIGHT aesthetic toggle — night = neon postfx + orb glow */}
+        {faceMode === 'core' && !mapMode && (
+          <button
+            onClick={toggleNightMode}
+            title={nightMode ? 'Night mode active — neon bloom + glowing orbs. Click for day.' : 'Day mode active. Click for neon night.'}
+            style={{
+              padding: '4px 10px',
+              borderRadius: 12,
+              border: nightMode ? '1px solid rgba(192,132,252,0.55)' : '1px solid rgba(125,211,252,0.45)',
+              background: nightMode ? 'rgba(38,16,54,0.8)' : 'rgba(8,24,38,0.8)',
+              color: nightMode ? '#d8b4fe' : '#7dd3fc',
+              fontFamily: "'IBM Plex Mono', monospace",
+              fontSize: 8.5,
+              fontWeight: 700,
+              letterSpacing: '0.12em',
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              gap: 5,
+              boxShadow: nightMode ? '0 0 10px rgba(192,132,252,0.28)' : '0 0 8px rgba(125,211,252,0.18)',
+              transition: 'all 0.2s',
+            }}
+          >
+            <span style={{ fontSize: 10 }}>{nightMode ? '☾' : '☀'}</span>
+            <span>{nightMode ? 'NIGHT' : 'DAY'}</span>
+          </button>
+        )}
 
         {/* FOUNDRY */}
         <button

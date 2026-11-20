@@ -394,8 +394,9 @@ const trailMat = new THREE.LineBasicMaterial({
   blending: THREE.AdditiveBlending, depthWrite: false,
 });
 
-function AgentField({ live, selectedAgentId, onSelectAgent }: {
+function AgentField({ live, nightMode, selectedAgentId, onSelectAgent }: {
   live: React.MutableRefObject<LiveSignalV2>;
+  nightMode?: boolean;
   selectedAgentId?: string | null;
   onSelectAgent?: (id: string | null) => void;
 }) {
@@ -445,6 +446,9 @@ function AgentField({ live, selectedAgentId, onSelectAgent }: {
       const agent = agentsRef.current[i];
       const id = agent?.id || `v2-agent-${i}`;
       const boost = (hoverRef.current === i || selectedAgentId === id) ? 1.35 : 1;
+      // Night mode: constellation orbs burn brighter + larger so the neon
+      // postfx has more emissive sources to bloom.
+      const neon = nightMode ? 1.45 : 1;
       const a = t * p.speed + p.phase;
       const ca = Math.cos(a), sa = Math.sin(a);
       const si = Math.sin(p.incl), ci = Math.cos(p.incl);
@@ -457,13 +461,13 @@ function AgentField({ live, selectedAgentId, onSelectAgent }: {
         const err = agent.status === 'error';
         const dim = agent.status === 'offline' || agent.status === 'retired';
         const pulse = wrk ? 1 + 0.18 * Math.sin(t * 6 + i) : 1 + 0.05 * Math.sin(t * 2 + i);
-        sprite.scale.setScalar((wrk ? 0.34 : 0.24) * pulse * boost);
+        sprite.scale.setScalar((wrk ? 0.34 : 0.24) * pulse * boost * Math.sqrt(neon));
         m.color.copy(err ? c('#f43f5e') : p.color);
-        m.opacity = dim ? 0.15 : wrk ? 0.9 : 0.55;
+        m.opacity = dim ? Math.min(1, 0.15 * neon) : Math.min(1, (wrk ? 0.9 : 0.55) * neon);
       } else {
-        sprite.scale.setScalar((0.14 + 0.03 * Math.sin(t * 2.2 + i)) * boost);
+        sprite.scale.setScalar((0.14 + 0.03 * Math.sin(t * 2.2 + i)) * boost * Math.sqrt(neon));
         m.color.copy(sig.colorRim).lerp(c('#ffffff'), 0.4);
-        m.opacity = 0.25 + 0.1 * Math.sin(t * 1.8 + i);
+        m.opacity = Math.min(1, (0.25 + 0.1 * Math.sin(t * 1.8 + i)) * neon);
       }
       // name tag rides beneath the sprite
       const label = labels.current[i];
@@ -1000,13 +1004,14 @@ function ModelConstellationV2({ live }: { live: React.MutableRefObject<LiveSigna
 
 const CHRONO_SEG_V2 = 1.4;
 
-function V2Scene({ live, headParallax, visualMode, chronoTime, replayTrack, perfMode, selectedAgentId, onSelectAgent, selectedMemoryId, onSelectMemory }: {
+function V2Scene({ live, headParallax, visualMode, chronoTime, replayTrack, perfMode, nightMode, selectedAgentId, onSelectAgent, selectedMemoryId, onSelectMemory }: {
   live: React.MutableRefObject<LiveSignalV2>;
   headParallax?: { x: number; y: number } | null;
   visualMode?: 'fleet' | 'memory' | 'both';
   chronoTime?: number | null;
   replayTrack?: ReplayTrackEvent[] | null;
   perfMode?: 'ultra' | 'smooth' | 'cinematic';
+  nightMode?: boolean;
   selectedAgentId?: string | null;
   onSelectAgent?: (id: string | null) => void;
   selectedMemoryId?: string | null;
@@ -1163,7 +1168,7 @@ function V2Scene({ live, headParallax, visualMode, chronoTime, replayTrack, perf
         {!hidden.has('motes') && <MoteHaze live={live} perfMode={perfMode} />}
         {!hidden.has('rings') && <OrbitRings live={live} />}
         {visualMode !== 'memory' && !hidden.has('agents') && (
-          <AgentField live={live} selectedAgentId={selectedAgentId} onSelectAgent={onSelectAgent} />
+          <AgentField live={live} nightMode={nightMode} selectedAgentId={selectedAgentId} onSelectAgent={onSelectAgent} />
         )}
         {visualMode !== 'fleet' && <MemoryBankV2 live={live} selectedMemoryId={selectedMemoryId} onSelectMemory={onSelectMemory} />}
         {!hidden.has('models') && <ModelConstellationV2 live={live} />}
@@ -1172,14 +1177,15 @@ function V2Scene({ live, headParallax, visualMode, chronoTime, replayTrack, perf
         {!hidden.has('murmur') && <MurmurationV2 live={live} perfMode={perfMode} />}
         <ShockwavesV2 live={live} />
       </group>
-      {!postOff && <PostFXV2 live={live} perfMode={perfMode} />}
+      {!postOff && <PostFXV2 live={live} perfMode={perfMode} nightMode={nightMode} />}
     </>
   );
 }
 
-function PostFXV2({ live, perfMode }: {
+function PostFXV2({ live, perfMode, nightMode }: {
   live: React.MutableRefObject<LiveSignalV2>;
   perfMode?: 'ultra' | 'smooth' | 'cinematic';
+  nightMode?: boolean;
 }) {
   const smooth = useRef(0);
   const smoothPhi = useRef(0);
@@ -1188,20 +1194,26 @@ function PostFXV2({ live, perfMode }: {
     smoothPhi.current += ((live.current.phiS ?? 0) - smoothPhi.current) * Math.min(1, delta * 3.5);
   });
   const lvl = smooth.current;
-  const bloomMul = perfMode === 'smooth' ? 0.6 : perfMode === 'ultra' ? 1.2 : 1;
+  const bloomMul = (perfMode === 'smooth' ? 0.6 : perfMode === 'ultra' ? 1.2 : 1) * (nightMode ? 1.9 : 1);
+  // Night mode: Φ cap lifted to the raw 2.5 bus ceiling and the bloom
+  // threshold drops — this is the deliberate "neon" look users toggle.
+  const phiCap = nightMode ? 2.5 : 1.2;
+  const threshold = nightMode ? 0.20 : 0.32;
+  const radius = nightMode ? 0.95 : 0.75;
+  const vigDarkness = nightMode ? 0.74 + lvl * 0.14 : 0.62 + lvl * 0.12;
   return (
     <EffectComposer multisampling={perfMode === 'cinematic' ? 4 : 0}>
       <Bloom
         mipmapBlur
-        intensity={(0.7 + lvl * 0.5 + Math.min(smoothPhi.current, 1.2) * 0.4) * bloomMul}
-        luminanceThreshold={0.32}
+        intensity={(0.7 + lvl * 0.5 + Math.min(smoothPhi.current, phiCap) * 0.4) * bloomMul}
+        luminanceThreshold={threshold}
         luminanceSmoothing={0.3}
-        radius={0.75}
+        radius={radius}
       />
       {perfMode !== 'smooth' && (
         <ChromaticAberration offset={new THREE.Vector2(0.0004 + lvl * 0.0007, 0.0004 + lvl * 0.0007)} radialModulation />
       )}
-      <Vignette offset={0.25} darkness={0.62 + lvl * 0.12} />
+      <Vignette offset={0.25} darkness={vigDarkness} />
     </EffectComposer>
   );
 }
@@ -1220,6 +1232,7 @@ export interface CortexCoreSceneV2Props {
   headParallax?: { x: number; y: number } | null;
   perfMode?: 'ultra' | 'smooth' | 'cinematic';
   onTogglePerfMode?: (mode: 'ultra' | 'smooth' | 'cinematic') => void;
+  nightMode?: boolean;
 }
 
 export function CortexCoreSceneV2(props: CortexCoreSceneV2Props) {
@@ -1291,6 +1304,7 @@ export function CortexCoreSceneV2(props: CortexCoreSceneV2Props) {
           chronoTime={props.chronoTime}
           replayTrack={props.replayTrack}
           perfMode={props.perfMode}
+          nightMode={props.nightMode}
           selectedAgentId={props.selectedAgentId}
           onSelectAgent={props.onSelectAgent}
           selectedMemoryId={props.selectedMemoryId}
