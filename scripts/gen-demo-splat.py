@@ -9,6 +9,7 @@ training. Swap in real captures later (Postshot/nerfstudio/gsplat output).
 Usage: python3 scripts/gen-demo-splat.py [out.ply] [count]
 """
 import math
+import os
 import random
 import struct
 import sys
@@ -97,17 +98,33 @@ def main():
     core_n = int(COUNT * 0.25)
     ring_n = int(COUNT * 0.20)
     jet_n = COUNT - shell_n - core_n - ring_n
-    pts = []
+    shell_pts = []
     for x, y, z in fib_sphere(shell_n, 1.0):
-        pts.append((x, y, z, 0.006 + random.random() * 0.005, 0.13 + random.random() * 0.11, None))
+        shell_pts.append((x, y, z, 0.006 + random.random() * 0.005, 0.13 + random.random() * 0.11, None))
+    core_pts = []
     for x, y, z in fib_sphere(core_n, 0.52, squash=1.15):
-        pts.append((x, y, z, 0.004 + random.random() * 0.0035, 0.20 + random.random() * 0.16, None))
+        core_pts.append((x, y, z, 0.004 + random.random() * 0.0035, 0.20 + random.random() * 0.16, None))
+    ring_pts_l = []
     for x, y, z in ring_pts(ring_n):
-        pts.append((x, y, z, 0.0045 + random.random() * 0.004, 0.30 + random.random() * 0.22, ring_color()))
+        ring_pts_l.append((x, y, z, 0.0045 + random.random() * 0.004, 0.30 + random.random() * 0.22, ring_color()))
+    jet_pts_l = []
     for x, y, z in jet_pts(jet_n):
-        pts.append((x, y, z, 0.003 + random.random() * 0.0025, 0.38 + random.random() * 0.25,
-                    (0.7 + random.random() * 0.3, 0.95, 1.0)))
+        jet_pts_l.append((x, y, z, 0.003 + random.random() * 0.0025, 0.38 + random.random() * 0.25,
+                          (0.7 + random.random() * 0.3, 0.95, 1.0)))
 
+    body_pts = shell_pts + core_pts + jet_pts_l
+    # Hero mode splits the ring into its own mesh so the scene can
+    # counter-rotate it against the core. Custom OUTs stay all-in-one.
+    split_ring = os.path.basename(OUT) == "cortex-core.ply"
+    outputs = [(OUT, body_pts + ([] if split_ring else ring_pts_l))]
+    if split_ring:
+        outputs.append((os.path.join(os.path.dirname(OUT), "cortex-ring.ply"), ring_pts_l))
+
+    for path, pts in outputs:
+        write_ply(path, pts)
+
+
+def write_ply(path, pts):
     header = (
         "ply\nformat binary_little_endian 1.0\n"
         f"element vertex {len(pts)}\n"
@@ -120,9 +137,8 @@ def main():
         "end_header\n"
     ).encode()
 
-    import os
-    os.makedirs(os.path.dirname(OUT) or ".", exist_ok=True)
-    with open(OUT, "wb") as f:
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    with open(path, "wb") as f:
         f.write(header)
         for x, y, z, scale, op, fixed_rgb in pts:
             t = (y / 1.0 + 1.0) / 2.0  # -1..1 -> 0..1
@@ -135,7 +151,7 @@ def main():
             # per-splat brightness jitter keeps it from banding
             j = 0.85 + random.random() * 0.3
             emit(f, x, y, z, tuple(min(1.0, c * j) for c in rgb), scale, op)
-    print(f"wrote {OUT}: {len(pts)} gaussians, {os.path.getsize(OUT)/1e6:.1f} MB")
+    print(f"wrote {path}: {len(pts)} gaussians, {os.path.getsize(path)/1e6:.1f} MB")
 
 
 if __name__ == "__main__":
