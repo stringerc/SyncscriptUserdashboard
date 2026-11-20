@@ -357,7 +357,7 @@ const coreVertex = /* glsl */ `
     vec4 wp = modelMatrix * vec4(displaced, 1.0);
     vWorldPos = wp.xyz;
     vec4 mv = viewMatrix * wp;
-    vNormal = normalize(mat3(modelMatrix) * n);
+    vNormal = normalize(normalMatrix * n);
     vViewPosition = -mv.xyz;
     gl_Position = projectionMatrix * mv;
   }
