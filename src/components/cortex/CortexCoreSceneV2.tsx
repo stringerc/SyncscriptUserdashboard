@@ -238,9 +238,10 @@ const moteFrag = /* glsl */ `
   }
 `;
 
-function MoteHaze({ live, perfMode }: {
+function MoteHaze({ live, perfMode, nightMode }: {
   live: React.MutableRefObject<LiveSignalV2>;
   perfMode?: 'ultra' | 'smooth' | 'cinematic';
+  nightMode?: boolean;
 }) {
   const count = perfMode === 'ultra' ? 2200 : perfMode === 'smooth' ? 900 : 1600;
   const matRef = useRef<THREE.ShaderMaterial>(null);
@@ -269,7 +270,7 @@ function MoteHaze({ live, perfMode }: {
     const sig = live.current;
     material.uniforms.uTime.value += delta;
     material.uniforms.uPixelRatio.value = state.gl.getPixelRatio();
-    material.uniforms.uEnergy.value = sig.energy;
+    material.uniforms.uEnergy.value = nightMode ? Math.min(1, sig.energy * 2.1 + 0.22) : sig.energy;
     material.uniforms.uColor.value.copy(sig.colorRim).lerp(c('#ffffff'), 0.3);
   });
   return <points geometry={geo} material={material} frustumCulled={false} />;
@@ -448,7 +449,7 @@ function AgentField({ live, nightMode, selectedAgentId, onSelectAgent }: {
       const boost = (hoverRef.current === i || selectedAgentId === id) ? 1.35 : 1;
       // Night mode: constellation orbs burn brighter + larger so the neon
       // postfx has more emissive sources to bloom.
-      const neon = nightMode ? 1.45 : 1;
+      const neon = nightMode ? 2.1 : 1;
       const a = t * p.speed + p.phase;
       const ca = Math.cos(a), sa = Math.sin(a);
       const si = Math.sin(p.incl), ci = Math.cos(p.incl);
@@ -634,9 +635,10 @@ const murmurFrag = /* glsl */ `
   }
 `;
 
-function MurmurationV2({ live, perfMode }: {
+function MurmurationV2({ live, perfMode, nightMode }: {
   live: React.MutableRefObject<LiveSignalV2>;
   perfMode?: 'ultra' | 'smooth' | 'cinematic';
+  nightMode?: boolean;
 }) {
   const count = perfMode === 'ultra' ? 5200 : perfMode === 'smooth' ? 1600 : 3200;
   const material = useMemo(() => new THREE.ShaderMaterial({
@@ -673,7 +675,7 @@ function MurmurationV2({ live, perfMode }: {
     material.uniforms.uEnergy.value = sig.energy;
     kickSmooth.current += (sig.kick - kickSmooth.current) * Math.min(1, delta * 3);
     material.uniforms.uKick.value = kickSmooth.current;
-    material.uniforms.uOpacity.value = 0.55 + sig.energy * 0.3;
+    material.uniforms.uOpacity.value = (0.55 + sig.energy * 0.3) * (nightMode ? 2.1 : 1);
     material.uniforms.uColorA.value.copy(sig.colorRim);
     material.uniforms.uColorB.value.copy(sig.colorRim).lerp(c('#a78bfa'), 0.6);
 
@@ -699,10 +701,11 @@ function MurmurationV2({ live, perfMode }: {
 
 // ── Memory engram constellation (V1 parity, V2-native) ──────────────────
 
-function MemoryBankV2({ live, selectedMemoryId, onSelectMemory }: {
+function MemoryBankV2({ live, selectedMemoryId, onSelectMemory, nightMode }: {
   live: React.MutableRefObject<LiveSignalV2>;
   selectedMemoryId?: string | null;
   onSelectMemory?: (id: string | null) => void;
+  nightMode?: boolean;
 }) {
   const groupRef = useRef<THREE.Group>(null);
   const sprites = useRef<(THREE.Sprite | null)[]>([]);
@@ -762,7 +765,7 @@ function MemoryBankV2({ live, selectedMemoryId, onSelectMemory }: {
       const sel = selectedMemoryId === o.id;
       sprite.scale.setScalar(sel ? 0.4 : 0.2 + 0.04 * Math.sin(t * 1.6 + i));
       m.color.copy(sel ? c('#ffffff') : o.color);
-      m.opacity = sel ? 0.95 : 0.4 + sig.energy * 0.15;
+      m.opacity = sel ? 0.95 : Math.min(1, (0.4 + sig.energy * 0.15) * (nightMode ? 2.2 : 1));
       if (!memoryWorldPositions[o.id]) memoryWorldPositions[o.id] = new THREE.Vector3();
       sprite.getWorldPosition(memoryWorldPositions[o.id]);
     });
@@ -926,9 +929,10 @@ const thoughtFrag = /* glsl */ `
   }
 `;
 
-function ThoughtSwarmV2({ live, perfMode }: {
+function ThoughtSwarmV2({ live, perfMode, nightMode }: {
   live: React.MutableRefObject<LiveSignalV2>;
   perfMode?: 'ultra' | 'smooth' | 'cinematic';
+  nightMode?: boolean;
 }) {
   const count = perfMode === 'ultra' ? 700 : perfMode === 'smooth' ? 300 : 500;
   const material = useMemo(() => new THREE.ShaderMaterial({
@@ -951,7 +955,7 @@ function ThoughtSwarmV2({ live, perfMode }: {
     const sig = live.current;
     material.uniforms.uTime.value += delta;
     material.uniforms.uPixelRatio.value = state.gl.getPixelRatio();
-    material.uniforms.uEnergy.value = sig.energy;
+    material.uniforms.uEnergy.value = nightMode ? Math.min(1, sig.energy * 2.1 + 0.22) : sig.energy;
     material.uniforms.uColor.value.copy(sig.colorRim).lerp(c('#c4b5fd'), 0.5);
   });
   return <points geometry={geo} material={material} frustumCulled={false} />;
@@ -959,7 +963,7 @@ function ThoughtSwarmV2({ live, perfMode }: {
 
 // ── Distant model constellation — labelled-core glyphs on wide orbits ───
 
-function ModelConstellationV2({ live }: { live: React.MutableRefObject<LiveSignalV2> }) {
+function ModelConstellationV2({ live, nightMode }: { live: React.MutableRefObject<LiveSignalV2>; nightMode?: boolean }) {
   const groupRef = useRef<THREE.Group>(null);
   const sprites = useRef<(THREE.Sprite | null)[]>([]);
   const params = useMemo(() => Array.from({ length: 8 }, (_, i) => ({
@@ -986,7 +990,7 @@ function ModelConstellationV2({ live }: { live: React.MutableRefObject<LiveSigna
       const m = sprite.material as THREE.SpriteMaterial;
       sprite.scale.setScalar(0.5 + 0.06 * Math.sin(t * 0.9 + i * 2));
       m.color.copy(p.color).lerp(sig.colorRim, 0.3);
-      m.opacity = 0.28 + sig.energy * 0.2;
+      m.opacity = Math.min(1, (0.28 + sig.energy * 0.2) * (nightMode ? 2.3 : 1));
     });
   });
   return (
@@ -1167,16 +1171,16 @@ function V2Scene({ live, headParallax, visualMode, chronoTime, replayTrack, perf
       <color attach="background" args={['#03040a']} />
       <group ref={rigRef}>
         {!hidden.has('core') && <HeroCore live={live} />}
-        {!hidden.has('motes') && <MoteHaze live={live} perfMode={perfMode} />}
+        {!hidden.has('motes') && <MoteHaze live={live} perfMode={perfMode} nightMode={nightMode} />}
         {!hidden.has('rings') && <OrbitRings live={live} />}
         {visualMode !== 'memory' && !hidden.has('agents') && (
           <AgentField live={live} nightMode={nightMode} selectedAgentId={selectedAgentId} onSelectAgent={onSelectAgent} />
         )}
-        {visualMode !== 'fleet' && <MemoryBankV2 live={live} selectedMemoryId={selectedMemoryId} onSelectMemory={onSelectMemory} />}
-        {!hidden.has('models') && <ModelConstellationV2 live={live} />}
+        {visualMode !== 'fleet' && <MemoryBankV2 live={live} selectedMemoryId={selectedMemoryId} onSelectMemory={onSelectMemory} nightMode={nightMode} />}
+        {!hidden.has('models') && <ModelConstellationV2 live={live} nightMode={nightMode} />}
         {!hidden.has('web') && <NeuralWebV2 live={live} />}
-        {!hidden.has('thoughts') && <ThoughtSwarmV2 live={live} perfMode={perfMode} />}
-        {!hidden.has('murmur') && <MurmurationV2 live={live} perfMode={perfMode} />}
+        {!hidden.has('thoughts') && <ThoughtSwarmV2 live={live} perfMode={perfMode} nightMode={nightMode} />}
+        {!hidden.has('murmur') && <MurmurationV2 live={live} perfMode={perfMode} nightMode={nightMode} />}
         <ShockwavesV2 live={live} />
       </group>
       {!postOff && <PostFXV2 live={live} perfMode={perfMode} nightMode={nightMode} />}
@@ -1196,19 +1200,19 @@ function PostFXV2({ live, perfMode, nightMode }: {
     smoothPhi.current += ((live.current.phiS ?? 0) - smoothPhi.current) * Math.min(1, delta * 3.5);
   });
   const lvl = smooth.current;
-  const bloomMul = (perfMode === 'smooth' ? 0.6 : perfMode === 'ultra' ? 1.2 : 1) * (nightMode ? 1.4 : 1);
+  const bloomMul = (perfMode === 'smooth' ? 0.6 : perfMode === 'ultra' ? 1.2 : 1) * (nightMode ? 0.35 : 1);
   // Night mode: exposure drops to 0.5 so the stage crushes dark, while the
   // bloom threshold drops and intensity rises — emissive core/orbs punch
   // through as neon on a near-black field.
   const phiCap = nightMode ? 2.5 : 1.2;
-  const threshold = nightMode ? 0.25 : 0.32;
+  const threshold = nightMode ? 0.62 : 0.32;
   const radius = nightMode ? 0.95 : 0.75;
   const vigDarkness = nightMode ? 0.74 + lvl * 0.14 : 0.62 + lvl * 0.12;
   return (
     <EffectComposer multisampling={perfMode === 'cinematic' ? 4 : 0}>
       {/* Night: crush mids BEFORE bloom so only true emissives (core,
           working orbs) clear the threshold — dark field, neon sources. */}
-      {nightMode && <BrightnessContrast brightness={-0.30} contrast={0.10} />}
+      {nightMode && <BrightnessContrast brightness={-0.22} contrast={0.06} />}
       <Bloom
         mipmapBlur
         intensity={(0.7 + lvl * 0.5 + Math.min(smoothPhi.current, phiCap) * 0.4) * bloomMul}
