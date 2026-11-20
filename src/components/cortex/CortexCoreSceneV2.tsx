@@ -186,14 +186,15 @@ const moteVert = /* glsl */ `
   float khash(float n) { return fract(sin(n) * 43758.5453); }
   void main() {
     float seed = aSeed;
-    // filled volume: random point inside ball via spherical coords + cbrt radius
-    float rad = 1.35 + pow(khash(seed * 3.1), 0.42) * 3.4;
+    // uniform volume: cbrt radius + true spherical coords — no shell
+    // (limb ring) and no polar squash (equatorial band)
+    float rad = 1.35 + pow(khash(seed * 3.1), 0.34) * 3.4;
     float theta = khash(seed * 5.7) * 6.2831;
     float phi = acos(2.0 * khash(seed * 9.3) - 1.0);
     float sy = sin(phi);
     vec3 base = vec3(
       cos(theta) * sy * rad,
-      cos(phi) * sy * rad * 0.85,
+      cos(phi) * rad,
       sin(theta) * sy * rad
     );
     // slow differential drift — motes wander, never orbit a plane
@@ -438,14 +439,17 @@ function V2Scene({ live, headParallax }: {
 }) {
   const { scene, camera, gl } = useThree();
   React.useEffect(() => {
-    (window as any).__v2debug = { scene, camera };
+    (window as any).__v2debug = { scene, camera, orbit, cur };
   }, [scene, camera]);
   const rigRef = useRef<THREE.Group>(null);
 
   // Orbit rig: drag rotates, wheel zooms, idle keeps a slow cinematic drift.
   // userYaw/userPitch/userZoom are persistent offsets; the drift term is
   // added on top so the camera never stops breathing.
-  const orbit = useRef({ yaw: 0, pitch: 0.06, zoom: 0, dragging: false, lx: 0, ly: 0 });
+  const orbit = useRef({
+    yaw: typeof window !== 'undefined' ? +(new URLSearchParams(window.location.search).get('v2yaw') || 0) : 0,
+    pitch: 0.06, zoom: 0, dragging: false, lx: 0, ly: 0,
+  });
   const cur = useRef({ yaw: 0, pitch: 0.06, zoom: 0 });
 
   React.useEffect(() => {
@@ -516,14 +520,19 @@ function V2Scene({ live, headParallax }: {
       rigRef.current.rotation.y += delta * 0.02 * (0.4 + sig.energy);
     }
   });
+  // ?v2hide=core,motes,rings,agents — layer bisection for the equator hunt
+  const hidden = useMemo(() => {
+    if (typeof window === 'undefined') return new Set<string>();
+    return new Set((new URLSearchParams(window.location.search).get('v2hide') || '').split(',').filter(Boolean));
+  }, []);
   return (
     <>
       <color attach="background" args={['#03040a']} />
       <group ref={rigRef}>
-        <HeroCore live={live} />
-        <MoteHaze live={live} />
-        <OrbitRings live={live} />
-        <AgentField live={live} />
+        {!hidden.has('core') && <HeroCore live={live} />}
+        {!hidden.has('motes') && <MoteHaze live={live} />}
+        {!hidden.has('rings') && <OrbitRings live={live} />}
+        {!hidden.has('agents') && <AgentField live={live} />}
       </group>
       <PostFXV2 live={live} />
     </>
