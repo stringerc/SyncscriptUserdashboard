@@ -4,7 +4,7 @@
  * Phase-2 surface layer. Design language: 1px hairline borders, corner ticks,
  * 9px mono uppercase labels, state-color accents, spring entrance.
  */
-import React, { Suspense, lazy, useEffect, useState } from 'react';
+import React, { Suspense, lazy, useEffect, useRef, useState } from 'react';
 import { motion } from 'motion/react';
 import {
   LineChart, Line, BarChart, Bar, AreaChart, Area, PieChart, Pie, Cell,
@@ -12,9 +12,105 @@ import {
 } from 'recharts';
 import { ExternalLink, Pin, X } from 'lucide-react';
 import { C } from '../cortex-demo-helpers';
-import type { CortexArtifact, ChartArtifact, TableArtifact, ImageArtifact, DocumentArtifact, FeedArtifact, StatArtifact } from '../../../lib/cortex-artifacts';
+import type { CortexArtifact, ChartArtifact, TableArtifact, ImageArtifact, DocumentArtifact, FeedArtifact, StatArtifact, WeatherArtifact } from '../../../lib/cortex-artifacts';
 
 const MONO = '"IBM Plex Mono", ui-monospace, monospace';
+
+// ── MurmurationField — starling-flock particle backdrop ──────────────────
+// ~140 boids driven by layered sine flow-fields; each bird is a small
+// chevron stroke. Runs on rAF, pauses offscreen/hidden, honors
+// prefers-reduced-motion (renders one static frame).
+function MurmurationField({ density = 1, className }: { density?: number; className?: string }) {
+  const ref = useRef<HTMLCanvasElement>(null);
+  useEffect(() => {
+    const canvas = ref.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    const reduced = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+    let raf = 0;
+    let running = false;
+    let w = 0, h = 0;
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    const N = Math.max(40, Math.round(130 * density));
+    const birds = Array.from({ length: N }, () => ({
+      x: Math.random(), y: Math.random(),
+      vx: (Math.random() - 0.5) * 0.0009, vy: (Math.random() - 0.5) * 0.0009,
+      phase: Math.random() * Math.PI * 2,
+      hue: [187, 318, 45, 265][Math.floor(Math.random() * 4)],
+      size: 0.8 + Math.random() * 1.4,
+      flap: Math.random() * Math.PI * 2,
+    }));
+    const resize = () => {
+      const r = canvas.getBoundingClientRect();
+      w = r.width; h = r.height;
+      canvas.width = Math.max(1, Math.round(w * dpr));
+      canvas.height = Math.max(1, Math.round(h * dpr));
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    };
+    resize();
+    const ro = new ResizeObserver(resize);
+    ro.observe(canvas);
+
+    const flow = (x: number, y: number, t: number) => {
+      // Layered sines ≈ cheap curl-noise; returns a heading angle.
+      return Math.sin(x * 6.1 + t * 0.00042) * 1.9
+        + Math.cos(y * 4.3 - t * 0.00031) * 1.6
+        + Math.sin((x + y) * 3.2 + t * 0.00053) * 1.1;
+    };
+
+    const tick = (now: number) => {
+      if (!running) return;
+      ctx.clearRect(0, 0, w, h);
+      const t = now;
+      for (const b of birds) {
+        const px = b.x * w, py = b.y * h;
+        const ang = flow(b.x, b.y, t) + b.phase * 0.35;
+        // Steer velocity toward flow heading, keep a minimum cruise speed.
+        const targetVx = Math.cos(ang) * 0.0016, targetVy = Math.sin(ang) * 0.0016;
+        b.vx += (targetVx - b.vx) * 0.02;
+        b.vy += (targetVy - b.vy) * 0.02;
+        b.x += b.vx * 60 * 0.016 * 60 * 0.016; // ~px/frame at 60fps
+        b.y += b.vy * 60 * 0.016 * 60 * 0.016;
+        // Soft wrap edges so the flock never leaves.
+        const m = 0.04;
+        if (b.x < -m) b.x += 1 + 2 * m; else if (b.x > 1 + m) b.x -= 1 + 2 * m;
+        if (b.y < -m) b.y += 1 + 2 * m; else if (b.y > 1 + m) b.y -= 1 + 2 * m;
+        b.flap += 0.35;
+        const heading = Math.atan2(b.vy, b.vx);
+        const s = b.size * (w / 900 + 0.4);
+        const flapAmp = Math.sin(b.flap) * s * 0.9;
+        ctx.save();
+        ctx.translate(px, py);
+        ctx.rotate(heading);
+        ctx.strokeStyle = `hsla(${b.hue}, 90%, 72%, 0.5)`;
+        ctx.lineWidth = 1;
+        ctx.lineCap = 'round';
+        // Starling dart: two swept wings meeting at a point.
+        ctx.beginPath();
+        ctx.moveTo(-s * 1.6, -flapAmp * 0.4);
+        ctx.quadraticCurveTo(-s * 0.4, -s * 0.9 - flapAmp, 0, 0);
+        ctx.quadraticCurveTo(-s * 0.4, s * 0.9 + flapAmp, -s * 1.6, flapAmp * 0.4);
+        ctx.stroke();
+        ctx.restore();
+      }
+      raf = requestAnimationFrame(tick);
+    };
+
+    const io = new IntersectionObserver(([e]) => {
+      const vis = e.isIntersecting && !document.hidden;
+      if (vis && !running) { running = true; raf = requestAnimationFrame(tick); }
+      else if (!vis && running) { running = false; cancelAnimationFrame(raf); }
+    }, { threshold: 0.02 });
+    io.observe(canvas);
+    if (reduced) {
+      // One static scatter frame for reduced-motion users.
+      running = true; tick(0); running = false;
+    }
+    return () => { running = false; cancelAnimationFrame(raf); ro.disconnect(); io.disconnect(); };
+  }, [density]);
+  return <canvas ref={ref} className={className} style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', pointerEvents: 'none' }} aria-hidden="true" />;
+}
 
 interface TelemetrySample { state: string; level: number; text: string; ts: number }
 let telemetryCache: TelemetrySample | null = null;
@@ -107,17 +203,24 @@ export function ArtifactShell({
       onClick={onExpand}
       style={{
         position: 'relative',
-        background: 'linear-gradient(160deg, rgba(103,232,249,0.045), rgba(167,139,250,0.025) 60%, rgba(4,8,14,0.6))',
-        border: `1px solid ${hover ? C.borderBright : C.border}`,
-        borderRadius: 6,
+        background: 'linear-gradient(155deg, rgba(13,32,30,0.66) 0%, rgba(9,20,32,0.55) 52%, rgba(16,10,34,0.62) 100%)',
+        backdropFilter: 'blur(18px) saturate(1.5)', WebkitBackdropFilter: 'blur(18px) saturate(1.5)',
+        border: `1px solid ${hover ? 'rgba(125,240,255,0.5)' : C.border}`,
+        borderRadius: 10,
         padding: compact ? '8px 10px' : '10px 12px',
         cursor: onExpand ? 'pointer' : 'default',
-        transition: 'border-color 0.2s ease',
+        transition: 'border-color 0.2s ease, box-shadow 0.25s ease',
+        boxShadow: hover
+          ? '0 14px 44px rgba(0,0,0,0.5), inset 0 1px 0 rgba(255,255,255,0.09), 0 0 26px rgba(103,232,249,0.1)'
+          : '0 10px 34px rgba(0,0,0,0.42), inset 0 1px 0 rgba(255,255,255,0.06)',
         fontFamily: "'DM Sans', ui-sans-serif, system-ui, sans-serif",
         overflow: 'hidden',
       }}
     >
       <CornerTicks />
+      {/* Starling murmuration — ambient flock drifting behind the panel. */}
+      <MurmurationField density={compact ? 0.45 : 0.8} />
+      <div style={{ position: 'relative', zIndex: 1 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
         {live && (
           <span style={{ width: 6, height: 6, borderRadius: '50%', background: C.green, boxShadow: `0 0 6px ${C.green}`, animation: 'pulse 1.4s infinite', flexShrink: 0 }} />
@@ -156,6 +259,7 @@ export function ArtifactShell({
           )}
         </div>
       )}
+      </div>
     </motion.div>
   );
 }
@@ -897,6 +1001,134 @@ function DocumentBody({ a }: { a: DocumentArtifact }) {
   );
 }
 
+// ── WeatherBody — animated condition-graded sky scene ────────────────────
+// Pure CSS/SVG atmosphere: gradient sky, sun/moon disc, drifting cloud
+// banks, rain/snow/fog layers — the "picture" weather panels were missing.
+interface WxScene {
+  sky: [string, string, string];       // top → mid → horizon
+  sun: 'day' | 'night' | null;
+  clouds: number;                      // 0-3 cloud banks
+  rain: boolean; snow: boolean; fog: boolean; storm: boolean;
+}
+
+function weatherScene(cond?: string, period?: string): WxScene {
+  const c = (cond || '').toLowerCase();
+  const night = /tonight|night|evening/.test((period || '').toLowerCase()) || /clear|sunny/.test(c) === false && /night/.test(c);
+  if (/thunder|storm|heavy rain|downpour/.test(c))
+    return { sky: ['#0b0714', '#1b1030', '#2a1440'], sun: null, clouds: 3, rain: true, snow: false, fog: false, storm: true };
+  if (/snow|flurr|sleet|wintry/.test(c))
+    return { sky: ['#0e1626', '#22344f', '#3a5070'], sun: null, clouds: 2, rain: false, snow: true, fog: false, storm: false };
+  if (/rain|shower|drizzle|precip/.test(c))
+    return { sky: ['#0a1220', '#16283e', '#24405c'], sun: null, clouds: 3, rain: true, snow: false, fog: false, storm: false };
+  if (/fog|haze|mist|smoky/.test(c))
+    return { sky: ['#141c26', '#2a3644', '#47525e'], sun: null, clouds: 1, rain: false, snow: false, fog: true, storm: false };
+  if (/overcast|cloudy|mostly cloudy/.test(c))
+    return { sky: ['#10161f', '#1d2836', '#31435a'], sun: null, clouds: 3, rain: false, snow: false, fog: false, storm: false };
+  if (/partly|mostly clear|mostly sunny/.test(c))
+    return { sky: ['#0a1a33', '#14406b', '#2e6a96'], sun: night ? 'night' : 'day', clouds: 1, rain: false, snow: false, fog: false, storm: false };
+  // clear / sunny / default
+  return { sky: ['#050b1e', '#0d2b52', '#1e5a86'], sun: night ? 'night' : 'day', clouds: 0, rain: false, snow: false, fog: false, storm: false };
+}
+
+function WeatherBody({ a }: { a: WeatherArtifact }) {
+  const scene = weatherScene(a.condition, a.period);
+  const [skyTop, skyMid, skyHor] = scene.sky;
+  return (
+    <div className="cx-wx-scene" style={{ position: 'relative', width: '100%', aspectRatio: '16 / 9', borderRadius: 6, overflow: 'hidden', minHeight: 150 }}>
+      {/* Sky gradient */}
+      <div style={{ position: 'absolute', inset: 0, background: `linear-gradient(180deg, ${skyTop} 0%, ${skyMid} 52%, ${skyHor} 100%)` }} />
+      {/* Sun / moon disc */}
+      {scene.sun && (
+        <div style={{
+          position: 'absolute', top: '14%', right: '16%', width: 54, height: 54, borderRadius: '50%',
+          background: scene.sun === 'day'
+            ? 'radial-gradient(circle at 38% 35%, #fff7d6, #ffd76a 55%, #ff9d3c)'
+            : 'radial-gradient(circle at 38% 35%, #f4f7ff, #b9c8e8 55%, #7d90c0)',
+          boxShadow: scene.sun === 'day' ? '0 0 42px 14px rgba(255,205,110,0.45)' : '0 0 34px 10px rgba(190,205,255,0.35)',
+          animation: 'cx-wx-bob 7s ease-in-out infinite',
+        }} />
+      )}
+      {/* Cloud banks — soft blurred ellipses drifting */}
+      {Array.from({ length: scene.clouds }).map((_, i) => (
+        <div key={i} style={{
+          position: 'absolute',
+          top: `${12 + i * 16}%`, left: `${-10 + i * 8}%`,
+          width: `${44 + i * 10}%`, height: 34 + i * 8,
+          borderRadius: '50%',
+          background: scene.storm || scene.rain
+            ? 'radial-gradient(ellipse at center, rgba(30,36,52,0.85), rgba(30,36,52,0) 70%)'
+            : 'radial-gradient(ellipse at center, rgba(220,232,255,0.28), rgba(220,232,255,0) 70%)',
+          filter: 'blur(6px)',
+          animation: `cx-wx-drift ${26 + i * 9}s linear infinite`,
+          animationDelay: `${-i * 9}s`,
+        }} />
+      ))}
+      {/* Precipitation layers */}
+      {scene.rain && (
+        <div style={{
+          position: 'absolute', inset: '-20% 0 0 0',
+          background: 'repeating-linear-gradient(105deg, transparent 0 7px, rgba(170,205,255,0.28) 7px 8px)',
+          animation: 'cx-wx-rain 0.9s linear infinite',
+        }} />
+      )}
+      {scene.snow && (
+        <div style={{
+          position: 'absolute', inset: 0,
+          backgroundImage: 'radial-gradient(rgba(235,244,255,0.75) 1px, transparent 1.6px), radial-gradient(rgba(235,244,255,0.5) 1px, transparent 1.6px)',
+          backgroundSize: '34px 34px, 58px 58px',
+          backgroundPosition: '0 0, 17px 23px',
+          animation: 'cx-wx-snow 7s linear infinite',
+        }} />
+      )}
+      {scene.fog && (
+        <div style={{
+          position: 'absolute', inset: '30% 0 0 0',
+          background: 'repeating-linear-gradient(180deg, transparent 0 26px, rgba(200,214,228,0.12) 26px 44px)',
+          animation: 'cx-wx-fog 11s ease-in-out infinite alternate',
+        }} />
+      )}
+      {/* Horizon haze */}
+      <div style={{ position: 'absolute', left: 0, right: 0, bottom: 0, height: '34%', background: 'linear-gradient(180deg, transparent, rgba(2,6,14,0.55))' }} />
+      {/* Readout overlay */}
+      <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', justifyContent: 'space-between', padding: '12px 14px' }}>
+        <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12 }}>
+          {a.temp && (
+            <span style={{
+              fontSize: 40, fontWeight: 200, color: '#f2fbff', lineHeight: 1,
+              fontFamily: MONO, letterSpacing: '-0.03em',
+              textShadow: '0 2px 18px rgba(0,0,0,0.6)',
+            }}>{a.temp}</span>
+          )}
+          <div style={{ paddingTop: 4 }}>
+            {a.period && <div style={{ fontSize: 9, letterSpacing: '0.26em', color: 'rgba(190,225,255,0.75)', fontFamily: MONO, textTransform: 'uppercase' }}>{a.period}</div>}
+            {a.condition && <div style={{ fontSize: 12, color: '#eaf4ff', fontWeight: 600, marginTop: 2, textShadow: '0 1px 8px rgba(0,0,0,0.6)' }}>{a.condition}</div>}
+          </div>
+        </div>
+        <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', gap: 8 }}>
+          <div style={{ fontSize: 9.5, color: 'rgba(200,224,255,0.85)', fontFamily: MONO, letterSpacing: '0.08em' }}>
+            {[a.city, a.wind ? `wind ${a.wind}` : null].filter(Boolean).join(' · ')}
+          </div>
+          {a.summary && (
+            <div style={{ fontSize: 8.5, color: 'rgba(170,200,230,0.6)', fontFamily: MONO, letterSpacing: '0.06em', maxWidth: '55%', textAlign: 'right', overflow: 'hidden', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' }}>
+              {a.summary}
+            </div>
+          )}
+        </div>
+      </div>
+      <style>{`
+        @keyframes cx-wx-drift { from { transform: translateX(-6%); } to { transform: translateX(112%); } }
+        @keyframes cx-wx-rain { from { transform: translateY(-30%); } to { transform: translateY(30%); } }
+        @keyframes cx-wx-snow { from { transform: translateY(-30px); } to { transform: translateY(30px); } }
+        @keyframes cx-wx-fog { from { opacity: 0.5; transform: translateX(-2%); } to { opacity: 0.95; transform: translateX(2%); } }
+        @keyframes cx-wx-bob { 0%,100% { transform: translateY(0); } 50% { transform: translateY(-7px); } }
+        @media (prefers-reduced-motion: reduce) {
+          .cx-wx-scene * { animation: none !important; }
+        }
+      `}</style>
+    </div>
+  );
+}
+
 function FeedBody({ a }: { a: FeedArtifact }) {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
@@ -990,6 +1222,7 @@ export function ArtifactRenderer({
     case 'document': return shell(artifact.title, <DocumentBody a={artifact} />);
     case 'feed': return shell(artifact.title, <FeedBody a={artifact} />);
     case 'map': return shell(artifact.title, <MapBody a={artifact} onOpenGlobe={onOpenGlobe ? () => onOpenGlobe(artifact) : undefined} />);
+    case 'weather': return shell(artifact.title, <WeatherBody a={artifact} />);
     default: return null;
   }
 }

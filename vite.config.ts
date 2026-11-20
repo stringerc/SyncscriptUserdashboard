@@ -5259,6 +5259,19 @@ end tell`;
                 }).filter((p: any) => Number.isFinite(p.y));
 
                 const artifacts: any[] = [];
+                // Weather scene first — the animated sky panel is the picture
+                // the stat/chart/table trio was missing.
+                artifacts.push({
+                  kind: 'weather',
+                  id: `wx-scene-${Date.now()}`,
+                  title: `Weather — ${city}`,
+                  city,
+                  temp: tempF || undefined,
+                  condition: conditions?.shortForecast || undefined,
+                  wind: wind || undefined,
+                  period: conditions?.name || undefined,
+                  summary: [tempF, conditions?.shortForecast, wind ? `wind ${wind}` : null].filter(Boolean).join(' · ') || undefined,
+                });
                 if (tempF) {
                   artifacts.push({
                     kind: 'stat', id: `wx-now-${Date.now()}`,

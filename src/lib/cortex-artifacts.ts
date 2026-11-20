@@ -97,6 +97,23 @@ export interface FeedArtifact extends ArtifactBase {
   items: FeedItem[];
 }
 
+/** Weather scene artifact — renders an animated condition-graded sky panel
+ *  (pure CSS/SVG, no image assets) with live-feeling atmosphere. */
+export interface WeatherArtifact extends ArtifactBase {
+  kind: 'weather';
+  title: string;
+  city?: string;
+  /** e.g. "53°F" */
+  temp?: string;
+  /** NWS shortForecast text — drives the scene grade. */
+  condition?: string;
+  wind?: string;
+  /** Current period name ("Today", "Tonight", "Friday"). */
+  period?: string;
+  /** One-line spoken-style summary. */
+  summary?: string;
+}
+
 export type CortexArtifact =
   | StatArtifact
   | ChartArtifact
@@ -104,9 +121,10 @@ export type CortexArtifact =
   | ImageArtifact
   | DocumentArtifact
   | MapArtifact
-  | FeedArtifact;
+  | FeedArtifact
+  | WeatherArtifact;
 
-export const ARTIFACT_KINDS = ['stat', 'chart', 'table', 'image', 'document', 'map', 'feed'] as const;
+export const ARTIFACT_KINDS = ['stat', 'chart', 'table', 'image', 'document', 'map', 'feed', 'weather'] as const;
 
 const MAX_STRING = 4000;
 const MAX_TITLE = 200;
@@ -260,6 +278,21 @@ export function validateArtifacts(input: unknown, source = 'emit_artifact'): {
           : [];
         if (!title || !items.length) { rejected++; continue; }
         accepted.push({ ...base, kind: 'feed', title, items });
+        break;
+      }
+      case 'weather': {
+        const condition = str(item.condition, 200);
+        const temp = str(item.temp, 40);
+        if (!title && !condition && !temp) { rejected++; continue; }
+        accepted.push({
+          ...base, kind: 'weather', title: title || condition || 'Weather',
+          ...(typeof item.city === 'string' ? { city: item.city.slice(0, 120) } : {}),
+          ...(temp ? { temp } : {}),
+          ...(condition ? { condition } : {}),
+          ...(typeof item.wind === 'string' ? { wind: item.wind.slice(0, 80) } : {}),
+          ...(typeof item.period === 'string' ? { period: item.period.slice(0, 60) } : {}),
+          ...(typeof item.summary === 'string' ? { summary: item.summary.slice(0, MAX_STRING) } : {}),
+        });
         break;
       }
     }
