@@ -45,7 +45,6 @@ import {
 } from './CortexVisualizer';
 import { agentsClient, type AgentClient, type ModelClient } from '../../lib/cortex-agents-client';
 import { neuroAudio } from '../../lib/cortex-neuro-audio';
-import { ZoonTracer } from './ZoonTracer';
 
 // ── Shared GLSL ──────────────────────────────────────────────────────────
 
@@ -3453,7 +3452,6 @@ function CortexCoreInner({
       <AccretionDisk live={live} />
       <NeuralWeb live={live} />
       <ThoughtSwarm live={live} />
-      <ZoonTracer live={live} count={qualityMode === 'ultra' ? 500 : qualityMode === 'smooth' ? 900 : 1400} />
       <KineticMotes
         live={live}
         fx={fx}
