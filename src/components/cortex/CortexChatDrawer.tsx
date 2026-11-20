@@ -10,6 +10,7 @@ import type { CortexArtifact } from '../../lib/cortex-artifacts';
 
 const ArtifactRenderer = lazy(() => import('./artifacts/ArtifactRenderer'));
 import { useCortexChatMessages, setCortexChatMessages, getCortexChatSnapshot } from '../../lib/cortex-chat-store';
+import { createSpeechArbiter } from '../../lib/cortex-tts-arbiter';
 import type { CortexSignalBusPayload } from './CortexVisualizer';
 
 const DRAWER_CSS = `
@@ -324,6 +325,14 @@ function CortexChatDrawerInner({ open, onClose, payload, onSubmitText }: CortexC
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const audioUrlRef = useRef<string | null>(null);
   const speechCancelRef = useRef<(() => void) | null>(null);
+  // Read-aloud is a cortana voice path outside useVoiceStream — it joins
+  // the same cross-surface speech mutex so it can't talk over Cortex.
+  const speechArbiterRef = useRef<ReturnType<typeof createSpeechArbiter> | null>(null);
+  const speechArbiter = (speechArbiterRef.current ??= createSpeechArbiter('chat-drawer-readaloud'));
+  const speechHbRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const clearSpeechHb = React.useCallback(() => {
+    if (speechHbRef.current) { clearInterval(speechHbRef.current); speechHbRef.current = null; }
+  }, []);
   const st = STATE_LABEL[payload.state] ?? STATE_LABEL.idle;
   const hydratedRef = useRef(false);
   const hydrateAttemptsRef = useRef(0);
@@ -408,26 +417,45 @@ function CortexChatDrawerInner({ open, onClose, payload, onSubmitText }: CortexC
     speechCancelRef.current = null;
     audioRef.current?.pause();
     speechSynthesis.cancel();
+    clearSpeechHb();
+    speechArbiter.release();
     setSpeakingId(null);
-  }, [open]);
+  }, [open, speechArbiter, clearSpeechHb]);
 
   useEffect(() => () => {
     speechCancelRef.current?.();
     audioRef.current?.pause();
     speechSynthesis.cancel();
+    clearSpeechHb();
+    speechArbiter.release();
     if (audioUrlRef.current) URL.revokeObjectURL(audioUrlRef.current);
-  }, []);
+  }, [speechArbiter, clearSpeechHb]);
 
   const stopSpeech = () => {
     speechCancelRef.current?.();
     speechCancelRef.current = null;
     audioRef.current?.pause();
+    clearSpeechHb();
+    speechArbiter.release();
     setSpeakingId(null);
   };
 
   const handleSpeak = async (msgId: string, rawText: string) => {
     if (speakingId === msgId) { stopSpeech(); return; }
     stopSpeech();
+    // User clicked read-aloud — explicit intent, so barge in over whatever
+    // surface is currently speaking (they yield on their next heartbeat).
+    speechArbiter.steal();
+    clearSpeechHb();
+    speechHbRef.current = setInterval(() => {
+      if (speechArbiter.heartbeat() === 'stolen') {
+        speechCancelRef.current?.();
+        speechCancelRef.current = null;
+        clearSpeechHb();
+        speechArbiter.release();
+        setSpeakingId(null);
+      }
+    }, 1000);
     const text = stripMarkdown(rawText);
     const chunks = chunkForSpeech(text);
     if (!chunks.length) return;
@@ -441,6 +469,8 @@ function CortexChatDrawerInner({ open, onClose, payload, onSubmitText }: CortexC
     };
     const cleanup = () => {
       if (speechCancelRef.current) { speechCancelRef.current(); speechCancelRef.current = null; }
+      clearSpeechHb();
+      speechArbiter.release();
       setSpeakingId(null);
     };
     const playNext = async () => {

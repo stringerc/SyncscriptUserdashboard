@@ -1932,6 +1932,9 @@ export function useVisualizerVoice(enabled: boolean, onState: (speaking: boolean
 
     /** Execute one full turn (LLM stream → tools → streamed speech). */
     const runTurn = async (text: string) => {
+      // User turn = barge-in: steal the cross-surface speech lock so this
+      // reply speaks now and any other tab/surface yields on next heartbeat.
+      try { vsRef.current?.bargeSpeech?.(); } catch {}
       const myGen = ++state.turnGen;
       const stale = () => state.turnGen !== myGen;
       state.turnInFlight = true;

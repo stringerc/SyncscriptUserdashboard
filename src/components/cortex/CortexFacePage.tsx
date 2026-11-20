@@ -197,6 +197,8 @@ export default function CortexFacePage() {
   const runAgentTurn = useCallback(async (userText: string, toolRecord?: string, depth = 0) => {
     const text = userText.trim();
     if (!text && !toolRecord) return;
+    // User turn = barge-in across tabs/surfaces.
+    try { voiceStreamRef.current?.bargeSpeech?.(); } catch {}
     if (text) {
       setLastHeard(text);
       try { turnEmotionRef.current = emotionApi.detectFromText(text); } catch {}

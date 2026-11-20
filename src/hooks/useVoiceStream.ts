@@ -23,7 +23,7 @@ import { sentenceToNexusProsodySegment } from '../utils/nexus-tts-prosody';
 import { PcmQueue, pumpWavToPcm } from '../utils/wav-pcm-stream';
 import { reportTtsRum } from '../utils/tts-rum-beacon';
 import { stepVuEnvelope } from '../utils/audio-vu-envelope';
-import { tryClaimSpeech, heartbeatSpeech, releaseSpeech } from '../lib/cortex-tts-arbiter';
+import { createSpeechArbiter, type SpeechArbiter } from '../lib/cortex-tts-arbiter';
 import { voiceLatencyMark, voiceLatencyMeasure } from '../utils/voice-latency-debug';
 import { createPcmFeeder, getEouEngine } from '../lib/voice/semantic-eou';
 import {
@@ -201,6 +201,15 @@ export function useVoiceStream(options: UseVoiceStreamOptions = {}) {
   onStatusChangeRef.current = onStatusChange;
   onSpeechEndRef.current = onSpeechEnd;
   onErrorRef.current = onError;
+
+  // Per-instance speech arbiter — every useVoiceStream instance (there are
+  // six across the app) is a distinct voice owner, so even two stacks in
+  // the same tab serialize through the shared localStorage lock.
+  const arbiterRef = useRef<SpeechArbiter | null>(null);
+  const speechArbiter = (arbiterRef.current ??= createSpeechArbiter(`vs-${Math.random().toString(36).slice(2, 10)}`));
+  // Set after stopSpeaking is defined; heartbeat 'stolen' triggers it for
+  // cross-tab/cross-instance barge-in.
+  const stopSpeakingRef = useRef<() => void>(() => {});
 
   // State
   const [state, setState] = useState<VoiceEngineState>({
@@ -803,9 +812,19 @@ export function useVoiceStream(options: UseVoiceStreamOptions = {}) {
             setIsSpeaking(false);
             setState(prev => ({ ...prev, status: 'idle' }));
             onStatusChangeRef.current?.('idle');
+            speechArbiter.release();
           }
           resolve();
         };
+
+        // Cross-surface heartbeat: if another owner steals the speech lock
+        // mid-playback (user turn on another tab/surface), yield at once.
+        audio.addEventListener('timeupdate', () => {
+          if (alive && speechArbiter.heartbeat() === 'stolen') {
+            try { audio.pause(); } catch {}
+            finish();
+          }
+        });
 
         const tryWebAudio = (): boolean => {
           try {
@@ -884,7 +903,7 @@ export function useVoiceStream(options: UseVoiceStreamOptions = {}) {
         void startPlayback();
       });
     },
-    [cleanupTtsAnalyzer],
+    [cleanupTtsAnalyzer, speechArbiter],
   );
 
   /** Speak using browser SpeechSynthesis as a last resort */
@@ -895,6 +914,7 @@ export function useVoiceStream(options: UseVoiceStreamOptions = {}) {
       setIsSpeaking(false);
       setState(prev => ({ ...prev, status: 'idle' }));
       onStatusChangeRef.current?.('idle');
+      speechArbiter.release();
       return Promise.resolve();
     }
 
@@ -927,6 +947,7 @@ export function useVoiceStream(options: UseVoiceStreamOptions = {}) {
         currentUtteranceRef.current = null;
         setState(prev => ({ ...prev, status: 'idle' }));
         onStatusChangeRef.current?.('idle');
+        speechArbiter.release();
         resolve();
       };
 
@@ -935,7 +956,7 @@ export function useVoiceStream(options: UseVoiceStreamOptions = {}) {
       currentUtteranceRef.current = utterance;
       synthRef.current!.speak(utterance);
     });
-  }, [selectVoice, ttsVoice, ttsRate, ttsPitch]);
+  }, [selectVoice, ttsVoice, ttsRate, ttsPitch, speechArbiter]);
 
   /**
    * Speak text using the best available TTS engine.
@@ -943,6 +964,12 @@ export function useVoiceStream(options: UseVoiceStreamOptions = {}) {
    * Single-Speaker Audio Mutex: Cancels all previous in-flight requests and audio playback.
    */
   const speak = useCallback(async (request: TTSRequest): Promise<void> => {
+    // Same cross-surface mutex as speakStreamSentence — the monolithic
+    // path must not race a second voice (Nexus calls, conversation engine).
+    if (!speechArbiter.tryClaim()) {
+      console.info('[TTS] speech lock held by another surface — muting speak()');
+      return;
+    }
     speechEpochRef.current += 1;
     const currentEpoch = speechEpochRef.current;
 
@@ -1178,7 +1205,7 @@ export function useVoiceStream(options: UseVoiceStreamOptions = {}) {
       durationMs: typeof performance !== 'undefined' ? performance.now() - rumStart : 0,
     });
     return speakBrowserFallback(request, currentEpoch);
-  }, [cleanupTtsAnalyzer, playAudioBlob, speakBrowserFallback]);
+  }, [cleanupTtsAnalyzer, playAudioBlob, speakBrowserFallback, speechArbiter]);
 
   /** RMS → orb level while gapless sources are alive. */
   const startGaplessVu = useCallback((ctx: AudioContext, analyser: AnalyserNode) => {
@@ -1192,7 +1219,10 @@ export function useVoiceStream(options: UseVoiceStreamOptions = {}) {
         return;
       }
       analyser.getByteTimeDomainData(data);
-      heartbeatSpeech();
+      if (speechArbiter.heartbeat() === 'stolen') {
+        // Another surface/tab barged in — yield immediately.
+        stopSpeakingRef.current();
+      }
       let sum = 0;
       for (let i = 0; i < data.length; i++) {
         const v = (data[i] - 128) / 128;
@@ -1210,7 +1240,7 @@ export function useVoiceStream(options: UseVoiceStreamOptions = {}) {
     };
     gaplessVuRafRef.current = requestAnimationFrame(tick);
     void ctx;
-  }, []);
+  }, [speechArbiter]);
 
   /** Flip to idle only when queue drained AND every scheduled source ended. */
   const finalizeStreamSpeech = useCallback(() => {
@@ -1222,8 +1252,8 @@ export function useVoiceStream(options: UseVoiceStreamOptions = {}) {
     setIsSpeaking(false);
     setState(prev => ({ ...prev, status: 'idle' }));
     onStatusChangeRef.current?.('idle');
-    releaseSpeech();
-  }, []);
+    speechArbiter.release();
+  }, [speechArbiter]);
 
   /** Shared gapless AudioContext + analyser for stream/blob scheduling. */
   const ensureGaplessGraph = useCallback(async (): Promise<{ ctx: AudioContext; analyser: AnalyserNode } | null> => {
@@ -1386,7 +1416,10 @@ export function useVoiceStream(options: UseVoiceStreamOptions = {}) {
 
     while (streamSentenceQueueRef.current.length > 0) {
       if (streamEpochRef.current !== currentEpoch) break;
-      heartbeatSpeech();
+      if (speechArbiter.heartbeat() === 'stolen') {
+        stopSpeakingRef.current();
+        break;
+      }
       const item = streamSentenceQueueRef.current.shift()!;
       activeSpokenTextRef.current = item.text;
       prefetchStreamTts();
@@ -1450,7 +1483,7 @@ export function useVoiceStream(options: UseVoiceStreamOptions = {}) {
 
     isDrainingStreamRef.current = false;
     finalizeStreamSpeech();
-  }, [playAudioBlob, scheduleStreamBlob, schedulePcmQueue, speakBrowserFallback, finalizeStreamSpeech, prefetchStreamTts, startStreamFetch]);
+  }, [playAudioBlob, scheduleStreamBlob, schedulePcmQueue, speakBrowserFallback, finalizeStreamSpeech, prefetchStreamTts, startStreamFetch, speechArbiter]);
 
   /** Progressive streaming sentence playback: queues sentence chunks and starts playing in sub-600ms */
   const speakStreamSentence = useCallback((sentence: string, isFinal = false, config?: { voice?: string; speed?: number; skipCartesia?: boolean }) => {
@@ -1464,8 +1497,8 @@ export function useVoiceStream(options: UseVoiceStreamOptions = {}) {
       // Cross-tab arbitration: only one Cortex tab vocalizes at a time.
       // Another tab holding the lock means its pipeline is already
       // answering — this turn still lands in chat, just stays silent.
-      if (!tryClaimSpeech()) {
-        console.info('[TTS] speech lock held by another tab — muting this utterance');
+      if (!speechArbiter.tryClaim()) {
+        console.info('[TTS] speech lock held by another surface — muting this utterance');
         return;
       }
       streamEpochRef.current += 1;
@@ -1508,7 +1541,7 @@ export function useVoiceStream(options: UseVoiceStreamOptions = {}) {
     streamSentenceQueueRef.current.push(item);
     prefetchStreamTts();
     void drainStreamQueue();
-  }, [drainStreamQueue, prefetchStreamTts, ttsVoice, ttsRate]);
+  }, [drainStreamQueue, prefetchStreamTts, ttsVoice, ttsRate, speechArbiter]);
 
   const finishStreaming = useCallback(() => {
     if (streamSentenceQueueRef.current.length === 0 && !isDrainingStreamRef.current) {
@@ -1517,10 +1550,11 @@ export function useVoiceStream(options: UseVoiceStreamOptions = {}) {
       setIsSpeaking(false);
       setState(prev => ({ ...prev, status: 'idle' }));
       onStatusChangeRef.current?.('idle');
+      speechArbiter.release();
     } else if (streamSentenceQueueRef.current.length > 0) {
       streamSentenceQueueRef.current[streamSentenceQueueRef.current.length - 1].isFinal = true;
     }
-  }, []);
+  }, [speechArbiter]);
 
   const stopSpeaking = useCallback(() => {
     speechEpochRef.current += 1;
@@ -1563,12 +1597,13 @@ export function useVoiceStream(options: UseVoiceStreamOptions = {}) {
     isSpeakingRef.current = false;
     setIsSpeaking(false);
     currentUtteranceRef.current = null;
-    releaseSpeech();
     if (state.status === 'speaking') {
       setState(prev => ({ ...prev, status: 'idle' }));
       onStatusChangeRef.current?.('idle');
     }
-  }, [cleanupTtsAnalyzer, state.status]);
+    speechArbiter.release();
+  }, [cleanupTtsAnalyzer, state.status, speechArbiter]);
+  stopSpeakingRef.current = stopSpeaking;
 
   // ==========================================================================
   // FULL CONVERSATION TURN
@@ -1653,6 +1688,10 @@ export function useVoiceStream(options: UseVoiceStreamOptions = {}) {
     },
     finishStreaming,
     stopSpeaking,
+    /** User-initiated turn barge-in: steal the cross-surface speech lock so
+     *  this surface's reply speaks immediately and the previous speaker
+     *  yields on its next heartbeat. Call when a user turn begins. */
+    bargeSpeech: () => speechArbiter.steal(),
     activeSpokenText: activeSpokenTextRef.current,
     availableVoices,
 

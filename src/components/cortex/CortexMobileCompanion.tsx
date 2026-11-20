@@ -52,6 +52,7 @@ import {
   type MemorySection,
 } from '../../lib/cortex-mobile-sync';
 import { sanitizeForSpeech, splitSpeechSentences } from './cortex-demo-helpers';
+import { createSpeechArbiter } from '../../lib/cortex-tts-arbiter';
 
 /** Canonical neural voice — Pocket cortana clone through the shared TTS proxy. */
 async function fetchCortanaTtsAudio(text: string, speed: number): Promise<Blob | null> {
@@ -126,6 +127,11 @@ export default function CortexMobileCompanion() {
   const isAudioQueuePlayingRef = useRef<boolean>(false);
   const currentBlobUrlsRef = useRef<string[]>([]);
   const synthRef = useRef<SpeechSynthesis | null>(null);
+  // Neural speech here bypasses useVoiceStream — join the same cross-surface
+  // speech mutex so the companion can't talk over Cortex (or vice versa).
+  const speechArbiterRef = useRef<ReturnType<typeof createSpeechArbiter> | null>(null);
+  const speechArbiter = (speechArbiterRef.current ??= createSpeechArbiter('mobile-companion'));
+  const speechHbRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => {
     if (typeof window !== 'undefined') {
@@ -187,8 +193,10 @@ export default function CortexMobileCompanion() {
     isAudioQueuePlayingRef.current = false;
     currentBlobUrlsRef.current.forEach(url => URL.revokeObjectURL(url));
     currentBlobUrlsRef.current = [];
+    if (speechHbRef.current) { clearInterval(speechHbRef.current); speechHbRef.current = null; }
+    speechArbiter.release();
     setSpeakingTargetId(null);
-  }, []);
+  }, [speechArbiter]);
 
   // Neural Speech Engine (Cortana / Kokoro / Cartesia with fallback)
   const playNeuralSpeech = useCallback(async (targetId: string, text: string) => {
@@ -199,7 +207,14 @@ export default function CortexMobileCompanion() {
 
     stopAllAudio();
     const cleanSpeech = sanitizeForSpeech(text, { full: true });
-    if (!cleanSpeech.trim()) return;
+    if (!cleanSpeech.trim()) { speechArbiter.release(); return; }
+
+    // User asked to hear this — barge in over any other speaking surface.
+    speechArbiter.steal();
+    if (speechHbRef.current) clearInterval(speechHbRef.current);
+    speechHbRef.current = setInterval(() => {
+      if (speechArbiter.heartbeat() === 'stolen') stopAllAudio();
+    }, 1000);
 
     setSpeakingTargetId(targetId);
     const sentences = splitSpeechSentences(cleanSpeech);
@@ -293,7 +308,7 @@ export default function CortexMobileCompanion() {
 
       speakNextLocal();
     }
-  }, [speakingTargetId, stopAllAudio, playbackSpeed]);
+  }, [speakingTargetId, stopAllAudio, playbackSpeed, speechArbiter]);
 
   // Two-Way Hands-Free Voice Mode Controller
   const toggleVoiceMode = useCallback(() => {

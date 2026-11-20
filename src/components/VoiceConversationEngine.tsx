@@ -570,6 +570,8 @@ export function VoiceConversationEngine({
 
   const handleUserMessage = useCallback(async (text: string) => {
     if (!text.trim() || isProcessingAI) return;
+    // User turn = barge-in across tabs/surfaces.
+    try { voiceStream.bargeSpeech?.(); } catch {}
 
     voiceLatencyMark('handler_enter');
     voiceLatencyMeasure('stt_to_handler', 'utterance_commit', 'handler_enter');

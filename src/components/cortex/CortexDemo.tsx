@@ -1488,6 +1488,9 @@ export default function CortexDemo() {
     const rawContent = typeof overrideText === 'string' ? overrideText : (input || domVal || '');
     if (!rawContent.trim()) return;
     recordUserActivity();
+    // User turn = barge-in across tabs/surfaces: steal the speech lock so
+    // this reply speaks and whichever tab was talking yields.
+    try { voiceStream.bargeSpeech?.(); } catch {}
 
     // Zero-Dead-Air & Barge-In: immediately halt any active AI speech on new user message
     if (voiceStream.isSpeaking) {
