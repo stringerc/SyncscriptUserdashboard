@@ -15,10 +15,14 @@ import React, { useEffect, useRef, useState } from 'react';
 import * as THREE from 'three';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import { OrbitControls } from '@react-three/drei';
-import { EffectComposer, Bloom, Vignette, ChromaticAberration } from '@react-three/postprocessing';
+import { EffectComposer, Bloom, Vignette, ChromaticAberration, EffectComposerContext } from '@react-three/postprocessing';
+import { EffectPass } from 'postprocessing';
 import { SparkRenderer, SplatMesh, generators } from '@sparkjsdev/spark';
 import { createFlowModifier, pointerToSphere, type FlowUniforms } from '../../lib/cortex-splat-flow';
 import { SwarmSim } from '../../lib/cortex-splat-swarm';
+import { CortexGpuSim } from '../../lib/cortex-gpu-sim';
+import { createGpuPosModifier, type GpuPosUniforms } from '../../lib/cortex-splat-gpu-pos';
+import { FrameFeedbackEffect } from '../../lib/frame-feedback-effect';
 
 const MONO = '"IBM Plex Mono", ui-monospace, monospace';
 const GUST_PERIOD = 26; // seconds between auto gusts
@@ -35,6 +39,9 @@ function SparkStage({ url, onReady, onFail, onGust }: {
   const meshes = useRef<{ mesh: SplatMesh; role: 'core' | 'ring' | 'asset' | 'swarm' }[]>([]);
   const swarmRef = useRef<SwarmSim | null>(null);
   const flowRef = useRef<FlowUniforms | null>(null);
+  const gpuSimRef = useRef<CortexGpuSim | null>(null);
+  const gpuModsRef = useRef<{ uniforms: GpuPosUniforms; spinSpeed: number }[]>([]);
+  const packedByRole = useRef(new Map<string, any>());
   const mouseTarget = useRef(new THREE.Vector3(0, 0, 5));
   const cursorActive = useRef(false);
   const lastMoveAt = useRef(-999);
@@ -95,6 +102,43 @@ function SparkStage({ url, onReady, onFail, onGust }: {
 
     // Splat meshes — cortex-core gets a counter-rotating ring sibling.
     const isHero = url.includes('cortex-core');
+
+    // GPU physics modifiers — core+ring positions come from the ping-pong
+    // sim texture; ring gets its own index offset (resolved post-init)
+    // and counter-spin so differential rotation survives.
+    const gpuMods = isHero
+      ? { core: createGpuPosModifier(0), ring: createGpuPosModifier(0) }
+      : null;
+
+    const maybeBuildGpuSim = () => {
+      if (!gpuMods || gpuSimRef.current) return;
+      const core = packedByRole.current.get('core');
+      const ring = packedByRole.current.get('ring');
+      if (!core || !ring) return;
+      const coreN = core.getNumSplats?.() ?? core.numSplats ?? 0;
+      const ringN = ring.getNumSplats?.() ?? ring.numSplats ?? 0;
+      const total = coreN + ringN;
+      if (total <= 0 || total > 140288) { console.log('[gpu-sim] skipped', { total }); return; }
+      const anchors = new Float32Array(total * 4);
+      let o = 0;
+      for (const ps of [core, ring]) {
+        const n = ps.getNumSplats?.() ?? ps.numSplats ?? 0;
+        for (let i = 0; i < n; i++) {
+          const s = ps.getSplat(i);
+          anchors[o * 4] = s.center.x; anchors[o * 4 + 1] = s.center.y; anchors[o * 4 + 2] = s.center.z;
+          anchors[o * 4 + 3] = Math.random();
+          o++;
+        }
+      }
+      gpuSimRef.current = new CortexGpuSim(gl, anchors);
+      gpuMods.ring.uniforms.indexOffset.value = coreN;
+      gpuModsRef.current = [
+        { uniforms: gpuMods.core.uniforms, spinSpeed: 0.06 },
+        { uniforms: gpuMods.ring.uniforms, spinSpeed: -0.22 },
+      ];
+      console.log('[splat] gpu sim bound', { particles: total });
+    };
+
     const urls: { url: string; role: 'core' | 'ring' | 'asset' | 'swarm' }[] = isHero
       ? [
           { url, role: 'core' },
@@ -106,7 +150,10 @@ function SparkStage({ url, onReady, onFail, onGust }: {
     let pending = urls.length;
     let cancelled = false;
     for (const { url: u, role } of urls) {
-      const mesh = new SplatMesh({ url: u, worldModifier: role === 'swarm' ? undefined : flow.modifier });
+      const worldModifier = role === 'swarm' ? undefined
+        : gpuMods && (role === 'core' || role === 'ring') ? gpuMods[role].modifier
+        : flow.modifier;
+      const mesh = new SplatMesh({ url: u, worldModifier });
       g.add(mesh);
       meshes.current.push({ mesh, role });
       mesh.initialized.then(() => {
@@ -120,6 +167,8 @@ function SparkStage({ url, onReady, onFail, onGust }: {
             boundingSphere: bb ? { c: bb.center.toArray(), r: bb.radius } : null,
           });
         } catch (e) { console.log('[splat] init-log-fail', e); }
+        packedByRole.current.set(role, (mesh as any).packedSplats);
+        maybeBuildGpuSim();
         if (role === 'swarm') {
           try {
             const ps: any = (mesh as any).packedSplats;
@@ -164,6 +213,10 @@ function SparkStage({ url, onReady, onFail, onGust }: {
       ambient.current = [];
       meshes.current = [];
       swarmRef.current = null;
+      gpuSimRef.current?.dispose();
+      gpuSimRef.current = null;
+      gpuModsRef.current = [];
+      packedByRole.current.clear();
       flowRef.current = null;
       gl.domElement.removeEventListener('pointerdown', onDown);
       gl.domElement.removeEventListener('pointermove', onMove);
@@ -230,12 +283,30 @@ function SparkStage({ url, onReady, onFail, onGust }: {
       );
     }
 
-    // Core breathing — two detuned sines + gust swell.
+    // GPU ping-pong sim — advances core+ring physics on the GPU and
+    // hands the position texture to the dyno modifiers.
+    const sim = gpuSimRef.current;
+    if (sim && gpuModsRef.current.length) {
+      const tex = sim.step(
+        Math.min(dt, 0.05),
+        (flow?.mouse.value as THREE.Vector3) ?? mouseTarget.current,
+        flow?.strength.value ?? 0,
+        gust,
+        t,
+      );
+      for (const m of gpuModsRef.current) {
+        m.uniforms.simPos.value = tex;
+        m.uniforms.spin.value = t * m.spinSpeed;
+      }
+    }
+
+    // Core breathing + ring counter-rotation still drive covariance on
+    // non-sim assets; simmed meshes get their motion from the GPU field.
     const breathe = 1 + 0.022 * Math.sin(t * 0.83) + 0.012 * Math.sin(t * 1.71 + 1.2) + 0.03 * gust;
-    // Ring counter-rotation — opposite sign, gust spins it up.
     const ringSpin = -(0.1 + 0.35 * gust);
 
     for (const { mesh, role } of meshes.current) {
+      if (gpuSimRef.current && (role === 'core' || role === 'ring')) continue;
       if (role === 'core') {
         mesh.rotation.y += 0.05 * dt;
         mesh.scale.setScalar(breathe);
@@ -258,6 +329,20 @@ function SparkStage({ url, onReady, onFail, onGust }: {
   return null;
 }
 
+/** Mounts the custom temporal-feedback effect as its own composer pass. */
+function FeedbackPass({ damp = 0.55 }: { damp?: number }) {
+  const { composer } = React.useContext(EffectComposerContext) as any;
+  const camera = useThree((s) => s.camera);
+  const fx = React.useMemo(() => new FrameFeedbackEffect(damp), [damp]);
+  React.useEffect(() => {
+    if (!composer) return;
+    const pass = new EffectPass(camera as any, fx as any);
+    composer.addPass(pass);
+    return () => { composer.removePass(pass); fx.dispose(); };
+  }, [composer, camera, fx]);
+  return null;
+}
+
 export default function CortexSplatScene({ splat }: { splat?: string }) {
   const raw = (splat || 'cortex-core').replace(/[^a-zA-Z0-9._-]/g, '');
   const url = raw.includes('.') ? `/splats/${raw}` : `/splats/${raw}.ply`;
@@ -269,6 +354,7 @@ export default function CortexSplatScene({ splat }: { splat?: string }) {
     <div style={{ position: 'fixed', inset: 0, zIndex: 60, background: 'radial-gradient(ellipse at center, #050a14 0%, #01030a 100%)' }}>
       <Canvas
         gl={{ antialias: false, alpha: true, powerPreference: 'high-performance' }}
+        onCreated={({ gl }) => { gl.toneMappingExposure = 0.85; }}
         camera={{ position: [0, 0.15, 3.1], fov: 45, near: 0.05, far: 60 }}
         dpr={[1, 1.75]}
       >
@@ -284,14 +370,15 @@ export default function CortexSplatScene({ splat }: { splat?: string }) {
         />
         <EffectComposer multisampling={0}>
           <Bloom
-            intensity={0.85}
-            luminanceThreshold={0.28}
-            luminanceSmoothing={0.3}
+            intensity={0.62}
+            luminanceThreshold={0.42}
+            luminanceSmoothing={0.35}
             mipmapBlur
             radius={0.7}
           />
           <ChromaticAberration offset={new THREE.Vector2(0.0007, 0.0007)} modulationOffset={0.2} radialModulation />
           <Vignette offset={0.22} darkness={0.68} />
+          <FeedbackPass damp={0.48} />
         </EffectComposer>
       </Canvas>
 

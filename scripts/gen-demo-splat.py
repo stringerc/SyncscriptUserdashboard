@@ -93,9 +93,9 @@ def swarm_pts(n):
     ga = math.pi * (3.0 - math.sqrt(5.0))
     for i in range(n):
         u = random.random()
-        if u < 0.14:  # inner core population
-            r = 0.12 + random.random() * 0.4
-        elif u < 0.34:  # ring-band contingent (matches ring tilt ~64deg)
+        if u < 0.24:  # inner core population — fills the orb's volume
+            r = 0.08 + random.random() * 0.5
+        elif u < 0.38:  # ring-band contingent (matches ring tilt ~64deg)
             th = random.random() * 2.0 * math.pi
             rr = 1.35 + random.random() * 0.6
             y = (random.random() - 0.5) * 0.14
@@ -151,7 +151,7 @@ def main():
     for x, y, z in jet_pts(jet_n):
         jet_pts_l.append((x, y, z, 0.003 + random.random() * 0.0025, 0.38 + random.random() * 0.25,
                           (0.7 + random.random() * 0.3, 0.95, 1.0)))
-    swarm_pts_l = swarm_pts(int(COUNT * 0.09))
+    swarm_pts_l = swarm_pts(int(COUNT * 0.25))
 
     body_pts = shell_pts + core_pts + jet_pts_l
     # Hero mode splits the ring into its own mesh so the scene can
