@@ -785,7 +785,8 @@ function Satellites({ live }: { live: React.MutableRefObject<LiveSignal> }) {
       Array.from({ length: SAT_COUNT }, (_, i) => ({
         radius: 1.85 + (i % 3) * 0.42 + Math.random() * 0.25,
         speed: (0.14 + Math.random() * 0.22) * (i % 2 === 0 ? 1 : -1),
-        incl: (Math.random() - 0.5) * 1.5,
+        incl: (Math.random() - 0.5) * 2.4,
+        node: Math.random() * Math.PI * 2,
         phase: Math.random() * Math.PI * 2,
         size: 0.018 + Math.random() * 0.022,
       })),
@@ -841,6 +842,24 @@ function Satellites({ live }: { live: React.MutableRefObject<LiveSignal> }) {
   const tmpCtrl = useMemo(() => new THREE.Vector3(), []);
   const tmpPerp = useMemo(() => new THREE.Vector3(), []);
   const tmpV = useMemo(() => new THREE.Vector3(), []);
+  const _satPos = useMemo(() => new THREE.Vector3(), []);
+  const _satLook = useMemo(() => new THREE.Vector3(), []);
+
+  // Inclined circular orbit: circle of radius `rad` in a plane tilted
+  // `incl` about X, then yawed `node` about Y — distributes satellites
+  // over the whole sphere instead of a flat equatorial ring.
+  const orbitPos = (
+    s: (typeof sats)[number], a: number, rad: number, out: THREE.Vector3
+  ) => {
+    const ca = Math.cos(a), sa = Math.sin(a);
+    const si = Math.sin(s.incl), ci = Math.cos(s.incl);
+    const nx = Math.cos(s.node), nz = Math.sin(s.node);
+    const ox = ca * rad;
+    const oy = sa * rad * si;
+    const oz = sa * rad * ci;
+    out.set(ox * nx + oz * nz, oy, -ox * nz + oz * nx);
+    return out;
+  };
 
   const rebuildTags = () => {
     const group = groupRef.current;
@@ -922,9 +941,10 @@ function Satellites({ live }: { live: React.MutableRefObject<LiveSignal> }) {
       const a = t * s.speed + s.phase;
       // Spawned agents ride a wider outer orbit — core crew inner, spawn outer.
       const rad = s.radius * (agent?.spawnSpec ? 1.38 : 1);
-      const px = Math.cos(a) * rad;
-      const py = Math.sin(a * 0.7 + s.incl) * rad * 0.45;
-      const pz = Math.sin(a) * rad;
+      orbitPos(s, a, rad, _satPos);
+      const px = _satPos.x;
+      const py = _satPos.y;
+      const pz = _satPos.z;
 
       // Screen anchor & 3D world position — zero-allocation scratch projections
       if (agent && groupRef.current) {
@@ -1024,11 +1044,8 @@ function Satellites({ live }: { live: React.MutableRefObject<LiveSignal> }) {
           // Orient: tangential alignment with orbital arc + fluid Lissajous drift
           const a2 = a + 0.09;
           const rad2 = s.radius * (agent.spawnSpec ? 1.38 : 1);
-          tmpW.set(
-            Math.cos(a2) * rad2 - px,
-            Math.sin(a2 * 0.7 + s.incl) * rad2 * 0.45 - py,
-            Math.sin(a2) * rad2 - pz,
-          ).normalize();
+          orbitPos(s, a2, rad2, _satLook);
+          tmpW.copy(_satLook).sub(_satPos).normalize();
           tmpT.set(px, py, pz).normalize(); // radial outward
           const fwd = tmpDir.copy(tmpW).transformDirection(groupRef.current!.matrixWorld).normalize();
           const up = tmpPerp.copy(tmpT).transformDirection(groupRef.current!.matrixWorld).normalize();
@@ -1741,10 +1758,13 @@ function ModelConstellation({ live }: { live: React.MutableRefObject<LiveSignal>
       pairs.forEach(({ m, i }, k) => {
         const a = i * golden + ring * 1.7;
         const r = 7.1 + ring * 0.9 + ((i * 37) % 10) * 0.16;
-        const y = Math.sin(a * 2.3 + ring) * (0.9 + ring * 0.5);
-        pos[k * 3] = Math.cos(a) * r;
-        pos[k * 3 + 1] = y;
-        pos[k * 3 + 2] = Math.sin(a) * r;
+        // spherical shell — models distributed through the volume, not a flat ring
+        const zz = ((i * 73 + ring * 41) % 100) / 100;
+        const py = (zz * 2 - 1) * r * 0.92;
+        const ringR = Math.sqrt(Math.max(0.0001, r * r - py * py));
+        pos[k * 3] = Math.cos(a) * ringR;
+        pos[k * 3 + 1] = py;
+        pos[k * 3 + 2] = Math.sin(a) * ringR;
         const cc = modelPointColor(m);
         col[k * 3] = cc.r; col[k * 3 + 1] = cc.g; col[k * 3 + 2] = cc.b;
       });
@@ -1764,10 +1784,13 @@ function ModelConstellation({ live }: { live: React.MutableRefObject<LiveSignal>
       const golden = Math.PI * (3 - Math.sqrt(5));
       const a = idx * golden + ring * 1.7;
       const r = 7.1 + ring * 0.9 + ((idx * 37) % 10) * 0.16;
+      const zz = ((idx * 73 + ring * 41) % 100) / 100;
+      const lpy = (zz * 2 - 1) * r * 0.92;
+      const lringR = Math.sqrt(Math.max(0.0001, r * r - lpy * lpy));
       return {
         ring,
-        x: Math.cos(a) * r, y: Math.sin(a * 2.3 + ring) * (0.9 + ring * 0.5) - 0.28,
-        z: Math.sin(a) * r, name: (String(m.id).split('/').pop() || m.id).slice(0, 24),
+        x: Math.cos(a) * lringR, y: lpy - 0.28,
+        z: Math.sin(a) * lringR, name: (String(m.id).split('/').pop() || m.id).slice(0, 24),
       };
     });
     return { geoA: mk(even, 0), geoB: mk(odd, 1), labels: labelPts };
@@ -1861,13 +1884,14 @@ function MemoryBankConstellation({
       const domainBaseR = domain === 'runtime' ? 2.3 : domain === 'system' ? 2.85 : domain === 'venture' ? 3.4 : domain === 'working' ? 3.95 : 4.5;
       const radius = domainBaseR + ((hash % 10) * 0.05);
       const speed = (0.05 + ((hash >> 3) % 8) * 0.012) * ((hash % 2 === 0) ? 1 : -1);
-      const incl = (((hash >> 6) % 100) / 50 - 1) * 0.85;
+      const incl = (((hash >> 6) % 100) / 50 - 1) * 1.2;
+      const node = (((hash >> 14) % 1000) / 1000) * Math.PI * 2;
       const phase = ((hash >> 10) % 360) * (Math.PI / 180);
       const colorHex = MEMORY_DOMAIN_COLORS[domain];
       return {
         id, label, text, context, entities, domain,
         color: c(colorHex), colorHex,
-        radius, speed, incl, phase,
+        radius, speed, incl, node, phase,
       };
     });
   }, [graphData.nodes]);
@@ -1914,9 +1938,16 @@ function MemoryBankConstellation({
 
     orbs.forEach((orb, i) => {
       const a = t * orb.speed + orb.phase;
-      const px = Math.cos(a) * orb.radius;
-      const py = Math.sin(a * 0.8 + orb.incl) * orb.radius * 0.42;
-      const pz = Math.sin(a) * orb.radius;
+      // Inclined orbit plane — engrams distributed over the sphere, not a flat ring.
+      const ca = Math.cos(a), sa = Math.sin(a);
+      const si = Math.sin(orb.incl), ci = Math.cos(orb.incl);
+      const nx = Math.cos(orb.node), nz = Math.sin(orb.node);
+      const ox = ca * orb.radius;
+      const oy = sa * orb.radius * si;
+      const oz = sa * orb.radius * ci;
+      const px = ox * nx + oz * nz;
+      const py = oy;
+      const pz = -ox * nz + oz * nx;
 
       if (!nodePositions.current[orb.id]) {
         nodePositions.current[orb.id] = new THREE.Vector3();
@@ -2539,7 +2570,8 @@ const thoughtVertex = /* glsl */ `
     float orbitR   = 2.9 + seed * 2.8;                    // 2.9 .. 5.7
     float speed    = 0.10 + fract(seed * 13.7) * 0.22;    // orbit rad/s-ish
     float dir      = fract(seed * 7.31) > 0.5 ? 1.0 : -1.0;
-    float band     = (fract(seed * 3.77) - 0.5) * 1.5;    // vertical band offset
+    float incl     = (fract(seed * 17.3) - 0.5) * 1.8;    // orbit plane tilt
+    float node     = fract(seed * 23.9) * 6.2831;         // ascending node
     float infall   = 0.015 + fract(seed * 5.13) * 0.05;   // base drift rate
 
     // lifecycle: slow ambient drift when idle, fast accretion when thinking
@@ -2549,10 +2581,15 @@ const thoughtVertex = /* glsl */ `
     float r = mix(orbitR, 1.12, life * life * (3.0 - 2.0 * life));
 
     float ang = seed * 6.2831 * 3.0 + uTime * speed * dir * (0.5 + uThink * 1.8);
+    // inclined spiral — thoughts accrete from all directions, not one disc
+    float ox = cos(ang) * r;
+    float oy = sin(ang) * r * sin(incl);
+    float oz = sin(ang) * r * cos(incl);
+    float cN = cos(node), sN = sin(node);
     vec3 pos = vec3(
-      cos(ang) * r,
-      band * (0.4 + life * 1.4) + sin(uTime * 0.7 + seed * 40.0) * 0.18,
-      sin(ang) * r * 0.82
+      ox * cN + oz * sN,
+      oy + sin(uTime * 0.7 + seed * 40.0) * 0.18,
+      -ox * sN + oz * cN
     );
 
     vLife = life;
@@ -2638,13 +2675,20 @@ const kineticVertex = /* glsl */ `
     float seed = aSeed;
     // base orbit: eccentric shell, differential rotation, gentle vertical bob
     float rad = 2.35 + khash(seed * 7.13) * 2.9;
-    float incl = (khash(seed * 3.71) - 0.5) * 1.9;
+    float incl = (khash(seed * 3.71) - 0.5) * 2.4;
+    float node = khash(seed * 7.77) * 6.2831;
     float speed = (0.05 + khash(seed * 9.31) * 0.16) * (khash(seed * 5.77) > 0.5 ? 1.0 : -1.0);
     float ang = seed * 6.2831 * 2.0 + uTime * speed;
+    // inclined orbit plane, yawed by node — motes fill the volume, not a ring
+    float ecc = 0.75 + khash(seed * 11.3) * 0.3;
+    float ox = cos(ang) * rad;
+    float oy = sin(ang) * rad * sin(incl);
+    float oz = sin(ang) * rad * cos(incl) * ecc;
+    float cN = cos(node), sN = sin(node);
     vec3 base = vec3(
-      cos(ang) * rad,
-      sin(ang * 0.63 + incl * 3.0) * rad * 0.42 + sin(uTime * 0.4 + seed * 40.0) * 0.12,
-      sin(ang) * rad * (0.75 + khash(seed * 11.3) * 0.3)
+      ox * cN + oz * sN,
+      oy + sin(uTime * 0.4 + seed * 40.0) * 0.12,
+      -ox * sN + oz * cN
     );
 
     // impulse response: damped harmonic scatter along a per-particle axis,
