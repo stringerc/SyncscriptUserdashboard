@@ -13,6 +13,12 @@ DONE + VERIFIED:
   proactive). Verified via node VM two-tab simulation 10/10; eslint clean;
   zero new tsc errors (repo has ~2400 pre-existing).
 
+ALSO SHIPPED:
+- Cross-tab chat sync (2fc07b6): cortex-chat-store envelope {v,epoch,msgs}
+  + storage-event union-merge by id; epoch bump = authoritative replace
+  for clears. CortexDemo subscribes + merges with echo guard. Verified
+  two-tab Playwright probe: turn on tab A rendered live in tab B drawer.
+
 UNVERIFIED / OPEN:
 - Real-browser two-tab typed-chat repro of the mutex (unit-level only).
 - OLED tuning: center luminance ~230 may read as blob; bloom/exposure knobs
