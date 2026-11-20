@@ -27,6 +27,8 @@ import { cortexSpeak } from '../../lib/cortex-speech';
 import { getGlobeEmbedUrl, configureGlobeBase, GLOBE_MODE_EVENT, setGlobeAvailable } from '../../lib/cortex-globe';
 import { neuroAudio } from '../../lib/cortex-neuro-audio';
 import { cortexWebcamParallax, type HandPinchState } from '../../lib/cortex-webcam-parallax';
+import { cortexGaze } from '../../lib/cortex-gaze';
+import CortexGazeLayer from './CortexGazeLayer';
 import { CORTEX_COLORS, CORTEX_STATE_THEME, CORTEX_TYPOGRAPHY, CORTEX_ANIMATION } from '../../lib/cortex-design-tokens';
 import { A2uiDemoPanel } from './a2ui/A2uiDemoPanel';
 
@@ -228,6 +230,11 @@ export default function CortexVisualizerPage() {
   const [holoCamActive, setHoloCamActive] = useState(false);
   const [headParallax, setHeadParallax] = useState<{ x: number; y: number } | null>(null);
   const [handPinch, setHandPinch] = useState<HandPinchState | null>(null);
+  // ?gaze=1 opts into WebGazer eye tracking — gaze drives camera parallax
+  // when live, falling back to webcam head-pose parallax otherwise.
+  const [gazeMode] = useState(() =>
+    typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('gaze') === '1');
+  const [gazeParallax, setGazeParallax] = useState<{ x: number; y: number } | null>(null);
   const [hoveredPacket, setHoveredPacket] = useState<{
     agentId: string;
     agentName: string;
@@ -664,6 +671,16 @@ export default function CortexVisualizerPage() {
     });
     return () => unsub();
   }, []);
+
+  // Gaze → parallax: same normalized mapping as webcam head tracking
+  // (-(n*2-1) per axis). Fresh gaze wins; stale/absent falls back to head.
+  useEffect(() => {
+    if (!gazeMode) return;
+    return cortexGaze.subscribe((g) => {
+      setGazeParallax(g ? { x: -(g.nx * 2 - 1), y: -(g.ny * 2 - 1) } : null);
+    });
+  }, [gazeMode]);
+  const effectiveParallax = gazeParallax ?? headParallax;
 
   // Tier-1 forecast markers: poll the agent snapshot's forecast ledger and
   // draw geolocated signals on the globe ambiently (no camera/layer changes).
@@ -1115,7 +1132,7 @@ export default function CortexVisualizerPage() {
               visualMode={coreVisualMode}
               chronoTime={chronoActive ? chronoTime : null}
               replayTrack={chronoActive ? replayTrack : null}
-              headParallax={headParallax}
+              headParallax={effectiveParallax}
               perfMode={coreQuality}
               onTogglePerfMode={setCoreQuality}
             />
@@ -1128,7 +1145,7 @@ export default function CortexVisualizerPage() {
             visualMode={coreVisualMode}
             chronoTime={chronoActive ? chronoTime : null}
             replayTrack={chronoActive ? replayTrack : null}
-            headParallax={headParallax}
+            headParallax={effectiveParallax}
             perfMode={coreQuality}
             onTogglePerfMode={setCoreQuality}
           />
@@ -3089,6 +3106,9 @@ export default function CortexVisualizerPage() {
 
       {/* Perf HUD — toggled with ` (backquote). Real rAF frame timing only. */}
       {showPerfHud && <PerfHud />}
+
+      {/* Eye-tracking layer — ?gaze=1 only; fixed overlay + parallax feed. */}
+      {gazeMode && <CortexGazeLayer />}
 
       {/* Bottom-right: sovereignty tag — suppressed on Foundry face */}
       {faceMode !== 'agents' && (
