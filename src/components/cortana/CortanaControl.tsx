@@ -2,86 +2,16 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useVoiceStream } from '../../hooks/useVoiceStream';
 import { useCortanaMood } from './CortanaMoodContext';
 import { bridgeFetch } from './bridge-client';
-import { playCortanaMp3, stopCortanaAudio, unlockCortanaAudio } from './cortana-audio';
 
 // CortanaControl — voice panel for /cortana only.
-// Bridge (127.0.0.1:5212): AI + allowlisted tools + neural TTS (no speechSynthesis).
-// Dev: Vite proxies same-origin /api/cortana → bridge.
+// Voice + brain run on the shared SyncScript stack: useVoiceStream STT/TTS
+// (Pocket cortana clone via /api/ai/tts) and /api/ai/nexus-guest for replies.
+// The :5212 bridge remains only for Govee mood lights + orb stats (best-effort).
 
 const WAKE_COOLDOWN_MS = 4000;
 const RESUME_LISTEN_MS = 800;
 
-function cleanTTS(text: string): string {
-  return text
-    .replace(/\\n/g, ' ')
-    .replace(/\\t/g, ' ')
-    .replace(/\\["']/g, '$1')
-    .replace(/\*\*(.*?)\*\*/g, '$1')
-    .replace(/\*(.*?)\*/g, '$1')
-    .replace(/`([^`]+)`/g, '$1')
-    .replace(/#{1,6}\s/g, '')
-    .replace(/-\s/g, '')
-    .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
-    .replace(/<[^>]+>/g, '')
-    .replace(/<function=[^>]+>[\s\S]*?<\/function>/g, '')
-    // Smart punctuation → ASCII (edge-tts handles these but they break JSON embedding
-    // and plain-ASCII consumers). Apostrophe/quotes/dashes/ellipsis.
-    .replace(/[‘’ʼ]/g, "'")
-    .replace(/[“”]/g, '"')
-    .replace(/[–—]/g, '-')
-    .replace(/…/g, '...')
-    .replace(/\s{2,}/g, ' ')
-    .trim();
-}
-
-/** Neural TTS only — no browser speechSynthesis (product rule for cortana identity). */
-async function cortanaSpeak(
-  text: string,
-  onSpeakStart?: () => void,
-  onSpeakEnd?: () => void,
-): Promise<{ ok: boolean; reason?: string }> {
-  stopCortanaAudio();
-  const cleaned = cleanTTS(text);
-  if (!cleaned) {
-    onSpeakEnd?.();
-    return { ok: false, reason: 'empty' };
-  }
-
-  try {
-    const res = await bridgeFetch('/api/cortana/tts', {
-      method: 'POST',
-      timeoutMs: 60000,
-      body: JSON.stringify({ input: cleaned, voice: 'cortana', speed: 1.0 }),
-    });
-
-    if (!res.ok) {
-      onSpeakEnd?.();
-      return { ok: false, reason: res.status === 503 ? 'tts_providers_down' : `tts_http_${res.status}` };
-    }
-
-    const data = await res.arrayBuffer();
-    return playCortanaMp3(data, onSpeakStart, onSpeakEnd);
-  } catch {
-    onSpeakEnd?.();
-    return { ok: false, reason: 'bridge_unreachable' };
-  }
-}
-
-function ttsFailureHint(reason?: string): string {
-  switch (reason) {
-    case 'bridge_unreachable':
-      return 'No audio — bridge offline. Run: npm run cortana:bridge';
-    case 'tts_providers_down':
-      return 'No audio — neural TTS unavailable (edge-tts / Kokoro).';
-    case 'autoplay_blocked':
-      return 'No audio — browser blocked autoplay. Click Listen once, then try again.';
-    case 'play_failed':
-    case 'empty_audio':
-      return 'No audio — playback failed.';
-    default:
-      return 'No audio — check bridge on port 5212.';
-  }
-}
+const CORTANA_SYSTEM_PROMPT = `You are Cortana, a warm, concise AI companion on the user's desktop. Keep replies short and speakable — one or two sentences, no markdown, no lists.`;
 
 const MOOD_COLORS: Record<string, string> = {
   idle: '#00ccff',
@@ -108,6 +38,8 @@ const CortanaControl: React.FC = () => {
   const {
     isListening,
     interimText,
+    isSpeaking: voiceIsSpeaking,
+    speakStreamSentence,
     startListening,
     stopListening,
     status,
@@ -126,6 +58,37 @@ const CortanaControl: React.FC = () => {
     },
   });
 
+  // Speak-then-resume: speakStreamSentence is fire-and-forget, so queue the
+  // post-speech callback and fire it when the shared engine drains to idle.
+  const sawSpeakingRef = useRef(false);
+  const afterSpeakRef = useRef<(() => void) | null>(null);
+  useEffect(() => {
+    isSpeakingRef.current = voiceIsSpeaking;
+    if (voiceIsSpeaking) {
+      sawSpeakingRef.current = true;
+      return;
+    }
+    if (sawSpeakingRef.current && afterSpeakRef.current) {
+      sawSpeakingRef.current = false;
+      const fn = afterSpeakRef.current;
+      afterSpeakRef.current = null;
+      fn();
+    }
+  }, [voiceIsSpeaking]);
+
+  const speakThen = useCallback((text: string, after?: () => void) => {
+    const cleaned = text.trim();
+    if (!cleaned) {
+      after?.();
+      return;
+    }
+    afterSpeakRef.current = after || null;
+    // If the engine is already mid-utterance our sentence queues behind it —
+    // the next true→false edge still lands after our audio, which is correct.
+    sawSpeakingRef.current = isSpeakingRef.current;
+    speakStreamSentence(cleaned, true, { voice: 'cortana', speed: 1.0 });
+  }, [speakStreamSentence]);
+
   // Wake word: final-ish interim, cooldown, armed only when idle
   useEffect(() => {
     if (isSpeakingRef.current || processingRef.current || !wakeArmedRef.current) return;
@@ -139,29 +102,17 @@ const CortanaControl: React.FC = () => {
 
     setMood('listening');
     setResponseText('Yes?');
-    void cortanaSpeak(
-      'Yes?',
-      () => {
-        setMood('speaking');
-        isSpeakingRef.current = true;
-      },
-      () => {
-        isSpeakingRef.current = false;
-        setMood('idle');
-        setTimeout(() => {
-          wakeArmedRef.current = true;
-          void startListening();
-        }, RESUME_LISTEN_MS);
-      },
-    ).then((result) => {
-      if (!result.ok) {
-        setResponseText(ttsFailureHint(result.reason));
-        isSpeakingRef.current = false;
-        setMood('idle');
+    setMood('speaking');
+    isSpeakingRef.current = true;
+    speakThen('Yes?', () => {
+      isSpeakingRef.current = false;
+      setMood('idle');
+      setTimeout(() => {
         wakeArmedRef.current = true;
-      }
+        void startListening();
+      }, RESUME_LISTEN_MS);
     });
-  }, [interimText, startListening, setMood]);
+  }, [interimText, startListening, setMood, speakThen]);
 
   const handleCommand = useCallback(
     async (text: string) => {
@@ -187,22 +138,30 @@ const CortanaControl: React.FC = () => {
       }
 
       try {
-        const res = await bridgeFetch('/api/cortana/ask', {
+        const res = await fetch('/api/ai/nexus-guest', {
           method: 'POST',
-          timeoutMs: 30000,
-          body: JSON.stringify({ message: text }),
+          headers: { 'Content-Type': 'application/json' },
+          signal: AbortSignal.timeout(30000),
+          body: JSON.stringify({
+            stream: false,
+            context: 'cortex',
+            systemPrompt: CORTANA_SYSTEM_PROMPT,
+            plainPersona: true,
+            messages: [{ role: 'user', content: text }],
+            maxTokens: 300,
+          }),
         });
 
         if (res.ok) {
-          const data = (await res.json()) as { reply?: string; response?: string; text?: string };
-          const reply = data.reply || data.response || data.text || "I couldn't process that.";
+          const data = (await res.json()) as { content?: string; reply?: string };
+          const reply = data.content || data.reply || "I couldn't process that.";
           setResponseText(reply);
 
           isSpeakingRef.current = true;
           stopListening();
           setMood('speaking');
 
-          const spoken = await cortanaSpeak(reply, undefined, () => {
+          speakThen(reply, () => {
             isSpeakingRef.current = false;
             setTimeout(() => {
               void startListening();
@@ -211,24 +170,13 @@ const CortanaControl: React.FC = () => {
               processingRef.current = false;
             }, RESUME_LISTEN_MS);
           });
-
-          if (!spoken.ok) {
-            setResponseText(`${reply}\n\n(${ttsFailureHint(spoken.reason)})`);
-            isSpeakingRef.current = false;
-            setTimeout(() => {
-              void startListening();
-              setMood('idle');
-              wakeArmedRef.current = true;
-              processingRef.current = false;
-            }, RESUME_LISTEN_MS);
-          }
           return;
         }
       } catch (err) {
         console.warn('[cortana] AI request failed:', err);
       }
 
-      // Bridge down — local only (time/date), neural TTS if bridge TTS still up
+      // Brain unreachable — local only (time/date)
       let localResponse = '';
       if (cmd.includes('time') || cmd.includes('what time')) {
         localResponse = `It's ${new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}.`;
@@ -239,8 +187,7 @@ const CortanaControl: React.FC = () => {
           day: 'numeric',
         })}.`;
       } else {
-        localResponse =
-          'Bridge offline. Start it with npm run cortana:bridge, then try again.';
+        localResponse = 'Something went wrong reaching the brain — try again in a moment.';
       }
 
       setResponseText(localResponse);
@@ -248,7 +195,7 @@ const CortanaControl: React.FC = () => {
       isSpeakingRef.current = true;
       stopListening();
 
-      await cortanaSpeak(localResponse, undefined, () => {
+      speakThen(localResponse, () => {
         isSpeakingRef.current = false;
         setTimeout(() => {
           void startListening();
@@ -258,7 +205,7 @@ const CortanaControl: React.FC = () => {
         }, RESUME_LISTEN_MS);
       });
     },
-    [setMood, stopListening, startListening],
+    [setMood, stopListening, startListening, speakThen],
   );
 
   handleCommandRef.current = handleCommand;
@@ -276,7 +223,13 @@ const CortanaControl: React.FC = () => {
   }, []);
 
   const unlockAudio = useCallback(() => {
-    unlockCortanaAudio();
+    // Gesture unlock for the shared gapless AudioContext — resume/create once.
+    try {
+      const AC =
+        window.AudioContext ||
+        (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+      if (AC) void new AC().resume().catch(() => {});
+    } catch { /* best-effort */ }
   }, []);
 
   const toggleListening = () => {
@@ -292,26 +245,16 @@ const CortanaControl: React.FC = () => {
 
   const testVoice = async () => {
     unlockAudio();
-    // Wait for AudioContext resume so the first word is audible after gesture
+    // Wait a tick so the AudioContext resume lands before synthesis starts
     await new Promise((r) => setTimeout(r, 50));
     setResponseText('Testing neural voice…');
-    isSpeakingRef.current = true;
     setMood('speaking');
-    const result = await cortanaSpeak(
-      'Audio systems online.',
-      undefined,
-      () => {
-        isSpeakingRef.current = false;
-        setMood('idle');
-      },
-    );
-    if (!result.ok) {
-      setResponseText(ttsFailureHint(result.reason));
+    isSpeakingRef.current = true;
+    speakThen('Audio systems online. Systems nominal.', () => {
       isSpeakingRef.current = false;
       setMood('idle');
-    } else {
-      setResponseText('Audio systems online.');
-    }
+    });
+    setResponseText('Audio systems online. Systems nominal.');
   };
 
   const cycleMood = () => {
@@ -458,8 +401,8 @@ const CortanaControl: React.FC = () => {
 
       <div style={{ fontSize: '9px', opacity: 0.35, textAlign: 'center', marginTop: 6 }}>
         {bridgeOnline
-          ? 'Bridge live · click Listen first (unlocks audio) · neural TTS'
-          : 'Bridge offline — run npm run cortana:bridge'}
+          ? 'Voice: neural cortana · bridge live (lights/stats)'
+          : 'Voice: neural cortana · bridge offline (lights/stats only)'}
       </div>
     </div>
   );

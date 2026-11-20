@@ -11,7 +11,6 @@ import type { CortexArtifact } from '../../lib/cortex-artifacts';
 const ArtifactRenderer = lazy(() => import('./artifacts/ArtifactRenderer'));
 import { useCortexChatMessages, setCortexChatMessages, getCortexChatSnapshot } from '../../lib/cortex-chat-store';
 import type { CortexSignalBusPayload } from './CortexVisualizer';
-import { fetchCartesiaTtsAudio } from '../../utils/cartesia-tts';
 
 const DRAWER_CSS = `
   @keyframes cx-drawer-in {
@@ -472,21 +471,7 @@ function CortexChatDrawerInner({ open, onClose, payload, onSubmitText }: CortexC
         throw new Error('local tts empty');
       } catch {
         if (dead) return;
-        // Secondary fallback: Cartesia Sonic cloud voice if local TTS fails
-        try {
-          const blob2 = await fetchCartesiaTtsAudio(chunks[idx], { voiceId: 'cortana' });
-          if (blob2 && blob2.size >= 100) {
-            const url2 = URL.createObjectURL(blob2);
-            urls.push(url2);
-            const audio2 = new Audio(url2);
-            audioRef.current = audio2;
-            audio2.onended = () => { idx += 1; void playNext(); };
-            audio2.onerror = () => { idx += 1; void playNext(); };
-            await audio2.play();
-            return;
-          }
-        } catch { }
-        // TTS unreachable — read the remainder via browser speech, whole reply
+        // Neural TTS unreachable — read the remainder via browser speech, whole reply
         const rest = chunks.slice(idx).join(' ');
         try {
           speechSynthesis.cancel();

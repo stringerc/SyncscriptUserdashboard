@@ -7,7 +7,7 @@
  * - 🟠 On-Device Hardware-Encrypted Offline Cache (Airplane mode)
  *
  * Audio & Voice Capabilities:
- * - 🎙️ Cortana Neural Voice (Jane - Halo CE match via Cartesia Sonic & Kokoro af_heart)
+ * - 🎙️ Cortana Neural Voice (Pocket TTS clone via /api/cortex/tts — same engine as desktop Cortex)
  * - ⚡ Sub-400ms sentence-chunked progressive streaming playback
  * - 🗣️ Hands-Free Two-Way Voice Mode (Microphone speech-to-text -> Cortex reasoning -> spoken response)
  * - 📲 Direct "Install to iPhone" Modal (Instant OTA Safari PWA + Native Xcode app)
@@ -52,7 +52,23 @@ import {
   type MemorySection,
 } from '../../lib/cortex-mobile-sync';
 import { sanitizeForSpeech, splitSpeechSentences } from './cortex-demo-helpers';
-import { fetchCartesiaTtsAudio, CARTESIA_VOICES, type CartesiaVoiceKey } from '../../utils/cartesia-tts';
+
+/** Canonical neural voice — Pocket cortana clone through the shared TTS proxy. */
+async function fetchCortanaTtsAudio(text: string, speed: number): Promise<Blob | null> {
+  try {
+    const res = await fetch('/api/cortex/tts', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text, voice: 'cortana', speed }),
+      signal: AbortSignal.timeout(20000),
+    });
+    if (!res.ok) return null;
+    const blob = await res.blob();
+    return blob.size > 200 ? blob : null;
+  } catch {
+    return null;
+  }
+}
 
 export default function CortexMobileCompanion() {
   const navigate = useNavigate();
@@ -73,7 +89,6 @@ export default function CortexMobileCompanion() {
 
   // Audio & Voice Engine State (Cortana Neural Pipeline)
   const [speakingTargetId, setSpeakingTargetId] = useState<string | null>(null);
-  const [selectedVoice, setSelectedVoice] = useState<string>('cortana');
   const [playbackSpeed, setPlaybackSpeed] = useState<number>(1.0);
   const [autoSpeakReplies, setAutoSpeakReplies] = useState<boolean>(true);
   const [isAudioSettingsOpen, setIsAudioSettingsOpen] = useState(false);
@@ -193,15 +208,10 @@ export default function CortexMobileCompanion() {
       return;
     }
 
-    // Try neural Cartesia / Kokoro voice first
+    // Try neural cortana voice first (Pocket clone via /api/cortex/tts)
     let neuralAudioAvailable = true;
     try {
-      // Test first sentence with Cortana voice
-      const testBlob = await fetchCartesiaTtsAudio(sentences[0], {
-        voiceId: selectedVoice as CartesiaVoiceKey,
-        speed: playbackSpeed,
-      });
-
+      const testBlob = await fetchCortanaTtsAudio(sentences[0], playbackSpeed);
       if (!testBlob) {
         neuralAudioAvailable = false;
       }
@@ -223,10 +233,7 @@ export default function CortexMobileCompanion() {
         sentenceIndex++;
 
         try {
-          const blob = await fetchCartesiaTtsAudio(sentenceText, {
-            voiceId: selectedVoice as CartesiaVoiceKey,
-            speed: playbackSpeed,
-          });
+          const blob = await fetchCortanaTtsAudio(sentenceText, playbackSpeed);
 
           if (!blob) {
             // Fallback to next sentence
@@ -239,7 +246,6 @@ export default function CortexMobileCompanion() {
 
           const audio = new Audio(blobUrl);
           activeAudioRef.current = audio;
-          audio.playbackRate = playbackSpeed;
 
           audio.onended = () => {
             void playNextSentence();
@@ -287,7 +293,7 @@ export default function CortexMobileCompanion() {
 
       speakNextLocal();
     }
-  }, [speakingTargetId, stopAllAudio, selectedVoice, playbackSpeed]);
+  }, [speakingTargetId, stopAllAudio, playbackSpeed]);
 
   // Two-Way Hands-Free Voice Mode Controller
   const toggleVoiceMode = useCallback(() => {
@@ -1402,30 +1408,10 @@ export default function CortexMobileCompanion() {
             </div>
 
             <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-              {/* Voice Selector */}
-              <div>
-                <label style={{ fontSize: 11, fontWeight: 600, color: '#94a3b8', display: 'block', marginBottom: 6 }}>
-                  ACTIVE NEURAL VOICE
-                </label>
-                <select
-                  value={selectedVoice}
-                  onChange={e => setSelectedVoice(e.target.value)}
-                  style={{
-                    width: '100%',
-                    padding: '8px 10px',
-                    borderRadius: 8,
-                    background: 'rgba(30, 41, 59, 0.8)',
-                    border: '1px solid rgba(255, 255, 255, 0.15)',
-                    color: '#ffffff',
-                    fontSize: 12,
-                    outline: 'none',
-                  }}
-                >
-                  <option value="cortana">Cortana (Signature Halo CE Match — Jane)</option>
-                  <option value="cortana_maia">Cortana Tactical (Maia)</option>
-                  <option value="cortana_evelyn">Cortana Digital (Evelyn)</option>
-                  <option value="cortana_allie">Cortana Banter (Allie)</option>
-                </select>
+              {/* Canonical voice — single cortana identity across all surfaces */}
+              <div style={{ padding: '8px 10px', borderRadius: 8, background: 'rgba(0, 204, 255, 0.07)', border: '1px solid rgba(0, 204, 255, 0.18)' }}>
+                <div style={{ fontSize: 11, fontWeight: 600, color: '#7dd3fc' }}>ACTIVE NEURAL VOICE</div>
+                <div style={{ fontSize: 12, color: '#e2e8f0', marginTop: 3 }}>Cortana — Halo CE signature (Pocket clone)</div>
               </div>
 
               {/* Speed Slider */}

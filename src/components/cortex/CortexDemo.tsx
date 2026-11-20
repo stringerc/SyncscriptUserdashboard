@@ -56,7 +56,7 @@ import {
   EfferenceCopyManager,
   INTERRUPT_COMMANDS,
 } from '../../utils/cortex-efference-copy';
-import { CARTESIA_VOICES, type CartesiaVoiceKey } from '../../utils/cartesia-tts';
+
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import type { CortexArtifact } from '../../lib/cortex-artifacts';
@@ -837,18 +837,6 @@ export default function CortexDemo() {
   const [isVoiceActive, setIsVoiceActive] = useState(false);
   const [interruptedNotice, setInterruptedNotice] = useState(false);
   const [echoSuppressedNotice, setEchoSuppressedNotice] = useState(false);
-  const [selectedVoice, setSelectedVoice] = useState<string>(() => {
-    try {
-      return localStorage.getItem('cortex_cartesia_voice') || 'cortana';
-    } catch {
-      return 'cortana';
-    }
-  });
-
-  const selectedVoiceRef = useRef(selectedVoice);
-  useEffect(() => {
-    selectedVoiceRef.current = selectedVoice;
-  }, [selectedVoice]);
 
   const isSpeakingRef = useRef(false);
   const isVoiceActiveRef = useRef(false);
@@ -919,8 +907,8 @@ export default function CortexDemo() {
   const voiceStream = useVoiceStream({
     continuous: true,
     interimResults: true,
-    ttsModel: 'cartesia',
-    ttsVoice: selectedVoice,
+    ttsModel: 'kokoro',
+    ttsVoice: 'cortana',
     onTranscript: (result) => {
       if (!isVoiceActiveRef.current) return;
       let text = result.text?.trim();
@@ -1120,7 +1108,7 @@ export default function CortexDemo() {
       sentences.forEach((sentence, idx) => {
         const isFinal = idx === sentences.length - 1;
         voiceStream.speakStreamSentence(sentence, isFinal, {
-          voice: selectedVoiceRef.current || 'cortana',
+          voice: 'cortana',
           speed: 1.0,
           skipCartesia: true,
         });
@@ -1982,7 +1970,7 @@ FORMATTING: clean structured markdown, bold subheadings, concise bullets; avoid 
                   clean,
                   ...recentAiSpeechHistoryRef.current.slice(0, 4)
                 ];
-                voiceStream.speakStreamSentence(clean, false, { voice: selectedVoiceRef.current, skipCartesia: true });
+                voiceStream.speakStreamSentence(clean, false, { voice: 'cortana', skipCartesia: true });
               }
             }
           }
@@ -2005,7 +1993,7 @@ FORMATTING: clean structured markdown, bold subheadings, concise bullets; avoid 
             ...recentAiSpeechHistoryRef.current.slice(0, 4)
           ];
           tailSentences.forEach((sentence, idx) => {
-            voiceStream.speakStreamSentence(sentence, idx === tailSentences.length - 1, { voice: selectedVoiceRef.current, skipCartesia: true });
+            voiceStream.speakStreamSentence(sentence, idx === tailSentences.length - 1, { voice: 'cortana', skipCartesia: true });
           });
         } else {
           voiceStream.finishStreaming();
@@ -2173,14 +2161,14 @@ FORMATTING: clean structured markdown, bold subheadings, concise bullets; avoid 
         if (sentences.length > 0) {
           sentences.forEach((sentence, idx) => {
             voiceStream.speakStreamSentence(sentence, idx === sentences.length - 1, {
-              voice: selectedVoiceRef.current || 'cortana',
+              voice: 'cortana',
               speed: 1.0,
               skipCartesia: true,
             });
           });
         } else {
           voiceStream.speakStreamSentence(cleanSpeech, true, {
-            voice: selectedVoiceRef.current || 'cortana',
+            voice: 'cortana',
             speed: 1.0,
             skipCartesia: true,
           });
@@ -2570,33 +2558,6 @@ FORMATTING: clean structured markdown, bold subheadings, concise bullets; avoid 
                   fontFamily: '"IBM Plex Mono", "SF Mono", monospace',
                 }}
               >
-                {/* Voice picker — real Kokoro voices (aliases resolved server-side) */}
-                <div style={{ padding: '6px 10px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
-                  <span style={{ fontSize: 10, color: C.dim }}>VOICE</span>
-                  <select
-                    value={selectedVoice}
-                    onChange={(e) => {
-                      const v = e.target.value;
-                      setSelectedVoice(v);
-                      try { localStorage.setItem('cortex_cartesia_voice', v); } catch {}
-                    }}
-                    style={{
-                      padding: '2px 6px', borderRadius: 4, fontSize: 10,
-                      background: C.surface, border: `1px solid ${C.cortex}44`,
-                      color: C.cortex, cursor: 'pointer', outline: 'none', maxWidth: 140,
-                    }}
-                  >
-                    <option value="cortana">Cortana (Halo CE — Wry Banter)</option>
-                    <option value="cortana_tactical">Cortana (Halo CE — Tactical)</option>
-                    <option value="cortana_curious">Cortana (Halo CE — Curious)</option>
-                    <option value="commander">Commander</option>
-                    <option value="gentle">Gentle</option>
-                    <option value="playful">Playful</option>
-                    <option value="natural">Natural</option>
-                    <option value="professional">Professional</option>
-                  </select>
-                </div>
-                <div style={{ height: 1, background: 'rgba(255,255,255,0.07)', margin: '4px 6px' }} />
                 {/* Mode cycle */}
                 <button onClick={() => { cycleMode(); }} style={menuItemStyle(mode === 'guardian' ? C.red : mode === 'advisory' ? C.cortex : C.dim)}>
                   MODE · {mode.toUpperCase()}

@@ -315,7 +315,7 @@ export default function CortexFacePage() {
   const voiceStream = useVoiceStream({
     continuous: true,
     interimResults: true,
-    ttsModel: 'cartesia',
+    ttsModel: 'kokoro',
     ttsVoice: cortexVoice,
     onTranscript: (result) => {
       // Conversation mode only; PTT owns the mic while held. While Cortex is
