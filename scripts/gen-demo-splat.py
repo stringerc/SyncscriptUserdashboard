@@ -85,6 +85,46 @@ def jet_pts(n):
     return pts
 
 
+def swarm_pts(n):
+    """Lagrangian swarm anchors — particles with home positions the sim
+    pulls them back to. Shell-biased distribution around the core with
+    a ring-band contingent and a hot inner population."""
+    pts = []
+    ga = math.pi * (3.0 - math.sqrt(5.0))
+    for i in range(n):
+        u = random.random()
+        if u < 0.14:  # inner core population
+            r = 0.12 + random.random() * 0.4
+        elif u < 0.34:  # ring-band contingent (matches ring tilt ~64deg)
+            th = random.random() * 2.0 * math.pi
+            rr = 1.35 + random.random() * 0.6
+            y = (random.random() - 0.5) * 0.14
+            x, z = math.cos(th) * rr, math.sin(th) * rr
+            cy, sy = math.cos(1.12), math.sin(1.12)
+            pts.append((x, y * cy - z * sy, y * sy + z * cy,
+                        0.003 + random.random() * 0.004, 0.6 + random.random() * 0.3,
+                        swarm_color()))
+            continue
+        else:  # main shell
+            r = 0.55 + (random.random() ** 0.62) * 1.25
+        y = 1.0 - (i / max(1, n - 1)) * 2.0
+        rr2 = math.sqrt(max(0.0, 1.0 - y * y))
+        th = ga * i + random.random() * 0.4
+        pts.append((math.cos(th) * rr2 * r, y * r, math.sin(th) * rr2 * r,
+                    0.003 + random.random() * 0.005, 0.55 + random.random() * 0.35,
+                    swarm_color()))
+    return pts
+
+
+def swarm_color():
+    k = random.random()
+    if k < 0.42:
+        return (0.55 + random.random() * 0.2, 0.85, 1.0)          # ice cyan
+    if k < 0.78:
+        return (0.8 + random.random() * 0.2, 0.92, 1.0)           # white-blue
+    return (1.0, 0.78 + random.random() * 0.15, 0.45 + random.random() * 0.2)  # gold
+
+
 def ring_color():
     """Pale gold <-> ice jitter so the band reads warm against the cool core."""
     k = random.random()
@@ -111,14 +151,17 @@ def main():
     for x, y, z in jet_pts(jet_n):
         jet_pts_l.append((x, y, z, 0.003 + random.random() * 0.0025, 0.38 + random.random() * 0.25,
                           (0.7 + random.random() * 0.3, 0.95, 1.0)))
+    swarm_pts_l = swarm_pts(int(COUNT * 0.09))
 
     body_pts = shell_pts + core_pts + jet_pts_l
     # Hero mode splits the ring into its own mesh so the scene can
-    # counter-rotate it against the core. Custom OUTs stay all-in-one.
-    split_ring = os.path.basename(OUT) == "cortex-core.ply"
-    outputs = [(OUT, body_pts + ([] if split_ring else ring_pts_l))]
-    if split_ring:
+    # counter-rotate it, and emits a swarm anchor field for the
+    # Lagrangian physics layer. Custom OUTs stay all-in-one.
+    split_hero = os.path.basename(OUT) == "cortex-core.ply"
+    outputs = [(OUT, body_pts + ([] if split_hero else ring_pts_l + swarm_pts_l))]
+    if split_hero:
         outputs.append((os.path.join(os.path.dirname(OUT), "cortex-ring.ply"), ring_pts_l))
+        outputs.append((os.path.join(os.path.dirname(OUT), "cortex-swarm.ply"), swarm_pts_l))
 
     for path, pts in outputs:
         write_ply(path, pts)

@@ -18,6 +18,7 @@ import { OrbitControls } from '@react-three/drei';
 import { EffectComposer, Bloom, Vignette, ChromaticAberration } from '@react-three/postprocessing';
 import { SparkRenderer, SplatMesh, generators } from '@sparkjsdev/spark';
 import { createFlowModifier, pointerToSphere, type FlowUniforms } from '../../lib/cortex-splat-flow';
+import { SwarmSim } from '../../lib/cortex-splat-swarm';
 
 const MONO = '"IBM Plex Mono", ui-monospace, monospace';
 const GUST_PERIOD = 26; // seconds between auto gusts
@@ -31,7 +32,8 @@ function SparkStage({ url, onReady, onFail, onGust }: {
   const { gl, scene, invalidate, pointer } = useThree();
   const holder = useRef<THREE.Group | null>(null);
   const ambient = useRef<{ snow: any; fallVelocity: any; wanderScale: any; opacity: any }[]>([]);
-  const meshes = useRef<{ mesh: SplatMesh; role: 'core' | 'ring' | 'asset' }[]>([]);
+  const meshes = useRef<{ mesh: SplatMesh; role: 'core' | 'ring' | 'asset' | 'swarm' }[]>([]);
+  const swarmRef = useRef<SwarmSim | null>(null);
   const flowRef = useRef<FlowUniforms | null>(null);
   const mouseTarget = useRef(new THREE.Vector3(0, 0, 5));
   const cursorActive = useRef(false);
@@ -93,14 +95,18 @@ function SparkStage({ url, onReady, onFail, onGust }: {
 
     // Splat meshes — cortex-core gets a counter-rotating ring sibling.
     const isHero = url.includes('cortex-core');
-    const urls: { url: string; role: 'core' | 'ring' | 'asset' }[] = isHero
-      ? [{ url, role: 'core' }, { url: '/splats/cortex-ring.ply', role: 'ring' }]
+    const urls: { url: string; role: 'core' | 'ring' | 'asset' | 'swarm' }[] = isHero
+      ? [
+          { url, role: 'core' },
+          { url: '/splats/cortex-ring.ply', role: 'ring' },
+          { url: '/splats/cortex-swarm.ply', role: 'swarm' },
+        ]
       : [{ url, role: 'asset' }];
 
     let pending = urls.length;
     let cancelled = false;
     for (const { url: u, role } of urls) {
-      const mesh = new SplatMesh({ url: u, worldModifier: flow.modifier });
+      const mesh = new SplatMesh({ url: u, worldModifier: role === 'swarm' ? undefined : flow.modifier });
       g.add(mesh);
       meshes.current.push({ mesh, role });
       mesh.initialized.then(() => {
@@ -114,6 +120,19 @@ function SparkStage({ url, onReady, onFail, onGust }: {
             boundingSphere: bb ? { c: bb.center.toArray(), r: bb.radius } : null,
           });
         } catch (e) { console.log('[splat] init-log-fail', e); }
+        if (role === 'swarm') {
+          try {
+            const ps: any = (mesh as any).packedSplats;
+            const n = ps?.getNumSplats?.() ?? 0;
+            const anchors = new Float32Array(n * 3);
+            for (let i = 0; i < n; i++) {
+              const s = ps.getSplat(i);
+              anchors[i * 3] = s.center.x; anchors[i * 3 + 1] = s.center.y; anchors[i * 3 + 2] = s.center.z;
+            }
+            swarmRef.current = new SwarmSim(anchors, ps);
+            console.log('[splat] swarm sim online', { particles: n, neighbors: swarmRef.current ? 'built' : 'none' });
+          } catch (e) { console.log('[splat] swarm init FAILED', e); }
+        }
         if (--pending === 0) onReady();
       }).catch((e) => {
         if (cancelled) return;
@@ -144,6 +163,7 @@ function SparkStage({ url, onReady, onFail, onGust }: {
       holder.current = null;
       ambient.current = [];
       meshes.current = [];
+      swarmRef.current = null;
       flowRef.current = null;
       gl.domElement.removeEventListener('pointerdown', onDown);
       gl.domElement.removeEventListener('pointermove', onMove);
@@ -196,6 +216,18 @@ function SparkStage({ url, onReady, onFail, onGust }: {
       const targetStrength = active ? 1 : 0;
       const sk = 1 - Math.exp(-(active ? 9 : 0.55) * dt);
       flow.strength.value += (targetStrength - flow.strength.value) * sk;
+    }
+
+    // Lagrangian swarm — real position+velocity physics; momentum
+    // persists so cursor passes produce genuine recoil.
+    const swarm = swarmRef.current;
+    if (swarm) {
+      swarm.step(
+        Math.min(dt, 0.05),
+        (flow?.mouse.value as THREE.Vector3) ?? mouseTarget.current,
+        flow?.strength.value ?? 0,
+        gust,
+      );
     }
 
     // Core breathing — two detuned sines + gust swell.
