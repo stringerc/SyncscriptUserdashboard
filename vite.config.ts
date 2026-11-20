@@ -651,7 +651,7 @@ const CORTEX_TOOLS = [
     type: 'function',
     function: {
       name: 'emit_artifact',
-      description: 'Emit structured visual artifacts that render as rich cards in the Cortex UI. Use when the user asks to see data, charts, tables, documents, maps, or status panels. Artifact kinds: stat {kind,title,value,unit?,delta?,spark?}, chart {kind,title,chartType:line|bar|area|pie,series:[{name,points:[{x,y}]}],xLabel?,yLabel?}, table {kind,title,columns:[],rows:[]}, image {kind,title,url}, document {kind,title,format:markdown|code,content,lang?}, map {kind,title,summary?}, feed {kind,title,items:[{label,value,tone?}]}. Max 3 per call. Only emit artifacts backed by real data or an explicit user request.',
+      description: 'Emit structured visual artifacts that render as rich cards in the Cortex UI. Use when the user asks to see data, charts, tables, documents, maps, splat scenes, or status panels. Artifact kinds: stat {kind,title,value,unit?,delta?,spark?}, chart {kind,title,chartType:line|bar|area|pie,series:[{name,points:[{x,y}]}],xLabel?,yLabel?}, table {kind,title,columns:[],rows:[]}, image {kind,title,url}, document {kind,title,format:markdown|code,content,lang?}, map {kind,title,summary?}, feed {kind,title,items:[{label,value,tone?}]}, splat {kind,title,splat:"<file>.spz|.ply|.ksplat",caption?} — splat renders a live 3D Gaussian-splat scene (assets in /splats). Max 3 per call. Only emit artifacts backed by real data or an explicit user request.',
       parameters: {
         type: 'object',
         properties: {
@@ -5191,11 +5191,10 @@ end tell`;
             }
 
             // 9b2. get_weather — NWS (api.weather.gov, no key) for US locations.
-            // Returns real forecast data plus emit_artifact-shaped artifacts so
-            // the response auto-docks stat/chart/table panels on the HUD.
+            // Returns real forecast data plus ONE consolidated weather-scene
+            // artifact (sky + hourly + radar + day strip) that auto-docks.
             if (tool === 'get_weather') {
               const locationArg = String(args?.location || '').trim();
-              const hoursWanted = Math.min(Math.max(Number(args?.hours) || 24, 1), 168);
               res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
               const nwsHeaders = { 'User-Agent': 'cortex-visualizer (personal weather tool)', 'Accept': 'application/geo+json' };
               try {
@@ -5252,16 +5251,44 @@ end tell`;
                   ? `${conditions.temperature}°${conditions.temperatureUnit || 'F'}` : null;
                 const wind = conditions ? `${conditions.windSpeed || ''} ${conditions.windDirection || ''}`.trim() : '';
 
-                // Hourly temps for the chart — next `hoursWanted` hours.
-                const hourPoints = hourly.slice(0, hoursWanted).map((hp: any) => {
+                // Rich hourly strip for the weather scene artifact — temp,
+                // precip chance, condition, day/night per hour.
+                const wxHours = hourly.slice(0, 18).map((hp: any) => {
                   const d = new Date(hp.startTime);
-                  return { x: d.toLocaleTimeString('en-US', { hour: 'numeric' }), y: Number(hp.temperature) };
-                }).filter((p: any) => Number.isFinite(p.y));
+                  return {
+                    t: d.toLocaleTimeString('en-US', { hour: 'numeric' }),
+                    temp: Number(hp.temperature),
+                    precip: Number.isFinite(Number(hp.probabilityOfPrecipitation?.value)) ? Number(hp.probabilityOfPrecipitation.value) : null,
+                    cond: hp.shortForecast ? String(hp.shortForecast).slice(0, 80) : undefined,
+                    day: hp.isDaytime === true,
+                  };
+                }).filter((h: any) => Number.isFinite(h.temp));
 
-                const artifacts: any[] = [];
-                // Weather scene first — the animated sky panel is the picture
-                // the stat/chart/table trio was missing.
-                artifacts.push({
+                // Multi-day forecast strip — pair each day period with the
+                // following night period for hi/lo (NWS alternates day/night).
+                const wxDays: any[] = [];
+                for (let i = 0; i < periods.length && wxDays.length < 7; i++) {
+                  const p = periods[i];
+                  if (p?.isDaytime === false) continue;
+                  const night = periods[i + 1]?.isDaytime === false ? periods[i + 1] : null;
+                  const hi = Number(p?.temperature), lo = night ? Number(night.temperature) : NaN;
+                  const pDay = Number(p?.probabilityOfPrecipitation?.value);
+                  const pNight = night ? Number(night.probabilityOfPrecipitation?.value) : NaN;
+                  const precip = [pDay, pNight].filter(Number.isFinite);
+                  wxDays.push({
+                    d: String(p?.name || '').slice(0, 30),
+                    ...(Number.isFinite(hi) ? { hi: Math.round(hi) } : {}),
+                    ...(Number.isFinite(lo) ? { lo: Math.round(lo) } : {}),
+                    cond: p?.shortForecast ? String(p.shortForecast).slice(0, 120) : undefined,
+                    precip: precip.length ? Math.max(...precip) : undefined,
+                  });
+                }
+
+                // ONE consolidated artifact — the scene card already carries
+                // temp/condition/hourly/radar; days strip replaces the old
+                // stat+chart+table panel trio. JSON fields below still give
+                // the model the raw forecast for its spoken summary.
+                const artifacts: any[] = [{
                   kind: 'weather',
                   id: `wx-scene-${Date.now()}`,
                   title: `Weather — ${city}`,
@@ -5271,35 +5298,13 @@ end tell`;
                   wind: wind || undefined,
                   period: conditions?.name || undefined,
                   summary: [tempF, conditions?.shortForecast, wind ? `wind ${wind}` : null].filter(Boolean).join(' · ') || undefined,
-                });
-                if (tempF) {
-                  artifacts.push({
-                    kind: 'stat', id: `wx-now-${Date.now()}`,
-                    title: `Now — ${city}`, value: tempF,
-                    unit: conditions?.shortForecast || undefined,
-                    delta: wind ? `Wind ${wind}` : undefined,
-                  });
-                }
-                if (hourPoints.length >= 2) {
-                  artifacts.push({
-                    kind: 'chart', id: `wx-chart-${Date.now()}`,
-                    title: `Temperature — next ${hourPoints.length}h`, chartType: 'line',
-                    series: [{ name: 'Temp (°F)', points: hourPoints }],
-                    xLabel: 'Hour', yLabel: '°F',
-                  });
-                }
-                if (dayPeriods.length) {
-                  artifacts.push({
-                    kind: 'table', id: `wx-table-${Date.now()}`,
-                    title: `Forecast — ${city}`,
-                    columns: ['Period', 'High/Low', 'Conditions', 'Wind'],
-                    rows: dayPeriods.map((p) => [
-                      p.name, `${p.temperature}°${p.temperatureUnit || 'F'}`,
-                      String(p.shortForecast || '').slice(0, 60),
-                      `${p.windSpeed || ''} ${p.windDirection || ''}`.trim(),
-                    ]),
-                  });
-                }
+                  humidity: Number.isFinite(Number(conditions?.relativeHumidity?.value)) ? Number(conditions.relativeHumidity.value) : undefined,
+                  precipNow: Number.isFinite(Number(conditions?.probabilityOfPrecipitation?.value)) ? Number(conditions.probabilityOfPrecipitation.value) : undefined,
+                  isDay: conditions?.isDaytime === true ? true : conditions?.isDaytime === false ? false : undefined,
+                  hourly: wxHours.length >= 2 ? wxHours : undefined,
+                  days: wxDays.length >= 2 ? wxDays : undefined,
+                  lat, lon,
+                }];
 
                 const wxSummary = [
                   `${city}: ${tempF || 'conditions unavailable'}${conditions?.shortForecast ? `, ${conditions.shortForecast}` : ''}${wind ? `, wind ${wind}` : ''}.`,
@@ -8550,7 +8555,7 @@ function triggerQuickAction() {
                 rawArtifacts = (rawArtifacts as any).artifacts || [rawArtifacts];
               }
               const raw = Array.isArray(rawArtifacts) ? rawArtifacts : [];
-              const VALID_KINDS = new Set(['stat', 'chart', 'table', 'image', 'document', 'map', 'feed']);
+              const VALID_KINDS = new Set(['stat', 'chart', 'table', 'image', 'document', 'map', 'feed', 'weather', 'splat']);
               const artifacts = raw
                 .filter((a: any) => a && typeof a === 'object' && VALID_KINDS.has(a.kind))
                 .slice(0, 3)
@@ -8561,7 +8566,7 @@ function triggerQuickAction() {
                 artifacts,
                 message: artifacts.length
                   ? `Emitted ${artifacts.length} artifact(s) — they will render as cards in the UI.`
-                  : 'No valid artifacts supplied (each needs a "kind" of stat|chart|table|image|document|map|feed).',
+                  : 'No valid artifacts supplied (each needs a "kind" of stat|chart|table|image|document|map|feed|weather|splat).',
                 durationMs: Date.now() - startMs,
               }));
             }

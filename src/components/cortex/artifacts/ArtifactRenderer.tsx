@@ -12,7 +12,11 @@ import {
 } from 'recharts';
 import { ExternalLink, Pin, X } from 'lucide-react';
 import { C } from '../cortex-demo-helpers';
-import type { CortexArtifact, ChartArtifact, TableArtifact, ImageArtifact, DocumentArtifact, FeedArtifact, StatArtifact, WeatherArtifact, WxHourPoint, WxDayPoint } from '../../../lib/cortex-artifacts';
+import type { CortexArtifact, ChartArtifact, TableArtifact, ImageArtifact, DocumentArtifact, FeedArtifact, StatArtifact, WeatherArtifact, WxHourPoint, WxDayPoint, SplatArtifact } from '../../../lib/cortex-artifacts';
+
+// SplatPreview pulls in three + @sparkjsdev/spark — keep it out of the
+// artifact chunk and mount it only when a splat card actually renders.
+const SplatPreview = lazy(() => import('./SplatPreview'));
 import 'uplot/dist/uPlot.min.css';
 
 const MONO = '"IBM Plex Mono", ui-monospace, monospace';
@@ -1886,6 +1890,25 @@ function MapBody({ a, onOpenGlobe }: { a: Extract<CortexArtifact, { kind: 'map' 
   );
 }
 
+function SplatBody({ a }: { a: SplatArtifact }) {
+  return (
+    <div>
+      <Suspense fallback={(
+        <div style={{ height: 190, display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: MONO, fontSize: 9, letterSpacing: '0.3em', color: C.dim }}>
+          ◌ LOADING SPLAT…
+        </div>
+      )}>
+        <SplatPreview url={a.splat} height={190} />
+      </Suspense>
+      {a.caption && (
+        <div style={{ fontSize: 10.5, color: C.text, marginTop: 8, lineHeight: 1.5, fontFamily: "'DM Sans', ui-sans-serif, system-ui, sans-serif" }}>
+          {a.caption}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function ArtifactRenderer({
   artifact, onExpand, onPin, onClose, onOpenGlobe, compact, fitHeight, fitSize, bare,
 }: {
@@ -1935,6 +1958,7 @@ export function ArtifactRenderer({
     case 'feed': return shell(artifact.title, <FeedBody a={artifact} />);
     case 'map': return shell(artifact.title, <MapBody a={artifact} onOpenGlobe={onOpenGlobe ? () => onOpenGlobe(artifact) : undefined} />);
     case 'weather': return shell(artifact.title, <WeatherBody a={artifact} />);
+    case 'splat': return shell(artifact.title, <SplatBody a={artifact} />);
     default: return null;
   }
 }

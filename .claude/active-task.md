@@ -129,6 +129,22 @@ ALSO SHIPPED:
   4-DAY FORECAST label + 4 tiles + hi/lo + precip, radar+hourly intact,
   0 pageerrors; tsc only pre-existing 897; eslint 0 errors.
 
+ALSO SHIPPED:
+- ROOT CAUSE of "same modals": live tool code is vite.config.ts, NOT
+  src/server/cortex-tools.ts (dead copy, gitignored, unimported). Ported
+  full weather artifact (hourly/days/lat-lon/humidity, single artifact)
+  into vite.config.ts get_weather + emit_artifact VALID_KINDS += weather,
+  splat. Verified via curl: 1 weather artifact, 7 days, 18 hourly.
+- splat artifact kind: SplatArtifact type + sanitizer (bare filename ->
+  /splats/, /splats/* path, or https .ply/.splat/.spz/.ksplat only) +
+  emit_artifact whitelist + tool docs. SplatPreview.tsx = lean Spark
+  viewer (auto-rotate, float, camera auto-frame, low-power) lazy-loaded
+  via React.lazy/Suspense inside ArtifactRenderer. URL normalization
+  inside preview (bare names -> /splats/) — raw dispatch bypasses
+  sanitizer and relative URLs hit SPA HTML fallback ("Invalid PLY").
+  Verified live: butterfly.spz + cortex-core.ply render in artifact
+  card, GAUSSIAN SPLAT // LIVE badge, 0 errors.
+
 UNVERIFIED / OPEN:
 - Real-browser two-tab typed turn (unit-level arbiter sim only).
 - Morning briefing auto-play: handleTogglePlayBrief is manual; if an

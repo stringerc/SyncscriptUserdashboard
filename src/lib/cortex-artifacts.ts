@@ -151,6 +151,14 @@ export interface WxDayPoint {
   precip?: number | null;
 }
 
+export interface SplatArtifact extends ArtifactBase {
+  kind: 'splat';
+  title: string;
+  /** `/splats/<file>` (.ply/.splat/.spz/.ksplat) or an https asset URL. */
+  splat: string;
+  caption?: string;
+}
+
 export type CortexArtifact =
   | StatArtifact
   | ChartArtifact
@@ -159,9 +167,10 @@ export type CortexArtifact =
   | DocumentArtifact
   | MapArtifact
   | FeedArtifact
-  | WeatherArtifact;
+  | WeatherArtifact
+  | SplatArtifact;
 
-export const ARTIFACT_KINDS = ['stat', 'chart', 'table', 'image', 'document', 'map', 'feed', 'weather'] as const;
+export const ARTIFACT_KINDS = ['stat', 'chart', 'table', 'image', 'document', 'map', 'feed', 'weather', 'splat'] as const;
 
 const MAX_STRING = 4000;
 const MAX_TITLE = 200;
@@ -366,6 +375,22 @@ export function validateArtifacts(input: unknown, source = 'emit_artifact'): {
                 }).filter((dd: WxDayPoint) => dd.d),
               }
             : {}),
+        });
+        break;
+      }
+      case 'splat': {
+        const splatRaw = str(item.splat, 300);
+        if (!title && !splatRaw) { rejected++; continue; }
+        // Allow /splats/<file>, bare filenames (normalized into /splats/),
+        // or absolute https asset URLs. Everything else is rejected.
+        const safe = /^\/splats\/[a-zA-Z0-9._/-]+$/.test(splatRaw) ? splatRaw
+          : /^[a-zA-Z0-9._-]+\.(?:ply|splat|spz|ksplat)$/i.test(splatRaw) ? `/splats/${splatRaw}`
+          : /^https:\/\/[a-zA-Z0-9._~:/?#@!$&'()*+,;=%-]+\.(?:ply|splat|spz|ksplat)$/i.test(splatRaw) ? splatRaw
+          : '';
+        if (!safe) { rejected++; continue; }
+        accepted.push({
+          ...base, kind: 'splat', title: title || 'Gaussian Splat', splat: safe,
+          ...(typeof item.caption === 'string' && item.caption ? { caption: item.caption.slice(0, MAX_STRING) } : {}),
         });
         break;
       }
