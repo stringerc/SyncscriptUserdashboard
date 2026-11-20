@@ -2431,10 +2431,11 @@ function AccretionDisk({ live }: { live: React.MutableRefObject<LiveSignal> }) {
   );
 }
 
-// ── Voice Halo & Gravitational Lensing Ring ──────────────────────────────
-// The native billboard ring wrapping the Sovereign Core.
-// Breathes organically with live voice audio level, IIT-Φ Integrated Information,
-// and cognitive thinking envelope with caustic optical deflection.
+// ── Voice Halo & Gravitational Lensing Shell ─────────────────────────────
+// A spherical fresnel shell wrapping the Sovereign Core — the glow now
+// lives on the whole sphere instead of a camera-facing equator ring.
+// Breathes organically with live voice audio level, IIT-Φ Integrated
+// Information, and cognitive thinking envelope with caustic shimmer.
 
 function VoiceHalo({ live }: { live: React.MutableRefObject<LiveSignal> }) {
   const meshRef = useRef<THREE.Mesh>(null);
@@ -2444,7 +2445,7 @@ function VoiceHalo({ live }: { live: React.MutableRefObject<LiveSignal> }) {
         transparent: true,
         depthWrite: false,
         blending: THREE.AdditiveBlending,
-        side: THREE.DoubleSide,
+        side: THREE.FrontSide,
         uniforms: {
           uLevel: { value: 0 },
           uPhi: { value: 0 },
@@ -2454,10 +2455,15 @@ function VoiceHalo({ live }: { live: React.MutableRefObject<LiveSignal> }) {
           uTime: { value: 0 },
         },
         vertexShader: /* glsl */ `
-          varying vec2 vUv;
+          varying vec3 vNormal;
+          varying vec3 vViewDir;
+          varying vec3 vPos;
           void main() {
-            vUv = uv;
-            gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+            vNormal = normalize(normalMatrix * normal);
+            vec4 mv = modelViewMatrix * vec4(position, 1.0);
+            vViewDir = normalize(-mv.xyz);
+            vPos = position;
+            gl_Position = projectionMatrix * mv;
           }
         `,
         fragmentShader: /* glsl */ `
@@ -2467,16 +2473,21 @@ function VoiceHalo({ live }: { live: React.MutableRefObject<LiveSignal> }) {
           uniform float uTime;
           uniform vec3 uColor;
           uniform vec3 uColorLens;
-          varying vec2 vUv;
+          varying vec3 vNormal;
+          varying vec3 vViewDir;
+          varying vec3 vPos;
           void main() {
-            float edge = smoothstep(0.0, 0.4, vUv.y) * smoothstep(1.0, 0.6, vUv.y);
+            // Fresnel rim — brightest at the silhouette, wrapping the whole sphere.
+            float fres = pow(1.0 - abs(dot(normalize(vNormal), normalize(vViewDir))), 2.4);
+            // Faint inner sheen so the shell reads as volume, not just an edge.
+            float sheen = 0.10 + 0.90 * fres;
             float pulse = 0.75 + 0.25 * sin(uTime * 4.5);
-            // Relativistic caustic fringe & gravitational photon oscillation
-            float wave = sin(atan(vUv.y - 0.5, vUv.x - 0.5) * 6.0 + uTime * 2.4);
+            // Caustic shimmer drifting over the shell surface.
+            float wave = sin(atan(vPos.z, vPos.x) * 5.0 + asin(clamp(vPos.y, -1.0, 1.0)) * 7.0 + uTime * 2.4);
             float caustic = 0.85 + 0.15 * wave;
-            float intensity = (0.05 + uLevel * 0.5 + uPhi * 0.45 + uThink * 0.35) * edge * pulse * caustic;
+            float intensity = (0.04 + uLevel * 0.42 + uPhi * 0.38 + uThink * 0.30) * sheen * pulse * caustic;
             vec3 col = mix(uColor, uColorLens, clamp(uPhi * 0.75 + uThink * 0.4, 0.0, 1.0));
-            gl_FragColor = vec4(col * intensity * 2.2, intensity);
+            gl_FragColor = vec4(col * intensity * 2.0, intensity);
           }
         `,
       }),
@@ -2494,12 +2505,12 @@ function VoiceHalo({ live }: { live: React.MutableRefObject<LiveSignal> }) {
     material.uniforms.uColor.value.copy(sig.colorRim);
     const s = 1.18 + sig.level * 0.55 + (sig.phiS ?? 0) * 0.18 + Math.sin(material.uniforms.uTime.value * 1.8) * 0.015;
     m.scale.setScalar(s);
-    m.quaternion.copy(state.camera.quaternion); // billboard
+    m.rotation.y += delta * 0.05; // slow drift so the caustic pattern evolves
   });
 
   return (
     <mesh ref={meshRef} material={material}>
-      <ringGeometry args={[0.95, 1.03, 128]} />
+      <sphereGeometry args={[1.02, 48, 48]} />
     </mesh>
   );
 }
