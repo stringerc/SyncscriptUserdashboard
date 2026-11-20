@@ -45,6 +45,7 @@ import {
 } from './CortexVisualizer';
 import { agentsClient, type AgentClient, type ModelClient } from '../../lib/cortex-agents-client';
 import { neuroAudio } from '../../lib/cortex-neuro-audio';
+import { ZoonTracer } from './ZoonTracer';
 
 // ── Shared GLSL ──────────────────────────────────────────────────────────
 
@@ -88,7 +89,7 @@ const STATE_COLORS: Record<CortexVoiceState, { core: string; rim: string; deep: 
   working: { core: '#4a044e', rim: '#e879f9', deep: '#12041a', energy: 0.68, cCore: c('#4a044e'), cRim: c('#e879f9'), cDeep: c('#12041a') },
 };
 
-interface LiveSignal {
+export interface LiveSignal {
   state: CortexVoiceState;
   level: number;      // smoothed 0..1
   rawLevel: number;
@@ -3451,6 +3452,7 @@ function CortexCoreInner({
       <AccretionDisk live={live} />
       <NeuralWeb live={live} />
       <ThoughtSwarm live={live} />
+      <ZoonTracer live={live} count={qualityMode === 'ultra' ? 1200 : qualityMode === 'smooth' ? 2200 : 3200} />
       <KineticMotes
         live={live}
         fx={fx}
