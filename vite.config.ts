@@ -334,6 +334,21 @@ const CORTEX_TOOLS = [
   {
     type: 'function',
     function: {
+      name: 'get_weather',
+      description: 'Get real current weather conditions and forecast for a location. Use when the user asks about weather, temperature, forecast, rain, or conditions. US locations use the National Weather Service (free, no key). Omit location or pass "here"/"local" for the device\'s last reported position. Returns structured data AND visual artifacts — the panels dock automatically, so also call emit_artifact only if the user wants additional custom views.',
+      parameters: {
+        type: 'object',
+        properties: {
+          location: { type: 'string', description: 'City and state (e.g. "Austin, TX") or "here"/"local" for current position' },
+          hours: { type: 'number', description: 'Hours of hourly forecast to include (default 24, max 168)' }
+        },
+        required: []
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
       name: 'cortex_skill_discovery',
       description: 'Discover, inspect, and install skills/repos to extend capabilities',
       parameters: {
@@ -3068,6 +3083,10 @@ function apiProxyPlugin(): Plugin {
         web_search: z.object({
           query: z.string().min(1, 'query cannot be empty'),
         }).passthrough(),
+        get_weather: z.object({
+          location: z.string().optional(),
+          hours: z.number().positive().max(168).optional(),
+        }).passthrough(),
         search_code: z.object({
           query: z.string().optional(),
           pattern: z.string().optional(),
@@ -5169,6 +5188,129 @@ end tell`;
                 totalMatches: 1,
                 durationMs: Date.now() - startMs,
               }));
+            }
+
+            // 9b2. get_weather — NWS (api.weather.gov, no key) for US locations.
+            // Returns real forecast data plus emit_artifact-shaped artifacts so
+            // the response auto-docks stat/chart/table panels on the HUD.
+            if (tool === 'get_weather') {
+              const locationArg = String(args?.location || '').trim();
+              const hoursWanted = Math.min(Math.max(Number(args?.hours) || 24, 1), 168);
+              res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+              const nwsHeaders = { 'User-Agent': 'cortex-visualizer (personal weather tool)', 'Accept': 'application/geo+json' };
+              try {
+                // Resolve coordinates: explicit "here"/empty → watch-zones file;
+                // "lat,lon" pair → direct; otherwise geocode via Nominatim.
+                let lat: number | null = null, lon: number | null = null, placeName = '';
+                const hereWords = /^(here|local|my location|current location|where i am)?$/i;
+                if (!locationArg || hereWords.test(locationArg)) {
+                  try {
+                    const wz = JSON.parse(fsSync.readFileSync(path.join(process.cwd(), '.cortex-runtime', 'watch-zones.json'), 'utf8'));
+                    if (Number.isFinite(wz?.lat) && Number.isFinite(wz?.lon)) { lat = wz.lat; lon = wz.lon; }
+                  } catch { }
+                }
+                const coordMatch = locationArg.match(/^\s*(-?\d{1,2}\.\d+)\s*,\s*(-?\d{1,3}\.\d+)\s*$/);
+                if (coordMatch) { lat = parseFloat(coordMatch[1]); lon = parseFloat(coordMatch[2]); }
+                if (lat === null || lon === null) {
+                  const q = locationArg && !hereWords.test(locationArg) ? locationArg : '';
+                  if (!q) throw new Error('No location given and no device position on file — pass a city like "Austin, TX".');
+                  const geoRes = await fetch(`https://nominatim.openstreetmap.org/search?format=json&limit=1&countrycodes=us&q=${encodeURIComponent(q)}`, {
+                    headers: { 'User-Agent': 'cortex-visualizer (personal weather tool)' },
+                    signal: AbortSignal.timeout(10000),
+                  });
+                  if (!geoRes.ok) throw new Error(`geocode HTTP ${geoRes.status}`);
+                  const geoArr: any[] = await geoRes.json();
+                  if (!geoArr.length) throw new Error(`Could not find "${q}" — try "City, ST".`);
+                  lat = parseFloat(geoArr[0].lat); lon = parseFloat(geoArr[0].lon);
+                  placeName = String(geoArr[0].display_name || q).split(',').slice(0, 2).join(',');
+                }
+
+                const ptRes = await fetch(`https://api.weather.gov/points/${lat.toFixed(4)},${lon.toFixed(4)}`, {
+                  headers: nwsHeaders, signal: AbortSignal.timeout(10000),
+                });
+                if (!ptRes.ok) throw new Error(`NWS points HTTP ${ptRes.status} — weather coverage is US-only.`);
+                const ptData: any = await ptRes.json();
+                const pp = ptData?.properties || {};
+                const rel = pp.relativeLocation?.properties || {};
+                const city = placeName || [rel.city, rel.state].filter(Boolean).join(', ') || 'Current location';
+                const forecastUrl = pp.forecast; const hourlyUrl = pp.forecastHourly;
+                if (!forecastUrl) throw new Error('NWS returned no forecast endpoint for this point.');
+
+                const [fcRes, hrRes] = await Promise.all([
+                  fetch(forecastUrl, { headers: nwsHeaders, signal: AbortSignal.timeout(10000) }),
+                  hourlyUrl ? fetch(hourlyUrl, { headers: nwsHeaders, signal: AbortSignal.timeout(10000) }).catch(() => null) : Promise.resolve(null),
+                ]);
+                if (!fcRes.ok) throw new Error(`NWS forecast HTTP ${fcRes.status}`);
+                const fcData: any = await fcRes.json();
+                const periods: any[] = (fcData?.properties?.periods || []).slice(0, 14);
+                const hourly: any[] = hrRes && hrRes.ok ? ((await hrRes.json())?.properties?.periods || []) : [];
+
+                // Compact shapes for the model + artifact builders.
+                const dayPeriods = periods.filter((p) => p.isDaytime !== false).slice(0, 7);
+                const conditions = periods[0] || null;
+                const tempF = conditions?.temperature != null
+                  ? `${conditions.temperature}°${conditions.temperatureUnit || 'F'}` : null;
+                const wind = conditions ? `${conditions.windSpeed || ''} ${conditions.windDirection || ''}`.trim() : '';
+
+                // Hourly temps for the chart — next `hoursWanted` hours.
+                const hourPoints = hourly.slice(0, hoursWanted).map((hp: any) => {
+                  const d = new Date(hp.startTime);
+                  return { x: d.toLocaleTimeString('en-US', { hour: 'numeric' }), y: Number(hp.temperature) };
+                }).filter((p: any) => Number.isFinite(p.y));
+
+                const artifacts: any[] = [];
+                if (tempF) {
+                  artifacts.push({
+                    kind: 'stat', id: `wx-now-${Date.now()}`,
+                    title: `Now — ${city}`, value: tempF,
+                    unit: conditions?.shortForecast || undefined,
+                    delta: wind ? `Wind ${wind}` : undefined,
+                  });
+                }
+                if (hourPoints.length >= 2) {
+                  artifacts.push({
+                    kind: 'chart', id: `wx-chart-${Date.now()}`,
+                    title: `Temperature — next ${hourPoints.length}h`, chartType: 'line',
+                    series: [{ name: 'Temp (°F)', points: hourPoints }],
+                    xLabel: 'Hour', yLabel: '°F',
+                  });
+                }
+                if (dayPeriods.length) {
+                  artifacts.push({
+                    kind: 'table', id: `wx-table-${Date.now()}`,
+                    title: `Forecast — ${city}`,
+                    columns: ['Period', 'High/Low', 'Conditions', 'Wind'],
+                    rows: dayPeriods.map((p) => [
+                      p.name, `${p.temperature}°${p.temperatureUnit || 'F'}`,
+                      String(p.shortForecast || '').slice(0, 60),
+                      `${p.windSpeed || ''} ${p.windDirection || ''}`.trim(),
+                    ]),
+                  });
+                }
+
+                const wxSummary = [
+                  `${city}: ${tempF || 'conditions unavailable'}${conditions?.shortForecast ? `, ${conditions.shortForecast}` : ''}${wind ? `, wind ${wind}` : ''}.`,
+                  dayPeriods.length ? `Next: ${dayPeriods.slice(0, 3).map((p) => `${p.name} ${p.temperature}°${p.temperatureUnit || 'F'} ${String(p.shortForecast || '').split(' ').slice(0, 3).join(' ')}`).join('; ')}.` : '',
+                ].filter(Boolean).join(' ');
+                return res.end(JSON.stringify({
+                  ok: true, tool: 'get_weather', message: wxSummary,
+                  location: { name: city, lat, lon },
+                  current: conditions ? {
+                    temperature: tempF, conditions: conditions.shortForecast,
+                    wind: wind || null, humidity: conditions.relativeHumidity?.value != null ? `${conditions.relativeHumidity.value}%` : null,
+                  } : null,
+                  forecast: periods.map((p) => ({
+                    name: p.name, temp: `${p.temperature}°${p.temperatureUnit || 'F'}`,
+                    conditions: p.shortForecast, wind: `${p.windSpeed || ''} ${p.windDirection || ''}`.trim(),
+                  })),
+                  hourlyCount: hourly.length,
+                  source: 'api.weather.gov',
+                  artifacts,
+                  durationMs: Date.now() - startMs,
+                }));
+              } catch (wxErr: any) {
+                return res.end(JSON.stringify({ ok: false, tool: 'get_weather', error: String(wxErr?.message || wxErr) }));
+              }
             }
 
             // 9c. cortex_skill_discovery
@@ -8917,6 +9059,37 @@ function triggerQuickAction() {
                   method: 'POST', body: cfd, signal: AbortSignal.timeout(cpTimeout),
                 });
                 if (cpRes.ok) {
+                  const upstreamType = cpRes.headers.get('content-type') || '';
+                  // pocket-tts streams a WAV as it generates (TTFB ~150ms).
+                  // Pipe it through chunked instead of buffering the whole
+                  // utterance — this is the difference between ~0.5s and ~5s
+                  // to first audio. Bytes are tee'd into the TTS cache so
+                  // repeat phrases still hit.
+                  if (upstreamType.includes('audio') && cpRes.body) {
+                    res.writeHead(200, {
+                      'Content-Type': upstreamType || 'audio/wav',
+                      'Cache-Control': 'no-store',
+                      'X-TTS-Cache': 'miss',
+                      'X-TTS-Engine': 'pocket-clone',
+                      'X-TTS-Voice': voice || 'cortana',
+                    });
+                    const teeChunks: Buffer[] = [];
+                    try {
+                      for await (const chunk of cpRes.body as any) {
+                        const b = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+                        teeChunks.push(b);
+                        res.write(b);
+                      }
+                      res.end();
+                      const full = Buffer.concat(teeChunks);
+                      if (full.length > 200 && full.slice(0, 4).toString('ascii') === 'RIFF') {
+                        ttsCacheSet(cpCacheKey, full);
+                      }
+                    } catch {
+                      try { res.end(); } catch { }
+                    }
+                    return;
+                  }
                   const buf = Buffer.from(await cpRes.arrayBuffer());
                   if (buf.length > 200 && buf.slice(0, 4).toString('ascii') === 'RIFF') {
                     ttsCacheSet(cpCacheKey, buf);

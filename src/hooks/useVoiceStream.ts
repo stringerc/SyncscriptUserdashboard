@@ -20,6 +20,7 @@ import { NEXUS_LANDING_KOKORO_VOICE_ID } from '../utils/nexus-tts-prosody';
 import { playNexusLandingKokoroTTS } from '../utils/nexus-kokoro-landing-playback';
 import { ensureKokoroOriginsLoaded, getKokoroDirectBases, fetchKokoroBufferForNexusSegment } from '../utils/nexus-kokoro-tts-fetch';
 import { sentenceToNexusProsodySegment } from '../utils/nexus-tts-prosody';
+import { PcmQueue, pumpWavToPcm } from '../utils/wav-pcm-stream';
 import { reportTtsRum } from '../utils/tts-rum-beacon';
 import { stepVuEnvelope } from '../utils/audio-vu-envelope';
 import { voiceLatencyMark, voiceLatencyMeasure } from '../utils/voice-latency-debug';
@@ -245,6 +246,10 @@ export function useVoiceStream(options: UseVoiceStreamOptions = {}) {
      *  so a long reply can't burst N concurrent synthesis requests. */
     startFetch: () => Promise<Blob | null>;
     fetchPromise?: Promise<Blob | null>;
+    /** Streaming path — pocket-tts emits WAV PCM progressively, so audio can
+     *  be scheduled the moment the first frames arrive instead of after the
+     *  whole utterance synthesizes. Null when the proxy can't stream. */
+    streamPromise?: Promise<PcmQueue | null>;
     queuedAt: number;
     voice?: string;
     speed?: number;
@@ -1217,14 +1222,13 @@ export function useVoiceStream(options: UseVoiceStreamOptions = {}) {
     onStatusChangeRef.current?.('idle');
   }, []);
 
-  /** Decode + schedule one blob gaplessly. Resolves after scheduling (not
-   *  after playback) so the drain loop can run ahead — true gapless. */
-  const scheduleStreamBlob = useCallback(async (blob: Blob): Promise<boolean> => {
+  /** Shared gapless AudioContext + analyser for stream/blob scheduling. */
+  const ensureGaplessGraph = useCallback(async (): Promise<{ ctx: AudioContext; analyser: AnalyserNode } | null> => {
     try {
       const AC =
         window.AudioContext ||
         (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
-      if (!AC) return false;
+      if (!AC) return null;
       let ctx = gaplessCtxRef.current;
       if (!ctx || ctx.state === 'closed') {
         ctx = new AC();
@@ -1234,7 +1238,7 @@ export function useVoiceStream(options: UseVoiceStreamOptions = {}) {
       // Suspended/interrupted contexts never advance currentTime — scheduled
       // sources would never fire onended and isSpeaking would stick true
       // forever, deadlocking the whole turn queue. Fall back to <audio>.
-      if (ctx.state !== 'running') return false;
+      if (ctx.state !== 'running') return null;
 
       let analyser = gaplessAnalyserRef.current;
       if (!analyser || analyser.context !== ctx) {
@@ -1245,6 +1249,19 @@ export function useVoiceStream(options: UseVoiceStreamOptions = {}) {
         gaplessAnalyserRef.current = analyser;
       }
       startGaplessVu(ctx, analyser);
+      return { ctx, analyser };
+    } catch {
+      return null;
+    }
+  }, [startGaplessVu]);
+
+  /** Decode + schedule one blob gaplessly. Resolves after scheduling (not
+   *  after playback) so the drain loop can run ahead — true gapless. */
+  const scheduleStreamBlob = useCallback(async (blob: Blob): Promise<boolean> => {
+    try {
+      const graph = await ensureGaplessGraph();
+      if (!graph) return false;
+      const { ctx, analyser } = graph;
 
       const audioBuf = await ctx.decodeAudioData(await blob.arrayBuffer());
       if (!audioBuf.duration) return false;
@@ -1267,7 +1284,79 @@ export function useVoiceStream(options: UseVoiceStreamOptions = {}) {
     } catch {
       return false;
     }
-  }, [finalizeStreamSpeech, startGaplessVu]);
+  }, [finalizeStreamSpeech, ensureGaplessGraph]);
+
+  /** Open the proxy TTS stream for one sentence. Resolves to a PcmQueue fed
+   *  by the WAV pump, or null when the proxy can't stream (caller falls back
+   *  to the buffered blob path). The pump holds a prefetch slot until the
+   *  stream ends so concurrent synthesis stays capped. */
+  const startStreamFetch = useCallback((item: StreamSentenceItem): Promise<PcmQueue | null> => {
+    if (item.streamPromise) return item.streamPromise;
+    item.streamPromise = (async () => {
+      streamFetchesActiveRef.current += 1;
+      let released = false;
+      const release = () => {
+        if (released) return;
+        released = true;
+        streamFetchesActiveRef.current = Math.max(0, streamFetchesActiveRef.current - 1);
+      };
+      try {
+        const res = await fetch('/api/ai/tts', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ text: item.text, voice: item.voice || 'cortana', speed: item.speed || 1.0 }),
+          signal: streamTtsAbortRef.current?.signal,
+        });
+        const ct = res.headers.get('content-type') || '';
+        if (!res.ok || !res.body || !ct.includes('audio')) {
+          release();
+          return null;
+        }
+        const queue = new PcmQueue();
+        void pumpWavToPcm(res.body, queue, streamTtsAbortRef.current?.signal)
+          .catch(() => queue.fail(new Error('pcm pump failed')))
+          .finally(release);
+        return queue;
+      } catch {
+        release();
+        return null;
+      }
+    })();
+    return item.streamPromise;
+  }, []);
+
+  /** Consume a PcmQueue: each arriving Float32 chunk becomes an AudioBuffer
+   *  scheduled on the shared gapless timeline. Resolves true once at least
+   *  one buffer was scheduled — first audio lands ~300ms into synthesis. */
+  const schedulePcmQueue = useCallback(async (queue: PcmQueue, epoch: number): Promise<boolean> => {
+    const graph = await ensureGaplessGraph();
+    if (!graph) return false;
+    const { ctx, analyser } = graph;
+    let scheduled = 0;
+    try {
+      for await (const chunk of queue.iterate()) {
+        if (streamEpochRef.current !== epoch) return scheduled > 0;
+        const audioBuf = ctx.createBuffer(1, chunk.samples.length, chunk.sampleRate);
+        audioBuf.getChannelData(0).set(chunk.samples);
+        const src = ctx.createBufferSource();
+        src.buffer = audioBuf;
+        src.connect(analyser);
+        const when = Math.max(ctx.currentTime + 0.03, gaplessNextStartRef.current);
+        src.start(when);
+        gaplessNextStartRef.current = when + Math.max(0.02, audioBuf.duration - 0.072);
+        gaplessSourcesRef.current.add(src);
+        src.onended = () => {
+          gaplessSourcesRef.current.delete(src);
+          if (gaplessSourcesRef.current.size === 0) setTtsOutputLevel(0);
+          finalizeStreamSpeech();
+        };
+        scheduled += 1;
+      }
+      return scheduled > 0;
+    } catch {
+      return scheduled > 0;
+    }
+  }, [ensureGaplessGraph, finalizeStreamSpeech]);
 
   /** Start synthesis for queued sentences while fewer than
    *  TTS_PREFETCH_AHEAD requests are in flight — keeps audio buffered
@@ -1275,10 +1364,17 @@ export function useVoiceStream(options: UseVoiceStreamOptions = {}) {
   const prefetchStreamTts = useCallback(() => {
     for (const item of streamSentenceQueueRef.current) {
       if (streamFetchesActiveRef.current >= TTS_PREFETCH_AHEAD) break;
-      if (item.fetchPromise) continue;
-      item.fetchPromise = item.startFetch();
+      if (item.fetchPromise || item.streamPromise) continue;
+      // Prefer the streaming path — the WAV pump buffers PCM client-side so
+      // playback starts on the first frames, not the full utterance. On
+      // stream-open failure the item lazily falls back to blob prefetch.
+      void startStreamFetch(item).then((queue) => {
+        if (!queue && !item.fetchPromise) {
+          item.fetchPromise = item.startFetch();
+        }
+      });
     }
-  }, []);
+  }, [startStreamFetch]);
 
   const drainStreamQueue = useCallback(async () => {
     if (isDrainingStreamRef.current) return;
@@ -1290,6 +1386,22 @@ export function useVoiceStream(options: UseVoiceStreamOptions = {}) {
       const item = streamSentenceQueueRef.current.shift()!;
       activeSpokenTextRef.current = item.text;
       prefetchStreamTts();
+
+      // Streaming path: the proxy pipes pocket-tts's chunked WAV straight
+      // through, so PCM frames schedule on the gapless timeline as they are
+      // generated — first audio ~300ms into synthesis, not after it.
+      if (!item.streamPromise && !item.fetchPromise) {
+        void startStreamFetch(item);
+      }
+      const streamQueue = item.streamPromise
+        ? await item.streamPromise.catch(() => null)
+        : null;
+      let streamed = false;
+      if (streamQueue) {
+        streamed = await schedulePcmQueue(streamQueue, currentEpoch);
+      }
+      if (streamed) continue;
+      if (streamEpochRef.current !== currentEpoch) break;
 
       let blob: Blob | null = null;
       try {
@@ -1326,7 +1438,7 @@ export function useVoiceStream(options: UseVoiceStreamOptions = {}) {
 
     isDrainingStreamRef.current = false;
     finalizeStreamSpeech();
-  }, [playAudioBlob, scheduleStreamBlob, speakBrowserFallback, finalizeStreamSpeech, prefetchStreamTts]);
+  }, [playAudioBlob, scheduleStreamBlob, schedulePcmQueue, speakBrowserFallback, finalizeStreamSpeech, prefetchStreamTts, startStreamFetch]);
 
   /** Progressive streaming sentence playback: queues sentence chunks and starts playing in sub-600ms */
   const speakStreamSentence = useCallback((sentence: string, isFinal = false, config?: { voice?: string; speed?: number; skipCartesia?: boolean }) => {
