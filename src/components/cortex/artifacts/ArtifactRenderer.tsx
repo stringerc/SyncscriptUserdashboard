@@ -4,7 +4,7 @@
  * Phase-2 surface layer. Design language: 1px hairline borders, corner ticks,
  * 9px mono uppercase labels, state-color accents, spring entrance.
  */
-import React, { Suspense, lazy, useEffect, useRef, useState } from 'react';
+import React, { Suspense, lazy, useEffect, useId, useRef, useState } from 'react';
 import { motion } from 'motion/react';
 import {
   LineChart, Line, BarChart, Bar, AreaChart, Area, PieChart, Pie, Cell,
@@ -12,7 +12,7 @@ import {
 } from 'recharts';
 import { ExternalLink, Pin, X } from 'lucide-react';
 import { C } from '../cortex-demo-helpers';
-import type { CortexArtifact, ChartArtifact, TableArtifact, ImageArtifact, DocumentArtifact, FeedArtifact, StatArtifact, WeatherArtifact, WxHourPoint, WxDayPoint, SplatArtifact } from '../../../lib/cortex-artifacts';
+import type { CortexArtifact, ChartArtifact, TableArtifact, ImageArtifact, DocumentArtifact, FeedArtifact, StatArtifact, WeatherArtifact, WxHourPoint, WxDayPoint, SplatArtifact, DashboardArtifact } from '../../../lib/cortex-artifacts';
 
 // SplatPreview pulls in three + @sparkjsdev/spark — keep it out of the
 // artifact chunk and mount it only when a splat card actually renders.
@@ -486,6 +486,7 @@ function StatBody({ a }: { a: StatArtifact }) {
 }
 
 function ChartBody({ a }: { a: ChartArtifact }) {
+  const gid = useId().replace(/:/g, '');
   // Merge all series into one row set keyed by x.
   const merged = new Map<string | number, Record<string, any>>();
   for (const s of a.series) {
@@ -498,9 +499,25 @@ function ChartBody({ a }: { a: ChartArtifact }) {
   }
   const rows = Array.from(merged.values()).slice(0, 200);
   const tooltipStyle = {
-    background: 'rgba(4,8,14,0.92)', border: `1px solid ${C.borderBright}`, borderRadius: 4,
+    background: 'rgba(6,12,22,0.88)', border: `1px solid ${C.borderBright}`, borderRadius: 6,
     fontSize: 10, fontFamily: MONO, color: C.text,
+    boxShadow: '0 8px 24px rgba(0,0,0,0.45), inset 0 1px 0 rgba(200,230,255,0.08)',
+    backdropFilter: 'blur(8px)',
   } as const;
+  // Vertical gradient defs for area fills — color → transparent, per series.
+  const areaDefs = a.chartType === 'area' ? (
+    <defs>
+      {a.series.map((s, i) => {
+        const col = CHART_COLORS[i % CHART_COLORS.length];
+        return (
+          <linearGradient key={i} id={`agd-${gid}-${i}`} x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor={col} stopOpacity={0.38} />
+            <stop offset="100%" stopColor={col} stopOpacity={0.02} />
+          </linearGradient>
+        );
+      })}
+    </defs>
+  ) : null;
 
   if (a.chartType === 'pie') {
     const pieData = a.series[0]?.points.map((p, i) => ({ name: String(p.x), value: p.y, fill: CHART_COLORS[i % CHART_COLORS.length] })) ?? [];
@@ -534,12 +551,18 @@ function ChartBody({ a }: { a: ChartArtifact }) {
             {a.series.map((s, i) => <Bar key={i} dataKey={s.name || `s${i}`} fill={CHART_COLORS[i % CHART_COLORS.length]} radius={[2, 2, 0, 0]} maxBarSize={22} />)}
           </BarChart>
         ) : a.chartType === 'area' ? (
-          <AreaChart data={rows}>{common}
-            {a.series.map((s, i) => <Area key={i} type="monotone" dataKey={s.name || `s${i}`} stroke={CHART_COLORS[i % CHART_COLORS.length]} fill={CHART_COLORS[i % CHART_COLORS.length]} fillOpacity={0.12} strokeWidth={1.5} />)}
+          <AreaChart data={rows}>{areaDefs}{common}
+            {a.series.map((s, i) => {
+              const col = CHART_COLORS[i % CHART_COLORS.length];
+              return <Area key={i} type="monotone" dataKey={s.name || `s${i}`} stroke={col} fill={`url(#agd-${gid}-${i})`} strokeWidth={1.8} activeDot={{ r: 3, fill: col, stroke: 'rgba(255,255,255,0.7)', strokeWidth: 1 }} />;
+            })}
           </AreaChart>
         ) : (
           <LineChart data={rows}>{common}
-            {a.series.map((s, i) => <Line key={i} type="monotone" dataKey={s.name || `s${i}`} stroke={CHART_COLORS[i % CHART_COLORS.length]} strokeWidth={1.6} dot={false} />)}
+            {a.series.map((s, i) => {
+              const col = CHART_COLORS[i % CHART_COLORS.length];
+              return <Line key={i} type="monotone" dataKey={s.name || `s${i}`} stroke={col} strokeWidth={1.8} dot={false} activeDot={{ r: 3, fill: col, stroke: 'rgba(255,255,255,0.7)', strokeWidth: 1 }} />;
+            })}
           </LineChart>
         )}
       </ResponsiveContainer>
@@ -1909,6 +1932,51 @@ function SplatBody({ a }: { a: SplatArtifact }) {
   );
 }
 
+// ── DashboardBody — composite mission-control grid ───────────────────────
+// One modal, many tiles. Splat tiles span the full row (Spark needs room);
+// everything else packs into an auto-fit frosted grid.
+function DashboardTile({ a }: { a: CortexArtifact }) {
+  switch (a.kind) {
+    case 'stat': return <StatBody a={a} />;
+    case 'chart': return <ChartBody a={a} />;
+    case 'feed': return <FeedBody a={a} />;
+    case 'image': return <ImageBody a={a} />;
+    case 'splat': return <SplatBody a={a} />;
+    default: return null;
+  }
+}
+
+function DashboardBody({ a }: { a: DashboardArtifact }) {
+  return (
+    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(190px, 1fr))', gap: 10 }}>
+      {a.tiles.map((t, i) => {
+        const wide = t.kind === 'splat' || t.kind === 'image';
+        return (
+          <div key={t.id || i} style={{
+            gridColumn: wide ? '1 / -1' : undefined,
+            padding: '10px 12px', borderRadius: 10,
+            background: 'linear-gradient(160deg, rgba(148,210,255,0.07), rgba(120,170,255,0.03))',
+            border: '1px solid rgba(148,210,255,0.14)',
+            backdropFilter: 'blur(10px) saturate(1.3)',
+            WebkitBackdropFilter: 'blur(10px) saturate(1.3)',
+            boxShadow: 'inset 0 1px 0 rgba(220,240,255,0.08), 0 6px 18px rgba(10,20,40,0.18)',
+          }}>
+            <div style={{
+              fontFamily: MONO, fontSize: 8.5, letterSpacing: '0.22em',
+              textTransform: 'uppercase', color: C.dim, marginBottom: 8,
+              display: 'flex', alignItems: 'center', gap: 6,
+            }}>
+              <span style={{ width: 14, height: 1, background: C.borderBright, display: 'inline-block' }} />
+              {t.title}
+            </div>
+            <DashboardTile a={t} />
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 export function ArtifactRenderer({
   artifact, onExpand, onPin, onClose, onOpenGlobe, compact, fitHeight, fitSize, bare,
 }: {
@@ -1959,6 +2027,7 @@ export function ArtifactRenderer({
     case 'map': return shell(artifact.title, <MapBody a={artifact} onOpenGlobe={onOpenGlobe ? () => onOpenGlobe(artifact) : undefined} />);
     case 'weather': return shell(artifact.title, <WeatherBody a={artifact} />);
     case 'splat': return shell(artifact.title, <SplatBody a={artifact} />);
+    case 'dashboard': return shell(artifact.title, <DashboardBody a={artifact} />);
     default: return null;
   }
 }

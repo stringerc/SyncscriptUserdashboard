@@ -159,6 +159,16 @@ export interface SplatArtifact extends ArtifactBase {
   caption?: string;
 }
 
+/** Composite mission-control surface — one modal containing a grid of
+ *  light artifact tiles (stat/chart/feed/image/splat). This is how Cortex
+ *  ships "a dashboard" instead of three separate panels. */
+export interface DashboardArtifact extends ArtifactBase {
+  kind: 'dashboard';
+  title: string;
+  /** Up to 6 tiles; heavy kinds (weather/document/map/table) are filtered out. */
+  tiles: CortexArtifact[];
+}
+
 export type CortexArtifact =
   | StatArtifact
   | ChartArtifact
@@ -168,9 +178,13 @@ export type CortexArtifact =
   | MapArtifact
   | FeedArtifact
   | WeatherArtifact
-  | SplatArtifact;
+  | SplatArtifact
+  | DashboardArtifact;
 
-export const ARTIFACT_KINDS = ['stat', 'chart', 'table', 'image', 'document', 'map', 'feed', 'weather', 'splat'] as const;
+export const ARTIFACT_KINDS = ['stat', 'chart', 'table', 'image', 'document', 'map', 'feed', 'weather', 'splat', 'dashboard'] as const;
+
+/** Tile kinds allowed inside a dashboard — light renderers only. */
+export const DASHBOARD_TILE_KINDS = new Set(['stat', 'chart', 'feed', 'image', 'splat']);
 
 const MAX_STRING = 4000;
 const MAX_TITLE = 200;
@@ -223,7 +237,7 @@ function sanitizeChartSeries(v: unknown): ChartSeries[] {
  * artifacts (schema-complete, capped at MAX_ARTIFACTS_PER_MESSAGE) and a
  * rejected count. Never throws.
  */
-export function validateArtifacts(input: unknown, source = 'emit_artifact'): {
+export function validateArtifacts(input: unknown, source = 'emit_artifact', max = MAX_ARTIFACTS_PER_MESSAGE): {
   accepted: CortexArtifact[];
   rejected: number;
 } {
@@ -232,7 +246,7 @@ export function validateArtifacts(input: unknown, source = 'emit_artifact'): {
   if (!Array.isArray(input)) return { accepted, rejected: input == null ? 0 : 1 };
 
   for (const item of input) {
-    if (accepted.length >= MAX_ARTIFACTS_PER_MESSAGE) { rejected++; continue; }
+    if (accepted.length >= max) { rejected++; continue; }
     if (!isObj(item)) { rejected++; continue; }
     const kind = item.kind;
     if (typeof kind !== 'string' || !(ARTIFACT_KINDS as readonly string[]).includes(kind)) {
@@ -392,6 +406,17 @@ export function validateArtifacts(input: unknown, source = 'emit_artifact'): {
           ...base, kind: 'splat', title: title || 'Gaussian Splat', splat: safe,
           ...(typeof item.caption === 'string' && item.caption ? { caption: item.caption.slice(0, MAX_STRING) } : {}),
         });
+        break;
+      }
+      case 'dashboard': {
+        if (!title) { rejected++; continue; }
+        // Tiles are recursively sanitized through the same validator, then
+        // filtered to light kinds — nested dashboards and heavy bodies
+        // (weather/document/map/table) never reach the grid.
+        const sub = validateArtifacts(item.tiles, source, 6);
+        const tiles = sub.accepted.filter((t) => DASHBOARD_TILE_KINDS.has(t.kind)).slice(0, 6);
+        if (!tiles.length) { rejected++; continue; }
+        accepted.push({ ...base, kind: 'dashboard', title, tiles });
         break;
       }
     }

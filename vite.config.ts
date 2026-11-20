@@ -16,6 +16,7 @@ import { execSync, execFile, spawn } from 'child_process';
 import { timingSafeEqual } from 'crypto';
 import { cortexObsidianMemory } from './src/lib/cortex-obsidian-memory';
 import { generateSplat } from './src/lib/cortex-splat-gen';
+import { validateArtifacts } from './src/lib/cortex-artifacts';
 import { recordForecastOutcome, loadCalibration } from './src/lib/cortex-agents/forecaster';
 import { getAutonomousVigilance } from './src/lib/cortex-autonomous-vigilance';
 import { deriveSomaticState, type SomaticSample } from './src/lib/cortex-somatic';
@@ -652,7 +653,7 @@ const CORTEX_TOOLS = [
     type: 'function',
     function: {
       name: 'emit_artifact',
-      description: 'Emit structured visual artifacts that render as rich cards in the Cortex UI. Use when the user asks to see data, charts, tables, documents, maps, splat scenes, or status panels. Artifact kinds: stat {kind,title,value,unit?,delta?,spark?}, chart {kind,title,chartType:line|bar|area|pie,series:[{name,points:[{x,y}]}],xLabel?,yLabel?}, table {kind,title,columns:[],rows:[]}, image {kind,title,url}, document {kind,title,format:markdown|code,content,lang?}, map {kind,title,summary?}, feed {kind,title,items:[{label,value,tone?}]}, splat {kind,title,splat:"<file>.spz|.ply|.ksplat",caption?} — splat renders a live 3D Gaussian-splat scene (assets in /splats). Max 3 per call. Only emit artifacts backed by real data or an explicit user request.',
+      description: 'Emit structured visual artifacts that render as rich cards in the Cortex UI. Use when the user asks to see data, charts, tables, documents, maps, splat scenes, or status panels. Artifact kinds: stat {kind,title,value,unit?,delta?,spark?}, chart {kind,title,chartType:line|bar|area|pie,series:[{name,points:[{x,y}]}],xLabel?,yLabel?}, table {kind,title,columns:[],rows:[]}, image {kind,title,url}, document {kind,title,format:markdown|code,content,lang?}, map {kind,title,summary?}, feed {kind,title,items:[{label,value,tone?}]}, splat {kind,title,splat:"<file>.spz|.ply|.ksplat",caption?} — splat renders a live 3D Gaussian-splat scene (assets in /splats). dashboard {kind,title,tiles:[<artifacts>]} — composite mission-control grid; tiles may be stat|chart|feed|image|splat (up to 6, splat/image tiles span full width). Max 3 per call. Only emit artifacts backed by real data or an explicit user request.',
       parameters: {
         type: 'object',
         properties: {
@@ -8575,14 +8576,14 @@ function triggerQuickAction() {
                 rawArtifacts = (rawArtifacts as any).artifacts || [rawArtifacts];
               }
               const raw = Array.isArray(rawArtifacts) ? rawArtifacts : [];
-              const VALID_KINDS = new Set(['stat', 'chart', 'table', 'image', 'document', 'map', 'feed', 'weather', 'splat']);
-              const artifacts = raw
-                .filter((a: any) => a && typeof a === 'object' && VALID_KINDS.has(a.kind))
-                .slice(0, 3)
-                .map((a: any) => ({ ...a, source: 'emit_artifact' }));
+              // Full schema validation — kind whitelist AND per-kind field
+              // sanitization (splat URL allowlist, dashboard tile recursion,
+              // numeric clamps). The old shallow kind-check let unsafe or
+              // malformed artifacts through to the renderer.
+              const { accepted: artifacts, rejected } = validateArtifacts(raw, 'emit_artifact');
               return res.end(JSON.stringify({
                 ok: true, tool: 'emit_artifact',
-                accepted: artifacts.length, rejected: raw.length - artifacts.length,
+                accepted: artifacts.length, rejected,
                 artifacts,
                 message: artifacts.length
                   ? `Emitted ${artifacts.length} artifact(s) — they will render as cards in the UI.`
