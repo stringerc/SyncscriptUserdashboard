@@ -14,6 +14,7 @@ import {
   MEMORY_DOMAIN_COLORS,
   MEMORY_DOMAIN_NAMES,
 } from './CortexCoreScene';
+import { CortexCoreSceneV2 } from './CortexCoreSceneV2';
 import { useVisualizerVoice } from './useVisualizerVoice';
 import { startInitiativeSensor } from '../../lib/cortex-initiative-sensor';
 import { CortexChatDrawer } from './CortexChatDrawer';
@@ -327,6 +328,9 @@ export default function CortexVisualizerPage() {
     }
     return 'cinematic';
   });
+  // ?scene=v2 mounts the clean-slate hero core (no equatorial geometry).
+  const [coreV2] = useState(() =>
+    typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('scene') === 'v2');
   const [initiativeCount, setInitiativeCount] = useState(0);
   const initiativeAutoOpenedRef = useRef(false);
   useEffect(() => {
@@ -1073,6 +1077,15 @@ export default function CortexVisualizerPage() {
         </>
       ) : faceMode === 'core' ? (
         <div key="face-core" className="cx-face-transition" style={{ position: 'absolute', inset: 0, zIndex: 4 }}>
+          {coreV2 ? (
+            <CortexCoreSceneV2
+              selectedAgentId={selectedAgentId}
+              onSelectAgent={setSelectedAgentId}
+              selectedMemoryId={selectedMemoryId}
+              onSelectMemory={setSelectedMemoryId}
+              headParallax={headParallax}
+            />
+          ) : (
           <CortexCoreScene
             selectedAgentId={selectedAgentId}
             onSelectAgent={setSelectedAgentId}
@@ -1085,6 +1098,7 @@ export default function CortexVisualizerPage() {
             perfMode={coreQuality}
             onTogglePerfMode={setCoreQuality}
           />
+          )}
           {chronoActive && chronoNowUi && (
             <div style={{
               position: 'absolute', bottom: 14, left: '50%', transform: 'translateX(-50%)',
