@@ -62,10 +62,16 @@ const HOT = c('#f0f9ff');
 
 // ── Hero core ────────────────────────────────────────────────────────────
 
+// ?v2disp=0 flattens vertex displacement — bisection for the equator hunt
+const V2_DISP = typeof window !== 'undefined'
+  ? +(new URLSearchParams(window.location.search).get('v2disp') ?? '1')
+  : 1;
+
 const coreVert = /* glsl */ `
   uniform float uTime;
   uniform float uLevel;
   uniform float uEnergy;
+  uniform float uDisp;
   varying vec3 vNormal;
   varying vec3 vView;
   varying vec3 vWorld;
@@ -81,7 +87,7 @@ const coreVert = /* glsl */ `
     );
     float ridge = 1.0 - abs(2.0 * fbm(n * 3.1 + q * 0.9 + vec3(t * 0.35)) - 1.0);
     float detail = vnoise(n * 7.0 + vec3(t, -t * 0.7, t * 0.4));
-    float amp = (0.09 + uEnergy * 0.38 + uLevel * 0.7) * (0.75 + 0.25 * sin(uTime * 4.2));
+    float amp = (0.09 + uEnergy * 0.38 + uLevel * 0.7) * (0.75 + 0.25 * sin(uTime * 4.2)) * uDisp;
     float d = (ridge - 0.45) * 0.7 + (detail - 0.5) * 0.22;
     vDisp = clamp(d * amp, -0.45, 0.45);
     vec3 displaced = position + n * vDisp;
@@ -145,6 +151,7 @@ function HeroCore({ live }: { live: React.MutableRefObject<LiveSignalV2> }) {
     uTime: { value: 0 },
     uLevel: { value: 0 },
     uEnergy: { value: 0.4 },
+    uDisp: { value: V2_DISP },
     uPhi: { value: 0 },
     uColorCore: { value: c('#124a5e') },
     uColorRim: { value: c('#38d9f5') },
@@ -525,6 +532,7 @@ function V2Scene({ live, headParallax }: {
     if (typeof window === 'undefined') return new Set<string>();
     return new Set((new URLSearchParams(window.location.search).get('v2hide') || '').split(',').filter(Boolean));
   }, []);
+  const postOff = typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('v2post') === 'off';
   return (
     <>
       <color attach="background" args={['#03040a']} />
@@ -534,7 +542,7 @@ function V2Scene({ live, headParallax }: {
         {!hidden.has('rings') && <OrbitRings live={live} />}
         {!hidden.has('agents') && <AgentField live={live} />}
       </group>
-      <PostFXV2 live={live} />
+      {!postOff && <PostFXV2 live={live} />}
     </>
   );
 }
