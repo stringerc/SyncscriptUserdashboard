@@ -47,7 +47,8 @@ function artifactSummary(art: CortexArtifact): string {
     case 'document': return `Document "${art.title}"`;
     case 'map': return `Map view "${art.title}"${art.summary ? ` — ${art.summary}` : ''}`;
     case 'feed': return `Status feed "${art.title}" (${art.items.length} items)`;
-    default: return `Stat "${art.title}": ${art.value}`;
+    case 'stat': return `Stat "${art.title}": ${art.value}`;
+    case 'weather': return `Weather "${art.title}"${art.temp ? ` — ${art.temp}` : ''}${art.condition ? `, ${art.condition}` : ''}`;
   }
 }
 
