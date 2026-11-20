@@ -14,7 +14,7 @@ import struct
 import sys
 
 OUT = sys.argv[1] if len(sys.argv) > 1 else "public/splats/cortex-core.ply"
-COUNT = int(sys.argv[2]) if len(sys.argv) > 2 else 60000
+COUNT = int(sys.argv[2]) if len(sys.argv) > 2 else 140000
 random.seed(7)
 
 
@@ -57,14 +57,56 @@ def emit(f, x, y, z, rgb, scale, opacity):
                         fdc[0], fdc[1], fdc[2], logit, s, s, s, 1.0, 0.0, 0.0, 0.0))
 
 
-def main():
-    outer_n = int(COUNT * 0.72)
-    inner_n = COUNT - outer_n
+def ring_pts(n, r0=1.5, r1=1.85, tilt=1.12, thick=0.055):
+    """Saturn-style particle ring: samples a thin torus then tips it ~64°
+    around X so it reads as a halo band rather than an equator."""
     pts = []
-    for x, y, z in fib_sphere(outer_n, 1.0):
-        pts.append((x, y, z, 0.006 + random.random() * 0.005, 0.13 + random.random() * 0.11))
-    for x, y, z in fib_sphere(inner_n, 0.52, squash=1.15):
-        pts.append((x, y, z, 0.004 + random.random() * 0.0035, 0.20 + random.random() * 0.16))
+    cy, sy = math.cos(tilt), math.sin(tilt)
+    for _ in range(n):
+        th = random.random() * 2.0 * math.pi
+        r = r0 + (r1 - r0) * (random.random() ** 0.7)
+        y = (random.random() - 0.5) * thick
+        x, z = math.cos(th) * r, math.sin(th) * r
+        pts.append((x, y * cy - z * sy, y * sy + z * cy))
+    return pts
+
+
+def jet_pts(n):
+    """Polar jets — two narrow streams of fast-looking motes along ±Y."""
+    pts = []
+    for _ in range(n):
+        sgn = 1.0 if random.random() < 0.5 else -1.0
+        t = 0.55 + random.random() * 0.55
+        spread = 0.02 + t * 0.09
+        pts.append(((random.random() - 0.5) * spread,
+                    sgn * t,
+                    (random.random() - 0.5) * spread))
+    return pts
+
+
+def ring_color():
+    """Pale gold <-> ice jitter so the band reads warm against the cool core."""
+    k = random.random()
+    if k < 0.5:
+        return (1.0, 0.82 + random.random() * 0.12, 0.45 + random.random() * 0.15)
+    return (0.75 + random.random() * 0.2, 0.9, 1.0)
+
+
+def main():
+    shell_n = int(COUNT * 0.50)
+    core_n = int(COUNT * 0.25)
+    ring_n = int(COUNT * 0.20)
+    jet_n = COUNT - shell_n - core_n - ring_n
+    pts = []
+    for x, y, z in fib_sphere(shell_n, 1.0):
+        pts.append((x, y, z, 0.006 + random.random() * 0.005, 0.13 + random.random() * 0.11, None))
+    for x, y, z in fib_sphere(core_n, 0.52, squash=1.15):
+        pts.append((x, y, z, 0.004 + random.random() * 0.0035, 0.20 + random.random() * 0.16, None))
+    for x, y, z in ring_pts(ring_n):
+        pts.append((x, y, z, 0.0045 + random.random() * 0.004, 0.30 + random.random() * 0.22, ring_color()))
+    for x, y, z in jet_pts(jet_n):
+        pts.append((x, y, z, 0.003 + random.random() * 0.0025, 0.38 + random.random() * 0.25,
+                    (0.7 + random.random() * 0.3, 0.95, 1.0)))
 
     header = (
         "ply\nformat binary_little_endian 1.0\n"
@@ -82,11 +124,14 @@ def main():
     os.makedirs(os.path.dirname(OUT) or ".", exist_ok=True)
     with open(OUT, "wb") as f:
         f.write(header)
-        for x, y, z, scale, op in pts:
+        for x, y, z, scale, op, fixed_rgb in pts:
             t = (y / 1.0 + 1.0) / 2.0  # -1..1 -> 0..1
-            # push saturation away from mid-grey so the grade survives
-            # alpha compositing instead of washing to pastel
-            rgb = tuple(max(0.0, min(1.0, 0.5 + (c - 0.5) * 1.7)) for c in shade(t))
+            if fixed_rgb is not None:
+                rgb = fixed_rgb
+            else:
+                # push saturation away from mid-grey so the grade survives
+                # alpha compositing instead of washing to pastel
+                rgb = tuple(max(0.0, min(1.0, 0.5 + (c - 0.5) * 1.7)) for c in shade(t))
             # per-splat brightness jitter keeps it from banding
             j = 0.85 + random.random() * 0.3
             emit(f, x, y, z, tuple(min(1.0, c * j) for c in rgb), scale, op)

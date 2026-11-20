@@ -5,27 +5,37 @@
  * discovers SplatMesh objects in the scene and draws them each frame).
  * Drop any trained splat into public/splats/ and pass ?splat=<name> — the
  * default is the procedural cortex-core.ply from scripts/gen-demo-splat.py.
+ *
+ * Quality stack: extSplats encoding + LoD "quality" + EffectComposer
+ * (Bloom / ChromaticAberration / Vignette) + pointer parallax.
  */
-import React, { useEffect, useState } from 'react';
-import { Canvas, useThree } from '@react-three/fiber';
+import React, { useEffect, useRef, useState } from 'react';
+import * as THREE from 'three';
+import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import { OrbitControls } from '@react-three/drei';
+import { EffectComposer, Bloom, Vignette, ChromaticAberration } from '@react-three/postprocessing';
 import { SparkRenderer, SplatMesh } from '@sparkjsdev/spark';
 
 const MONO = '"IBM Plex Mono", ui-monospace, monospace';
 
 function SparkStage({ url, onReady, onFail }: { url: string; onReady: () => void; onFail: () => void }) {
-  const { gl, scene, invalidate } = useThree();
+  const { gl, scene, invalidate, pointer } = useThree();
+  const holder = useRef<THREE.Group | null>(null);
+
   useEffect(() => {
+    const g = new THREE.Group();
+    scene.add(g);
+    holder.current = g;
     const spark = new SparkRenderer({ renderer: gl, onDirty: () => invalidate() });
-    scene.add(spark);
+    g.add(spark);
     const mesh = new SplatMesh({ url });
-    scene.add(mesh);
+    g.add(mesh);
     let cancelled = false;
     mesh.initialized.then(() => {
       if (cancelled) return;
       try {
         const ps: any = (mesh as any).packedSplats;
-        const bb = (mesh as any).geometry?.boundingSphere;
+        const bb: any = (mesh as any).geometry?.boundingSphere;
         console.log('[splat] initialized', {
           numSplats: ps?.numSplats ?? ps?.splats?.length,
           hasExt: !!(mesh as any).extSplats,
@@ -36,13 +46,24 @@ function SparkStage({ url, onReady, onFail }: { url: string; onReady: () => void
     }).catch((e) => { console.log('[splat] init FAILED', e); onFail(); });
     return () => {
       cancelled = true;
-      scene.remove(spark);
-      scene.remove(mesh);
+      holder.current = null;
+      g.remove(spark);
+      g.remove(mesh);
+      scene.remove(g);
       try { spark.dispose(); } catch {}
       try { (mesh as any).dispose?.(); } catch {}
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [gl, scene, url]);
+
+  // Pointer parallax — the whole splat field leans toward the cursor.
+  useFrame((_, dt) => {
+    const g = holder.current;
+    if (!g) return;
+    const k = 1 - Math.exp(-4 * dt);
+    g.rotation.y += (pointer.x * 0.14 - g.rotation.y) * k;
+    g.rotation.x += (-pointer.y * 0.09 - g.rotation.x) * k;
+  });
   return null;
 }
 
@@ -69,6 +90,17 @@ export default function CortexSplatScene({ splat }: { splat?: string }) {
           enableDamping
           dampingFactor={0.06}
         />
+        <EffectComposer multisampling={0}>
+          <Bloom
+            intensity={0.85}
+            luminanceThreshold={0.28}
+            luminanceSmoothing={0.3}
+            mipmapBlur
+            radius={0.7}
+          />
+          <ChromaticAberration offset={new THREE.Vector2(0.0007, 0.0007)} radialModulation />
+          <Vignette offset={0.22} darkness={0.68} />
+        </EffectComposer>
       </Canvas>
 
       {/* HUD chrome */}
@@ -85,7 +117,7 @@ export default function CortexSplatScene({ splat }: { splat?: string }) {
         fontFamily: MONO, fontSize: 8.5, letterSpacing: '0.22em',
         color: 'rgba(148,233,255,0.4)', pointerEvents: 'none',
       }}>
-        {ready ? 'DRAG TO ORBIT · SCROLL TO ZOOM' : failed ? 'SPLAT LOAD FAILED' : 'DECOMPRESSING GAUSSIANS…'}
+        {ready ? 'DRAG TO ORBIT · SCROLL TO ZOOM · MOVE TO PARALLAX' : failed ? 'SPLAT LOAD FAILED' : 'DECOMPRESSING GAUSSIANS…'}
       </div>
       {!ready && !failed && (
         <div style={{
