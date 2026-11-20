@@ -423,6 +423,14 @@ export async function runCortexToolLoop(ctx: CortexToolLoopContext): Promise<{ a
             }]);
 
             let toolResult: any = null;
+            // Dual-channel spawn tracking: sceneSpawn/holoSpawn payloads
+            // ride alongside the card artifact. Acked spawns suppress the
+            // duplicate card below; unacknowledged ones fall back to a
+            // synthesized card so content is never silently lost.
+            const spawnState = {
+              splatUrl: '', splatAcked: false,
+              holo: null as any, holoClean: null as any, holoAcked: false,
+            };
             if (currentToolCall?.tool === 'cortex_surface') {
               const action = String(currentToolCall.args?.action || '').toLowerCase();
               const target = String(currentToolCall.args?.target || '').toLowerCase();
@@ -485,34 +493,23 @@ export async function runCortexToolLoop(ctx: CortexToolLoopContext): Promise<{ a
                   signal: AbortSignal.timeout(toolTimeoutMs),
                 });
                 toolResult = await execRes.json();
-                // Scene-spawn side channel: generate_splat(inSpace:true)
-                // returns sceneSpawn — place it as a live 3D object in the
-                // visualizer space. If no 3D scene acknowledges (chat page),
-                // fall back to a splat card so it is never silently lost.
+                // Scene-spawn side channel: sceneSpawn rides alongside the
+                // splat card artifact — mount it live in the 3D space when
+                // a scene acknowledges; the card stays as fallback.
                 const spawn = (toolResult as any)?.sceneSpawn;
                 if (spawn && typeof spawn.url === 'string' && typeof window !== 'undefined') {
-                  const acked = await dispatchSceneSpawn(spawn);
-                  if (!acked) {
-                    for (const a of validateArtifacts([{
-                      kind: 'splat',
-                      title: String(spawn.title || 'Gaussian Splat').slice(0, 200),
-                      splat: spawn.url,
-                      caption: 'Generated splat — open the visualizer to place it in the 3D space.',
-                    }], currentToolCall!.tool).accepted) {
-                      if (!collectedArtifacts.some((x) => x.id === a.id)) collectedArtifacts.push(a);
-                    }
-                  }
+                  spawnState.splatUrl = spawn.url;
+                  spawnState.splatAcked = await dispatchSceneSpawn(spawn);
                 }
-                // Holo-dashboard spawn: compose_dashboard(inSpace:true)
-                // returns holoSpawn — curved glass panel in the 3D scene.
-                // No ack → dashboard falls back to a normal card.
+                // Holo-dashboard spawn: holoSpawn rides alongside the
+                // dashboard artifact — curved glass panel in the 3D scene.
                 const holo = (toolResult as any)?.holoSpawn?.dashboard;
                 if (holo && typeof holo === 'object' && typeof window !== 'undefined') {
-                  const acked = await dispatchHoloSpawn(holo);
-                  if (!acked) {
-                    for (const a of validateArtifacts([holo], currentToolCall!.tool).accepted) {
-                      if (!collectedArtifacts.some((x) => x.id === a.id)) collectedArtifacts.push(a);
-                    }
+                  const [clean] = validateArtifacts([holo], currentToolCall!.tool).accepted;
+                  if (clean) {
+                    spawnState.holo = holo;
+                    spawnState.holoClean = clean;
+                    spawnState.holoAcked = await dispatchHoloSpawn(clean);
                   }
                 }
               } catch (execErr: any) {
@@ -521,8 +518,30 @@ export async function runCortexToolLoop(ctx: CortexToolLoopContext): Promise<{ a
             }
 
             // Lift generative-UI artifacts out of tool results onto the final AI message.
+            // Acked scene spawns suppress their duplicate card; unacked
+            // spawns whose artifact channel came back empty get a
+            // synthesized fallback card so nothing is silently lost.
             for (const a of extractArtifactsFromResult(toolResult, currentToolCall!.tool)) {
+              if (spawnState.splatAcked && a.kind === 'splat' && (a as any).splat === spawnState.splatUrl) continue;
+              if (spawnState.holoAcked && a.kind === 'dashboard' && a.title === spawnState.holoClean?.title) continue;
               if (!collectedArtifacts.some((x) => x.id === a.id)) collectedArtifacts.push(a);
+            }
+            if (spawnState.splatUrl && !spawnState.splatAcked
+              && !collectedArtifacts.some((a) => a.kind === 'splat' && (a as any).splat === spawnState.splatUrl)) {
+              for (const a of validateArtifacts([{
+                kind: 'splat',
+                title: 'Gaussian Splat',
+                splat: spawnState.splatUrl,
+                caption: 'Generated splat — open the visualizer to place it in the 3D space.',
+              }], currentToolCall!.tool).accepted) {
+                if (!collectedArtifacts.some((x) => x.id === a.id)) collectedArtifacts.push(a);
+              }
+            }
+            if (spawnState.holo && !spawnState.holoAcked && spawnState.holoClean
+              && !collectedArtifacts.some((a) => a.kind === 'dashboard' && a.title === spawnState.holoClean.title)) {
+              for (const a of validateArtifacts([spawnState.holo], currentToolCall!.tool).accepted) {
+                if (!collectedArtifacts.some((x) => x.id === a.id)) collectedArtifacts.push(a);
+              }
             }
 
             // Update tool execution message in UI

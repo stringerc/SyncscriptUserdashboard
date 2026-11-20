@@ -653,7 +653,7 @@ const CORTEX_TOOLS = [
     type: 'function',
     function: {
       name: 'emit_artifact',
-      description: 'Emit structured visual artifacts that render as rich cards in the Cortex UI. Use when the user asks to see data, charts, tables, documents, maps, splat scenes, or status panels. Artifact kinds: stat {kind,title,value,unit?,delta?,spark?}, chart {kind,title,chartType:line|bar|area|pie,series:[{name,points:[{x,y}]}],xLabel?,yLabel?}, table {kind,title,columns:[],rows:[]}, image {kind,title,url}, document {kind,title,format:markdown|code,content,lang?}, map {kind,title,summary?}, feed {kind,title,items:[{label,value,tone?}]}, splat {kind,title,splat:"<file>.spz|.ply|.ksplat",caption?} — splat renders a live 3D Gaussian-splat scene (assets in /splats). dashboard {kind,title,tiles:[<artifacts>]} — composite mission-control grid; tiles may be stat|chart|feed|image|splat (up to 6, splat/image tiles span full width). Max 3 per call. Only emit artifacts backed by real data or an explicit user request.',
+      description: 'Emit structured visual artifacts that render as rich cards in the Cortex UI. Use when the user asks to see data, charts, tables, documents, maps, splat scenes, or status panels. Artifact kinds: stat {kind,title,value,unit?,delta?,spark?}, chart {kind,title,chartType:line|bar|area|pie,series:[{name,points:[{x,y}]}],xLabel?,yLabel?}, table {kind,title,columns:[],rows:[]}, image {kind,title,url}, document {kind,title,format:markdown|code,content,lang?}, map {kind,title,summary?}, feed {kind,title,items:[{label,value,tone?}]}, splat {kind,title,splat:"<file>.spz|.ply|.ksplat",caption?} — splat renders a live 3D Gaussian-splat scene (assets in /splats). dashboard {kind,title,tiles:[<artifacts>]} — composite mission-control grid; tiles may be stat|chart|feed|image|splat (up to 6, splat/image tiles span full width). Max 3 per call. Only emit artifacts backed by real data or an explicit user request. RENDERING: dashboard and splat artifacts automatically mount as live objects inside the 3D visualizer space when one is present (holographic deck / orbiting splat), falling back to cards elsewhere — pass inSpace:false to force cards.',
       parameters: {
         type: 'object',
         properties: {
@@ -661,7 +661,8 @@ const CORTEX_TOOLS = [
             type: 'array',
             items: { type: 'object' },
             description: 'Array of artifact objects, each with a "kind" field and kind-specific fields per the tool description.'
-          }
+          },
+          inSpace: { type: 'boolean', description: 'Set false to force card-only rendering. Default: dashboard and splat artifacts are also offered to the 3D visualizer space — they mount as live scene objects when a scene is present and fall back to cards automatically elsewhere.' }
         },
         required: ['artifacts']
       }
@@ -671,7 +672,7 @@ const CORTEX_TOOLS = [
     type: 'function',
     function: {
       name: 'generate_splat',
-      description: 'Generate a NEW 3D Gaussian-splat scene and return it as a live splat artifact that renders in the UI. Two modes: (1) PROCEDURAL — params scene (orb|butterfly|flower|helix|galaxy|ridge|flow), palette (aurora|ember|ocean|violet|mono|prism), seed, count; instant, deterministic per seed, infinite variety. (2) PHOTO — pass image (https URL or /public path) to lift a single photo into a splat via monocular depth unprojection; first call downloads a ~100MB depth model then caches it. Use when the user asks to create/generate/make a splat, 3D scene, generative art, or an immersive visual. The returned artifact renders automatically. COMPOSITION: if the user wants the splat inside a dashboard or alongside other tiles, FIRST call this tool, THEN call emit_artifact with kind:"dashboard" and put the returned splat URL (artifact.splat / splatUrl) into a splat tile — you may do both in the same turn (this tool first).',
+      description: 'Generate a NEW 3D Gaussian-splat scene and return it as a live splat. Two modes: (1) PROCEDURAL — params scene (orb|butterfly|flower|helix|galaxy|ridge|flow), palette (aurora|ember|ocean|violet|mono|prism), seed, count; instant, deterministic per seed, infinite variety. (2) PHOTO — pass image (https URL or /public path) to lift a single photo into a splat via monocular depth unprojection; first call downloads a ~100MB depth model then caches it. Use when the user asks to create/generate/make a splat, 3D scene, generative art, or an immersive visual. RENDERING: by default the splat mounts LIVE inside the 3D visualizer space (orbiting the core) when a scene is present, and falls back to a card automatically on surfaces without one — no extra param needed. Set inSpace:false only when the user explicitly wants a card/modal instead of the 3D space. COMPOSITION: if the user wants the splat inside a dashboard or alongside other tiles, FIRST call this tool, THEN call compose_dashboard (preferred) or emit_artifact kind:"dashboard" with the returned splat URL (artifact.splat / splatUrl) in a splat tile — you may do both in the same turn (this tool first).',
       parameters: {
         type: 'object',
         properties: {
@@ -680,7 +681,7 @@ const CORTEX_TOOLS = [
           image: { type: 'string', description: 'Image URL or /public path for photo→splat mode' },
           seed: { type: 'number', description: 'Random seed for reproducibility (default random)' },
           count: { type: 'number', description: 'Approximate splat count, 4000–200000 (default 60000)' },
-          inSpace: { type: 'boolean', description: 'When true, spawn the splat as a live 3D object inside the visualizer space (orbiting the core) instead of a card panel. Use when the user wants the splat IN the scene/space, not in a modal.' },
+          inSpace: { type: 'boolean', description: 'Rendering control: DEFAULT mounts the splat live inside the visualizer 3D space (orbiting the core) when a scene is present, with automatic card fallback elsewhere. Set false ONLY when the user explicitly wants a card/modal instead of the 3D space.' },
           title: { type: 'string', description: 'Display title for the artifact card' }
         }
       }
@@ -690,7 +691,7 @@ const CORTEX_TOOLS = [
     type: 'function',
     function: {
       name: 'compose_dashboard',
-      description: 'Atomically build AND render a dashboard artifact in ONE call — generates any requested splat tile server-side, then emits a single composite dashboard panel. THIS is the tool for any multi-part visual request: dashboards, mission control, overviews, "show me X + Y + a splat". tiles: array of stat|chart|feed|image tile objects (full artifact shape minus kind-specific base fields). splat: optional {scene,palette,image,seed,count,title} that generates a NEW splat tile automatically. Replaces generate_splat+emit_artifact chains — prefer this whenever the request has 2+ visual parts.',
+      description: 'Atomically build AND render a dashboard in ONE call — generates any requested splat tile server-side, then emits a single composite dashboard. THIS is the tool for any multi-part visual request: dashboards, mission control, overviews, "show me X + Y + a splat". tiles: array of stat|chart|feed|image tile objects (full artifact shape minus kind-specific base fields). splat: optional {scene,palette,image,seed,count,title} that generates a NEW splat tile automatically. Replaces generate_splat+emit_artifact chains — prefer this whenever the request has 2+ visual parts. RENDERING: by default the dashboard mounts as a HOLOGRAPHIC curved glass panel inside the 3D visualizer space (live splat volume behind the tiles) when a scene is present, falling back to a card automatically elsewhere — set inSpace:false only if the user explicitly wants a card/modal.',
       parameters: {
         type: 'object',
         properties: {
@@ -704,7 +705,7 @@ const CORTEX_TOOLS = [
             type: 'object',
             description: 'Optional splat tile to generate: {scene:orb|butterfly|flower|helix|galaxy|ridge|flow, palette:aurora|ember|ocean|violet|mono|prism, image?:URL/path for photo mode, seed?, count?, title?}'
           },
-          inSpace: { type: 'boolean', description: 'When true, render the dashboard as a holographic curved panel INSIDE the 3D visualizer space (CanvasTexture + live splat volume) instead of a DOM card. Falls back to a card automatically on surfaces with no 3D scene.' }
+          inSpace: { type: 'boolean', description: 'Rendering control: DEFAULT mounts the dashboard as a holographic curved glass panel INSIDE the 3D visualizer space (CanvasTexture + live splat volume) when a scene is present, with automatic card fallback elsewhere. Set false ONLY when the user explicitly wants a card/modal.' }
         },
         required: ['title']
       }
@@ -3317,8 +3318,8 @@ function apiProxyPlugin(): Plugin {
             { name: 'render_video', description: 'Render a video composition via the governed Remotion pipeline (tools/remotion). Writes an .mp4 under .cortex-runtime/renders/ and returns the verified output path.', parameters: { composition: 'string? (default CortexPromo)', outputName: 'string? (.mp4, sanitized)', durationSeconds: 'number? (<=600)', props: 'object? (e.g. {title, subtitle})' } },
             { name: 'run_sandboxed', description: 'Run a command inside a hardware-isolated microsandbox microVM (CONTAINED lane). Returns stdout/stderr/exitCode. Use for untrusted or destructive-capable agent code.', parameters: { image: 'string? (default python:3.12-alpine)', command: 'string (binary, no shell)', args: 'string[]?', timeoutMs: 'number? (<=120000)', workdir: 'string?', env: 'object?' } },
             { name: 'sandbox_status', description: 'Probe microsandbox runtime availability (msb binary, SDK, VM round-trip).', parameters: {} },
-            { name: 'generate_splat', description: 'Generate a new 3D Gaussian-splat scene as a live splat artifact. Procedural scenes (orb|butterfly|flower|helix|galaxy|ridge|flow) with palette/seed/count, or photo mode via image URL/path (depth unprojection). inSpace:true spawns it as a live 3D object in the visualizer.', parameters: { scene: 'string?', palette: 'string?', image: 'string?', seed: 'number?', count: 'number?', inSpace: 'boolean?', title: 'string?' } },
-            { name: 'compose_dashboard', description: 'Atomically build and render a dashboard artifact: tiles (stat|chart|feed|image) plus optional auto-generated splat tile. One call for any multi-part visual request.', parameters: { title: 'string', tiles: 'object[]?', splat: 'object?' } },
+            { name: 'generate_splat', description: 'Generate a new 3D Gaussian-splat scene. Procedural scenes (orb|butterfly|flower|helix|galaxy|ridge|flow) with palette/seed/count, or photo mode via image URL/path (depth unprojection). By default mounts LIVE in the visualizer 3D space (card fallback elsewhere); inSpace:false forces a card.', parameters: { scene: 'string?', palette: 'string?', image: 'string?', seed: 'number?', count: 'number?', inSpace: 'boolean?', title: 'string?' } },
+            { name: 'compose_dashboard', description: 'Atomically build and render a dashboard: tiles (stat|chart|feed|image) plus optional auto-generated splat tile. By default mounts as a holographic panel inside the visualizer 3D space (card fallback elsewhere); inSpace:false forces a card. One call for any multi-part visual request.', parameters: { title: 'string', tiles: 'object[]?', splat: 'object?', inSpace: 'boolean?' } },
           ];
           res.writeHead(200, {
             'Content-Type': 'application/json',
@@ -8607,10 +8608,20 @@ function triggerQuickAction() {
               // numeric clamps). The old shallow kind-check let unsafe or
               // malformed artifacts through to the renderer.
               const { accepted: artifacts, rejected } = validateArtifacts(raw, 'emit_artifact');
+              // Surface-adaptive spawn channels: dashboard and splat
+              // artifacts ALSO ship as holoSpawn/sceneSpawn payloads so
+              // 3D-aware clients can mount them inside the visualizer
+              // space. Clients suppress the card only when the scene
+              // acknowledges; every other surface renders the card.
+              const dashArt = artifacts.find((a) => a.kind === 'dashboard');
+              const splatArt = artifacts.find((a) => a.kind === 'splat');
+              const wantSpace = args?.inSpace !== false;
               return res.end(JSON.stringify({
                 ok: true, tool: 'emit_artifact',
                 accepted: artifacts.length, rejected,
                 artifacts,
+                ...(wantSpace && dashArt ? { holoSpawn: { dashboard: dashArt } } : {}),
+                ...(wantSpace && splatArt ? { sceneSpawn: { url: (splatArt as any).splat, title: splatArt.title, scale: 1.4 } } : {}),
                 message: artifacts.length
                   ? `Emitted ${artifacts.length} artifact(s) — they will render as cards in the UI.`
                   : 'No valid artifacts supplied (each needs a "kind" of stat|chart|table|image|document|map|feed|weather|splat).',
@@ -8636,26 +8647,24 @@ function triggerQuickAction() {
                       count: typeof args?.count === 'number' ? args.count : undefined,
                     });
                 const label = image ? 'photo splat' : `${result.scene} splat`;
-                // inSpace mode: no card — the client spawns this as a live
-                // 3D SplatMesh inside the visualizer scene itself.
-                if (args?.inSpace === true) {
-                  return res.end(JSON.stringify({
-                    ok: true, tool: 'generate_splat',
-                    sceneSpawn: { url: result.url, title: String(args?.title || '').trim() || `Generated ${label}`, scale: 1.4 },
-                    message: `Spawned ${result.splats.toLocaleString()}-splat ${label} into the visualizer space → ${result.url}`,
-                    durationMs: Date.now() - startMs,
-                  }));
-                }
+                const spawnTitle = String(args?.title || '').trim() || `Generated ${label}`;
+                // Dual-channel: the splat artifact always ships so surfaces
+                // with no 3D scene still get a card; sceneSpawn additionally
+                // lets the visualizer mount it live in the scene. Clients
+                // suppress the card only when SceneSplats acknowledges.
+                // inSpace:false forces card-only (no spawn attempt).
+                const wantSpace = args?.inSpace !== false;
                 return res.end(JSON.stringify({
                   ok: true, tool: 'generate_splat',
                   splatUrl: result.url,
                   artifact: {
                     kind: 'splat',
-                    title: String(args?.title || '').trim() || `Generated ${label}`,
+                    title: spawnTitle,
                     splat: result.url,
                     caption: `${result.splats.toLocaleString()} splats · seed ${result.seed}${result.palette !== 'source' ? ` · ${result.palette}` : ''}`,
                     source: 'generate_splat',
                   },
+                  ...(wantSpace ? { sceneSpawn: { url: result.url, title: spawnTitle, scale: 1.4 } } : {}),
                   message: `Generated ${result.splats.toLocaleString()}-splat ${label} → ${result.url}`,
                   durationMs: Date.now() - startMs,
                 }));
@@ -8701,27 +8710,28 @@ function triggerQuickAction() {
                 if (!tiles.length) {
                   return res.end(JSON.stringify({ ok: false, tool: 'compose_dashboard', error: 'Needs at least one tile or a splat spec.' }));
                 }
-                const dashboard = {
+                // Validate through the same schema the client uses — raw
+                // model tiles get sanitized (URL allowlists, kind filters,
+                // caps) before they reach either channel.
+                const { accepted: dashAccepted } = validateArtifacts([{
                   kind: 'dashboard',
                   title: String(args?.title || 'Dashboard').slice(0, 200) || 'Dashboard',
                   tiles,
                   source: 'compose_dashboard',
-                };
-                // inSpace: hand the dashboard to the 3D scene as a holo
-                // deck — client falls back to this same artifact as a card
-                // when no CortexHoloDeck consumer acknowledges.
-                if (args?.inSpace === true) {
-                  return res.end(JSON.stringify({
-                    ok: true, tool: 'compose_dashboard',
-                    holoSpawn: { dashboard },
-                    message: `Spawned holographic dashboard "${dashboard.title}" into the visualizer space (${tiles.length} modules).`,
-                    durationMs: Date.now() - startMs,
-                  }));
+                }], 'compose_dashboard');
+                const dashboard = dashAccepted[0];
+                if (!dashboard) {
+                  return res.end(JSON.stringify({ ok: false, tool: 'compose_dashboard', error: 'Dashboard had no valid tiles (stat|chart|feed|image|splat).' }));
                 }
+                // Dual-channel: artifacts always ship (card fallback);
+                // holoSpawn lets the visualizer mount a holographic deck
+                // in the 3D scene. inSpace:false forces card-only.
+                const wantSpace = args?.inSpace !== false;
                 return res.end(JSON.stringify({
                   ok: true, tool: 'compose_dashboard',
                   artifacts: [dashboard],
-                  message: `Composed dashboard "${dashboard.title}" with ${tiles.length} tile(s).`,
+                  ...(wantSpace ? { holoSpawn: { dashboard } } : {}),
+                  message: `Composed dashboard "${dashboard.title}" with ${dashboard.kind === 'dashboard' ? dashboard.tiles.length : tiles.length} tile(s).`,
                   durationMs: Date.now() - startMs,
                 }));
               } catch (dashErr: any) {

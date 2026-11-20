@@ -104,9 +104,9 @@ Available tools:
 - fetch_url {url: "https://..."}
 - create_document {format: "md"|"html"|"pdf"|"docx"|"csv", title: "...", content: "..."}
 - emit_artifact {artifacts: [{kind, ...}]} — kinds: stat{title,value,unit?,spark?}, chart{title,chartType:line|bar|area|pie,series:[{name,points:[{x,y}]}]}, table{title,columns:[],rows:[]}, document{title,format:markdown|code,content}, feed{title,items:[{label,value}]}, map{title,summary?}, splat{title,splat:"<file>.spz|.ply|.ksplat",caption?} — splat renders a live 3D Gaussian-splat scene (files in /splats, e.g. butterfly.spz, cortex-core.ply). dashboard{title,tiles:[<stat|chart|feed|image|splat artifacts>]} — composite mission-control grid, ONE panel holding up to 6 tiles; tiles are full artifact objects e.g. {kind:"stat",title:"Agents",value:"7"}, {kind:"chart",title:"Tokens",chartType:"area",series:[{name:"tok/s",points:[{x:"00",y:12},{x:"12",y:44}]}]}, {kind:"splat",title:"Scene",splat:"/splats/gen-galaxy-x.ply"} — splat tiles accept any /splats file INCLUDING one just returned by generate_splat. Use whenever the user wants a dashboard, overview, or multi-metric view — PREFER dashboard over emitting 2-3 separate artifacts when the request has multiple parts. MANDATORY whenever the user asks to see, pin, dock, show, or display a panel/stat/chart/table/image/document/feed/splat — including "pin a panel that says X". The tool call is what creates the panel; saying "pinned" or "done" without calling it is a lie the user will see.
-- compose_dashboard {title, tiles:[...], splat?:{scene,palette,image,seed,count,title}} — ATOMIC dashboard builder: generates any requested splat tile server-side AND emits one composite dashboard panel in a single call. tiles are stat|chart|feed|image objects e.g. {kind:"stat",title:"Agents",value:"7"}, {kind:"chart",title:"Tokens",chartType:"area",series:[{name:"tok/s",points:[{x:"00",y:12}]}]}, {kind:"feed",title:"Alerts",items:[{label:"GPU",value:"72%",tone:"ok"}]}. PREFER THIS for any multi-part visual request ("dashboard", "overview", "mission control", "show me X and Y and a splat") — it replaces emit_artifact+generate_splat chains. Set inSpace:true when the user wants the dashboard IN the 3D space as a holographic panel (not a modal card).
+- compose_dashboard {title, tiles:[...], splat?:{scene,palette,image,seed,count,title}} — ATOMIC dashboard builder: generates any requested splat tile server-side AND emits one composite dashboard panel in a single call. tiles are stat|chart|feed|image objects e.g. {kind:"stat",title:"Agents",value:"7"}, {kind:"chart",title:"Tokens",chartType:"area",series:[{name:"tok/s",points:[{x:"00",y:12}]}]}, {kind:"feed",title:"Alerts",items:[{label:"GPU",value:"72%",tone:"ok"}]}. PREFER THIS for any multi-part visual request ("dashboard", "overview", "mission control", "show me X and Y and a splat") — it replaces emit_artifact+generate_splat chains. RENDERING: by default the dashboard mounts as a holographic curved glass panel INSIDE the 3D space (live splat volume behind the tiles), falling back to a card automatically on surfaces without a scene — set inSpace:false only if the user explicitly wants a card/modal.
 - generate_image {prompt, aspect?} — creates an image artifact card. Use when the user asks to generate/draw/create an image.
-- generate_splat {scene?, palette?, image?, seed?, count?, inSpace?, title?} — creates a NEW live 3D Gaussian-splat. Procedural scenes: orb|butterfly|flower|helix|galaxy|ridge|flow with palettes aurora|ember|ocean|violet|mono|prism (instant, seed-reproducible). Photo mode: pass image (URL or /public path) to lift a photo into a splat via depth (first call downloads a ~100MB model, then ~4s). DEFAULT renders a card artifact. Set inSpace:true when the user wants the splat IN the 3D space/scene itself (orbiting the core, no modal) — e.g. "spawn a galaxy in the space", "make a butterfly float in the scene". Use when the user asks for a splat, 3D scene, generative art, or immersive visual. COMPOSITION: when the user wants a dashboard/overview CONTAINING a new splat, call generate_splat FIRST, then emit_artifact kind:"dashboard" with the returned splatUrl in a splat tile — both calls in the same turn, generate_splat first.
+- generate_splat {scene?, palette?, image?, seed?, count?, inSpace?, title?} — creates a NEW live 3D Gaussian-splat. Procedural scenes: orb|butterfly|flower|helix|galaxy|ridge|flow with palettes aurora|ember|ocean|violet|mono|prism (instant, seed-reproducible). Photo mode: pass image (URL or /public path) to lift a photo into a splat via depth (first call downloads a ~100MB model, then ~4s). RENDERING: by default the splat mounts LIVE inside the 3D space/scene itself (orbiting the core, no modal) when a scene is present, falling back to a card automatically elsewhere — set inSpace:false only if the user explicitly wants a card/modal. Use when the user asks for a splat, 3D scene, generative art, or immersive visual. COMPOSITION: when the user wants a dashboard/overview CONTAINING a new splat, call generate_splat FIRST, then emit_artifact kind:"dashboard" with the returned splatUrl in a splat tile — both calls in the same turn, generate_splat first.
 - read_file {path: "relative/or/absolute", startLine?, endLine?}
 - write_file {path: "...", content: "..."}
 - edit_file {path: "...", targetContent: "...", replacementContent: "..."}
@@ -788,32 +788,35 @@ async function execTool(tool: string, args: Record<string, any>, turnSignal?: Ab
         : AbortSignal.timeout(toolTimeoutMs),
     });
     const data = await res.json().catch(() => ({}));
-    // Scene-spawn side channel: generate_splat(inSpace:true) returns
-    // sceneSpawn — place it as a live 3D object in the visualizer space.
-    // If no 3D scene acknowledges (e.g. /cortex/chat), fall back to a card
-    // so the splat is never silently lost.
+    const artifacts = extractArtifactsFromResult(data, tool);
+    // Dual-channel spawn side channels: generate_splat/compose_dashboard/
+    // emit_artifact ship BOTH the card artifact AND a sceneSpawn/holoSpawn
+    // payload. When a mounted 3D consumer acknowledges the spawn, suppress
+    // the duplicate card; when nothing acknowledges (e.g. /cortex/chat),
+    // the artifact stays and renders as the card fallback automatically.
     const spawn = (data as any)?.sceneSpawn;
-    let sceneFallback: CortexArtifact[] = [];
     if (spawn && typeof spawn.url === 'string') {
       const acked = await dispatchSceneSpawn(spawn);
-      if (!acked) {
-        sceneFallback = validateArtifacts([{
-          kind: 'splat',
-          title: String(spawn.title || 'Gaussian Splat').slice(0, 200),
-          splat: spawn.url,
-          caption: 'Generated splat — open the visualizer to place it in the 3D space.',
-        }], tool).accepted;
+      if (acked) {
+        for (let i = artifacts.length - 1; i >= 0; i--) {
+          const a = artifacts[i] as any;
+          if (a?.kind === 'splat' && a?.splat === spawn.url) artifacts.splice(i, 1);
+        }
       }
     }
-    // Holo-dashboard spawn: compose_dashboard(inSpace:true) returns
-    // holoSpawn — render as a curved glass panel inside the 3D scene.
-    // No ack → fall back to the dashboard artifact as a normal card.
     const holo = (data as any)?.holoSpawn?.dashboard;
     if (holo && typeof holo === 'object') {
-      const acked = await dispatchHoloSpawn(holo);
-      if (!acked) sceneFallback.push(...validateArtifacts([holo], tool).accepted);
+      const [clean] = validateArtifacts([holo], tool).accepted;
+      if (clean) {
+        const acked = await dispatchHoloSpawn(clean);
+        if (acked) {
+          for (let i = artifacts.length - 1; i >= 0; i--) {
+            const a = artifacts[i] as any;
+            if (a?.kind === 'dashboard' && a?.title === clean.title) artifacts.splice(i, 1);
+          }
+        }
+      }
     }
-    const artifacts = [...sceneFallback, ...extractArtifactsFromResult(data, tool)];
     const r = (data as any)?.result ?? data;
     const s = r?.stdout ? String(r.stdout)
       : r?.content ? String(r.content)
