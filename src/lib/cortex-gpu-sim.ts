@@ -43,6 +43,24 @@ const FORCE_GLSL = /* glsl */ `
     acc += vec3(-toC.z / d, 0.0, toC.x / d) * (3.4 * w);
     acc.y += sin(uTime * 3.0 + seed * 6.2831) * 3.4 * w * 0.4;
   }
+  // Voice reactivity — Cortex speaking swells the field with a per-particle
+  // phased chorus (syllabic, not uniform pumping); listening implodes
+  // gently; thinking stirs the turbulence faster.
+  float voice = uSpeak * (0.55 + 0.45 * sin(uTime * 6.3 + seed * 3.0));
+  vec3 radial = normalize(pos + vec3(0.0001));
+  acc += radial * voice * 0.55;
+  acc += vec3(
+    sin(pos.y * 4.0 + uTime * 9.0),
+    sin(pos.z * 4.4 - uTime * 8.0),
+    sin(pos.x * 3.8 + uTime * 10.0)
+  ) * voice * 0.22;
+  acc -= radial * uListen * 0.16;
+  acc += vec3(
+    sin(pos.z * 5.1 - uTime * 11.0),
+    sin(pos.x * 4.6 + uTime * 12.5),
+    sin(pos.y * 5.4 + uTime * 9.5)
+  ) * uThink * 0.14;
+
   vel = (vel + acc * uDt) * exp(-2.4 * uDt);
   float sp2 = dot(vel, vel);
   if (sp2 > 9.0) vel *= 3.0 / sqrt(sp2);
@@ -55,6 +73,9 @@ const VEL_SHADER = /* glsl */ `
   uniform float uGust;
   uniform float uTime;
   uniform float uDt;
+  uniform float uSpeak;
+  uniform float uListen;
+  uniform float uThink;
   void main() {
     vec2 uv = gl_FragCoord.xy / resolution.xy;
     vec3 pos = texture2D(texturePosition, uv).xyz;
@@ -71,6 +92,9 @@ const POS_SHADER = /* glsl */ `
   uniform float uGust;
   uniform float uTime;
   uniform float uDt;
+  uniform float uSpeak;
+  uniform float uListen;
+  uniform float uThink;
   void main() {
     vec2 uv = gl_FragCoord.xy / resolution.xy;
     vec3 pos = texture2D(texturePosition, uv).xyz;
@@ -91,6 +115,9 @@ export class CortexGpuSim {
   private uGust: { value: number };
   private uTime: { value: number };
   private uDt: { value: number };
+  private uSpeak: { value: number };
+  private uListen: { value: number };
+  private uThink: { value: number };
   particleCount = 0;
 
   constructor(renderer: THREE.WebGLRenderer, anchors: Float32Array) {
@@ -123,6 +150,9 @@ export class CortexGpuSim {
     this.uGust = { value: 0 };
     this.uTime = { value: 0 };
     this.uDt = { value: 0.016 };
+    this.uSpeak = { value: 0 };
+    this.uListen = { value: 0 };
+    this.uThink = { value: 0 };
 
     for (const v of [this.posVar, this.velVar]) {
       const u = v.material.uniforms;
@@ -132,6 +162,9 @@ export class CortexGpuSim {
       u.uGust = this.uGust;
       u.uTime = this.uTime;
       u.uDt = this.uDt;
+      u.uSpeak = this.uSpeak;
+      u.uListen = this.uListen;
+      u.uThink = this.uThink;
     }
 
     const err = this.gpu.init();
@@ -140,12 +173,15 @@ export class CortexGpuSim {
   }
 
   /** Advance one sim step; returns the texture holding current positions. */
-  step(dt: number, cursor: THREE.Vector3, cursorStrength: number, gust: number, time: number): THREE.Texture {
+  step(dt: number, cursor: THREE.Vector3, cursorStrength: number, gust: number, time: number, voice?: { speak?: number; listen?: number; think?: number }): THREE.Texture {
     this.uDt.value = Math.min(dt, 0.05);
     this.uCursor.value.copy(cursor);
     this.uCursorStrength.value = cursorStrength;
     this.uGust.value = gust;
     this.uTime.value = time;
+    this.uSpeak.value = voice?.speak ?? 0;
+    this.uListen.value = voice?.listen ?? 0;
+    this.uThink.value = voice?.think ?? 0;
     this.gpu.compute();
     return this.gpu.getCurrentRenderTarget(this.posVar).texture;
   }

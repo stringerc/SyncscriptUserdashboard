@@ -27,11 +27,12 @@ import { FrameFeedbackEffect } from '../../lib/frame-feedback-effect';
 const MONO = '"IBM Plex Mono", ui-monospace, monospace';
 const GUST_PERIOD = 26; // seconds between auto gusts
 
-function SparkStage({ url, onReady, onFail, onGust }: {
+function SparkStage({ url, onReady, onFail, onGust, onVoice }: {
   url: string;
   onReady: () => void;
   onFail: () => void;
   onGust?: (active: boolean) => void;
+  onVoice?: (state: string, level: number) => void;
 }) {
   const { gl, scene, invalidate, pointer } = useThree();
   const holder = useRef<THREE.Group | null>(null);
@@ -40,7 +41,7 @@ function SparkStage({ url, onReady, onFail, onGust }: {
   const swarmRef = useRef<SwarmSim | null>(null);
   const flowRef = useRef<FlowUniforms | null>(null);
   const gpuSimRef = useRef<CortexGpuSim | null>(null);
-  const gpuModsRef = useRef<{ uniforms: GpuPosUniforms; spinSpeed: number }[]>([]);
+  const gpuModsRef = useRef<{ uniforms: GpuPosUniforms; spinSpeed: number; angle: number }[]>([]);
   const packedByRole = useRef(new Map<string, any>());
   const mouseTarget = useRef(new THREE.Vector3(0, 0, 5));
   const cursorActive = useRef(false);
@@ -48,6 +49,10 @@ function SparkStage({ url, onReady, onFail, onGust }: {
   const manualGustAt = useRef(-999);
   const gustWas = useRef(false);
   const clockRef = useRef<THREE.Clock | null>(null);
+  // Voice-reactive targets from cortexSignalBus (window event, ~30Hz).
+  const voiceTarget = useRef({ speak: 0, listen: 0, think: 0 });
+  const voiceCur = useRef({ speak: 0, listen: 0, think: 0 });
+  const voiceStateRef = useRef('idle');
 
   useEffect(() => {
     const g = new THREE.Group();
@@ -133,8 +138,8 @@ function SparkStage({ url, onReady, onFail, onGust }: {
       gpuSimRef.current = new CortexGpuSim(gl, anchors);
       gpuMods.ring.uniforms.indexOffset.value = coreN;
       gpuModsRef.current = [
-        { uniforms: gpuMods.core.uniforms, spinSpeed: 0.06 },
-        { uniforms: gpuMods.ring.uniforms, spinSpeed: -0.22 },
+        { uniforms: gpuMods.core.uniforms, spinSpeed: 0.06, angle: 0 },
+        { uniforms: gpuMods.ring.uniforms, spinSpeed: -0.22, angle: 0 },
       ];
       console.log('[splat] gpu sim bound', { particles: total });
     };
@@ -207,6 +212,23 @@ function SparkStage({ url, onReady, onFail, onGust }: {
     gl.domElement.addEventListener('pointerenter', onEnter);
     gl.domElement.addEventListener('pointerleave', onLeave);
 
+    // Cortex voice state → animation targets. The signal bus broadcasts
+    // 'cortex-signal-bus' CustomEvents on window (debounced ~30Hz).
+    const onBus = (e: Event) => {
+      const d = (e as CustomEvent).detail as any;
+      if (!d || typeof d.state !== 'string') return;
+      const lvl = Math.max(0, Math.min(1, d.level ?? 0));
+      const vt = voiceTarget.current;
+      vt.speak = d.state === 'speaking' ? Math.max(0.12, lvl) : 0;
+      vt.listen = d.state === 'listening' ? 0.55 + lvl * 0.45 : 0;
+      vt.think = d.state === 'thinking' || d.state === 'working' ? 0.75 : 0;
+      if (d.state !== voiceStateRef.current) {
+        voiceStateRef.current = d.state;
+        onVoice?.(d.state, lvl);
+      }
+    };
+    window.addEventListener('cortex-signal-bus', onBus);
+
     return () => {
       cancelled = true;
       holder.current = null;
@@ -222,6 +244,7 @@ function SparkStage({ url, onReady, onFail, onGust }: {
       gl.domElement.removeEventListener('pointermove', onMove);
       gl.domElement.removeEventListener('pointerenter', onEnter);
       gl.domElement.removeEventListener('pointerleave', onLeave);
+      window.removeEventListener('cortex-signal-bus', onBus);
       g.traverse((n: any) => { try { n.dispose?.(); } catch {} });
       scene.remove(g);
       try { spark.dispose(); } catch {}
@@ -283,6 +306,16 @@ function SparkStage({ url, onReady, onFail, onGust }: {
       );
     }
 
+    // Voice envelope — fast attack, slower release so syllables read
+    // as swells rather than flicker.
+    const vt = voiceTarget.current;
+    const vc = voiceCur.current;
+    const vk = 1 - Math.exp(-7 * dt);
+    const vr = 1 - Math.exp(-2.2 * dt);
+    vc.speak += (vt.speak - vc.speak) * (vt.speak > vc.speak ? vk : vr);
+    vc.listen += (vt.listen - vc.listen) * (vt.listen > vc.listen ? vk : vr);
+    vc.think += (vt.think - vc.think) * (vt.think > vc.think ? vk : vr);
+
     // GPU ping-pong sim — advances core+ring physics on the GPU and
     // hands the position texture to the dyno modifiers.
     const sim = gpuSimRef.current;
@@ -293,10 +326,14 @@ function SparkStage({ url, onReady, onFail, onGust }: {
         flow?.strength.value ?? 0,
         gust,
         t,
+        { speak: vc.speak, listen: vc.listen, think: vc.think },
       );
       for (const m of gpuModsRef.current) {
         m.uniforms.simPos.value = tex;
-        m.uniforms.spin.value = t * m.spinSpeed;
+        // Voice makes the ring whirl — integrated angle so speech
+        // on/off never snaps the rotation.
+        m.angle += dt * m.spinSpeed * (1 + vc.speak * 2.2 + vc.think * 0.8);
+        m.uniforms.spin.value = m.angle;
       }
     }
 
@@ -317,13 +354,17 @@ function SparkStage({ url, onReady, onFail, onGust }: {
     }
 
     if (layers.length === 3) {
-      layers[0].fallVelocity.value = 0.03 * Math.max(0.15, (0.65 + 0.5 * Math.sin(t * 0.31) + 0.25 * Math.sin(t * 0.83 + 1.7)) * (1 + 5.5 * gust));
-      layers[0].wanderScale.value = 0.32 * (0.8 + 0.35 * Math.sin(t * 0.47 + 0.6)) * (1 + 1.6 * gust);
-      layers[0].opacity.value = Math.min(0.95, 0.55 * (0.85 + 0.15 * Math.sin(t * 0.9)) * (1 + 0.7 * gust));
-      layers[1].fallVelocity.value = 0.014 * (0.9 + 0.3 * Math.sin(t * 0.21 + 2.2)) * (1 + 3 * gust);
-      layers[1].opacity.value = Math.min(0.9, 0.35 * (0.9 + 0.2 * Math.sin(t * 0.66)) * (1 + 0.8 * gust));
-      layers[2].fallVelocity.value = 0.045 * (0.85 + 0.3 * Math.sin(t * 0.57 + 4.0)) * (1 + 2.5 * gust);
-      layers[2].opacity.value = Math.min(0.95, 0.7 * (0.85 + 0.15 * Math.sin(t * 1.1 + 0.4)) * (1 + 0.9 * gust));
+      // Voice coupling — Cortex speaking stirs the spore field like
+      // breath; listening settles it; thinking adds a low shimmer.
+      const surge = (1 + vc.speak * 3.4 + vc.think * 0.55) * (1 - vc.listen * 0.4);
+      const calm = 1 - vc.listen * 0.3 + vc.speak * 0.15;
+      layers[0].fallVelocity.value = 0.03 * Math.max(0.15, (0.65 + 0.5 * Math.sin(t * 0.31) + 0.25 * Math.sin(t * 0.83 + 1.7)) * (1 + 5.5 * gust)) * surge;
+      layers[0].wanderScale.value = 0.32 * (0.8 + 0.35 * Math.sin(t * 0.47 + 0.6)) * (1 + 1.6 * gust) * (1 + vc.speak * 0.9 + vc.think * 0.4);
+      layers[0].opacity.value = Math.min(0.95, 0.55 * (0.85 + 0.15 * Math.sin(t * 0.9)) * (1 + 0.7 * gust) * calm);
+      layers[1].fallVelocity.value = 0.014 * (0.9 + 0.3 * Math.sin(t * 0.21 + 2.2)) * (1 + 3 * gust) * surge;
+      layers[1].opacity.value = Math.min(0.9, 0.35 * (0.9 + 0.2 * Math.sin(t * 0.66)) * (1 + 0.8 * gust) * calm);
+      layers[2].fallVelocity.value = 0.045 * (0.85 + 0.3 * Math.sin(t * 0.57 + 4.0)) * (1 + 2.5 * gust) * (1 + vc.speak * 1.8);
+      layers[2].opacity.value = Math.min(0.95, 0.7 * (0.85 + 0.15 * Math.sin(t * 1.1 + 0.4)) * (1 + 0.9 * gust) * (1 + vc.speak * 0.6));
     }
   });
   return null;
@@ -349,6 +390,7 @@ export default function CortexSplatScene({ splat }: { splat?: string }) {
   const [ready, setReady] = useState(false);
   const [failed, setFailed] = useState(false);
   const [gusting, setGusting] = useState(false);
+  const [voice, setVoice] = useState({ state: 'idle', level: 0 });
 
   return (
     <div style={{ position: 'fixed', inset: 0, zIndex: 60, background: 'radial-gradient(ellipse at center, #050a14 0%, #01030a 100%)' }}>
@@ -358,7 +400,8 @@ export default function CortexSplatScene({ splat }: { splat?: string }) {
         camera={{ position: [0, 0.15, 3.1], fov: 45, near: 0.05, far: 60 }}
         dpr={[1, 1.75]}
       >
-        <SparkStage url={url} onReady={() => setReady(true)} onFail={() => setFailed(true)} onGust={setGusting} />
+        <SparkStage url={url} onReady={() => setReady(true)} onFail={() => setFailed(true)} onGust={setGusting}
+          onVoice={(s, l) => setVoice((v) => (v.state === s && Math.abs(v.level - l) < 0.001 ? v : { state: s, level: l }))} />
         <OrbitControls
           enablePan={false}
           autoRotate
@@ -391,7 +434,7 @@ export default function CortexSplatScene({ splat }: { splat?: string }) {
         textShadow: gusting ? '0 0 18px rgba(255,170,80,0.7)' : '0 0 14px rgba(103,232,249,0.4)',
         transition: 'color 300ms, text-shadow 300ms',
       }}>
-        {gusting ? '✦ SOLAR GUST ✦' : `GAUSSIAN SPLAT // ${raw.toUpperCase()}`}
+        {gusting ? '✦ SOLAR GUST ✦' : voice.state !== 'idle' ? `◉ ${voice.state.toUpperCase()}` : `GAUSSIAN SPLAT // ${raw.toUpperCase()}`}
       </div>
       <div style={{
         position: 'absolute', bottom: 18, left: '50%', transform: 'translateX(-50%)',
