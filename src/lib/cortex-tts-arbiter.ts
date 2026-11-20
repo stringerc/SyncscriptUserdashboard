@@ -76,6 +76,33 @@ export function createSpeechArbiter(ownerId?: string): SpeechArbiter {
   const owner = ownerId ?? nextOwnerId('arb');
   let lastBeatWrite = 0;
   let heldToken: string | null = null;
+  // Auto-heartbeat: freshness is owned by the arbiter, not by whichever
+  // playback path happens to remember to poll. Without this, any utterance
+  // longer than LOCK_STALE_MS (speak(), gapless tails, browser fallback)
+  // looks abandoned and a second voice claims the lock mid-sentence —
+  // two voices interleave = "shaken" audio.
+  let hbTimer: ReturnType<typeof setInterval> | null = null;
+
+  const stopAutoBeat = () => {
+    if (hbTimer) { clearInterval(hbTimer); hbTimer = null; }
+  };
+
+  const startAutoBeat = () => {
+    if (hbTimer) return;
+    hbTimer = setInterval(() => {
+      try {
+        const cur = readLock();
+        const curOwner = lockOwner(cur);
+        if (!curOwner || curOwner !== owner) {
+          // Stolen or released elsewhere — stop beating; manual
+          // heartbeat() callers still get 'stolen' for detection.
+          stopAutoBeat();
+          return;
+        }
+        writeLock(cur.token || heldToken || 'beat');
+      } catch { /* ignore */ }
+    }, 2000);
+  };
 
   const writeLock = (token: string) => {
     try {
@@ -91,7 +118,7 @@ export function createSpeechArbiter(ownerId?: string): SpeechArbiter {
       const token = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
       writeLock(token);
       const won = readLock()?.token === token;
-      if (won) heldToken = token;
+      if (won) { heldToken = token; startAutoBeat(); }
       return won;
     } catch {
       return true; // no localStorage — fail open
@@ -102,7 +129,7 @@ export function createSpeechArbiter(ownerId?: string): SpeechArbiter {
     try {
       const token = `steal-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
       writeLock(token);
-      if (readLock()?.token === token) heldToken = token;
+      if (readLock()?.token === token) { heldToken = token; startAutoBeat(); }
     } catch { /* ignore */ }
   };
 
@@ -126,6 +153,7 @@ export function createSpeechArbiter(ownerId?: string): SpeechArbiter {
 
   const release = () => {
     heldToken = null;
+    stopAutoBeat();
     try {
       if (lockOwner(readLock()) === owner) localStorage.removeItem(KEY);
     } catch { /* ignore */ }

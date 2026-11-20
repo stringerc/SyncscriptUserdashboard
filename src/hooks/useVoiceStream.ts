@@ -937,9 +937,18 @@ export function useVoiceStream(options: UseVoiceStreamOptions = {}) {
       utterance.volume = 1.0;
 
       let settled = false;
+      const fallbackWatch = setInterval(() => {
+        try {
+          if (settled) { clearInterval(fallbackWatch); return; }
+          if (speechArbiter.heartbeat() === 'stolen') {
+            try { synthRef.current?.cancel(); } catch {}
+          }
+        } catch { clearInterval(fallbackWatch); }
+      }, 900);
       const done = () => {
         if (settled) return;
         settled = true;
+        clearInterval(fallbackWatch);
         activeSpokenTextRef.current = '';
         lastSpeechEndTimeRef.current = Date.now();
         isSpeakingRef.current = false;
@@ -970,6 +979,19 @@ export function useVoiceStream(options: UseVoiceStreamOptions = {}) {
       console.info('[TTS] speech lock held by another surface — muting speak()');
       return;
     }
+    // Stolen-watch: the arbiter auto-beats freshness, but an explicit
+    // barge-in must yield mid-playback — the landing player and browser
+    // fallback have no heartbeat of their own. Self-clears once nothing
+    // is playing so it can never leak.
+    const stolenWatch = setInterval(() => {
+      try {
+        const alive = isSpeakingRef.current
+          || gaplessSourcesRef.current.size > 0
+          || !!activeAudioRef.current;
+        if (!alive) { clearInterval(stolenWatch); return; }
+        if (speechArbiter.heartbeat() === 'stolen') stopSpeakingRef.current?.();
+      } catch { clearInterval(stolenWatch); }
+    }, 900);
     speechEpochRef.current += 1;
     const currentEpoch = speechEpochRef.current;
 
@@ -1369,6 +1391,9 @@ export function useVoiceStream(options: UseVoiceStreamOptions = {}) {
     try {
       for await (const chunk of queue.iterate()) {
         if (streamEpochRef.current !== epoch) return scheduled > 0;
+        // Yield mid-sentence if another surface barged in — without this a
+        // long synthesis holds scheduled audio while the thief plays.
+        if ((scheduled & 7) === 0 && speechArbiter.heartbeat() === 'stolen') break;
         const audioBuf = ctx.createBuffer(1, chunk.samples.length, chunk.sampleRate);
         audioBuf.getChannelData(0).set(chunk.samples);
         const src = ctx.createBufferSource();
@@ -1389,7 +1414,7 @@ export function useVoiceStream(options: UseVoiceStreamOptions = {}) {
     } catch {
       return scheduled > 0;
     }
-  }, [ensureGaplessGraph, finalizeStreamSpeech]);
+  }, [ensureGaplessGraph, finalizeStreamSpeech, speechArbiter]);
 
   /** Start synthesis for queued sentences while fewer than
    *  TTS_PREFETCH_AHEAD requests are in flight — keeps audio buffered
