@@ -1,7 +1,8 @@
 /**
  * ZoonTracer — velocity-streak particle layer inspired by the zoon_works
- * TouchDesigner motion-blur study: near-white motes on black leaving long
- * directional trails, with periodic radial bursts.
+ * TouchDesigner motion-blur study: faint motes hugging the core leaving
+ * short directional trails. Deliberately quiet — no bursts, no far-field
+ * debris; just a subtle motion-blur sheen around the sphere.
  *
  * Each particle is an instanced camera-facing streak quad whose long axis is
  * aligned to its screen-space velocity and whose alpha fades tail→head.
@@ -15,7 +16,7 @@ import * as THREE from 'three';
 import { useFrame } from '@react-three/fiber';
 import type { LiveSignal } from './CortexCoreScene';
 
-const MAX = 3200;
+const MAX = 1400;
 
 const vertexShader = /* glsl */ `
   attribute vec3 iPos;
@@ -107,7 +108,6 @@ export function ZoonTracer({
 }) {
   const meshRef = useRef<THREE.Mesh>(null);
   const particles = useRef<P[]>([]);
-  const burstTimer = useRef(2.5);
 
   const { geometry, material } = useMemo(() => {
     const geo = new THREE.InstancedBufferGeometry();
@@ -165,16 +165,16 @@ export function ZoonTracer({
       const seed = Math.random();
       const theta = Math.random() * Math.PI * 2;
       const phi = Math.acos(2 * Math.random() - 1);
-      const r = 5 + Math.random() * 11;
+      const r = 2.3 + Math.random() * 3.0;
       arr.push({
         pos: new THREE.Vector3(
           r * Math.sin(phi) * Math.cos(theta),
-          r * Math.sin(phi) * Math.sin(theta) * 0.7,
-          r * Math.cos(phi) * 0.8 - 2,
+          r * Math.sin(phi) * Math.sin(theta) * 0.8,
+          r * Math.cos(phi) * 0.8 - 1,
         ),
         vel: new THREE.Vector3(),
         life: 1,
-        lifeMax: 2.5 + Math.random() * 5,
+        lifeMax: 1.6 + Math.random() * 3.2,
         size: 0.5 + Math.random(),
         seed,
         alive: false,
@@ -193,47 +193,25 @@ export function ZoonTracer({
     };
   }, [count, geometry, material]);
 
+  // Tight shell hugging the core — short lazy streaks, no explosions.
   const spawnAmbient = (p: P) => {
     const theta = Math.random() * Math.PI * 2;
     const phi = Math.acos(2 * Math.random() - 1);
-    const r = 5 + Math.random() * 11;
+    const r = 2.3 + Math.random() * 3.0;
     p.pos.set(
       r * Math.sin(phi) * Math.cos(theta),
-      r * Math.sin(phi) * Math.sin(theta) * 0.7,
-      r * Math.cos(phi) * 0.8 - 2,
+      r * Math.sin(phi) * Math.sin(theta) * 0.8,
+      r * Math.cos(phi) * 0.8 - 1,
     );
-    // Slow drift + slight inward pull — long lazy streaks.
+    // Slow drift — barely-there sheen, not debris.
     p.vel.set(
-      (Math.random() - 0.5) * 1.6,
-      (Math.random() - 0.5) * 1.2,
-      (Math.random() - 0.5) * 1.6,
+      (Math.random() - 0.5) * 0.9,
+      (Math.random() - 0.5) * 0.7,
+      (Math.random() - 0.5) * 0.9,
     );
-    p.lifeMax = 3 + Math.random() * 6;
+    p.lifeMax = 1.6 + Math.random() * 3.2;
     p.life = 1;
     p.alive = true;
-  };
-
-  const spawnBurst = (cx: number, cy: number, cz: number, energy: number) => {
-    // Radial burst — the video's signature "detonation" moments.
-    const n = Math.floor(90 + energy * 220);
-    let spawned = 0;
-    for (const p of particles.current) {
-      if (spawned >= n) break;
-      if (p.alive && p.life > p.lifeMax * 0.5) continue;
-      const theta = Math.random() * Math.PI * 2;
-      const phi = Math.acos(2 * Math.random() - 1);
-      const speed = (2.5 + Math.random() * 7) * (0.6 + energy * 0.8);
-      p.pos.set(cx + (Math.random() - 0.5) * 0.6, cy + (Math.random() - 0.5) * 0.6, cz + (Math.random() - 0.5) * 0.6);
-      p.vel.set(
-        Math.sin(phi) * Math.cos(theta) * speed,
-        Math.sin(phi) * Math.sin(theta) * speed * 0.8,
-        Math.cos(phi) * speed * 0.7,
-      );
-      p.lifeMax = 0.9 + Math.random() * 2.4;
-      p.life = 1;
-      p.alive = true;
-      spawned++;
-    }
   };
 
   useFrame((state, delta) => {
@@ -247,24 +225,12 @@ export function ZoonTracer({
     const arr = particles.current;
     if (!arr.length) return;
 
-    // Periodic bursts + energy/kick-reactive bursts (voice events = detonations).
-    burstTimer.current -= dt;
-    const kick = sig.kick + sig.ingest;
-    if (burstTimer.current <= 0 || kick > 0.9) {
-      const energy = Math.min(1, 0.25 + sig.energy * 0.5 + kick * 0.6);
-      // Burst from a random point in the core region — not always dead centre.
-      const a = Math.random() * Math.PI * 2;
-      const rr = Math.random() * 4;
-      spawnBurst(Math.cos(a) * rr, (Math.random() - 0.5) * 3, Math.sin(a) * rr - 2, energy);
-      burstTimer.current = kick > 0.9 ? 0.4 : 5 + Math.random() * 7;
-    }
-
-    const drag = Math.exp(-0.55 * dt);
+    const drag = Math.exp(-0.8 * dt);
     for (let i = 0; i < arr.length; i++) {
       const p = arr[i];
       if (!p.alive) {
-        // Trickle ambient respawns to keep the field alive.
-        if (Math.random() < dt * 14) spawnAmbient(p);
+        // Sparse trickle — keeps a faint sheen without debris density.
+        if (Math.random() < dt * 5) spawnAmbient(p);
         else { iLife.setX(i, 0); continue; }
       }
       p.life -= dt / p.lifeMax;
@@ -273,7 +239,7 @@ export function ZoonTracer({
       p.vel.multiplyScalar(drag);
       // Gentle containment — keep motes in the observable shell.
       const d2 = p.pos.lengthSq();
-      if (d2 > 420) {
+      if (d2 > 90) {
         p.vel.multiplyScalar(-0.4);
         p.pos.multiplyScalar(0.98);
       }
@@ -287,7 +253,7 @@ export function ZoonTracer({
 
     material.uniforms.uTime.value = state.clock.elapsedTime;
     material.uniforms.uEnergy.value = Math.min(1, sig.energy + sig.kick * 0.5);
-    material.uniforms.uOpacity.value = 0.55 + sig.energy * 0.4;
+    material.uniforms.uOpacity.value = 0.3 + sig.energy * 0.25;
     material.uniforms.uHead.value.copy(sig.colorRim).lerp(new THREE.Color('#ffffff'), 0.55);
     material.uniforms.uTail.value.copy(sig.colorDeep).lerp(new THREE.Color('#155e75'), 0.5);
   });

@@ -2360,12 +2360,15 @@ function AccretionDisk({ live }: { live: React.MutableRefObject<LiveSignal> }) {
     const pos = new Float32Array(COUNT * 3);
     const seed = new Float32Array(COUNT);
     for (let i = 0; i < COUNT; i++) {
-      // flat disk: radius band + thin vertical spread
+      // spherical shell: uniform direction * radius band — glow throughout
+      // the whole core volume instead of a flat equatorial ring.
       const r = 2.1 + Math.pow(Math.random(), 0.7) * 1.6;
-      const a = Math.random() * Math.PI * 2;
-      pos[i * 3] = Math.cos(a) * r;
-      pos[i * 3 + 1] = (Math.random() - 0.5) * (0.1 + r * 0.05);
-      pos[i * 3 + 2] = Math.sin(a) * r;
+      const theta = Math.random() * Math.PI * 2;
+      const phi = Math.acos(2 * Math.random() - 1);
+      const sy = Math.sin(phi);
+      pos[i * 3] = Math.cos(theta) * sy * r;
+      pos[i * 3 + 1] = Math.cos(phi) * sy * r * 0.82; // slight polar squash
+      pos[i * 3 + 2] = Math.sin(theta) * sy * r;
       seed[i] = Math.random();
     }
     geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
@@ -2425,9 +2428,7 @@ function AccretionDisk({ live }: { live: React.MutableRefObject<LiveSignal> }) {
   });
 
   return (
-    <group rotation={[1.32, 0, 0.12]}>
-      <points ref={pointsRef} geometry={geometry} material={material} frustumCulled={false} />
-    </group>
+    <points ref={pointsRef} geometry={geometry} material={material} frustumCulled={false} />
   );
 }
 
@@ -3452,7 +3453,7 @@ function CortexCoreInner({
       <AccretionDisk live={live} />
       <NeuralWeb live={live} />
       <ThoughtSwarm live={live} />
-      <ZoonTracer live={live} count={qualityMode === 'ultra' ? 1200 : qualityMode === 'smooth' ? 2200 : 3200} />
+      <ZoonTracer live={live} count={qualityMode === 'ultra' ? 500 : qualityMode === 'smooth' ? 900 : 1400} />
       <KineticMotes
         live={live}
         fx={fx}
