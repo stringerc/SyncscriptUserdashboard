@@ -294,18 +294,6 @@ function SparkStage({ url, onReady, onFail, onGust, onVoice }: {
       flow.strength.value += (targetStrength - flow.strength.value) * sk;
     }
 
-    // Lagrangian swarm — real position+velocity physics; momentum
-    // persists so cursor passes produce genuine recoil.
-    const swarm = swarmRef.current;
-    if (swarm) {
-      swarm.step(
-        Math.min(dt, 0.05),
-        (flow?.mouse.value as THREE.Vector3) ?? mouseTarget.current,
-        flow?.strength.value ?? 0,
-        gust,
-      );
-    }
-
     // Voice envelope — fast attack, slower release so syllables read
     // as swells rather than flicker.
     const vt = voiceTarget.current;
@@ -315,6 +303,19 @@ function SparkStage({ url, onReady, onFail, onGust, onVoice }: {
     vc.speak += (vt.speak - vc.speak) * (vt.speak > vc.speak ? vk : vr);
     vc.listen += (vt.listen - vc.listen) * (vt.listen > vc.listen ? vk : vr);
     vc.think += (vt.think - vc.think) * (vt.think > vc.think ? vk : vr);
+
+    // Lagrangian swarm — real position+velocity physics; momentum
+    // persists so cursor passes produce genuine recoil.
+    const swarm = swarmRef.current;
+    if (swarm) {
+      swarm.step(
+        Math.min(dt, 0.05),
+        (flow?.mouse.value as THREE.Vector3) ?? mouseTarget.current,
+        flow?.strength.value ?? 0,
+        gust,
+        { speak: vc.speak, listen: vc.listen, think: vc.think },
+      );
+    }
 
     // GPU ping-pong sim — advances core+ring physics on the GPU and
     // hands the position texture to the dyno modifiers.

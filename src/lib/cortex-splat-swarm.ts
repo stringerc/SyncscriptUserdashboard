@@ -97,12 +97,15 @@ export class SwarmSim {
     }
   }
 
-  step(dt: number, cursor: THREE.Vector3, cursorStrength: number, gust: number) {
+  step(dt: number, cursor: THREE.Vector3, cursorStrength: number, gust: number, voice?: { speak?: number; listen?: number; think?: number }) {
     const n = this.n;
     const t = this.time;
     this.time += dt;
     const damp = Math.exp(-DAMP_RATE * dt);
-    const amb = AMB_K * (1 + gust * 1.8);
+    const speak = voice?.speak ?? 0;
+    const listen = voice?.listen ?? 0;
+    const think = voice?.think ?? 0;
+    const amb = AMB_K * (1 + gust * 1.8) * (1 + speak * 2.4 + think * 0.9) * (1 - listen * 0.35);
     const cur = CURSOR_PUSH * cursorStrength * (1 + gust * 0.9);
     const swr = CURSOR_SWIRL * cursorStrength * (1 + gust * 0.9);
     const R2 = CURSOR_RADIUS * CURSOR_RADIUS;
@@ -147,6 +150,17 @@ export class SwarmSim {
       ax += (Math.sin(y * 1.9 + t * 0.6) + 0.45 * Math.sin(z * 3.3 - t * 0.9)) * amb;
       ay += (Math.sin(z * 1.6 - t * 0.45) + 0.45 * Math.sin(x * 2.7 + t * 0.75)) * amb;
       az += (Math.sin(x * 2.1 + t * 0.55) + 0.45 * Math.sin(y * 3.0 + t * 1.05)) * amb;
+
+      // Voice coupling — syllabic radial swell (per-particle phase via
+      // index hash) + gentle implosion while listening.
+      if (speak > 0.01 || listen > 0.01) {
+        const vl = speak * (0.6 + 0.4 * Math.sin(t * 6.3 + i * 1.71));
+        const il = 1 / (Math.sqrt(x * x + y * y + z * z) + 0.08);
+        const vr = (vl - listen * 0.55) * 2.0;
+        ax += x * il * vr;
+        ay += y * il * vr;
+        az += z * il * vr;
+      }
 
       // Cursor repulsion + vertical-axis swirl. Velocity is integrated,
       // not applied as offset — momentum persists after the cursor leaves.

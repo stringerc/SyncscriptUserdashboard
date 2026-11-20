@@ -45,21 +45,23 @@ const FORCE_GLSL = /* glsl */ `
   }
   // Voice reactivity — Cortex speaking swells the field with a per-particle
   // phased chorus (syllabic, not uniform pumping); listening implodes
-  // gently; thinking stirs the turbulence faster.
+  // gently; thinking stirs the turbulence faster. Coefficients are large
+  // on purpose: spring k=6.0 dominates small forces, so voice must push
+  // hard enough to read as visible choreography at default zoom.
   float voice = uSpeak * (0.55 + 0.45 * sin(uTime * 6.3 + seed * 3.0));
   vec3 radial = normalize(pos + vec3(0.0001));
-  acc += radial * voice * 0.55;
+  acc += radial * voice * 1.9;
   acc += vec3(
     sin(pos.y * 4.0 + uTime * 9.0),
     sin(pos.z * 4.4 - uTime * 8.0),
     sin(pos.x * 3.8 + uTime * 10.0)
-  ) * voice * 0.22;
-  acc -= radial * uListen * 0.16;
+  ) * voice * 0.6;
+  acc -= radial * uListen * 0.34;
   acc += vec3(
     sin(pos.z * 5.1 - uTime * 11.0),
     sin(pos.x * 4.6 + uTime * 12.5),
     sin(pos.y * 5.4 + uTime * 9.5)
-  ) * uThink * 0.14;
+  ) * uThink * 0.4;
 
   vel = (vel + acc * uDt) * exp(-2.4 * uDt);
   float sp2 = dot(vel, vel);
