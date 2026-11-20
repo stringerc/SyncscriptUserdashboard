@@ -38,6 +38,14 @@ const AMBIENT_POLL_MS = 60_000;
 const LEADER_STALE_MS = 25_000;
 const LEADER_KEY = 'cortex_voice_leader';
 const AMBIENT_LAST_KEY = 'cortex_ambient_last_id';
+const AMBIENT_SEEN_KEY = 'cortex_ambient_seen_ids';
+const AMBIENT_SPOKEN_KEY = 'cortex_ambient_spoken_texts';
+const TEXT_DEDUP_MS = 6 * 3600 * 1000;
+const SEEN_MAX = 500;
+const SPOKEN_MAX = 200;
+// Routine agent-runtime completion notices ("SENTINEL completed: …") are
+// written to the same queue for the inbox UI but are chatter, not speech.
+const ROUTINE_NOTICE_RE = /\bcompleted:\s/i;
 
 interface LeaderRecord { id: string; ts: number }
 
@@ -66,6 +74,20 @@ class CortexProactiveVoiceService {
   private ambientTimer: ReturnType<typeof setInterval> | null = null;
   private ambientLastId = (() => {
     try { return localStorage.getItem(AMBIENT_LAST_KEY) || ''; } catch { return ''; }
+  })();
+  private ambientSeenIds = (() => {
+    try {
+      const raw = localStorage.getItem(AMBIENT_SEEN_KEY);
+      const arr = raw ? JSON.parse(raw) : [];
+      return new Set<string>(Array.isArray(arr) ? arr.filter((x) => typeof x === 'string') : []);
+    } catch { return new Set<string>(); }
+  })();
+  private ambientSpokenTexts = (() => {
+    try {
+      const raw = localStorage.getItem(AMBIENT_SPOKEN_KEY);
+      const obj = raw ? JSON.parse(raw) : {};
+      return (obj && typeof obj === 'object' ? obj : {}) as Record<string, number>;
+    } catch { return {} as Record<string, number>; }
   })();
   private storageHandler: ((e: StorageEvent) => void) | null = null;
   private started = false;
@@ -133,11 +155,42 @@ class CortexProactiveVoiceService {
     if (this.ambientTimer) { clearInterval(this.ambientTimer); this.ambientTimer = null; }
   }
 
+  private persistAmbientState(): void {
+    try {
+      localStorage.setItem(AMBIENT_LAST_KEY, this.ambientLastId);
+      localStorage.setItem(AMBIENT_SEEN_KEY, JSON.stringify([...this.ambientSeenIds].slice(-SEEN_MAX)));
+      const now = Date.now();
+      const fresh = Object.fromEntries(
+        Object.entries(this.ambientSpokenTexts).filter(([, ts]) => now - ts < TEXT_DEDUP_MS),
+      );
+      const keys = Object.keys(fresh);
+      if (keys.length > SPOKEN_MAX) {
+        keys.sort((a, b) => fresh[a] - fresh[b]);
+        for (const k of keys.slice(0, keys.length - SPOKEN_MAX)) delete fresh[k];
+      }
+      this.ambientSpokenTexts = fresh;
+      localStorage.setItem(AMBIENT_SPOKEN_KEY, JSON.stringify(fresh));
+    } catch {}
+  }
+
+  private normalizeNoticeText(text: string): string {
+    return text.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim().slice(0, 160);
+  }
+
   /**
    * Drain the server-side ambient notice queue (always-on host generates,
    * this client decides whether it's an appropriate moment to speak).
    * Items are marked seen regardless of policy outcome — notices are
    * ephemeral and the next server tick produces fresh ones.
+   *
+   * Speech gates (in order):
+   *   1. seen-id set — mixed id formats ('notice-task-*' vs '<ts>-*') break
+   *      lexicographic max-id comparison, so dedupe by membership instead.
+   *   2. routine agent-completion notices are queued for the inbox UI but
+   *      never spoken — they were drowning out every real notice.
+   *   3. content dedupe — identical text within 6h is never re-spoken.
+   *   4. at most ONE announcement per poll — a backlog burst must not
+   *      queue a wall of utterances into the voice stream.
    */
   private async pollAmbient(): Promise<void> {
     try {
@@ -146,18 +199,34 @@ class CortexProactiveVoiceService {
       const data: any = await res.json();
       const items = Array.isArray(data?.items) ? data.items : [];
       let newest = this.ambientLastId;
+      let announceCandidate: { text: string; kind: string } | null = null;
       for (const item of items) {
         if (!item || typeof item.id !== 'string' || typeof item.text !== 'string') continue;
-        if (this.ambientLastId && item.id <= this.ambientLastId) continue;
+        if (this.ambientSeenIds.has(item.id)) continue;
+        this.ambientSeenIds.add(item.id);
         if (item.id > newest) newest = item.id;
-        this.announce(item.text, item.kind === 'system' ? 'system' : 'ambient', {
-          signals: [item.kind === 'system' ? 'server-health' : 'server-state', 'ambient-queue'],
+        const text = String(item.text).trim();
+        if (!text || ROUTINE_NOTICE_RE.test(text.slice(0, 120))) continue;
+        const norm = this.normalizeNoticeText(text);
+        const lastSpoken = this.ambientSpokenTexts[norm];
+        if (lastSpoken && Date.now() - lastSpoken < TEXT_DEDUP_MS) continue;
+        // Keep the newest eligible item — earlier backlog stays silent.
+        announceCandidate = {
+          text,
+          kind: item.kind === 'system' ? 'system' : 'ambient',
+        };
+      }
+      if (announceCandidate) {
+        const spoken = this.announce(announceCandidate.text, announceCandidate.kind as ProactiveCategory, {
+          signals: ['ambient-queue'],
         });
+        if (spoken) {
+          const norm = this.normalizeNoticeText(announceCandidate.text);
+          this.ambientSpokenTexts[norm] = Date.now();
+        }
       }
-      if (newest !== this.ambientLastId) {
-        this.ambientLastId = newest;
-        try { localStorage.setItem(AMBIENT_LAST_KEY, newest); } catch {}
-      }
+      if (newest !== this.ambientLastId) this.ambientLastId = newest;
+      this.persistAmbientState();
     } catch {}
   }
 
