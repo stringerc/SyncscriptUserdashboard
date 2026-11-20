@@ -436,6 +436,18 @@ export default function CortexSplatScene({ splat }: { splat?: string }) {
       }}>
         {gusting ? '✦ SOLAR GUST ✦' : voice.state !== 'idle' ? `◉ ${voice.state.toUpperCase()}` : `GAUSSIAN SPLAT // ${raw.toUpperCase()}`}
       </div>
+      {/* Persistent voice-link chip — dim at idle so the bus connection
+          is verifiable even when Cortex isn't talking. */}
+      <div style={{
+        position: 'absolute', top: 22, right: 22,
+        fontFamily: MONO, fontSize: 8.5, letterSpacing: '0.26em',
+        color: voice.state === 'idle' ? 'rgba(120,140,160,0.35)' : 'rgba(140,240,255,0.9)',
+        pointerEvents: 'none',
+        textShadow: voice.state === 'idle' ? 'none' : '0 0 14px rgba(103,232,249,0.6)',
+        transition: 'color 250ms, text-shadow 250ms',
+      }}>
+        VOICE·{voice.state === 'idle' ? 'STANDBY' : voice.state.toUpperCase()}
+      </div>
       <div style={{
         position: 'absolute', bottom: 18, left: '50%', transform: 'translateX(-50%)',
         fontFamily: MONO, fontSize: 8.5, letterSpacing: '0.22em',
