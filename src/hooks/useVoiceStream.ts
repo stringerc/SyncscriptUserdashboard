@@ -23,6 +23,7 @@ import { sentenceToNexusProsodySegment } from '../utils/nexus-tts-prosody';
 import { PcmQueue, pumpWavToPcm } from '../utils/wav-pcm-stream';
 import { reportTtsRum } from '../utils/tts-rum-beacon';
 import { stepVuEnvelope } from '../utils/audio-vu-envelope';
+import { tryClaimSpeech, heartbeatSpeech, releaseSpeech } from '../lib/cortex-tts-arbiter';
 import { voiceLatencyMark, voiceLatencyMeasure } from '../utils/voice-latency-debug';
 import { createPcmFeeder, getEouEngine } from '../lib/voice/semantic-eou';
 import {
@@ -1191,6 +1192,7 @@ export function useVoiceStream(options: UseVoiceStreamOptions = {}) {
         return;
       }
       analyser.getByteTimeDomainData(data);
+      heartbeatSpeech();
       let sum = 0;
       for (let i = 0; i < data.length; i++) {
         const v = (data[i] - 128) / 128;
@@ -1220,6 +1222,7 @@ export function useVoiceStream(options: UseVoiceStreamOptions = {}) {
     setIsSpeaking(false);
     setState(prev => ({ ...prev, status: 'idle' }));
     onStatusChangeRef.current?.('idle');
+    releaseSpeech();
   }, []);
 
   /** Shared gapless AudioContext + analyser for stream/blob scheduling. */
@@ -1383,6 +1386,7 @@ export function useVoiceStream(options: UseVoiceStreamOptions = {}) {
 
     while (streamSentenceQueueRef.current.length > 0) {
       if (streamEpochRef.current !== currentEpoch) break;
+      heartbeatSpeech();
       const item = streamSentenceQueueRef.current.shift()!;
       activeSpokenTextRef.current = item.text;
       prefetchStreamTts();
@@ -1457,6 +1461,13 @@ export function useVoiceStream(options: UseVoiceStreamOptions = {}) {
 
     // Mutex check: if idle or starting new stream
     if (!isSpeakingRef.current) {
+      // Cross-tab arbitration: only one Cortex tab vocalizes at a time.
+      // Another tab holding the lock means its pipeline is already
+      // answering — this turn still lands in chat, just stays silent.
+      if (!tryClaimSpeech()) {
+        console.info('[TTS] speech lock held by another tab — muting this utterance');
+        return;
+      }
       streamEpochRef.current += 1;
       streamSentenceQueueRef.current = [];
       streamTtsAbortRef.current = new AbortController();
@@ -1552,6 +1563,7 @@ export function useVoiceStream(options: UseVoiceStreamOptions = {}) {
     isSpeakingRef.current = false;
     setIsSpeaking(false);
     currentUtteranceRef.current = null;
+    releaseSpeech();
     if (state.status === 'speaking') {
       setState(prev => ({ ...prev, status: 'idle' }));
       onStatusChangeRef.current?.('idle');
