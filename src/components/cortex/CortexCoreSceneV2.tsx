@@ -368,7 +368,7 @@ function Ring({ spec, live, index }: {
 
 // ── Agent constellation — glowing motes on inclined orbits ──────────────
 
-const AGENT_COUNT = 14;
+const AGENT_COUNT = 22;
 const TRAIL_LEN = 26;
 
 // agent name-tag textures — canvas-backed, regenerated only on rename
@@ -410,7 +410,7 @@ function AgentField({ live, nightMode, selectedAgentId, onSelectAgent }: {
   const agentsRef = useRef<AgentClient[]>([]);
   const trailRefs = useRef<{ line: THREE.Line; pos: Float32Array; col: Float32Array; head: number }[]>([]);
   const params = useMemo(() => Array.from({ length: AGENT_COUNT }, (_, i) => ({
-    radius: 2.0 + (i % 3) * 0.45 + ((i * 37) % 10) * 0.04,
+    radius: 1.95 + (i % 4) * 0.42 + ((i * 37) % 10) * 0.04,
     speed: (0.16 + ((i * 13) % 10) * 0.02) * (i % 2 === 0 ? 1 : -1),
     incl: (((i * 61) % 100) / 100 - 0.5) * 2.2,
     node: ((i * 47) % 100) / 100 * Math.PI * 2,
@@ -468,7 +468,7 @@ function AgentField({ live, nightMode, selectedAgentId, onSelectAgent }: {
       } else {
         sprite.scale.setScalar((0.14 + 0.03 * Math.sin(t * 2.2 + i)) * boost * Math.sqrt(neon));
         m.color.copy(sig.colorRim).lerp(c('#ffffff'), 0.4);
-        m.opacity = Math.min(1, (0.25 + 0.1 * Math.sin(t * 1.8 + i)) * neon);
+        m.opacity = Math.min(1, (0.36 + 0.12 * Math.sin(t * 1.8 + i)) * neon);
       }
       // name tag rides beneath the sprite
       const label = labels.current[i];
