@@ -12,7 +12,7 @@ import {
 } from 'recharts';
 import { ExternalLink, Pin, X } from 'lucide-react';
 import { C } from '../cortex-demo-helpers';
-import type { CortexArtifact, ChartArtifact, TableArtifact, ImageArtifact, DocumentArtifact, FeedArtifact, StatArtifact, WeatherArtifact, WxHourPoint } from '../../../lib/cortex-artifacts';
+import type { CortexArtifact, ChartArtifact, TableArtifact, ImageArtifact, DocumentArtifact, FeedArtifact, StatArtifact, WeatherArtifact, WxHourPoint, WxDayPoint } from '../../../lib/cortex-artifacts';
 import 'uplot/dist/uPlot.min.css';
 
 const MONO = '"IBM Plex Mono", ui-monospace, monospace';
@@ -372,16 +372,16 @@ export function ArtifactShell({
         transition={{ duration: 0.6, ease: [0.16, 1, 0.3, 1] }}
         style={{
         position: 'relative',
-        background: 'linear-gradient(155deg, rgba(13,32,30,0.46) 0%, rgba(9,20,32,0.38) 52%, rgba(16,10,34,0.44) 100%)',
-        backdropFilter: 'blur(22px) saturate(1.6)', WebkitBackdropFilter: 'blur(22px) saturate(1.6)',
-        border: `1px solid ${hover ? 'rgba(160,245,255,0.55)' : 'rgba(255,255,255,0.13)'}`,
+        background: 'linear-gradient(155deg, rgba(122,192,255,0.18) 0%, rgba(56,116,220,0.11) 52%, rgba(98,142,246,0.15) 100%)',
+        backdropFilter: 'blur(24px) saturate(1.7)', WebkitBackdropFilter: 'blur(24px) saturate(1.7)',
+        border: `1px solid ${hover ? 'rgba(175,238,255,0.62)' : 'rgba(198,232,255,0.22)'}`,
         borderRadius: 10,
         padding: compact ? '8px 10px' : '10px 12px',
         cursor: onExpand ? 'pointer' : 'default',
         transition: 'border-color 0.2s ease, box-shadow 0.25s ease',
         boxShadow: hover
-          ? '0 18px 50px rgba(0,0,0,0.5), inset 0 1px 0 rgba(255,255,255,0.14), inset 0 -1px 0 rgba(255,255,255,0.04), 0 0 30px rgba(103,232,249,0.14)'
-          : '0 12px 38px rgba(0,0,0,0.42), inset 0 1px 0 rgba(255,255,255,0.1), inset 0 -1px 0 rgba(255,255,255,0.03)',
+          ? '0 18px 50px rgba(2,10,30,0.5), inset 0 1px 0 rgba(255,255,255,0.2), inset 0 -1px 0 rgba(160,210,255,0.06), 0 0 36px rgba(96,180,255,0.22)'
+          : '0 12px 38px rgba(2,10,30,0.45), inset 0 1px 0 rgba(255,255,255,0.15), inset 0 -1px 0 rgba(160,210,255,0.05)',
         fontFamily: "'DM Sans', ui-sans-serif, system-ui, sans-serif",
         overflow: 'hidden',
       }}
@@ -392,7 +392,7 @@ export function ArtifactShell({
       {/* Glass sheen — top-light specular streak across the frosted surface. */}
       <div aria-hidden="true" style={{
         position: 'absolute', inset: 0, borderRadius: 'inherit', pointerEvents: 'none',
-        background: 'linear-gradient(180deg, rgba(255,255,255,0.11) 0%, rgba(255,255,255,0.03) 22%, transparent 42%)',
+        background: 'linear-gradient(180deg, rgba(214,242,255,0.17) 0%, rgba(165,215,255,0.05) 24%, transparent 45%)',
       }} />
       <div style={{ position: 'relative', zIndex: 1 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
@@ -1439,17 +1439,35 @@ function WxIcon({ k, size = 46 }: { k: string; size?: number }) {
   );
 }
 
-function wxIconKey(a: WeatherArtifact, scene: WxScene): string {
-  const c = (a.condition || '').toLowerCase();
-  const night = scene.sun === 'night' || a.isDay === false;
+function wxCondKey(cond?: string): 'storm' | 'snow' | 'rain' | 'fog' | 'cloud' | 'partly' | 'sun' {
+  const c = (cond || '').toLowerCase();
   if (/thunder|storm|lightning/.test(c)) return 'storm';
   if (/snow|flurr|sleet|wintry|blizzard/.test(c)) return 'snow';
   if (/rain|shower|drizzle|precip/.test(c)) return 'rain';
   if (/fog|haze|mist|smoky/.test(c)) return 'fog';
   if (/overcast|cloudy|mostly cloudy/.test(c)) return 'cloud';
-  if (/partly|mostly clear|mostly sunny/.test(c)) return night ? 'partly-night' : 'partly-day';
-  return night ? 'moon' : 'sun';
+  if (/partly|mostly clear|mostly sunny/.test(c)) return 'partly';
+  return 'sun';
 }
+
+function wxIconKey(a: WeatherArtifact, scene: WxScene): string {
+  const night = scene.sun === 'night' || a.isDay === false;
+  const k = wxCondKey(a.condition);
+  if (k === 'partly') return night ? 'partly-night' : 'partly-day';
+  if (k === 'sun') return night ? 'moon' : 'sun';
+  return k;
+}
+
+// Frost-glass tile shared by the weather card's data regions — icy blue
+// translucency over the live scene, hairline highlight, deep soft shadow.
+const WX_GLASS: React.CSSProperties = {
+  background: 'linear-gradient(165deg, rgba(198,230,255,0.11) 0%, rgba(110,168,238,0.07) 55%, rgba(72,124,205,0.09) 100%)',
+  backdropFilter: 'blur(16px) saturate(1.4)',
+  WebkitBackdropFilter: 'blur(16px) saturate(1.4)',
+  border: '1px solid rgba(205,236,255,0.18)',
+  borderRadius: 8,
+  boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.16), 0 10px 28px rgba(3,10,26,0.38)',
+};
 
 // ── Hourly strip — uPlot temp curve + precip bars ────────────────────────
 
@@ -1519,6 +1537,48 @@ function WxHourly({ hours }: { hours: WxHourPoint[] }) {
     };
   }, [hours]);
   return <div ref={ref} className="cx-wx-hourly" />;
+}
+
+// ── WxDays — multi-day forecast strip on frost-glass tiles ───────────────
+
+function wxDayIconKey(cond?: string): string {
+  const k = wxCondKey(cond);
+  if (k === 'partly') return 'partly-day';
+  if (k === 'sun') return 'sun';
+  return k;
+}
+
+function WxDays({ days }: { days: WxDayPoint[] }) {
+  return (
+    <div style={{ display: 'flex', gap: 6, overflowX: 'auto', paddingBottom: 2 }}>
+      {days.map((d, i) => (
+        <div key={i} style={{
+          ...WX_GLASS,
+          flex: '0 0 auto',
+          width: 86,
+          padding: '8px 9px 7px',
+          display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3,
+        }}>
+          <div style={{ fontSize: 8, letterSpacing: '0.18em', color: 'rgba(185,220,255,0.65)', fontFamily: MONO, textTransform: 'uppercase', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '100%' }}>
+            {d.d}
+          </div>
+          <WxIcon k={wxDayIconKey(d.cond)} size={30} />
+          <div style={{ display: 'flex', alignItems: 'baseline', gap: 5, fontFamily: MONO }}>
+            {d.hi != null && <span style={{ fontSize: 12, color: '#eaf6ff', fontWeight: 600 }}>{d.hi}°</span>}
+            {d.lo != null && <span style={{ fontSize: 10.5, color: 'rgba(170,205,240,0.75)' }}>{d.lo}°</span>}
+          </div>
+          {d.precip != null && d.precip >= 20 && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 3, fontSize: 8.5, color: 'rgba(147,197,253,0.9)', fontFamily: MONO, letterSpacing: '0.04em' }}>
+              <svg width="7" height="9" viewBox="0 0 7 9" fill="none">
+                <path d="M3.5 0C1.6 2.8 0 4.6 0 6.2A3.5 3.5 0 0 0 7 6.2C7 4.6 5.4 2.8 3.5 0Z" fill="rgba(147,197,253,0.9)" />
+              </svg>
+              {d.precip}%
+            </div>
+          )}
+        </div>
+      ))}
+    </div>
+  );
 }
 
 // ── WxRadar — RainViewer radar mosaic centered on the forecast point ──
@@ -1609,8 +1669,8 @@ function WxRadar({ lat, lon }: { lat: number; lon: number }) {
     ? new Date(frame.time * 1000).toUTCString().replace(/.*?(\d{2}:\d{2}).*/, '$1') + ' UTC'
     : '';
   return (
-    <div>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
+    <div style={{ ...WX_GLASS, padding: '8px 10px 9px' }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 5 }}>
         <div style={{ fontSize: 8.5, letterSpacing: '0.22em', color: 'rgba(160,200,235,0.55)', fontFamily: MONO, textTransform: 'uppercase' }}>
           Radar
         </div>
@@ -1631,7 +1691,7 @@ function WxRadar({ lat, lon }: { lat: number; lon: number }) {
           >›</button>
         </div>
       </div>
-      <div style={{ borderRadius: 6, overflow: 'hidden', border: `1px solid ${C.border}`, background: '#04070f' }}>
+      <div style={{ borderRadius: 6, overflow: 'hidden' }}>
         <canvas
           ref={canvasRef}
           width={WX_RADAR_COLS.length * WX_TILE}
@@ -1725,9 +1785,18 @@ function WeatherBody({ a }: { a: WeatherArtifact }) {
           </div>
         </div>
       </div>
+      {/* Multi-day forecast — frosted hi/lo tiles */}
+      {a.days && a.days.length > 1 && (
+        <div>
+          <div style={{ fontSize: 8.5, letterSpacing: '0.22em', color: 'rgba(160,200,235,0.55)', fontFamily: MONO, textTransform: 'uppercase', marginBottom: 4 }}>
+            {a.days.length}-Day Forecast
+          </div>
+          <WxDays days={a.days} />
+        </div>
+      )}
       {/* Hourly strip — temp curve + precip probability */}
       {a.hourly && a.hourly.length >= 2 && (
-        <div>
+        <div style={{ ...WX_GLASS, padding: '8px 10px 6px' }}>
           <div style={{ fontSize: 8.5, letterSpacing: '0.22em', color: 'rgba(160,200,235,0.55)', fontFamily: MONO, textTransform: 'uppercase', marginBottom: 2 }}>
             Next {a.hourly.length}h
           </div>

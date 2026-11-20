@@ -137,6 +137,18 @@ export interface WeatherArtifact extends ArtifactBase {
   /** Coordinates for the radar overlay (WeatherArtifact only). */
   lat?: number;
   lon?: number;
+  /** Multi-day forecast strip (day/night paired hi/lo). */
+  days?: WxDayPoint[];
+}
+
+export interface WxDayPoint {
+  /** Period label, e.g. "Today", "Friday". */
+  d: string;
+  hi?: number;
+  lo?: number;
+  cond?: string;
+  /** Max precipitation probability 0-100 across day+night. */
+  precip?: number | null;
 }
 
 export type CortexArtifact =
@@ -339,6 +351,21 @@ export function validateArtifacts(input: unknown, source = 'emit_artifact'): {
             ? { lat: Number(item.lat) } : {}),
           ...(Number.isFinite(Number(item.lon)) && Math.abs(Number(item.lon)) <= 180
             ? { lon: Number(item.lon) } : {}),
+          ...(Array.isArray(item.days)
+            ? {
+                days: item.days.slice(0, 8).map((dd: any) => {
+                  const o = isObj(dd) ? dd : {};
+                  const hi = Number(o.hi), lo = Number(o.lo);
+                  return {
+                    d: str(o.d, 30) || '',
+                    ...(Number.isFinite(hi) ? { hi: Math.round(hi) } : {}),
+                    ...(Number.isFinite(lo) ? { lo: Math.round(lo) } : {}),
+                    ...(typeof o.cond === 'string' && o.cond ? { cond: o.cond.slice(0, 120) } : {}),
+                    ...(Number.isFinite(Number(o.precip)) ? { precip: Math.max(0, Math.min(100, Math.round(Number(o.precip)))) } : {}),
+                  } as WxDayPoint;
+                }).filter((dd: WxDayPoint) => dd.d),
+              }
+            : {}),
         });
         break;
       }

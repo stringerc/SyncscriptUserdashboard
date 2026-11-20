@@ -116,6 +116,19 @@ ALSO SHIPPED:
   removed (unused). NOTE: src/server/ is gitignored — cortex-tools.ts
   weather changes live on disk only, not in git.
 
+ALSO SHIPPED:
+- Weather modal consolidation + frost-blue glass (this commit):
+  get_weather emitted 4 artifacts -> useVisualizerVoice auto-pins EVERY
+  artifact as a surface panel = "3 plain modals". Now emits ONE weather
+  artifact; dayPeriods paired day+night into WxDayPoint[] hi/lo strip.
+  ArtifactRenderer: WxDays frosted forecast tiles (86px, mini WxIcon,
+  hi/lo, precip droplet svg), WX_GLASS style on hourly/radar/days
+  regions, ArtifactShell recolored dark-teal -> luminous ice-blue frost
+  (rgba(122,192,255,...) gradient, blur 24/sat 1.7, brighter sheen+glow).
+  Refactored wxIconKey onto shared wxCondKey. Verified: probe shows
+  4-DAY FORECAST label + 4 tiles + hi/lo + precip, radar+hourly intact,
+  0 pageerrors; tsc only pre-existing 897; eslint 0 errors.
+
 UNVERIFIED / OPEN:
 - Real-browser two-tab typed turn (unit-level arbiter sim only).
 - Morning briefing auto-play: handleTogglePlayBrief is manual; if an
