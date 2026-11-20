@@ -97,8 +97,22 @@ export interface FeedArtifact extends ArtifactBase {
   items: FeedItem[];
 }
 
+/** One hour of forecast — drives the inline temperature/precip strip. */
+export interface WxHourPoint {
+  /** Short hour label, e.g. "2 PM". */
+  t: string;
+  /** Temperature in °F. */
+  temp: number;
+  /** Precipitation probability 0-100, null when NWS omits it. */
+  precip: number | null;
+  /** NWS shortForecast for this hour — drives per-hour icon. */
+  cond?: string;
+  /** True when this hour is daytime (icon sun vs moon). */
+  day?: boolean;
+}
+
 /** Weather scene artifact — renders an animated condition-graded sky panel
- *  (pure CSS/SVG, no image assets) with live-feeling atmosphere. */
+ *  (canvas particles + animated SVG icon + hourly strip, no image assets). */
 export interface WeatherArtifact extends ArtifactBase {
   kind: 'weather';
   title: string;
@@ -112,6 +126,17 @@ export interface WeatherArtifact extends ArtifactBase {
   period?: string;
   /** One-line spoken-style summary. */
   summary?: string;
+  /** Relative humidity %, current conditions. */
+  humidity?: number;
+  /** Current precipitation probability 0-100. */
+  precipNow?: number;
+  /** Whether the current period is daytime. */
+  isDay?: boolean;
+  /** Hourly forecast points for the strip chart (next ~18h). */
+  hourly?: WxHourPoint[];
+  /** Coordinates for the radar overlay (WeatherArtifact only). */
+  lat?: number;
+  lon?: number;
 }
 
 export type CortexArtifact =
@@ -284,6 +309,20 @@ export function validateArtifacts(input: unknown, source = 'emit_artifact'): {
         const condition = str(item.condition, 200);
         const temp = str(item.temp, 40);
         if (!title && !condition && !temp) { rejected++; continue; }
+        const hourly = Array.isArray(item.hourly)
+          ? item.hourly.slice(0, 24).map((h: any) => {
+              const ho = isObj(h) ? h : {};
+              const ht = Number(ho.temp);
+              if (!Number.isFinite(ht)) return null;
+              return {
+                t: str(ho.t, 24) || '',
+                temp: Math.round(ht),
+                precip: Number.isFinite(Number(ho.precip)) ? Math.max(0, Math.min(100, Math.round(Number(ho.precip)))) : null,
+                ...(typeof ho.cond === 'string' && ho.cond ? { cond: ho.cond.slice(0, 120) } : {}),
+                ...(typeof ho.day === 'boolean' ? { day: ho.day } : {}),
+              } as WxHourPoint;
+            }).filter(Boolean) as WxHourPoint[]
+          : undefined;
         accepted.push({
           ...base, kind: 'weather', title: title || condition || 'Weather',
           ...(typeof item.city === 'string' ? { city: item.city.slice(0, 120) } : {}),
@@ -292,6 +331,14 @@ export function validateArtifacts(input: unknown, source = 'emit_artifact'): {
           ...(typeof item.wind === 'string' ? { wind: item.wind.slice(0, 80) } : {}),
           ...(typeof item.period === 'string' ? { period: item.period.slice(0, 60) } : {}),
           ...(typeof item.summary === 'string' ? { summary: item.summary.slice(0, MAX_STRING) } : {}),
+          ...(Number.isFinite(Number(item.humidity)) ? { humidity: Math.max(0, Math.min(100, Math.round(Number(item.humidity)))) } : {}),
+          ...(Number.isFinite(Number(item.precipNow)) ? { precipNow: Math.max(0, Math.min(100, Math.round(Number(item.precipNow)))) } : {}),
+          ...(typeof item.isDay === 'boolean' ? { isDay: item.isDay } : {}),
+          ...(hourly && hourly.length >= 2 ? { hourly } : {}),
+          ...(Number.isFinite(Number(item.lat)) && Math.abs(Number(item.lat)) <= 90
+            ? { lat: Number(item.lat) } : {}),
+          ...(Number.isFinite(Number(item.lon)) && Math.abs(Number(item.lon)) <= 180
+            ? { lon: Number(item.lon) } : {}),
         });
         break;
       }

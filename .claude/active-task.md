@@ -100,6 +100,22 @@ ALSO SHIPPED:
   one-off glitch. Head prebuffer 0.7s->1.0s PCM for early-hole cover.
   Verified: warmup req fires on mount, advance/duration=1.0000, 0 overlap.
 
+ALSO SHIPPED:
+- Weather artifact v2 (uncommitted->this commit): NWS get_weather now
+  emits weather scene + stat + hourly chart + forecast table + lat/lon.
+  WeatherBody rebuilt: tsParticles v4 canvas sky (rain/snow/storm/fog/
+  stars/motes via loadFull singleton — Engine ctor does NOT exist in v4),
+  hand-animated SVG icon, uPlot hourly temp+precip strip (lazy-loaded),
+  WxRadar = RainViewer tile mosaic (z7, 3x2 tiles, ~2h frame stepper,
+  location marker, LIVE badge; silent-fail when no lat/lon or fetch dies).
+  Verified: Playwright probe — scene/particles/icon/uPlot all mount,
+  radar canvas 768x512 with real echo coverage (0.7% lit px over Gulf
+  storm test), zero pageerrors. tsc: only pre-existing 897 format error.
+  eslint: 0 errors (2 pre-existing unused-import warnings). Deps:
+  @tsparticles/engine + tsparticles + uplot added; @tsparticles/slim
+  removed (unused). NOTE: src/server/ is gitignored — cortex-tools.ts
+  weather changes live on disk only, not in git.
+
 UNVERIFIED / OPEN:
 - Real-browser two-tab typed turn (unit-level arbiter sim only).
 - Morning briefing auto-play: handleTogglePlayBrief is manual; if an

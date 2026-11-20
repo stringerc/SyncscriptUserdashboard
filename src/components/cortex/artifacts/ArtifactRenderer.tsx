@@ -12,7 +12,8 @@ import {
 } from 'recharts';
 import { ExternalLink, Pin, X } from 'lucide-react';
 import { C } from '../cortex-demo-helpers';
-import type { CortexArtifact, ChartArtifact, TableArtifact, ImageArtifact, DocumentArtifact, FeedArtifact, StatArtifact, WeatherArtifact } from '../../../lib/cortex-artifacts';
+import type { CortexArtifact, ChartArtifact, TableArtifact, ImageArtifact, DocumentArtifact, FeedArtifact, StatArtifact, WeatherArtifact, WxHourPoint } from '../../../lib/cortex-artifacts';
+import 'uplot/dist/uPlot.min.css';
 
 const MONO = '"IBM Plex Mono", ui-monospace, monospace';
 
@@ -1175,9 +1176,10 @@ function DocumentBody({ a }: { a: DocumentArtifact }) {
   );
 }
 
-// ── WeatherBody — animated condition-graded sky scene ────────────────────
-// Pure CSS/SVG atmosphere: gradient sky, sun/moon disc, drifting cloud
-// banks, rain/snow/fog layers — the "picture" weather panels were missing.
+// ── WeatherBody v2 — canvas-particle sky + animated icon + hourly strip ──
+// tsparticles canvas (rain/snow/storm/fog/stars/motes) over the graded sky,
+// a hand-animated SVG weather glyph, and a uPlot hourly temp+precip strip.
+
 interface WxScene {
   sky: [string, string, string];       // top → mid → horizon
   sun: 'day' | 'night' | null;
@@ -1204,97 +1206,559 @@ function weatherScene(cond?: string, period?: string): WxScene {
   return { sky: ['#050b1e', '#0d2b52', '#1e5a86'], sun: night ? 'night' : 'day', clouds: 0, rain: false, snow: false, fog: false, storm: false };
 }
 
+type WxParticleKind = 'rain' | 'storm' | 'snow' | 'fog' | 'stars' | 'motes';
+
+function wxParticleKind(scene: WxScene): WxParticleKind {
+  if (scene.storm) return 'storm';
+  if (scene.rain) return 'rain';
+  if (scene.snow) return 'snow';
+  if (scene.fog) return 'fog';
+  if (scene.sun === 'night') return 'stars';
+  return 'motes';
+}
+
+function wxParticleOptions(kind: WxParticleKind): Record<string, unknown> {
+  const base = {
+    fullScreen: { enable: false },
+    detectRetina: true,
+    fpsLimit: 60,
+    background: { color: { value: 'transparent' } },
+    interactivity: {
+      events: { onHover: { enable: true, mode: 'parallax' } },
+      modes: { parallax: { force: 16, smooth: 10 } },
+    },
+  };
+  switch (kind) {
+    case 'rain':
+    case 'storm': {
+      const storm = kind === 'storm';
+      return {
+        ...base,
+        particles: {
+          number: { value: storm ? 210 : 140 },
+          color: { value: storm ? ['#eef6ff', '#cfe2ff', '#bcd8ff'] : ['#bfe0ff', '#d8ecff', '#9cc8f0'] },
+          shape: { type: 'line' },
+          size: { value: { min: storm ? 12 : 9, max: storm ? 26 : 20 } },
+          rotate: { value: 100 },
+          opacity: { value: { min: 0.14, max: storm ? 0.55 : 0.42 } },
+          move: {
+            enable: true,
+            speed: { min: storm ? 42 : 30, max: storm ? 72 : 55 },
+            direction: 'bottom',
+            angle: 10,
+            outModes: { default: 'out' },
+          },
+          life: { duration: { value: { min: 3, max: 6 } } },
+        },
+      };
+    }
+    case 'snow':
+      return {
+        ...base,
+        particles: {
+          number: { value: 95 },
+          color: { value: ['#ffffff', '#dcecff', '#cfe4ff'] },
+          shape: { type: 'circle' },
+          size: { value: { min: 1.6, max: 3.8 } },
+          opacity: { value: { min: 0.4, max: 0.9 } },
+          rotate: { value: 360, animation: { enable: true, speed: { min: 2, max: 6 } } },
+          move: {
+            enable: true,
+            random: true,
+            speed: { min: 10, max: 24 },
+            direction: 'bottom',
+            drift: { min: 3, max: 9 },
+            outModes: { default: 'out' },
+          },
+          life: { duration: { value: { min: 4, max: 8 } } },
+        },
+      };
+    case 'fog':
+      return {
+        ...base,
+        particles: {
+          number: { value: 10 },
+          color: { value: ['rgba(185,205,228,0.55)', 'rgba(170,195,220,0.4)', 'rgba(200,218,235,0.5)'] },
+          shape: { type: 'circle' },
+          size: { value: { min: 55, max: 150 } },
+          opacity: { value: { min: 0.05, max: 0.11 } },
+          move: {
+            enable: true,
+            speed: { min: 4, max: 11 },
+            direction: 'right',
+            angle: 180,
+            outModes: { default: 'out' },
+          },
+          life: { duration: { value: { min: 6, max: 12 } } },
+        },
+      };
+    case 'stars':
+      return {
+        ...base,
+        particles: {
+          number: { value: 130 },
+          color: { value: ['#ffffff', '#cfe4ff', '#ffe9c4'] },
+          shape: { type: 'circle' },
+          size: { value: { min: 0.6, max: 1.9 } },
+          opacity: {
+            value: { min: 0.25, max: 0.95 },
+            animation: { enable: true, speed: { min: 0.4, max: 1.4 }, sync: false, startValue: 'random' },
+          },
+          move: { enable: false },
+        },
+      };
+    default: // motes — clear/partly day + overcast
+      return {
+        ...base,
+        particles: {
+          number: { value: 42 },
+          color: { value: ['#ffe9c4', '#cfe8ff', '#ffffff'] },
+          shape: { type: 'circle' },
+          size: { value: { min: 0.8, max: 2.1 } },
+          opacity: {
+            value: { min: 0.15, max: 0.5 },
+            animation: { enable: true, speed: { min: 0.5, max: 1.2 }, sync: false },
+          },
+          move: {
+            enable: true,
+            speed: { min: 2, max: 7 },
+            direction: 'top',
+            angle: 25,
+            outModes: { default: 'out' },
+          },
+          life: { duration: { value: { min: 5, max: 10 } } },
+        },
+      };
+  }
+}
+
+function WxParticles({ kind }: { kind: WxParticleKind }) {
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) return;
+    let dead = false;
+    let container: { destroy?: () => void } | null = null;
+    void (async () => {
+      const [{ tsParticles }, { loadFull }] = await Promise.all([
+        import('@tsparticles/engine'),
+        import('tsparticles'),
+      ]);
+      await loadFull(tsParticles);
+      if (dead || !el.isConnected) return;
+      container = (await tsParticles.load({
+        element: el,
+        id: `wx-${kind}-${Math.random().toString(36).slice(2, 8)}`,
+        options: wxParticleOptions(kind),
+      })) as { destroy?: () => void } | null;
+    })().catch((e) => { console.warn('[WxParticles]', e); /* decorative — never break the card */ });
+    return () => {
+      dead = true;
+      try { container?.destroy?.(); } catch { /* noop */ }
+    };
+  }, [kind]);
+  return <div ref={ref} style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }} />;
+}
+
+// ── Animated SVG weather glyph (Meteocons-style, hand-drawn) ─────────────
+
+function WxIcon({ k, size = 46 }: { k: string; size?: number }) {
+  const cloud = 'M7 18.6a4.6 4.6 0 0 1-.42-9.18A6.1 6.1 0 0 1 18.4 8.7a4.3 4.3 0 0 1-.7 9.9H7z';
+  const rays = Array.from({ length: 8 }, (_, i) => {
+    const a = (i * Math.PI) / 4;
+    const x1 = 12 + Math.cos(a) * 6.6, y1 = 12 + Math.sin(a) * 6.6;
+    const x2 = 12 + Math.cos(a) * 8.6, y2 = 12 + Math.sin(a) * 8.6;
+    return <line key={i} x1={x1} y1={y1} x2={x2} y2={y2} />;
+  });
+  const miniSun = (
+    <g>
+      <g className="cx-wxi-rays" stroke="#ffd76a" strokeWidth="1.1" strokeLinecap="round" opacity="0.85">
+        {Array.from({ length: 6 }, (_, i) => {
+          const a = (i * Math.PI) / 3 + 0.5;
+          return <line key={i} x1={17.6 + Math.cos(a) * 3.1} y1={6.4 + Math.sin(a) * 3.1} x2={17.6 + Math.cos(a) * 4.1} y2={6.4 + Math.sin(a) * 4.1} />;
+        })}
+      </g>
+      <circle cx="17.6" cy="6.4" r="2.4" fill="#ffd76a" />
+    </g>
+  );
+  const miniMoon = (
+    <g>
+      <path d="M19.5 5.6A5.4 5.4 0 0 1 18.4 9.4 5.4 5.4 0 1 0 19.5 5.6z" fill="#dfe8ff" />
+      <circle cx="8.6" cy="5.2" r="0.55" fill="#fff" className="cx-wxi-twinkle" />
+      <circle cx="20.4" cy="11.6" r="0.45" fill="#fff" className="cx-wxi-twinkle" style={{ animationDelay: '1.2s' }} />
+    </g>
+  );
+  const drops = (
+    <g stroke="#8fd0ff" strokeWidth="1.5" strokeLinecap="round">
+      <line className="cx-wxi-drop" x1="8.6" y1="18.4" x2="7.9" y2="21" style={{ animationDelay: '0s' }} />
+      <line className="cx-wxi-drop" x1="12" y1="18.8" x2="11.3" y2="21.4" style={{ animationDelay: '0.35s' }} />
+      <line className="cx-wxi-drop" x1="15.4" y1="18.4" x2="14.7" y2="21" style={{ animationDelay: '0.7s' }} />
+    </g>
+  );
+  const flakes = (
+    <g fill="#eef6ff">
+      <circle className="cx-wxi-flake" cx="8.6" cy="19.4" r="0.85" style={{ animationDelay: '0s' }} />
+      <circle className="cx-wxi-flake" cx="12" cy="20" r="0.7" style={{ animationDelay: '0.6s' }} />
+      <circle className="cx-wxi-flake" cx="15.4" cy="19.4" r="0.85" style={{ animationDelay: '1.1s' }} />
+    </g>
+  );
+  const fogLines = (
+    <g stroke="#b8cfe4" strokeWidth="1.4" strokeLinecap="round">
+      <line className="cx-wxi-fogline" x1="7.4" y1="19.2" x2="16.6" y2="19.2" style={{ animationDelay: '0s' }} />
+      <line className="cx-wxi-fogline" x1="9" y1="21" x2="15" y2="21" style={{ animationDelay: '0.9s' }} />
+    </g>
+  );
+  const bolt = (
+    <path className="cx-wxi-bolt" d="M13.4 13.2 10.9 17.6h2.3l-1.5 3.6 3.6-4.8h-2.3l1.4-3.2z" fill="#fde047" />
+  );
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" aria-hidden="true" style={{ display: 'block', flexShrink: 0 }}>
+      {k === 'sun' && (
+        <g>
+          <g className="cx-wxi-rays" stroke="#ffd76a" strokeWidth="1.5" strokeLinecap="round">{rays}</g>
+          <circle cx="12" cy="12" r="4.2" fill="#ffd76a" />
+        </g>
+      )}
+      {k === 'moon' && (
+        <g>
+          <path d="M20 13.4A8.4 8.4 0 0 1 10.6 4 8.4 8.4 0 1 0 20 13.4z" fill="#dfe8ff" />
+          <circle cx="17.6" cy="4.6" r="0.6" fill="#fff" className="cx-wxi-twinkle" />
+          <circle cx="5.4" cy="8.8" r="0.5" fill="#fff" className="cx-wxi-twinkle" style={{ animationDelay: '1.4s' }} />
+          <circle cx="19.8" cy="17.8" r="0.45" fill="#fff" className="cx-wxi-twinkle" style={{ animationDelay: '0.7s' }} />
+        </g>
+      )}
+      {k === 'partly-day' && <g>{miniSun}<path d={cloud} fill="#cfe0f5" /></g>}
+      {k === 'partly-night' && <g>{miniMoon}<path d={cloud} fill="#aebfd8" /></g>}
+      {k === 'cloud' && <path d={cloud} fill="#cfe0f5" />}
+      {k === 'rain' && <g><path d={cloud} fill="#b9cbe2" />{drops}</g>}
+      {k === 'snow' && <g><path d={cloud} fill="#c8d8ec" />{flakes}</g>}
+      {k === 'storm' && <g><path d={cloud} fill="#9fb2cc" />{bolt}{drops}</g>}
+      {k === 'fog' && <g><path d={cloud} fill="#bccadb" opacity="0.85" />{fogLines}</g>}
+    </svg>
+  );
+}
+
+function wxIconKey(a: WeatherArtifact, scene: WxScene): string {
+  const c = (a.condition || '').toLowerCase();
+  const night = scene.sun === 'night' || a.isDay === false;
+  if (/thunder|storm|lightning/.test(c)) return 'storm';
+  if (/snow|flurr|sleet|wintry|blizzard/.test(c)) return 'snow';
+  if (/rain|shower|drizzle|precip/.test(c)) return 'rain';
+  if (/fog|haze|mist|smoky/.test(c)) return 'fog';
+  if (/overcast|cloudy|mostly cloudy/.test(c)) return 'cloud';
+  if (/partly|mostly clear|mostly sunny/.test(c)) return night ? 'partly-night' : 'partly-day';
+  return night ? 'moon' : 'sun';
+}
+
+// ── Hourly strip — uPlot temp curve + precip bars ────────────────────────
+
+function WxHourly({ hours }: { hours: WxHourPoint[] }) {
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el || hours.length < 2) return;
+    let plot: { destroy: () => void; setSize?: (o: { width: number; height: number }) => void } | null = null;
+    let dead = false;
+    void (async () => {
+      const { default: uPlot } = await import('uplot');
+      if (dead || !el.isConnected) return;
+      const data: uPlot.AlignedData = [
+        hours.map((_, i) => i),
+        hours.map((h) => h.temp),
+        hours.map((h) => h.precip ?? 0),
+      ];
+      plot = new uPlot({
+        width: el.clientWidth || 320,
+        height: 92,
+        padding: [8, 10, 0, 10],
+        cursor: { show: true, x: false, y: false, points: { show: false } },
+        legend: { show: false },
+        scales: { pp: { range: [0, 400] } },
+        axes: [
+          {
+            show: true,
+            stroke: 'rgba(160,200,235,0.3)',
+            grid: { show: false },
+            ticks: { show: false },
+            values: (_self: unknown, splits: number[]) =>
+              splits.map((i) => hours[Math.max(0, Math.min(hours.length - 1, Math.round(i)))]?.t ?? ''),
+          },
+          { show: false },
+          { show: false, scale: 'pp' },
+        ],
+        series: [
+          {},
+          {
+            label: 'Temp °F',
+            stroke: '#8fd8ff',
+            width: 1.6,
+            fill: 'rgba(103,232,249,0.10)',
+            points: { show: false },
+            spanGaps: true,
+          },
+          {
+            label: 'Precip %',
+            scale: 'pp',
+            stroke: 'rgba(125,211,252,0)',
+            fill: 'rgba(56,189,248,0.30)',
+            paths: uPlot.paths.bars?.({ gap: 3, size: [0.62, 14, 1] }),
+            points: { show: false },
+          },
+        ],
+      }, data, el) as unknown as { destroy: () => void; setSize?: (o: { width: number; height: number }) => void };
+      const ro = new ResizeObserver(() => {
+        if (el.clientWidth > 0) plot?.setSize?.({ width: el.clientWidth, height: 92 });
+      });
+      ro.observe(el);
+      return () => ro.disconnect();
+    })().catch(() => { /* chart is decorative — never break the card */ });
+    return () => {
+      dead = true;
+      try { plot?.destroy(); } catch { /* noop */ }
+    };
+  }, [hours]);
+  return <div ref={ref} className="cx-wx-hourly" />;
+}
+
+// ── WxRadar — RainViewer radar mosaic centered on the forecast point ──
+// Free tile API (no key, CORS-open). 3×2 tiles @ z7 ≈ 8.4°×5.6° regional view,
+// step through ~2h of 10-min past frames with ‹ ›.
+const WX_RADAR_Z = 7;
+const WX_RADAR_COLS = [-1, 0, 1];
+const WX_RADAR_ROWS = [-1, 0];
+const WX_TILE = 256;
+
+function WxRadar({ lat, lon }: { lat: number; lon: number }) {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const [host, setHost] = useState('https://tilecache.rainviewer.com');
+  const [frames, setFrames] = useState<{ time: number; path: string }[]>([]);
+  const [idx, setIdx] = useState(-1);
+  const [failed, setFailed] = useState(false);
+
+  useEffect(() => {
+    let dead = false;
+    fetch('https://api.rainviewer.com/public/weather-maps.json')
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`))))
+      .then((d) => {
+        if (dead) return;
+        if (typeof d?.host === 'string' && d.host) setHost(d.host.replace(/\/+$/, ''));
+        const past = Array.isArray(d?.radar?.past)
+          ? d.radar.past.filter((f: any) => f && Number.isFinite(f.time) && typeof f.path === 'string')
+          : [];
+        if (past.length) { setFrames(past); setIdx(past.length - 1); }
+        else setFailed(true);
+      })
+      .catch(() => { if (!dead) setFailed(true); });
+    return () => { dead = true; };
+  }, []);
+
+  useEffect(() => {
+    const frame = frames[idx];
+    const cv = canvasRef.current;
+    if (!frame || !cv || !Number.isFinite(lat) || !Number.isFinite(lon)) return;
+    let dead = false;
+    const n = 2 ** WX_RADAR_Z;
+    const fx = ((lon + 180) / 360) * n;
+    const latR = (lat * Math.PI) / 180;
+    const fy = ((1 - Math.log(Math.tan(latR) + 1 / Math.cos(latR)) / Math.PI) / 2) * n;
+    const cx = Math.floor(fx);
+    const cy = Math.floor(fy);
+    const ctx = cv.getContext('2d');
+    if (!ctx) return;
+
+    const jobs: Promise<void>[] = [];
+    const tiles: { img: HTMLImageElement; dx: number; dy: number }[] = [];
+    for (const dx of WX_RADAR_COLS) {
+      for (const dy of WX_RADAR_ROWS) {
+        const x = (((cx + dx) % n) + n) % n;
+        const y = cy + dy;
+        if (y < 0 || y >= n) continue;
+        const img = new Image();
+        img.crossOrigin = 'anonymous';
+        const job = new Promise<void>((resolve) => {
+          img.onload = () => { tiles.push({ img, dx, dy }); resolve(); };
+          img.onerror = () => resolve();
+        });
+        img.src = `${host}${frame.path}/256/${WX_RADAR_Z}/${x}/${y}/2/1_1.png`;
+        jobs.push(job);
+      }
+    }
+    void Promise.all(jobs).then(() => {
+      if (dead || !cv.isConnected) return;
+      ctx.fillStyle = '#04070f';
+      ctx.fillRect(0, 0, cv.width, cv.height);
+      for (const t of tiles) {
+        ctx.drawImage(t.img, (t.dx + 1) * WX_TILE, (t.dy + 1) * WX_TILE);
+      }
+      // Location marker — cyan ring at the exact fractional tile position.
+      const mx = (fx - (cx - 1)) * WX_TILE;
+      const my = (fy - (cy - 1)) * WX_TILE;
+      ctx.strokeStyle = 'rgba(103,232,249,0.95)';
+      ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.arc(mx, my, 7, 0, Math.PI * 2); ctx.stroke();
+      ctx.fillStyle = '#67e8f9';
+      ctx.beginPath(); ctx.arc(mx, my, 2.4, 0, Math.PI * 2); ctx.fill();
+    });
+    return () => { dead = true; };
+  }, [frames, idx, host, lat, lon]);
+
+  if (failed) return null;
+  const frame = frames[idx];
+  const frameLabel = frame
+    ? new Date(frame.time * 1000).toUTCString().replace(/.*?(\d{2}:\d{2}).*/, '$1') + ' UTC'
+    : '';
+  return (
+    <div>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
+        <div style={{ fontSize: 8.5, letterSpacing: '0.22em', color: 'rgba(160,200,235,0.55)', fontFamily: MONO, textTransform: 'uppercase' }}>
+          Radar
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          {idx === frames.length - 1 && frames.length > 0 && (
+            <span style={{ fontSize: 8, letterSpacing: '0.2em', color: '#4ade80', fontFamily: MONO }}>● LIVE</span>
+          )}
+          <button
+            onClick={() => setIdx((i) => Math.max(0, i - 1))}
+            disabled={idx <= 0}
+            style={{ ...iconBtn, width: 18, height: 18, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: 10, opacity: idx <= 0 ? 0.3 : 1 }}
+          >‹</button>
+          <span style={{ fontSize: 8.5, color: 'rgba(190,220,250,0.7)', fontFamily: MONO, minWidth: 52, textAlign: 'center' }}>{frameLabel}</span>
+          <button
+            onClick={() => setIdx((i) => Math.min(frames.length - 1, i + 1))}
+            disabled={idx >= frames.length - 1}
+            style={{ ...iconBtn, width: 18, height: 18, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: 10, opacity: idx >= frames.length - 1 ? 0.3 : 1 }}
+          >›</button>
+        </div>
+      </div>
+      <div style={{ borderRadius: 6, overflow: 'hidden', border: `1px solid ${C.border}`, background: '#04070f' }}>
+        <canvas
+          ref={canvasRef}
+          width={WX_RADAR_COLS.length * WX_TILE}
+          height={WX_RADAR_ROWS.length * WX_TILE}
+          style={{ display: 'block', width: '100%', height: 'auto' }}
+        />
+      </div>
+    </div>
+  );
+}
+
 function WeatherBody({ a }: { a: WeatherArtifact }) {
   const scene = weatherScene(a.condition, a.period);
   const [skyTop, skyMid, skyHor] = scene.sky;
+  const iconKey = wxIconKey(a, scene);
+  const kind = wxParticleKind(scene);
+  const stats = [
+    a.city,
+    a.wind ? `wind ${a.wind}` : null,
+    a.humidity != null ? `RH ${a.humidity}%` : null,
+    a.precipNow != null ? `precip ${a.precipNow}%` : null,
+  ].filter(Boolean).join('  ·  ');
   return (
-    <div className="cx-wx-scene" style={{ position: 'relative', width: '100%', aspectRatio: '16 / 9', borderRadius: 6, overflow: 'hidden', minHeight: 150 }}>
-      {/* Sky gradient */}
-      <div style={{ position: 'absolute', inset: 0, background: `linear-gradient(180deg, ${skyTop} 0%, ${skyMid} 52%, ${skyHor} 100%)` }} />
-      {/* Sun / moon disc */}
-      {scene.sun && (
-        <div style={{
-          position: 'absolute', top: '14%', right: '16%', width: 54, height: 54, borderRadius: '50%',
-          background: scene.sun === 'day'
-            ? 'radial-gradient(circle at 38% 35%, #fff7d6, #ffd76a 55%, #ff9d3c)'
-            : 'radial-gradient(circle at 38% 35%, #f4f7ff, #b9c8e8 55%, #7d90c0)',
-          boxShadow: scene.sun === 'day' ? '0 0 42px 14px rgba(255,205,110,0.45)' : '0 0 34px 10px rgba(190,205,255,0.35)',
-          animation: 'cx-wx-bob 7s ease-in-out infinite',
-        }} />
-      )}
-      {/* Cloud banks — soft blurred ellipses drifting */}
-      {Array.from({ length: scene.clouds }).map((_, i) => (
-        <div key={i} style={{
-          position: 'absolute',
-          top: `${12 + i * 16}%`, left: `${-10 + i * 8}%`,
-          width: `${44 + i * 10}%`, height: 34 + i * 8,
-          borderRadius: '50%',
-          background: scene.storm || scene.rain
-            ? 'radial-gradient(ellipse at center, rgba(30,36,52,0.85), rgba(30,36,52,0) 70%)'
-            : 'radial-gradient(ellipse at center, rgba(220,232,255,0.28), rgba(220,232,255,0) 70%)',
-          filter: 'blur(6px)',
-          animation: `cx-wx-drift ${26 + i * 9}s linear infinite`,
-          animationDelay: `${-i * 9}s`,
-        }} />
-      ))}
-      {/* Precipitation layers */}
-      {scene.rain && (
-        <div style={{
-          position: 'absolute', inset: '-20% 0 0 0',
-          background: 'repeating-linear-gradient(105deg, transparent 0 7px, rgba(170,205,255,0.28) 7px 8px)',
-          animation: 'cx-wx-rain 0.9s linear infinite',
-        }} />
-      )}
-      {scene.snow && (
-        <div style={{
-          position: 'absolute', inset: 0,
-          backgroundImage: 'radial-gradient(rgba(235,244,255,0.75) 1px, transparent 1.6px), radial-gradient(rgba(235,244,255,0.5) 1px, transparent 1.6px)',
-          backgroundSize: '34px 34px, 58px 58px',
-          backgroundPosition: '0 0, 17px 23px',
-          animation: 'cx-wx-snow 7s linear infinite',
-        }} />
-      )}
-      {scene.fog && (
-        <div style={{
-          position: 'absolute', inset: '30% 0 0 0',
-          background: 'repeating-linear-gradient(180deg, transparent 0 26px, rgba(200,214,228,0.12) 26px 44px)',
-          animation: 'cx-wx-fog 11s ease-in-out infinite alternate',
-        }} />
-      )}
-      {/* Horizon haze */}
-      <div style={{ position: 'absolute', left: 0, right: 0, bottom: 0, height: '34%', background: 'linear-gradient(180deg, transparent, rgba(2,6,14,0.55))' }} />
-      {/* Readout overlay */}
-      <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', justifyContent: 'space-between', padding: '12px 14px' }}>
-        <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12 }}>
-          {a.temp && (
-            <span style={{
-              fontSize: 40, fontWeight: 200, color: '#f2fbff', lineHeight: 1,
-              fontFamily: MONO, letterSpacing: '-0.03em',
-              textShadow: '0 2px 18px rgba(0,0,0,0.6)',
-            }}>{a.temp}</span>
-          )}
-          <div style={{ paddingTop: 4 }}>
-            {a.period && <div style={{ fontSize: 9, letterSpacing: '0.26em', color: 'rgba(190,225,255,0.75)', fontFamily: MONO, textTransform: 'uppercase' }}>{a.period}</div>}
-            {a.condition && <div style={{ fontSize: 12, color: '#eaf4ff', fontWeight: 600, marginTop: 2, textShadow: '0 1px 8px rgba(0,0,0,0.6)' }}>{a.condition}</div>}
-          </div>
-        </div>
-        <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', gap: 8 }}>
-          <div style={{ fontSize: 9.5, color: 'rgba(200,224,255,0.85)', fontFamily: MONO, letterSpacing: '0.08em' }}>
-            {[a.city, a.wind ? `wind ${a.wind}` : null].filter(Boolean).join(' · ')}
-          </div>
-          {a.summary && (
-            <div style={{ fontSize: 8.5, color: 'rgba(170,200,230,0.6)', fontFamily: MONO, letterSpacing: '0.06em', maxWidth: '55%', textAlign: 'right', overflow: 'hidden', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' }}>
-              {a.summary}
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+      <div className="cx-wx-scene" style={{ position: 'relative', width: '100%', aspectRatio: '16 / 9', borderRadius: 6, overflow: 'hidden', minHeight: 150 }}>
+        {/* Sky gradient */}
+        <div style={{ position: 'absolute', inset: 0, background: `linear-gradient(180deg, ${skyTop} 0%, ${skyMid} 52%, ${skyHor} 100%)` }} />
+        {/* Sun rays (day) — rotating conic halo behind the disc */}
+        {scene.sun === 'day' && (
+          <div className="cx-wx-rays" style={{
+            position: 'absolute', top: '2%', right: '8%', width: 110, height: 110, borderRadius: '50%',
+            background: 'repeating-conic-gradient(rgba(255,214,106,0.55) 0deg 7deg, transparent 7deg 24deg)',
+            WebkitMask: 'radial-gradient(circle, black 18%, transparent 68%)',
+            mask: 'radial-gradient(circle, black 18%, transparent 68%)',
+          }} />
+        )}
+        {/* Sun / moon disc */}
+        {scene.sun && (
+          <div style={{
+            position: 'absolute', top: '14%', right: '16%', width: 54, height: 54, borderRadius: '50%',
+            background: scene.sun === 'day'
+              ? 'radial-gradient(circle at 38% 35%, #fff7d6, #ffd76a 55%, #ff9d3c)'
+              : 'radial-gradient(circle at 38% 35%, #f4f7ff, #b9c8e8 55%, #7d90c0)',
+            boxShadow: scene.sun === 'day' ? '0 0 42px 14px rgba(255,205,110,0.45)' : '0 0 34px 10px rgba(190,205,255,0.35)',
+            animation: 'cx-wx-bob 7s ease-in-out infinite',
+          }} />
+        )}
+        {/* Cloud banks — soft blurred ellipses drifting */}
+        {Array.from({ length: scene.clouds }).map((_, i) => (
+          <div key={i} style={{
+            position: 'absolute',
+            top: `${12 + i * 16}%`, left: `${-10 + i * 8}%`,
+            width: `${44 + i * 10}%`, height: 34 + i * 8,
+            borderRadius: '50%',
+            background: scene.storm || scene.rain
+              ? 'radial-gradient(ellipse at center, rgba(30,36,52,0.85), rgba(30,36,52,0) 70%)'
+              : 'radial-gradient(ellipse at center, rgba(220,232,255,0.28), rgba(220,232,255,0) 70%)',
+            filter: 'blur(6px)',
+            animation: `cx-wx-drift ${26 + i * 9}s linear infinite`,
+            animationDelay: `${-i * 9}s`,
+          }} />
+        ))}
+        {/* Canvas particle layer — rain/snow/storm/fog/stars/motes */}
+        <WxParticles kind={kind} />
+        {/* Lightning flash (storm) */}
+        {scene.storm && <div className="cx-wx-flash" />}
+        {/* Horizon haze */}
+        <div style={{ position: 'absolute', left: 0, right: 0, bottom: 0, height: '34%', background: 'linear-gradient(180deg, transparent, rgba(2,6,14,0.55))', pointerEvents: 'none' }} />
+        {/* Readout overlay */}
+        <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', justifyContent: 'space-between', padding: '12px 14px', pointerEvents: 'none' }}>
+          <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12 }}>
+            <WxIcon k={iconKey} size={48} />
+            <div style={{ paddingTop: 2 }}>
+              {a.temp && (
+                <span style={{
+                  fontSize: 40, fontWeight: 200, color: '#f2fbff', lineHeight: 1,
+                  fontFamily: MONO, letterSpacing: '-0.03em',
+                  textShadow: '0 2px 18px rgba(0,0,0,0.6)',
+                }}>{a.temp}</span>
+              )}
+              <div>
+                {a.period && <div style={{ fontSize: 9, letterSpacing: '0.26em', color: 'rgba(190,225,255,0.75)', fontFamily: MONO, textTransform: 'uppercase' }}>{a.period}</div>}
+                {a.condition && <div style={{ fontSize: 12, color: '#eaf4ff', fontWeight: 600, marginTop: 2, textShadow: '0 1px 8px rgba(0,0,0,0.6)' }}>{a.condition}</div>}
+              </div>
             </div>
-          )}
+          </div>
+          <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', gap: 8 }}>
+            <div style={{ fontSize: 9.5, color: 'rgba(200,224,255,0.85)', fontFamily: MONO, letterSpacing: '0.08em' }}>
+              {stats}
+            </div>
+          </div>
         </div>
       </div>
+      {/* Hourly strip — temp curve + precip probability */}
+      {a.hourly && a.hourly.length >= 2 && (
+        <div>
+          <div style={{ fontSize: 8.5, letterSpacing: '0.22em', color: 'rgba(160,200,235,0.55)', fontFamily: MONO, textTransform: 'uppercase', marginBottom: 2 }}>
+            Next {a.hourly.length}h
+          </div>
+          <WxHourly hours={a.hourly} />
+        </div>
+      )}
+      {a.lat != null && a.lon != null && <WxRadar lat={a.lat} lon={a.lon} />}
       <style>{`
         @keyframes cx-wx-drift { from { transform: translateX(-6%); } to { transform: translateX(112%); } }
         @keyframes cx-wx-rain { from { transform: translateY(-30%); } to { transform: translateY(30%); } }
         @keyframes cx-wx-snow { from { transform: translateY(-30px); } to { transform: translateY(30px); } }
         @keyframes cx-wx-fog { from { opacity: 0.5; transform: translateX(-2%); } to { opacity: 0.95; transform: translateX(2%); } }
         @keyframes cx-wx-bob { 0%,100% { transform: translateY(0); } 50% { transform: translateY(-7px); } }
+        @keyframes cx-wx-flash { 0%,86%,100% { opacity: 0; } 87% { opacity: 0.5; } 88% { opacity: 0.08; } 89% { opacity: 0.4; } 90% { opacity: 0; } 95% { opacity: 0.3; } 96% { opacity: 0; } }
+        @keyframes cx-wx-rays-spin { to { transform: rotate(360deg); } }
+        .cx-wx-rays { animation: cx-wx-rays-spin 28s linear infinite; }
+        .cx-wxi-rays { transform-box: fill-box; transform-origin: center; animation: cx-wx-rays-spin 26s linear infinite; }
+        .cx-wxi-twinkle { animation: cx-wxi-tw 2.6s ease-in-out infinite; }
+        @keyframes cx-wxi-tw { 0%,100% { opacity: 0.25; } 50% { opacity: 1; } }
+        .cx-wxi-drop { animation: cx-wxi-fall 1.15s linear infinite; }
+        @keyframes cx-wxi-fall { 0% { transform: translateY(-2px); opacity: 0; } 25% { opacity: 1; } 100% { transform: translateY(5px); opacity: 0; } }
+        .cx-wxi-flake { animation: cx-wxi-flake 2.4s ease-in-out infinite; }
+        @keyframes cx-wxi-flake { 0%,100% { transform: translate(0,0); } 50% { transform: translate(1.6px,-2.2px); } }
+        .cx-wxi-bolt { animation: cx-wxi-bolt 3.8s linear infinite; }
+        @keyframes cx-wxi-bolt { 0%,55%,100% { opacity: 0; } 58% { opacity: 1; } 62% { opacity: 0.2; } 66% { opacity: 1; } 70% { opacity: 0; } }
+        .cx-wxi-fogline { animation: cx-wxi-fogx 3.4s ease-in-out infinite alternate; }
+        @keyframes cx-wxi-fogx { from { transform: translateX(-1.6px); } to { transform: translateX(1.6px); } }
+        .cx-wx-flash { position: absolute; inset: 0; background: #dfeaff; pointer-events: none; }
+        .cx-wx-hourly .uplot { font-family: ${MONO}; }
+        .cx-wx-hourly .u-over { background: rgba(6,12,24,0.92) !important; border: 1px solid rgba(125,211,252,0.25) !important; color: #dff2ff !important; font-size: 9px !important; padding: 3px 7px !important; border-radius: 4px !important; }
+        .cx-wx-hourly .u-over .u-series { color: #bfe6ff !important; }
         @media (prefers-reduced-motion: reduce) {
           .cx-wx-scene * { animation: none !important; }
         }
