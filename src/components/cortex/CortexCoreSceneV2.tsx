@@ -1407,6 +1407,10 @@ function SceneSplats() {
       const url = String(d.url || '');
       if (!/^\/splats\/[\w./-]+\.(ply|splat|spz|ksplat)$/i.test(url)) return;
       const scale = Number.isFinite(Number(d.scale)) ? Number(d.scale) : undefined;
+      // Ack the spawn so tool callers know a live 3D consumer exists —
+      // surfaces without a scene (chat page) get no ack and fall back
+      // to rendering a card instead of losing the splat silently.
+      window.dispatchEvent(new CustomEvent('cortex-splat-ack', { detail: { url } }));
       if (sparkMod.current && spark) spawnMesh(sparkMod.current, url, scale);
       else pending.current.push({ url, scale });
       if (pending.current.length > 4) pending.current.shift();

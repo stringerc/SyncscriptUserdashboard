@@ -689,6 +689,29 @@ const CORTEX_TOOLS = [
   {
     type: 'function',
     function: {
+      name: 'compose_dashboard',
+      description: 'Atomically build AND render a dashboard artifact in ONE call — generates any requested splat tile server-side, then emits a single composite dashboard panel. THIS is the tool for any multi-part visual request: dashboards, mission control, overviews, "show me X + Y + a splat". tiles: array of stat|chart|feed|image tile objects (full artifact shape minus kind-specific base fields). splat: optional {scene,palette,image,seed,count,title} that generates a NEW splat tile automatically. Replaces generate_splat+emit_artifact chains — prefer this whenever the request has 2+ visual parts.',
+      parameters: {
+        type: 'object',
+        properties: {
+          title: { type: 'string', description: 'Dashboard title' },
+          tiles: {
+            type: 'array',
+            items: { type: 'object' },
+            description: 'Tile artifacts: {kind:"stat",title,value,unit?,delta?,spark?}, {kind:"chart",title,chartType:"line|bar|area|pie",series:[{name,points:[{x,y}]}]}, {kind:"feed",title,items:[{label,value,tone?}]}, {kind:"image",title,url}'
+          },
+          splat: {
+            type: 'object',
+            description: 'Optional splat tile to generate: {scene:orb|butterfly|flower|helix|galaxy|ridge|flow, palette:aurora|ember|ocean|violet|mono|prism, image?:URL/path for photo mode, seed?, count?, title?}'
+          }
+        },
+        required: ['title']
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
       name: 'generate_image',
       description: 'Generate an image from a text prompt and return it as a visual artifact card. Use when the user asks to create, draw, generate, or imagine an image, logo, artwork, or visual.',
       parameters: {
@@ -3293,7 +3316,8 @@ function apiProxyPlugin(): Plugin {
             { name: 'render_video', description: 'Render a video composition via the governed Remotion pipeline (tools/remotion). Writes an .mp4 under .cortex-runtime/renders/ and returns the verified output path.', parameters: { composition: 'string? (default CortexPromo)', outputName: 'string? (.mp4, sanitized)', durationSeconds: 'number? (<=600)', props: 'object? (e.g. {title, subtitle})' } },
             { name: 'run_sandboxed', description: 'Run a command inside a hardware-isolated microsandbox microVM (CONTAINED lane). Returns stdout/stderr/exitCode. Use for untrusted or destructive-capable agent code.', parameters: { image: 'string? (default python:3.12-alpine)', command: 'string (binary, no shell)', args: 'string[]?', timeoutMs: 'number? (<=120000)', workdir: 'string?', env: 'object?' } },
             { name: 'sandbox_status', description: 'Probe microsandbox runtime availability (msb binary, SDK, VM round-trip).', parameters: {} },
-            { name: 'generate_splat', description: 'Generate a new 3D Gaussian-splat scene as a live splat artifact. Procedural scenes (orb|butterfly|flower|helix|galaxy|ridge|flow) with palette/seed/count, or photo mode via image URL/path (depth unprojection).', parameters: { scene: 'string?', palette: 'string?', image: 'string?', seed: 'number?', count: 'number?', title: 'string?' } },
+            { name: 'generate_splat', description: 'Generate a new 3D Gaussian-splat scene as a live splat artifact. Procedural scenes (orb|butterfly|flower|helix|galaxy|ridge|flow) with palette/seed/count, or photo mode via image URL/path (depth unprojection). inSpace:true spawns it as a live 3D object in the visualizer.', parameters: { scene: 'string?', palette: 'string?', image: 'string?', seed: 'number?', count: 'number?', inSpace: 'boolean?', title: 'string?' } },
+            { name: 'compose_dashboard', description: 'Atomically build and render a dashboard artifact: tiles (stat|chart|feed|image) plus optional auto-generated splat tile. One call for any multi-part visual request.', parameters: { title: 'string', tiles: 'object[]?', splat: 'object?' } },
           ];
           res.writeHead(200, {
             'Content-Type': 'application/json',
@@ -8638,6 +8662,60 @@ function triggerQuickAction() {
                 return res.end(JSON.stringify({
                   ok: false, tool: 'generate_splat',
                   error: String(splatErr?.message || splatErr),
+                  durationMs: Date.now() - startMs,
+                }));
+              }
+            }
+
+            // 20c. compose_dashboard — atomic generate+emit: builds a
+            // dashboard artifact (optionally generating a splat tile
+            // server-side) and returns it through the normal artifact
+            // pipeline. One call replaces generate_splat + emit_artifact.
+            if (tool === 'compose_dashboard') {
+              res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+              try {
+                const tiles: any[] = Array.isArray(args?.tiles) ? args.tiles.slice(0, 5) : [];
+                const sp = args?.splat;
+                if (sp && typeof sp === 'object') {
+                  const image = String(sp.image || '').trim();
+                  const result = image
+                    ? await (await import('./src/lib/cortex-splat-depth')).generateSplatFromImage({
+                        image,
+                        seed: typeof sp.seed === 'number' ? sp.seed : undefined,
+                        maxSplats: typeof sp.count === 'number' ? sp.count : undefined,
+                      })
+                    : generateSplat({
+                        scene: typeof sp.scene === 'string' ? sp.scene : undefined,
+                        palette: typeof sp.palette === 'string' ? sp.palette : undefined,
+                        seed: typeof sp.seed === 'number' ? sp.seed : undefined,
+                        count: typeof sp.count === 'number' ? sp.count : undefined,
+                      });
+                  tiles.push({
+                    kind: 'splat',
+                    title: String(sp.title || 'Generated Splat').slice(0, 80),
+                    splat: result.url,
+                    caption: `${result.splats.toLocaleString()} splats · seed ${result.seed}${result.palette !== 'source' ? ` · ${result.palette}` : ''}`,
+                  });
+                }
+                if (!tiles.length) {
+                  return res.end(JSON.stringify({ ok: false, tool: 'compose_dashboard', error: 'Needs at least one tile or a splat spec.' }));
+                }
+                const dashboard = {
+                  kind: 'dashboard',
+                  title: String(args?.title || 'Dashboard').slice(0, 200) || 'Dashboard',
+                  tiles,
+                  source: 'compose_dashboard',
+                };
+                return res.end(JSON.stringify({
+                  ok: true, tool: 'compose_dashboard',
+                  artifacts: [dashboard],
+                  message: `Composed dashboard "${dashboard.title}" with ${tiles.length} tile(s).`,
+                  durationMs: Date.now() - startMs,
+                }));
+              } catch (dashErr: any) {
+                return res.end(JSON.stringify({
+                  ok: false, tool: 'compose_dashboard',
+                  error: String(dashErr?.message || dashErr),
                   durationMs: Date.now() - startMs,
                 }));
               }

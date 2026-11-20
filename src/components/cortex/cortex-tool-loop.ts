@@ -9,6 +9,8 @@ import type React from 'react';
 import { ConsciousAgent } from '../../lib/consciousness';
 import {
   extractArtifactsFromResult,
+  dispatchSceneSpawn,
+  validateArtifacts,
   type CortexArtifact,
 } from '../../lib/cortex-artifacts';
 import {
@@ -482,6 +484,24 @@ export async function runCortexToolLoop(ctx: CortexToolLoopContext): Promise<{ a
                   signal: AbortSignal.timeout(toolTimeoutMs),
                 });
                 toolResult = await execRes.json();
+                // Scene-spawn side channel: generate_splat(inSpace:true)
+                // returns sceneSpawn — place it as a live 3D object in the
+                // visualizer space. If no 3D scene acknowledges (chat page),
+                // fall back to a splat card so it is never silently lost.
+                const spawn = (toolResult as any)?.sceneSpawn;
+                if (spawn && typeof spawn.url === 'string' && typeof window !== 'undefined') {
+                  const acked = await dispatchSceneSpawn(spawn);
+                  if (!acked) {
+                    for (const a of validateArtifacts([{
+                      kind: 'splat',
+                      title: String(spawn.title || 'Gaussian Splat').slice(0, 200),
+                      splat: spawn.url,
+                      caption: 'Generated splat — open the visualizer to place it in the 3D space.',
+                    }], currentToolCall!.tool).accepted) {
+                      if (!collectedArtifacts.some((x) => x.id === a.id)) collectedArtifacts.push(a);
+                    }
+                  }
+                }
               } catch (execErr: any) {
                 toolResult = { ok: false, error: execErr.message || 'Execution failed' };
               }

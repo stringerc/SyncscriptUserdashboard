@@ -428,6 +428,35 @@ export function artifactTitle(a: CortexArtifact): string {
   return a.title || a.kind;
 }
 
+/** Dispatch a scene-splat spawn and resolve true only if a mounted
+ *  SceneSplats consumer acknowledges it (cortex-splat-ack) within
+ *  `timeoutMs`. Returns false on surfaces with no 3D scene (e.g. the
+ *  standalone /cortex/chat page) so callers can fall back to a card. */
+export function dispatchSceneSpawn(
+  spawn: { url: string; title?: string; scale?: number },
+  timeoutMs = 600,
+): Promise<boolean> {
+  if (typeof window === 'undefined') return Promise.resolve(false);
+  const url = String(spawn?.url || '');
+  if (!url) return Promise.resolve(false);
+  return new Promise((resolve) => {
+    let done = false;
+    const finish = (ok: boolean) => {
+      if (done) return;
+      done = true;
+      clearTimeout(t);
+      window.removeEventListener('cortex-splat-ack', onAck);
+      resolve(ok);
+    };
+    const onAck = (e: Event) => {
+      if ((e as CustomEvent).detail?.url === url) finish(true);
+    };
+    const t = setTimeout(() => finish(false), timeoutMs);
+    window.addEventListener('cortex-splat-ack', onAck);
+    window.dispatchEvent(new CustomEvent('cortex-spawn-splat', { detail: spawn }));
+  });
+}
+
 /** Extract artifact list from a tool-execution result payload (any nesting). */
 export function extractArtifactsFromResult(result: unknown, source: string): CortexArtifact[] {
   if (!isObj(result)) return [];
