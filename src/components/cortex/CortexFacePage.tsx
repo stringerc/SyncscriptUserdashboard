@@ -187,7 +187,9 @@ export default function CortexFacePage() {
       const apiRes = await fetch('/api/ai/nexus-guest', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        signal: AbortSignal.timeout(30000),
+        // Provider chain can fail over across several candidates at ~10s
+        // each under congestion — 30s kills turns that would have completed.
+        signal: AbortSignal.timeout(60000),
         body: JSON.stringify({
           context: 'cortex',
           systemPrompt: VOICE_SYSTEM_PROMPT,
