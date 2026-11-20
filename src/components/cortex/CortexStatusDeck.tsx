@@ -165,7 +165,7 @@ export default function CortexStatusDeck({ speaking }: { speaking: boolean }) {
     ms == null ? 'idle' : ms < good ? 'good' : ms < warn ? 'warn' : 'bad';
 
   return (
-    <div style={{ position: 'absolute', top: 18, right: 18, zIndex: 60, display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 10 }}>
+    <div style={{ position: 'absolute', top: 62, right: 18, zIndex: 60, display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 10 }}>
       <button
         onClick={(e) => { e.stopPropagation(); setOpen((v) => !v); }}
         style={{
