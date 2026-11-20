@@ -17,6 +17,7 @@ import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import { OrbitControls } from '@react-three/drei';
 import { EffectComposer, Bloom, Vignette, ChromaticAberration } from '@react-three/postprocessing';
 import { SparkRenderer, SplatMesh, generators } from '@sparkjsdev/spark';
+import { createFlowModifier, pointerToSphere, type FlowUniforms } from '../../lib/cortex-splat-flow';
 
 const MONO = '"IBM Plex Mono", ui-monospace, monospace';
 const GUST_PERIOD = 26; // seconds between auto gusts
@@ -31,6 +32,10 @@ function SparkStage({ url, onReady, onFail, onGust }: {
   const holder = useRef<THREE.Group | null>(null);
   const ambient = useRef<{ snow: any; fallVelocity: any; wanderScale: any; opacity: any }[]>([]);
   const meshes = useRef<{ mesh: SplatMesh; role: 'core' | 'ring' | 'asset' }[]>([]);
+  const flowRef = useRef<FlowUniforms | null>(null);
+  const mouseTarget = useRef(new THREE.Vector3(0, 0, 5));
+  const cursorActive = useRef(false);
+  const lastMoveAt = useRef(-999);
   const manualGustAt = useRef(-999);
   const gustWas = useRef(false);
   const clockRef = useRef<THREE.Clock | null>(null);
@@ -81,6 +86,11 @@ function SparkStage({ url, onReady, onFail, onGust }: {
       opacity: 0.7,
     });
 
+    // GPU flow field — ambient liquid motion + cursor parting, shared
+    // across meshes so the whole field moves coherently.
+    const flow = createFlowModifier();
+    flowRef.current = flow.uniforms;
+
     // Splat meshes — cortex-core gets a counter-rotating ring sibling.
     const isHero = url.includes('cortex-core');
     const urls: { url: string; role: 'core' | 'ring' | 'asset' }[] = isHero
@@ -90,7 +100,7 @@ function SparkStage({ url, onReady, onFail, onGust }: {
     let pending = urls.length;
     let cancelled = false;
     for (const { url: u, role } of urls) {
-      const mesh = new SplatMesh({ url: u });
+      const mesh = new SplatMesh({ url: u, worldModifier: flow.modifier });
       g.add(mesh);
       meshes.current.push({ mesh, role });
       mesh.initialized.then(() => {
@@ -112,19 +122,33 @@ function SparkStage({ url, onReady, onFail, onGust }: {
       });
     }
 
-    // Click anywhere on the canvas triggers a manual gust.
+    // Click anywhere on the canvas triggers a manual gust; pointer
+    // activity arms the flow field's cursor interaction.
     const onDown = () => {
       const et = clockRef.current?.elapsedTime;
       if (et != null) manualGustAt.current = et;
     };
+    const onMove = () => {
+      const et = clockRef.current?.elapsedTime;
+      if (et != null) { cursorActive.current = true; lastMoveAt.current = et; }
+    };
+    const onEnter = () => { cursorActive.current = true; };
+    const onLeave = () => { cursorActive.current = false; };
     gl.domElement.addEventListener('pointerdown', onDown);
+    gl.domElement.addEventListener('pointermove', onMove);
+    gl.domElement.addEventListener('pointerenter', onEnter);
+    gl.domElement.addEventListener('pointerleave', onLeave);
 
     return () => {
       cancelled = true;
       holder.current = null;
       ambient.current = [];
       meshes.current = [];
+      flowRef.current = null;
       gl.domElement.removeEventListener('pointerdown', onDown);
+      gl.domElement.removeEventListener('pointermove', onMove);
+      gl.domElement.removeEventListener('pointerenter', onEnter);
+      gl.domElement.removeEventListener('pointerleave', onLeave);
       g.traverse((n: any) => { try { n.dispose?.(); } catch {} });
       scene.remove(g);
       try { spark.dispose(); } catch {}
@@ -153,6 +177,22 @@ function SparkStage({ url, onReady, onFail, onGust }: {
     const gust = Math.min(1, Math.max(autoGust, manGust));
     const gusting = gust > 0.3;
     if (gusting !== gustWas.current) { gustWas.current = gusting; onGust?.(gusting); }
+
+    // Flow-field uniforms — cursor ray → sphere point, smoothed for a
+    // liquid wake; strength eases in on activity, decays on idle.
+    const flow = flowRef.current;
+    if (flow) {
+      flow.time.value = t;
+      flow.gust.value = gust;
+      const cam = state.camera;
+      pointerToSphere(pointer, cam, new THREE.Vector3(0, 0, 0), 1.5, mouseTarget.current);
+      const mk = 1 - Math.exp(-7 * dt);
+      (flow.mouse.value as THREE.Vector3).lerp(mouseTarget.current, mk);
+      const active = cursorActive.current && t - lastMoveAt.current < 4;
+      const targetStrength = active ? 1 : 0;
+      const sk = 1 - Math.exp(-(active ? 9 : 2.2) * dt);
+      flow.strength.value += (targetStrength - flow.strength.value) * sk;
+    }
 
     // Core breathing — two detuned sines + gust swell.
     const breathe = 1 + 0.022 * Math.sin(t * 0.83) + 0.012 * Math.sin(t * 1.71 + 1.2) + 0.03 * gust;
