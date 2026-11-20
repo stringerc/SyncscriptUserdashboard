@@ -106,30 +106,27 @@ const coreFrag = /* glsl */ `
   varying vec3 vView;
   varying vec3 vWorld;
   varying float vDisp;
+  ${NOISE_GLSL}
   void main() {
     vec3 n = normalize(vNormal);
     vec3 viewDir = normalize(vView);
     float fres = pow(1.0 - abs(dot(n, viewDir)), 2.2);
     float energy = 0.5 + uEnergy * 0.55 + uLevel * 0.35;
 
-    // Plasma bands precess around a drifting axis — never a fixed equator.
+    // Banding comes from 3D noise on the surface normal — there is no
+    // axis, no latitude, no equator. The pattern drifts through the
+    // noise field and wraps the whole sphere unevenly.
     float flow = 1.5 + uPhi * 1.4;
-    vec3 axis = normalize(vec3(
-      sin(uTime * 0.10) * 0.85,
-      0.55 + 0.3 * sin(uTime * 0.073),
-      cos(uTime * 0.12) * 0.85
-    ));
-    vec3 axis2 = normalize(vec3(axis.z * 0.8, axis.x + 0.35, -axis.y * 0.8));
-    float lat = dot(n, axis);
-    float lat2 = dot(n, axis2);
-    float bands = 0.5 + 0.5 * sin(lat * 9.0 + uTime * flow + vDisp * 16.0);
-    float bands2 = 0.5 + 0.5 * sin(lat2 * 6.5 - uTime * flow * 0.8 + vDisp * 11.0);
-    // cellular mottling so the surface never reads as stripes
-    float mott = 0.5 + 0.5 * sin(lat * 21.0 + lat2 * 13.0 + uTime * 0.9);
+    vec3 drift = vec3(uTime * 0.31, -uTime * 0.23, uTime * 0.17) * flow * 0.35;
+    float nb = fbm(n * 2.6 + drift);
+    float bands = smoothstep(0.32, 0.72, nb);
+    float nb2 = fbm(n * 5.2 - drift * 1.7 + vec3(7.3, 2.1, 4.9));
+    float bands2 = smoothstep(0.38, 0.78, nb2);
+    float mott = fbm(n * 9.0 + drift * 2.3);
 
     float centerGlow = pow(max(dot(n, viewDir), 0.0), 1.5);
     float crest = smoothstep(0.10, 0.40, vDisp);
-    float shimmer = 0.5 + 0.5 * sin(uTime * (2.0 + uPhi * 3.0) + lat * 9.0);
+    float shimmer = 0.5 + 0.5 * sin(uTime * (2.0 + uPhi * 3.0) + nb * 12.0);
 
     vec3 col = uColorCore * (0.6 + centerGlow * 1.2);
     col += uColorHot * crest * (0.26 + uLevel * 0.28);

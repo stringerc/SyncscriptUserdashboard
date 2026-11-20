@@ -15,6 +15,7 @@ import {
   MEMORY_DOMAIN_NAMES,
 } from './CortexCoreScene';
 import { CortexCoreSceneV2 } from './CortexCoreSceneV2';
+import { CortexOrb } from './CortexOrb';
 import { useVisualizerVoice } from './useVisualizerVoice';
 import { startInitiativeSensor } from '../../lib/cortex-initiative-sensor';
 import { CortexChatDrawer } from './CortexChatDrawer';
@@ -328,9 +329,22 @@ export default function CortexVisualizerPage() {
     }
     return 'cinematic';
   });
-  // ?scene=v2 mounts the clean-slate hero core (no equatorial geometry).
-  const [coreV2] = useState(() =>
-    typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('scene') === 'v2');
+  // Core scene: V1 (full equatorial rig) or V2 (clean-slate hero core).
+  // ?scene=v1|v2 seeds the pick once; the nav toggle persists the choice.
+  const [coreScene, setCoreScene] = useState<'v1' | 'v2'>(() => {
+    if (typeof window === 'undefined') return 'v1';
+    const qs = new URLSearchParams(window.location.search).get('scene');
+    if (qs === 'v1' || qs === 'v2') return qs;
+    try {
+      const saved = localStorage.getItem('cortex_core_scene');
+      if (saved === 'v1' || saved === 'v2') return saved;
+    } catch {}
+    return 'v1';
+  });
+  const coreV2 = coreScene === 'v2';
+  // ?orb=1 overlays the thinking-orbs dotted orb (2D canvas, no lighting).
+  const [orbMode] = useState(() =>
+    typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('orb') === '1');
   const [initiativeCount, setInitiativeCount] = useState(0);
   const initiativeAutoOpenedRef = useRef(false);
   useEffect(() => {
@@ -1077,6 +1091,7 @@ export default function CortexVisualizerPage() {
         </>
       ) : faceMode === 'core' ? (
         <div key="face-core" className="cx-face-transition" style={{ position: 'absolute', inset: 0, zIndex: 4 }}>
+          {orbMode && <CortexOrb />}
           {coreV2 ? (
             <CortexCoreSceneV2
               selectedAgentId={selectedAgentId}
@@ -1403,6 +1418,35 @@ export default function CortexVisualizerPage() {
           >
             <span style={{ color: '#e879f9' }}>🌍</span>
             <span>{mapMode ? 'MAP ACTIVE' : 'MAP'}</span>
+          </button>
+
+          {/* CORE SCENE — V1 full rig ⇄ V2 clean hero (persisted) */}
+          <button
+            onClick={() => setCoreScene(s => {
+              const next = s === 'v2' ? 'v1' : 'v2';
+              try { localStorage.setItem('cortex_core_scene', next); } catch {}
+              return next;
+            })}
+            title="Toggle core scene — V1 full equatorial rig / V2 clean-slate hero"
+            style={{
+              padding: '5px 12px',
+              borderRadius: 14,
+              border: `1px solid ${coreV2 ? '#a78bfa' : 'rgba(167,139,250,0.18)'}`,
+              background: coreV2 ? 'rgba(167,139,250,0.18)' : 'rgba(4,8,14,0.5)',
+              color: coreV2 ? '#ede9fe' : 'rgba(196,181,253,0.7)',
+              fontFamily: "'IBM Plex Mono', monospace",
+              fontSize: 9.5,
+              fontWeight: 700,
+              letterSpacing: '0.14em',
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              gap: 5,
+              transition: 'all 0.2s',
+            }}
+          >
+            <span style={{ color: '#a78bfa' }}>◈</span>
+            <span>{coreV2 ? 'CORE V2' : 'CORE V1'}</span>
           </button>
 
           {/* CHAT */}
