@@ -64,6 +64,8 @@ export interface CortexSignalBusPayload {
   event?: string;
   /** Utterances accepted while Cortex was busy and waiting to run (voice channel) */
   queueDepth?: number;
+  /** Detected user emotion label (neutral|happy|excited|stressed|sad|angry|confused|calm|tired) */
+  emotion?: string;
   /** Whether wake-word gate is currently awake or asleep in standby */
   wakeState?: 'asleep' | 'waking' | 'awake';
 }

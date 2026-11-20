@@ -7,6 +7,9 @@ import * as THREE from 'three';
 import type { CortexVoiceState } from './CortexVisualizer';
 
 const c = (hex: string) => new THREE.Color(hex);
+// Scratch colors for the per-frame emotion lerp — allocated once, never per frame.
+const tmpEmotionColor = c('#ffffff');
+const tmpEmotionRim = c('#ffffff');
 
 export const STATE_COLORS_V2: Record<CortexVoiceState, { core: string; rim: string; deep: string; energy: number; cCore: THREE.Color; cRim: THREE.Color; cDeep: THREE.Color }> = {
   idle: { core: '#124a5e', rim: '#38d9f5', deep: '#020a12', energy: 0.45, cCore: c('#124a5e'), cRim: c('#38d9f5'), cDeep: c('#020a12') },
@@ -33,7 +36,23 @@ export interface LiveSignalV2 {
   channel: string;
   eventSeq: number;
   ingest: number;
+  /** User emotion label from the voice loop ('neutral' when none/cleared) */
+  emotion: string;
+  emotionMix: number;
 }
+
+/** Emotion → rim tint. Mixed into the state rim color so the core's glow
+ *  subtly mirrors the user's detected mood (never overrides state identity). */
+export const EMOTION_TINT_V2: Record<string, string> = {
+  stressed: '#fb7185',
+  sad: '#818cf8',
+  angry: '#f43f5e',
+  excited: '#fbbf24',
+  happy: '#34d399',
+  tired: '#64748b',
+  confused: '#c084fc',
+  calm: '#22d3ee',
+};
 
 export function makeLiveForV2(): LiveSignalV2 {
   return {
@@ -53,6 +72,8 @@ export function makeLiveForV2(): LiveSignalV2 {
     channel: '',
     eventSeq: 0,
     ingest: 0,
+    emotion: 'neutral',
+    emotionMix: 0,
   };
 }
 
@@ -70,4 +91,14 @@ export function tickLiveForV2(live: LiveSignalV2, delta: number, t: number) {
   live.phiS += (live.phi - live.phiS) * Math.min(1, delta * 0.8);
   const thinkTarget = live.state === 'thinking' || live.state === 'working' ? 1 : 0;
   live.think += (thinkTarget - live.think) * Math.min(1, delta * (thinkTarget > live.think ? 1.4 : 0.5));
+  // Emotion tint: ease the mix in/out and lerp the rim toward the mood hue.
+  const emoTarget = live.emotion !== 'neutral' && EMOTION_TINT_V2[live.emotion] ? 1 : 0;
+  live.emotionMix += (emoTarget - live.emotionMix) * Math.min(1, delta * 1.8);
+  if (live.emotionMix > 0.01) {
+    tmpEmotionColor.set(EMOTION_TINT_V2[live.emotion] || '#ffffff');
+    tmpEmotionRim.copy(target.cRim).lerp(tmpEmotionColor, live.emotionMix * 0.55);
+    live.colorRim.lerp(tmpEmotionRim, Math.min(1, delta * 3.0));
+  } else {
+    live.colorRim.lerp(target.cRim, Math.min(1, delta * 2.4));
+  }
 }

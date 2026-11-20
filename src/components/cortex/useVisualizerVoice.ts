@@ -34,7 +34,8 @@ import {
   globePlacesSearch, globePlaceDetails,
   type MapCommand,
 } from '../../lib/cortex-globe';
-import type { STTResult } from '../../types/voice-engine';
+import type { STTResult, EmotionState } from '../../types/voice-engine';
+import { useEmotionDetection } from '../../hooks/useEmotionDetection';
 import {
   extractArtifactsFromResult,
   type CortexArtifact,
@@ -95,6 +96,7 @@ Available tools:
 - run_command {command: "shell command"}
 - chrome_control {action: "list_tabs"|"open_url"|"close_tabs"|"restore_tabs", query?, url?}
 - web_search {query: "search terms"}
+- get_weather {location?: "City, ST" or "here", hours?: number} — real NWS forecast for US locations; returns data AND auto-docks weather panels. Use whenever the user asks about weather, temperature, or forecast.
 - fetch_url {url: "https://..."}
 - create_document {format: "md"|"html"|"pdf"|"docx"|"csv", title: "...", content: "..."}
 - emit_artifact {artifacts: [{kind, ...}]} — kinds: stat{title,value,unit?,spark?}, chart{title,chartType:line|bar|area|pie,series:[{name,points:[{x,y}]}]}, table{title,columns:[],rows:[]}, document{title,format:markdown|code,content}, feed{title,items:[{label,value}]}, map{title,summary?}. MANDATORY whenever the user asks to see, pin, dock, show, or display a panel/stat/chart/table/image/document/feed — including "pin a panel that says X". The tool call is what creates the panel; saying "pinned" or "done" without calling it is a lie the user will see.
@@ -243,6 +245,7 @@ function friendlyToolDescription(tool: string, args: Record<string, any>): strin
   if (tool === 'run_command') return `Running: "${String(args?.command || '').slice(0, 30)}"…`;
   if (tool === 'chrome_control') return `Chrome: ${args?.action || 'tabs'}…`;
   if (tool === 'web_search') return `Searching web for "${String(args?.query || '').slice(0, 26)}"…`;
+  if (tool === 'get_weather') return `Reading weather for ${String(args?.location || 'your location').slice(0, 26)}…`;
   if (tool === 'fetch_url') return `Fetching ${String(args?.url || '').slice(0, 30)}…`;
   if (tool === 'create_document') return `Compiling: ${args?.title || 'Document'}…`;
   if (tool === 'emit_artifact') return `Creating ${args?.artifacts?.[0]?.kind || 'artifact'} panel…`;
@@ -885,6 +888,29 @@ function takeSentence(buffer: string): { sentence: string; rest: string } | null
   return null;
 }
 
+/** Turn the detected user emotion into a compact tone directive for the LLM.
+ *  Kept terse — it rides every agentic turn's system suffix. */
+function emotionGuidanceSuffix(e: EmotionState | null): string {
+  if (!e || e.confidence < 0.45 || e.primary === 'neutral' || e.primary === 'calm') return '';
+  switch (e.primary) {
+    case 'stressed':
+      return 'USER EMOTION: stressed. Stay calm and reassuring, slower pace, offer to simplify or prioritize — never add pressure.';
+    case 'sad':
+      return 'USER EMOTION: down. Be warm and gentle, acknowledge the feeling first, keep it brief and human.';
+    case 'angry':
+      return 'USER EMOTION: frustrated. Stay steady and solution-first, never defensive or dismissive, de-escalate with brevity.';
+    case 'excited':
+    case 'happy':
+      return 'USER EMOTION: upbeat. Match the energy, be enthusiastic and forward-looking, keep momentum.';
+    case 'tired':
+      return 'USER EMOTION: drained. Be soft and concise, suggest the smallest next step or a break, no demands.';
+    case 'confused':
+      return 'USER EMOTION: uncertain. Slow down, clarify with one simple question or a step-by-step breakdown.';
+    default:
+      return '';
+  }
+}
+
 interface StreamOpts {
   signal?: AbortSignal;
   /** Dispatch each completed sentence for speech as it arrives. */
@@ -1044,6 +1070,12 @@ export function useVisualizerVoice(enabled: boolean, onState: (speaking: boolean
   const vsRef = useRef(voiceStream);
   vsRef.current = voiceStream;
 
+  // Affective loop: text-prosody emotion detection (lexicon + optional voice
+  // prosody). Text analysis is pure — no extra mic graph — so every user turn
+  // gets a free emotion read that tunes tone guidance, TTS prosody, and the
+  // signal bus for the scenes.
+  const emotionApi = useEmotionDetection();
+
   // Mirror TTS activity to the page's mic-live indicator.
   useEffect(() => { onState(voiceStream.isSpeaking); }, [voiceStream.isSpeaking, onState]);
 
@@ -1064,6 +1096,9 @@ export function useVisualizerVoice(enabled: boolean, onState: (speaking: boolean
     const liveTurnRef = { aiId: null as string | null, userId: null as string | null, buf: '', artifacts: [] as CortexArtifact[] };
     const speechHistoryRef = { current: [] as string[] };
     const turnAbortRef = { current: null as AbortController | null };
+    // Per-turn user emotion (text prosody) — set in runTurn, read by the
+    // system-prompt suffix, TTS speed shaping, and the signal bus.
+    const turnEmotionRef = { current: null as EmotionState | null };
     // Spec-confirmation gate: agent work with real blast radius (builder /
     // spawned agents) is intercepted, expanded into a contract, spoken, and
     // held here until the user's next utterance confirms or cancels it.
@@ -1106,7 +1141,13 @@ export function useVisualizerVoice(enabled: boolean, onState: (speaking: boolean
     const publish = (p: Parameters<typeof cortexSignalBus.publish>[0]) => {
       const livePhi = getLivePhi();
       const phi = p.phi ?? (livePhi > 0 ? livePhi : undefined);
-      cortexSignalBus.publish({ agentName: 'CORTEX', channel: 'voice', ...(phi !== undefined ? { phi } : {}), ...p });
+      const emotion = turnEmotionRef.current?.primary;
+      cortexSignalBus.publish({
+        agentName: 'CORTEX', channel: 'voice',
+        ...(phi !== undefined ? { phi } : {}),
+        emotion: emotion ?? 'neutral',
+        ...p,
+      });
     };
     const publishQueue = () => publish({ queueDepth: pendingQueue.length + (state.priority ? 1 : 0) });
     const toListening = (text = 'Listening…') =>
@@ -1140,7 +1181,17 @@ export function useVisualizerVoice(enabled: boolean, onState: (speaking: boolean
       // emoji, $/%/dates are spoken correctly while the transcript keeps
       // the clean (but readable) version.
       const ttsText = sanitizeForNexusTTS(clean) || clean;
-      vsRef.current.speakStreamSentence(ttsText, isFinal, { voice: 'cortana', speed: 1.0 });
+      // Prosodic mirroring: Cortex's delivery subtly tracks the user's detected
+      // arousal — measured, never theatrical (±6% rate, calm baseline 1.0).
+      const emo = turnEmotionRef.current;
+      let speechRate = 1.0;
+      if (emo && emo.confidence >= 0.45 && emo.primary !== 'neutral') {
+        if (emo.primary === 'stressed' || emo.primary === 'sad' || emo.primary === 'angry') speechRate = 0.95;
+        else if (emo.primary === 'tired') speechRate = 0.93;
+        else if (emo.primary === 'excited' || emo.primary === 'happy') speechRate = Math.min(1.06, 0.97 + emo.arousal * 0.12);
+        else if (emo.primary === 'confused') speechRate = 0.96;
+      }
+      vsRef.current.speakStreamSentence(ttsText, isFinal, { voice: 'cortana', speed: speechRate });
     };
 
     const speakWhole = async (text: string) => {
@@ -1225,7 +1276,7 @@ export function useVisualizerVoice(enabled: boolean, onState: (speaking: boolean
         }
       } catch {}
 
-      const sysSuffix = [worldStateHeader, turnMemorySuffix, surfaceManifestSuffix()].filter(Boolean).join('\n\n') || undefined;
+      const sysSuffix = [worldStateHeader, emotionGuidanceSuffix(turnEmotionRef.current), turnMemorySuffix, surfaceManifestSuffix()].filter(Boolean).join('\n\n') || undefined;
       turnMemorySuffix = '';
       let accumulatedThought = '';
       const onReasoning = (chunk: string) => {
@@ -1887,6 +1938,9 @@ export function useVisualizerVoice(enabled: boolean, onState: (speaking: boolean
       publishQueue();
       historyRef.current.push({ role: 'user', content: text });
       if (historyRef.current.length > 12) historyRef.current = historyRef.current.slice(-12);
+      // Affective read of the user's utterance — tunes reply tone, TTS rate,
+      // and rides the signal bus so the core visuals can mirror the mood.
+      try { turnEmotionRef.current = emotionApi.detectFromText(text); } catch {}
       const userMsgId = `viz-u-${Date.now()}`;
       liveTurnRef.userId = userMsgId;
       appendCortexChatMessage({
@@ -2215,6 +2269,20 @@ export function useVisualizerVoice(enabled: boolean, onState: (speaking: boolean
         }
       } catch (e) {
         console.warn('[viz-voice] turn failed', e);
+        // Beacon the real exception server-side — the spoken fallback is
+        // generic, so without this the failure is undiagnosable remotely.
+        try {
+          void fetch('/api/cortex/viz-turn-error', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              message: String((e as any)?.message || e),
+              stack: String((e as any)?.stack || ''),
+              turnText: String(text || '').slice(0, 200),
+              url: typeof window !== 'undefined' ? window.location.href : '',
+            }),
+          });
+        } catch { /* beacon is best-effort */ }
         if (!cancelled && !stale()) {
           // Barge-in / manual interrupt aborts the in-flight stream — that is
           // intentional, not a glitch. Stay silent and return to listening.

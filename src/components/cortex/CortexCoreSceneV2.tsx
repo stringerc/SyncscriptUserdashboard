@@ -1239,6 +1239,7 @@ export function CortexCoreSceneV2(props: CortexCoreSceneV2Props) {
       live.current.phi = p.phi ?? 0;
       live.current.channel = p.channel ?? '';
       live.current.eventSeq = p.eventSeq ?? 0;
+      if (p.emotion !== undefined) live.current.emotion = p.emotion;
       if (p.state !== prev || (p.eventSeq ?? 0) !== prevEvent || p.event === 'wake') {
         live.current.kick = p.event === 'wake' ? 1.8 : 1;
       }
