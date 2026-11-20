@@ -13,6 +13,7 @@ import React, { useRef } from 'react';
 import * as THREE from 'three';
 import { useFrame, useThree } from '@react-three/fiber';
 import type { CortexArtifact, DashboardArtifact } from '../../lib/cortex-artifacts';
+import { makeMaterializeRig, tickMaterialize, prefersReducedMotion, MATERIALIZE_DURATION, type MaterializeRig } from '../../lib/cortex-materialize';
 
 const MONO = '"IBM Plex Mono", ui-monospace, monospace';
 const SANS = "'DM Sans', ui-sans-serif, system-ui, sans-serif";
@@ -203,7 +204,7 @@ function buildDeck(a: DashboardArtifact): { group: THREE.Group; splatUrl?: strin
 }
 
 // ── Component ────────────────────────────────────────────────────────────
-interface DeckItem { g: THREE.Group; phase: number; baseY: number }
+interface DeckItem { deck: THREE.Group; mat: MaterializeRig; phase: number; baseY: number }
 
 export function CortexHoloDeck() {
   const { gl, scene, invalidate } = useThree();
@@ -227,13 +228,18 @@ export function CortexHoloDeck() {
       const ang = idx * 2.39996 + 0.8;
       const rad = 4.6 + idx * 0.7;
       const baseY = idx === 0 ? 0.55 : -0.5;
-      group.position.set(Math.cos(ang) * rad, baseY, Math.sin(ang) * rad - 2.2);
+      // Materialize rig: deck condenses out of a pixie-dust implosion.
+      const mat = prefersReducedMotion()
+        ? { rig: new THREE.Group(), burst: null, age: MATERIALIZE_DURATION }
+        : makeMaterializeRig();
+      mat.rig.position.set(Math.cos(ang) * rad, baseY, Math.sin(ang) * rad - 2.2);
       group.lookAt(0, baseY, 0);
-      host.current.add(group);
-      items.current.push({ g: group, phase: idx * 2.1, baseY });
+      mat.rig.add(group);
+      host.current.add(mat.rig);
+      items.current.push({ deck: group, mat, phase: idx * 2.1, baseY });
       while (items.current.length > MAX_DECKS) {
         const old = items.current.shift()!;
-        host.current.remove(old.g);
+        host.current.remove(old.mat.rig);
       }
 
       // Live splat behind the glass — the tile's SplatMesh floats in the
@@ -247,7 +253,6 @@ export function CortexHoloDeck() {
           if (bs && bs.radius > 0.0001) mesh.scale.setScalar(1.5 / bs.radius);
         }).catch(() => {});
       }
-      window.dispatchEvent(new CustomEvent('cortex-holo-ack', { detail: { id: a.id } }));
       invalidate();
     };
 
@@ -260,11 +265,19 @@ export function CortexHoloDeck() {
       g.add(spark as any);
       sparkReady.current = true;
       for (const a of pending.current.splice(0)) spawnDeck(a);
-    })().catch(() => {});
+    })().catch(() => {
+      // Spark failed to load — still mount queued decks; splat tiles
+      // degrade to their canvas well instead of dropping the dashboard.
+      sparkReady.current = true;
+      for (const a of pending.current.splice(0)) spawnDeck(a);
+    });
 
     const onSpawn = (e: Event) => {
       const d = (e as CustomEvent).detail;
       if (d?.kind !== 'dashboard' || !Array.isArray(d.tiles)) return;
+      // Ack on ACCEPT — including queued spawns — so tool callers suppress
+      // the card immediately instead of timing out while Spark loads.
+      window.dispatchEvent(new CustomEvent('cortex-holo-ack', { detail: { id: d.id } }));
       const needsSpark = d.tiles.some((t: any) => t?.kind === 'splat');
       if (needsSpark && !sparkReady.current) {
         if (pending.current.length < 3) pending.current.push(d as DashboardArtifact);
@@ -280,11 +293,12 @@ export function CortexHoloDeck() {
     };
   }, [gl, scene, invalidate]);
 
-  useFrame((state) => {
+  useFrame((state, delta) => {
     const t = state.clock.elapsedTime;
     for (const it of items.current) {
-      it.g.position.y = it.baseY + Math.sin(t * 0.4 + it.phase) * 0.12;
-      it.g.rotation.y += 0.0016;
+      tickMaterialize(it.mat, delta);
+      it.mat.rig.position.y = it.baseY + Math.sin(t * 0.4 + it.phase) * 0.12;
+      it.deck.rotation.y += 0.0016;
     }
   });
 

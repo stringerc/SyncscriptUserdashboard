@@ -24,6 +24,7 @@ import {
 } from './CortexVisualizer';
 import { agentsClient, type AgentClient } from '../../lib/cortex-agents-client';
 import { CortexHoloDeck } from './CortexHoloDeck';
+import { makeMaterializeRig, tickMaterialize, prefersReducedMotion, MATERIALIZE_DURATION, type MaterializeRig } from '../../lib/cortex-materialize';
 import {
   makeLiveForV2,
   tickLiveForV2,
@@ -1340,7 +1341,7 @@ function SignalTicker({ live }: { live: React.MutableRefObject<LiveSignalV2> }) 
 // same WebGL pass and post stack as the core, not trapped in a panel.
 // @sparkjsdev/spark is dynamically imported so it stays out of the main
 // chunk until the first scene splat is actually requested.
-interface SceneSplatItem { g: THREE.Group; spin: number; baseY: number; phase: number }
+interface SceneSplatItem { g: THREE.Group; fit: THREE.Group; mat: MaterializeRig; spin: number; baseY: number; phase: number }
 
 function SceneSplats() {
   const { gl, scene, invalidate } = useThree();
@@ -1367,6 +1368,11 @@ function SceneSplats() {
 
     const spawnMesh = (mod: { SparkRenderer: any; SplatMesh: any }, url: string, scale?: number) => {
       if (!host.current) return;
+      // Materialize rig: splat condenses out of a pixie-dust implosion —
+      // rig carries spawn scale/birth, inner holder keeps fit-scaling.
+      const mat = prefersReducedMotion()
+        ? { rig: new THREE.Group(), burst: null, age: MATERIALIZE_DURATION }
+        : makeMaterializeRig();
       const holder = new THREE.Group();
       // Golden-angle orbit slots around the core — each new splat claims
       // the next slot so multiple scene splats never overlap.
@@ -1374,12 +1380,13 @@ function SceneSplats() {
       const ang = idx * 2.39996 + (url.length % 7) * 0.13;
       const rad = 3.6 + (idx % 3) * 1.1;
       const baseY = ((idx % 3) - 1) * 0.9 + Math.sin(idx * 2.1) * 0.4;
-      holder.position.set(Math.cos(ang) * rad, baseY, Math.sin(ang) * rad - 1.2);
+      mat.rig.position.set(Math.cos(ang) * rad, baseY, Math.sin(ang) * rad - 1.2);
       const mesh = new mod.SplatMesh({ url });
       holder.add(mesh);
-      host.current.add(holder);
+      mat.rig.add(holder);
+      host.current.add(mat.rig);
       console.log('[scene-splat] spawned', url);
-      const item: SceneSplatItem = { g: holder, spin: 0.06 + (idx % 4) * 0.03, baseY, phase: idx * 1.7 };
+      const item: SceneSplatItem = { g: mat.rig, fit: holder, mat, spin: 0.06 + (idx % 4) * 0.03, baseY, phase: idx * 1.7 };
       items.current.push(item);
       mesh.initialized?.then(() => {
         const bs = (mesh as any).geometry?.boundingSphere;
@@ -1425,9 +1432,10 @@ function SceneSplats() {
     };
   }, [gl, scene, invalidate]);
 
-  useFrame((state) => {
+  useFrame((state, delta) => {
     const t = state.clock.elapsedTime;
     for (const it of items.current) {
+      tickMaterialize(it.mat, delta);
       it.g.rotation.y += it.spin * 0.016;
       it.g.position.y = it.baseY + Math.sin(t * 0.45 + it.phase) * 0.18;
     }
