@@ -2,6 +2,8 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useVoiceStream } from '../../hooks/useVoiceStream';
 import { useCortanaMood } from './CortanaMoodContext';
 import { bridgeFetch } from './bridge-client';
+import { useEmotionDetection } from '../../hooks/useEmotionDetection';
+import type { EmotionState } from '../../types/voice-engine';
 
 // CortanaControl — voice panel for /cortana only.
 // Voice + brain run on the shared SyncScript stack: useVoiceStream STT/TTS
@@ -12,6 +14,33 @@ const WAKE_COOLDOWN_MS = 4000;
 const RESUME_LISTEN_MS = 800;
 
 const CORTANA_SYSTEM_PROMPT = `You are Cortana, a warm, concise AI companion on the user's desktop. Keep replies short and speakable — one or two sentences, no markdown, no lists.`;
+
+/** Rolling conversational memory — last N turns so Cortana feels continuous,
+ *  not stateless. Bounded to keep latency and context tight. */
+const MAX_HISTORY_TURNS = 6;
+
+function cortanaEmotionSuffix(e: EmotionState | null): string {
+  if (!e || e.confidence < 0.45 || e.primary === 'neutral' || e.primary === 'calm') return '';
+  switch (e.primary) {
+    case 'stressed': return '\nThe user sounds stressed — stay calm, reassuring, brief; offer to simplify.';
+    case 'sad': return '\nThe user sounds down — be warm and gentle, acknowledge first, keep it short.';
+    case 'angry': return '\nThe user sounds frustrated — stay steady, solution-first, never defensive.';
+    case 'excited':
+    case 'happy': return '\nThe user is upbeat — match the energy, stay enthusiastic.';
+    case 'tired': return '\nThe user sounds drained — be soft, brief, suggest the smallest next step.';
+    case 'confused': return '\nThe user seems uncertain — slow down, clarify simply.';
+    default: return '';
+  }
+}
+
+function cortanaEmotionRate(e: EmotionState | null): number {
+  if (!e || e.confidence < 0.45) return 1.0;
+  if (e.primary === 'stressed' || e.primary === 'sad' || e.primary === 'angry') return 0.95;
+  if (e.primary === 'tired') return 0.93;
+  if (e.primary === 'excited' || e.primary === 'happy') return Math.min(1.06, 0.97 + e.arousal * 0.12);
+  if (e.primary === 'confused') return 0.96;
+  return 1.0;
+}
 
 const MOOD_COLORS: Record<string, string> = {
   idle: '#00ccff',
@@ -32,6 +61,9 @@ const CortanaControl: React.FC = () => {
   const lastWakeAtRef = useRef(0);
   const processingRef = useRef(false);
   const handleCommandRef = useRef<(text: string) => Promise<void>>(async () => {});
+  const emotionApi = useEmotionDetection();
+  const turnEmotionRef = useRef<EmotionState | null>(null);
+  const chatHistoryRef = useRef<Array<{ role: 'user' | 'assistant'; content: string }>>([]);
 
   const accentColor = MOOD_COLORS[mood] || MOOD_COLORS.idle;
 
@@ -86,7 +118,7 @@ const CortanaControl: React.FC = () => {
     // If the engine is already mid-utterance our sentence queues behind it —
     // the next true→false edge still lands after our audio, which is correct.
     sawSpeakingRef.current = isSpeakingRef.current;
-    speakStreamSentence(cleaned, true, { voice: 'cortana', speed: 1.0 });
+    speakStreamSentence(cleaned, true, { voice: 'cortana', speed: cortanaEmotionRate(turnEmotionRef.current) });
   }, [speakStreamSentence]);
 
   // Wake word: final-ish interim, cooldown, armed only when idle
@@ -121,6 +153,11 @@ const CortanaControl: React.FC = () => {
 
       processingRef.current = true;
       setMood('thinking');
+      try { turnEmotionRef.current = emotionApi.detectFromText(text); } catch {}
+      chatHistoryRef.current.push({ role: 'user', content: text });
+      if (chatHistoryRef.current.length > MAX_HISTORY_TURNS * 2) {
+        chatHistoryRef.current = chatHistoryRef.current.slice(-MAX_HISTORY_TURNS * 2);
+      }
 
       if (
         cmd.includes('stop') &&
@@ -145,9 +182,9 @@ const CortanaControl: React.FC = () => {
           body: JSON.stringify({
             stream: false,
             context: 'cortex',
-            systemPrompt: CORTANA_SYSTEM_PROMPT,
+            systemPrompt: CORTANA_SYSTEM_PROMPT + cortanaEmotionSuffix(turnEmotionRef.current),
             plainPersona: true,
-            messages: [{ role: 'user', content: text }],
+            messages: [...chatHistoryRef.current, { role: 'user' as const, content: text }],
             maxTokens: 300,
           }),
         });
@@ -156,6 +193,7 @@ const CortanaControl: React.FC = () => {
           const data = (await res.json()) as { content?: string; reply?: string };
           const reply = data.content || data.reply || "I couldn't process that.";
           setResponseText(reply);
+          chatHistoryRef.current.push({ role: 'assistant', content: reply.slice(0, 600) });
 
           isSpeakingRef.current = true;
           stopListening();
@@ -205,7 +243,7 @@ const CortanaControl: React.FC = () => {
         }, RESUME_LISTEN_MS);
       });
     },
-    [setMood, stopListening, startListening, speakThen],
+    [setMood, stopListening, startListening, speakThen, emotionApi],
   );
 
   handleCommandRef.current = handleCommand;
