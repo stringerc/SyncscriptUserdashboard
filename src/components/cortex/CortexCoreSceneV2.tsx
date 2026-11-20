@@ -439,21 +439,81 @@ function V2Scene({ live, headParallax }: {
   live: React.MutableRefObject<LiveSignalV2>;
   headParallax?: { x: number; y: number } | null;
 }) {
-  const { scene, camera } = useThree();
+  const { scene, camera, gl } = useThree();
   React.useEffect(() => {
     (window as any).__v2debug = { scene, camera };
   }, [scene, camera]);
   const rigRef = useRef<THREE.Group>(null);
-  const pointer = useRef({ x: 0, y: 0 });
+
+  // Orbit rig: drag rotates, wheel zooms, idle keeps a slow cinematic drift.
+  // userYaw/userPitch/userZoom are persistent offsets; the drift term is
+  // added on top so the camera never stops breathing.
+  const orbit = useRef({ yaw: 0, pitch: 0.06, zoom: 0, dragging: false, lx: 0, ly: 0 });
+  const cur = useRef({ yaw: 0, pitch: 0.06, zoom: 0 });
+
+  React.useEffect(() => {
+    const el = gl.domElement;
+    const o = orbit.current;
+    const onDown = (e: PointerEvent) => {
+      o.dragging = true; o.lx = e.clientX; o.ly = e.clientY;
+      el.setPointerCapture(e.pointerId);
+      el.style.cursor = 'grabbing';
+    };
+    const onMove = (e: PointerEvent) => {
+      if (!o.dragging) return;
+      const dx = e.clientX - o.lx, dy = e.clientY - o.ly;
+      o.lx = e.clientX; o.ly = e.clientY;
+      o.yaw -= dx * 0.0052;
+      o.pitch = THREE.MathUtils.clamp(o.pitch + dy * 0.004, -1.15, 1.15);
+    };
+    const onUp = (e: PointerEvent) => {
+      o.dragging = false;
+      el.style.cursor = 'grab';
+      try { el.releasePointerCapture(e.pointerId); } catch {}
+    };
+    const onWheel = (e: WheelEvent) => {
+      e.preventDefault();
+      o.zoom = THREE.MathUtils.clamp(o.zoom + e.deltaY * 0.004, -3.6, 5.5);
+    };
+    el.addEventListener('pointerdown', onDown);
+    el.addEventListener('pointermove', onMove);
+    el.addEventListener('pointerup', onUp);
+    el.addEventListener('pointercancel', onUp);
+    el.addEventListener('wheel', onWheel, { passive: false });
+    el.style.cursor = 'grab';
+    return () => {
+      el.removeEventListener('pointerdown', onDown);
+      el.removeEventListener('pointermove', onMove);
+      el.removeEventListener('pointerup', onUp);
+      el.removeEventListener('pointercancel', onUp);
+      el.removeEventListener('wheel', onWheel);
+    };
+  }, [gl]);
+
   useFrame((state, delta) => {
     const sig = live.current;
-    // slow cinematic drift + pointer parallax
     const t = state.clock.elapsedTime;
-    const px = headParallax ? headParallax.x : pointer.current.x;
-    const py = headParallax ? headParallax.y : pointer.current.y;
-    state.camera.position.x += (Math.sin(t * 0.05) * 0.8 + px * 0.5 - state.camera.position.x) * Math.min(1, delta * 1.2);
-    state.camera.position.y += (0.4 + Math.sin(t * 0.04) * 0.5 + py * 0.35 - state.camera.position.y) * Math.min(1, delta * 1.2);
-    state.camera.position.z += (8.4 - state.camera.position.z) * Math.min(1, delta * 1.0);
+    const o = orbit.current;
+    const px = headParallax ? headParallax.x : 0;
+    const py = headParallax ? headParallax.y : 0;
+
+    // desired spherical position: slow drift yaw + user offsets
+    const drift = t * 0.018 * (0.4 + sig.energy * 0.6);
+    const yawT = o.yaw + drift;
+    const pitchT = o.pitch;
+    const rT = THREE.MathUtils.clamp(8.4 + o.zoom, 4.6, 14.5);
+    const k = Math.min(1, delta * (o.dragging ? 14 : 4));
+    cur.current.yaw += (yawT - cur.current.yaw) * k;
+    cur.current.pitch += (pitchT - cur.current.pitch) * k;
+    cur.current.zoom += (rT - cur.current.zoom) * k;
+
+    const r = cur.current.zoom;
+    const cp = Math.cos(cur.current.pitch);
+    state.camera.position.set(
+      r * cp * Math.sin(cur.current.yaw) + px * 0.6,
+      r * Math.sin(cur.current.pitch) + 0.35 + py * 0.4,
+      r * cp * Math.cos(cur.current.yaw)
+    );
     state.camera.lookAt(0, 0, 0);
     if (rigRef.current) {
       rigRef.current.rotation.y += delta * 0.02 * (0.4 + sig.energy);
@@ -462,7 +522,6 @@ function V2Scene({ live, headParallax }: {
   return (
     <>
       <color attach="background" args={['#03040a']} />
-      <ambientLight intensity={0.15} />
       <group ref={rigRef}>
         <HeroCore live={live} />
         <MoteHaze live={live} />
