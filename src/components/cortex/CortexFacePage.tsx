@@ -183,6 +183,9 @@ export default function CortexFacePage() {
     let aiContent = '';
     let voiceBuffer = '';
     let spokeFirst = false;
+    turnAbortRef.current?.abort();
+    const turnAbort = new AbortController();
+    turnAbortRef.current = turnAbort;
 
     try {
       const apiRes = await fetch('/api/ai/nexus-guest', {
@@ -190,10 +193,14 @@ export default function CortexFacePage() {
         headers: { 'Content-Type': 'application/json' },
         // Provider chain can fail over across several candidates at ~10s
         // each under congestion — 30s kills turns that would have completed.
-        signal: AbortSignal.timeout(60000),
+        signal: AbortSignal.any([AbortSignal.timeout(60000), turnAbort.signal]),
         body: JSON.stringify({
           context: 'cortex',
           systemPrompt: VOICE_SYSTEM_PROMPT,
+          // Voice replies are spoken aloud — skip the consciousness-theory
+          // persona prefix server-side so jargon ("epistemic homeostasis",
+          // IIT/Phi) never reaches the TTS.
+          plainPersona: true,
           messages: conversationRef.current,
           maxTokens: 600,
         }),
@@ -283,7 +290,10 @@ export default function CortexFacePage() {
       conversationRef.current.push({ role: 'assistant', content: aiContent.replace(/```tool_call[\s\S]*?```/g, '').trim().slice(0, 800) });
       setLastReply(aiContent.replace(/```[\s\S]*?```/g, '').replace(/[#*`>\-[\]]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 200));
     } catch (err: any) {
-      setVoiceError(`Voice turn failed: ${err?.message || 'unreachable'}`);
+      // User barged in / clicked to interrupt — expected, not an error.
+      if (err?.name !== 'AbortError') {
+        setVoiceError(`Voice turn failed: ${err?.message || 'unreachable'}`);
+      }
       publish('idle');
     } finally {
       setIsThinking(false);
@@ -319,6 +329,7 @@ export default function CortexFacePage() {
         const echo = isAcousticEcho(text, activeSpeechRef.current, speechHistoryRef.current);
         if (echo.isEcho) return;
         voiceStreamRef.current?.stopSpeaking();
+        turnAbortRef.current?.abort();
         lastSpeakEndRef.current = 0;
         isThinkingRef.current = false;
       }
@@ -388,6 +399,9 @@ export default function CortexFacePage() {
 
   const pcmCaptureRef = useRef<PcmCapture | null>(null);
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
+  // Aborts the in-flight nexus-guest SSE stream on barge-in / click-interrupt
+  // so an interrupted turn stops generating tokens instead of queueing speech.
+  const turnAbortRef = useRef<AbortController | null>(null);
 
   // ── Push-to-talk: hold SPACE or the mic button ──
   // Records raw PCM → 16kHz WAV → local whisper.cpp → transcript → agent turn.
@@ -462,10 +476,12 @@ export default function CortexFacePage() {
       const up = (e: KeyboardEvent) => {
         if (e.code === 'Space') { e.preventDefault(); stopPtt(); }
       };
-      // Tap-to-interrupt: any click inside the visualizer stops Cortex's speech.
+      // Tap-to-interrupt: any click inside the visualizer stops Cortex's speech
+      // and aborts the in-flight model stream (no zombie token generation).
       const click = () => {
         recordUserActivity();
         try { voiceStreamRef.current?.stopSpeaking(); } catch {}
+        try { turnAbortRef.current?.abort(); } catch {}
       };
       win.addEventListener('keydown', down);
       win.addEventListener('keyup', up);
