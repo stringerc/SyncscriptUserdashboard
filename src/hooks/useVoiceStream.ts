@@ -106,6 +106,23 @@ const TTS_PROXY_ATTEMPTS = 3;
  *  without bursting the TTS server on long replies. */
 const TTS_PREFETCH_AHEAD = 3;
 
+// Fire-and-forget TTS warmup: pocket-tts cold synthesis measured ~15-21s on a
+// loaded box vs ~1s warm. One tiny request on first voice-hook mount pulls
+// model weights + connection pools so the user's first real utterance isn't
+// the cold one. Module-level guard: 6 hook instances still warm once.
+let ttsWarmupFired = false;
+function warmTtsEngine() {
+  if (ttsWarmupFired || typeof fetch !== 'function') return;
+  ttsWarmupFired = true;
+  try {
+    void fetch('/api/ai/tts', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text: 'Ready.', voice: 'cortana', speed: 1.0 }),
+    }).then((r) => r.arrayBuffer()).catch(() => {});
+  } catch { /* warmup is best-effort */ }
+}
+
 /** Monolithic Kokoro via Vercel proxy with transient 502/503/504 retries (cold ONNX / tunnel blips). */
 async function fetchTtsProxyAudio(text: string, voice: string, speed: number): Promise<Blob | null> {
   if (isTtsProxyDisabled()) return null;
@@ -1421,10 +1438,11 @@ export function useVoiceStream(options: UseVoiceStreamOptions = {}) {
         pending.push(chunk);
         pendingSecs += chunk.samples.length / chunk.sampleRate;
         // Prebuffer the head of the stream: pocket-tts delivers PCM in
-        // bursts, so the first second arrives unevenly — starting playback
-        // on the first ~340ms chunk guarantees an underrun gap moments
-        // later. Hold until ~0.7s is queued, then flush as one batch.
-        if (scheduled === 0 && pendingSecs < 0.7) continue;
+        // ~1s bursts with holes, so the first second arrives unevenly —
+        // starting playback on the first ~340ms chunk guarantees an
+        // underrun gap moments later. Hold until ~1s is queued (cushion
+        // absorbs the first generation hole), then flush as one batch.
+        if (scheduled === 0 && pendingSecs < 1.0) continue;
         for (const c of pending.splice(0)) scheduleOne(c);
         pendingSecs = 0;
       }
@@ -1670,6 +1688,7 @@ export function useVoiceStream(options: UseVoiceStreamOptions = {}) {
   }, []);
 
   useEffect(() => {
+    warmTtsEngine();
     return () => {
       const ctx = ttsAudioCtxRef.current;
       ttsAudioCtxRef.current = null;
