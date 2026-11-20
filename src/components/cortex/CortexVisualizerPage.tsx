@@ -339,12 +339,15 @@ export default function CortexVisualizerPage() {
   // Initiative HUD badge + one-time auto-open: the first proposal of a session
   // surfaces the Inbox once; afterwards the badge keeps count visible without
   // interrupting (restraint).
+  // Fixed 'smooth' ceiling: the manual quality buttons are gone — the
+  // AutoQualityGovernor inside the scene still downgrades to 'ultra'
+  // under sustained frame pressure, and context-loss degrades here.
   const [coreQuality, setCoreQuality] = useState<CoreQualityMode>(() => {
     if (typeof window !== 'undefined') {
       const s = localStorage.getItem('cortex_core_quality') as CoreQualityMode | null;
-      if (s === 'ultra' || s === 'smooth' || s === 'cinematic') return s;
+      if (s === 'ultra' || s === 'smooth') return s;
     }
-    return 'cinematic';
+    return 'smooth';
   });
   // Core scene: V1 (full equatorial rig) or V2 (clean-slate hero core).
   // ?scene=v1|v2 seeds the pick once; the nav toggle persists the choice.
@@ -1329,77 +1332,6 @@ export default function CortexVisualizerPage() {
           )}
           <span>CORE</span>
         </button>
-
-        {/* CORE GPU PERFORMANCE TOGGLE (Visible on Core face) */}
-        {faceMode === 'core' && !mapMode && (
-          <button
-            onClick={() => {
-              const next: CoreQualityMode =
-                coreQuality === 'ultra' ? 'smooth' : coreQuality === 'smooth' ? 'cinematic' : 'ultra';
-              setCoreQuality(next);
-              try { localStorage.setItem('cortex_core_quality', next); } catch {}
-              cortexSpeak(
-                next === 'ultra' ? 'Engaging Turbo 120 FPS Direct WebGL mode.' :
-                next === 'smooth' ? 'Engaging 60 FPS smooth mode.' :
-                'Activating cinematic post stack.'
-              );
-            }}
-            title={
-              coreQuality === 'ultra'
-                ? 'Turbo 120 FPS Active (Direct Native WebGL · Zero Post Overhead · Butter-Smooth). Click for 60 FPS Smooth.'
-                : coreQuality === 'smooth'
-                ? 'Smooth 60 FPS Active (4-Pass Lean Shaders · DPR 1.0 · Zero Lag). Click for Cinematic 8-Pass FX.'
-                : 'Cinematic FX Active (8-Pass GTAO + GodRays + DoF Bokeh). Click for Turbo 120 FPS.'
-            }
-            style={{
-              padding: '4px 10px',
-              borderRadius: 12,
-              border:
-                coreQuality === 'ultra' ? '1px solid rgba(56,189,248,0.55)' :
-                coreQuality === 'smooth' ? '1px solid rgba(52,211,153,0.5)' :
-                '1px solid rgba(251,191,36,0.5)',
-              background:
-                coreQuality === 'ultra' ? 'rgba(4,24,36,0.85)' :
-                coreQuality === 'smooth' ? 'rgba(6,28,22,0.75)' :
-                'rgba(34,18,6,0.75)',
-              color:
-                coreQuality === 'ultra' ? '#38bdf8' :
-                coreQuality === 'smooth' ? '#34d399' :
-                '#fbbf24',
-              fontFamily: "'IBM Plex Mono', monospace",
-              fontSize: 8.5,
-              fontWeight: 700,
-              letterSpacing: '0.12em',
-              cursor: 'pointer',
-              display: 'flex',
-              alignItems: 'center',
-              gap: 5,
-              boxShadow:
-                coreQuality === 'ultra' ? '0 0 8px rgba(56,189,248,0.25)' :
-                coreQuality === 'smooth' ? '0 0 8px rgba(52,211,153,0.2)' :
-                '0 0 8px rgba(251,191,36,0.25)',
-              transition: 'all 0.2s',
-            }}
-          >
-            <span style={{
-              width: 5,
-              height: 5,
-              borderRadius: '50%',
-              background:
-                coreQuality === 'ultra' ? '#38bdf8' :
-                coreQuality === 'smooth' ? '#34d399' :
-                '#fbbf24',
-              boxShadow: `0 0 6px ${
-                coreQuality === 'ultra' ? '#38bdf8' :
-                coreQuality === 'smooth' ? '#34d399' :
-                '#fbbf24'
-              }`,
-            }} />
-            <span>
-              {coreQuality === 'ultra' ? '🚀 TURBO 120FPS' : coreQuality === 'smooth' ? '⚡ 60FPS' : '◈ CINEMA'}
-            </span>
-          </button>
-        )}
 
         {/* FOUNDRY */}
         <button

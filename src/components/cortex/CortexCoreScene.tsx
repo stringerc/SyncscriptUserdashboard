@@ -3348,18 +3348,22 @@ function PostFX({
     lensing.center.set((lensCenter.current.x + 1) / 2, (lensCenter.current.y + 1) / 2);
     lensing.aspect = state.size.width / Math.max(1, state.size.height);
     // Mass proxy: integrated information + cognitive load bend spacetime.
-    lensing.strength = Math.min(0.012, smoothPhi.current * 0.004 + smoothThink.current * 0.003 + smooth.current * 0.002);
+    // Φ is capped for postfx — raw spikes to 2.5 used to drop the bloom
+    // threshold to 0.2 and crush the scene into "neon core on black".
+    const phiFx = Math.min(smoothPhi.current, 1.2);
+    lensing.strength = Math.min(0.012, phiFx * 0.004 + smoothThink.current * 0.003 + smooth.current * 0.002);
     lensing.updateUniforms();
 
     const lvl = smooth.current;
-    const phiDisp = smoothPhi.current * 0.0016 + smoothThink.current * 0.0012;
+    const phiDisp = phiFx * 0.0016 + smoothThink.current * 0.0012;
     const off = 0.00035 + lvl * 0.0008 + phiDisp;
     chromaOffset.set(off, off);
   });
 
   const lvl = smooth.current;
+  const phiFx = Math.min(smoothPhi.current, 1.2);
   // Relativistic spacetime warping: chromatic aberration & Einstein-radius contraction
-  const phiDisp = smoothPhi.current * 0.0016 + smoothThink.current * 0.0012;
+  const phiDisp = phiFx * 0.0016 + smoothThink.current * 0.0012;
   const vigDarkness = 0.52 + lvl * 0.16 + smoothThink.current * 0.14;
   const vigOffset = Math.max(0.12, 0.28 - phiDisp * 15);
 
@@ -3368,15 +3372,15 @@ function PostFX({
       <EffectComposer multisampling={0}>
         <Bloom
           mipmapBlur
-          intensity={0.80 + lvl * 0.55 + smoothPhi.current * 0.45}
-          luminanceThreshold={Math.max(0.2, 0.42 - smoothPhi.current * 0.08)}
+          intensity={0.80 + lvl * 0.55 + phiFx * 0.45}
+          luminanceThreshold={Math.max(0.2, 0.42 - phiFx * 0.08)}
           luminanceSmoothing={0.25}
           radius={0.70 + smoothThink.current * 0.15}
         />
         <ChromaticAberration
           offset={chromaOffset}
           radialModulation
-          modulationOffset={Math.max(0.1, 0.35 - smoothPhi.current * 0.12)}
+          modulationOffset={Math.max(0.1, 0.35 - phiFx * 0.12)}
         />
         <primitive object={lensing} />
         <Vignette
@@ -3395,15 +3399,15 @@ function PostFX({
       {dof && <primitive object={dof} />}
       <Bloom
         mipmapBlur
-        intensity={0.80 + lvl * 0.55 + smoothPhi.current * 0.45}
-        luminanceThreshold={Math.max(0.2, 0.42 - smoothPhi.current * 0.08)}
+        intensity={0.80 + lvl * 0.55 + phiFx * 0.45}
+        luminanceThreshold={Math.max(0.2, 0.42 - phiFx * 0.08)}
         luminanceSmoothing={0.25}
         radius={0.70 + smoothThink.current * 0.15}
       />
       <ChromaticAberration
         offset={chromaOffset}
         radialModulation
-        modulationOffset={Math.max(0.1, 0.35 - smoothPhi.current * 0.12)}
+        modulationOffset={Math.max(0.1, 0.35 - phiFx * 0.12)}
       />
       <primitive object={lensing} />
       <Vignette
@@ -3701,14 +3705,13 @@ const CortexCoreSceneBase: React.FC<CortexCoreSceneProps> = ({
   holoParallax = true,
   headParallax,
   perfMode: externalPerfMode,
-  onTogglePerfMode,
 }) => {
-  const [internalQuality, setInternalQuality] = React.useState<CoreQualityMode>(() => {
+  const [internalQuality] = React.useState<CoreQualityMode>(() => {
     if (typeof window !== 'undefined') {
       const saved = localStorage.getItem('cortex_core_quality') as CoreQualityMode | null;
-      if (saved === 'ultra' || saved === 'smooth' || saved === 'cinematic') return saved;
+      if (saved === 'ultra' || saved === 'smooth') return saved;
     }
-    return 'cinematic';
+    return 'smooth';
   });
 
   const qualityMode = externalPerfMode ?? internalQuality;
@@ -3718,16 +3721,6 @@ const CortexCoreSceneBase: React.FC<CortexCoreSceneProps> = ({
   React.useEffect(() => {
     (window as unknown as { __cortexAutoLevel?: string }).__cortexAutoLevel = effectiveQuality;
   }, [effectiveQuality]);
-
-  const handleToggleQuality = () => {
-    const next: CoreQualityMode =
-      qualityMode === 'ultra' ? 'smooth' : qualityMode === 'smooth' ? 'cinematic' : 'ultra';
-    if (typeof window !== 'undefined') {
-      try { localStorage.setItem('cortex_core_quality', next); } catch {}
-    }
-    setInternalQuality(next);
-    onTogglePerfMode?.(next);
-  };
 
   const [reduced, setReduced] = React.useState(() =>
     typeof window !== 'undefined' && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
@@ -3822,77 +3815,6 @@ const CortexCoreSceneBase: React.FC<CortexCoreSceneProps> = ({
         />
         {reduced && <InvalidateBridge />}
       </Canvas>
-
-      {/* Floating quick quality badge on bottom-left for immediate feedback */}
-      <div style={{
-        position: 'absolute',
-        bottom: 24,
-        left: 24,
-        zIndex: 25,
-        display: 'flex',
-        alignItems: 'center',
-        gap: 8,
-      }}>
-        <button
-          onClick={handleToggleQuality}
-          title={
-            qualityMode === 'ultra'
-              ? 'Turbo 120 FPS Active (Direct Native WebGL · Zero Post Overhead · Butter-Smooth). Click for 60 FPS Smooth.'
-              : qualityMode === 'smooth'
-              ? 'Smooth 60 FPS Active (4-Pass Lean Shaders · DPR 1.0). Click for Cinematic 8-Pass FX.'
-              : 'Cinematic FX Active (8-Pass GTAO + GodRays + DoF Bokeh). Click for Turbo 120 FPS.'
-          }
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: 6,
-            padding: '4px 10px',
-            borderRadius: 14,
-            background:
-              qualityMode === 'ultra' ? 'rgba(4,24,36,0.85)' :
-              qualityMode === 'smooth' ? 'rgba(4,24,20,0.85)' :
-              'rgba(32,16,4,0.85)',
-            border: `1px solid ${
-              qualityMode === 'ultra' ? 'rgba(56,189,248,0.55)' :
-              qualityMode === 'smooth' ? 'rgba(52,211,153,0.45)' :
-              'rgba(251,191,36,0.5)'
-            }`,
-            backdropFilter: 'blur(8px)',
-            color:
-              qualityMode === 'ultra' ? '#38bdf8' :
-              qualityMode === 'smooth' ? '#34d399' :
-              '#fbbf24',
-            fontFamily: "'IBM Plex Mono', monospace",
-            fontSize: 8.5,
-            fontWeight: 700,
-            letterSpacing: '0.14em',
-            cursor: 'pointer',
-            boxShadow:
-              qualityMode === 'ultra' ? '0 0 10px rgba(56,189,248,0.22)' :
-              qualityMode === 'smooth' ? '0 0 10px rgba(52,211,153,0.18)' :
-              '0 0 10px rgba(251,191,36,0.22)',
-            transition: 'all 0.2s ease',
-          }}
-        >
-          <span style={{
-            width: 5,
-            height: 5,
-            borderRadius: '50%',
-            background:
-              qualityMode === 'ultra' ? '#38bdf8' :
-              qualityMode === 'smooth' ? '#34d399' :
-              '#fbbf24',
-            boxShadow: `0 0 5px ${
-              qualityMode === 'ultra' ? '#38bdf8' :
-              qualityMode === 'smooth' ? '#34d399' :
-              '#fbbf24'
-            }`,
-          }} />
-          <span>
-            {qualityMode === 'ultra' ? '🚀 TURBO 120FPS' : qualityMode === 'smooth' ? '⚡ 60FPS SMOOTH' : '◈ CINEMATIC FX'}
-          </span>
-        </button>
-      </div>
 
       {contextLost && (
         <div style={{

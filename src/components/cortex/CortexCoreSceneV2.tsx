@@ -1193,7 +1193,7 @@ function PostFXV2({ live, perfMode }: {
     <EffectComposer multisampling={perfMode === 'cinematic' ? 4 : 0}>
       <Bloom
         mipmapBlur
-        intensity={(0.7 + lvl * 0.5 + smoothPhi.current * 0.4) * bloomMul}
+        intensity={(0.7 + lvl * 0.5 + Math.min(smoothPhi.current, 1.2) * 0.4) * bloomMul}
         luminanceThreshold={0.32}
         luminanceSmoothing={0.3}
         radius={0.75}
