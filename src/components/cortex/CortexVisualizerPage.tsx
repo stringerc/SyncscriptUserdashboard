@@ -332,14 +332,14 @@ export default function CortexVisualizerPage() {
   // Core scene: V1 (full equatorial rig) or V2 (clean-slate hero core).
   // ?scene=v1|v2 seeds the pick once; the nav toggle persists the choice.
   const [coreScene, setCoreScene] = useState<'v1' | 'v2'>(() => {
-    if (typeof window === 'undefined') return 'v1';
+    if (typeof window === 'undefined') return 'v2';
     const qs = new URLSearchParams(window.location.search).get('scene');
     if (qs === 'v1' || qs === 'v2') return qs;
     try {
       const saved = localStorage.getItem('cortex_core_scene');
       if (saved === 'v1' || saved === 'v2') return saved;
     } catch {}
-    return 'v1';
+    return 'v2';
   });
   const coreV2 = coreScene === 'v2';
   // ?orb=1 overlays the thinking-orbs dotted orb (2D canvas, no lighting).
@@ -1098,7 +1098,12 @@ export default function CortexVisualizerPage() {
               onSelectAgent={setSelectedAgentId}
               selectedMemoryId={selectedMemoryId}
               onSelectMemory={setSelectedMemoryId}
+              visualMode={coreVisualMode}
+              chronoTime={chronoActive ? chronoTime : null}
+              replayTrack={chronoActive ? replayTrack : null}
               headParallax={headParallax}
+              perfMode={coreQuality}
+              onTogglePerfMode={setCoreQuality}
             />
           ) : (
           <CortexCoreScene

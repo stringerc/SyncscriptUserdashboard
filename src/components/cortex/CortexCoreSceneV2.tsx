@@ -13,7 +13,7 @@
  * Driven by the same cortexSignalBus LiveSignal as V1.
  */
 
-import React, { useMemo, useRef } from 'react';
+import React, { useCallback, useMemo, useRef } from 'react';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import { EffectComposer, Bloom, Vignette, ChromaticAberration } from '@react-three/postprocessing';
 import * as THREE from 'three';
@@ -28,6 +28,15 @@ import {
   tickLiveForV2,
   type LiveSignalV2,
 } from './cortexCoreV2Shared';
+import {
+  agentWorldPositions,
+  memoryWorldPositions,
+  MEMORY_DOMAIN_COLORS,
+  getMemoryDomain,
+  hashMemory,
+  chronoNow,
+  type ReplayTrackEvent,
+} from './CortexCoreScene';
 
 const NOISE_GLSL = /* glsl */ `
   float hash13(vec3 p) {
@@ -183,7 +192,7 @@ function HeroCore({ live }: { live: React.MutableRefObject<LiveSignalV2> }) {
 
 // ── Volumetric mote haze (filled ball — no shell, no ring) ──────────────
 
-const moteCount = 1600;
+// quality-tiered inside MoteHaze via perfMode
 const moteVert = /* glsl */ `
   attribute float aSeed;
   uniform float uTime;
@@ -229,16 +238,20 @@ const moteFrag = /* glsl */ `
   }
 `;
 
-function MoteHaze({ live }: { live: React.MutableRefObject<LiveSignalV2> }) {
+function MoteHaze({ live, perfMode }: {
+  live: React.MutableRefObject<LiveSignalV2>;
+  perfMode?: 'ultra' | 'smooth' | 'cinematic';
+}) {
+  const count = perfMode === 'ultra' ? 2200 : perfMode === 'smooth' ? 900 : 1600;
   const matRef = useRef<THREE.ShaderMaterial>(null);
   const geo = useMemo(() => {
     const g = new THREE.BufferGeometry();
-    const seeds = new Float32Array(moteCount);
-    for (let i = 0; i < moteCount; i++) seeds[i] = Math.random();
-    g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(moteCount * 3), 3));
+    const seeds = new Float32Array(count);
+    for (let i = 0; i < count; i++) seeds[i] = Math.random();
+    g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(count * 3), 3));
     g.setAttribute('aSeed', new THREE.BufferAttribute(seeds, 1));
     return g;
-  }, []);
+  }, [count]);
   const material = useMemo(() => new THREE.ShaderMaterial({
     transparent: true,
     depthWrite: false,
@@ -408,6 +421,10 @@ function AgentField({ live }: { live: React.MutableRefObject<LiveSignalV2> }) {
         m.color.copy(sig.colorRim).lerp(c('#ffffff'), 0.4);
         m.opacity = 0.25 + 0.1 * Math.sin(t * 1.8 + i);
       }
+      // publish world position for chrono-replay camera chase (V1 contract)
+      const id = agent?.id || `v2-agent-${i}`;
+      if (!agentWorldPositions[id]) agentWorldPositions[id] = new THREE.Vector3();
+      sprite.getWorldPosition(agentWorldPositions[id]);
     });
   });
 
@@ -438,11 +455,155 @@ function glowTexture(): THREE.CanvasTexture {
   return _glowTex;
 }
 
+// ── Memory engram constellation (V1 parity, V2-native) ──────────────────
+
+function MemoryBankV2({ live, selectedMemoryId, onSelectMemory }: {
+  live: React.MutableRefObject<LiveSignalV2>;
+  selectedMemoryId?: string | null;
+  onSelectMemory?: (id: string | null) => void;
+}) {
+  const groupRef = useRef<THREE.Group>(null);
+  const sprites = useRef<(THREE.Sprite | null)[]>([]);
+  const [graphData, setGraphData] = React.useState<{ nodes: any[]; edges: any[] }>({ nodes: [], edges: [] });
+
+  React.useEffect(() => {
+    let active = true;
+    const fetchGraph = async () => {
+      try {
+        const res = await fetch('/api/cortex/memory/graph');
+        if (!res.ok) return;
+        const data = await res.json();
+        if (active && data.ok && Array.isArray(data.nodes)) {
+          setGraphData({ nodes: data.nodes, edges: data.edges || [] });
+        }
+      } catch { /* fail-soft */ }
+    };
+    fetchGraph();
+    const interval = setInterval(fetchGraph, 8000);
+    return () => { active = false; clearInterval(interval); };
+  }, []);
+
+  const orbs = useMemo(() => (graphData.nodes || []).slice(0, 48).map((n) => {
+    const data = n.data || {};
+    const id = String(data.id || Math.random());
+    const label = String(data.label || 'Memory Engram');
+    const context = String(data.context || 'cortex-runtime');
+    const entities = String(data.entities || '');
+    const domain = getMemoryDomain(context, label, entities);
+    const hash = hashMemory(id);
+    const domainBaseR = domain === 'runtime' ? 2.3 : domain === 'system' ? 2.85 : domain === 'venture' ? 3.4 : domain === 'working' ? 3.95 : 4.5;
+    return {
+      id, label,
+      radius: domainBaseR + ((hash % 10) * 0.05),
+      speed: (0.05 + ((hash >> 3) % 8) * 0.012) * ((hash % 2 === 0) ? 1 : -1),
+      incl: (((hash >> 6) % 100) / 50 - 1) * 1.2,
+      node: (((hash >> 14) % 1000) / 1000) * Math.PI * 2,
+      phase: ((hash >> 10) % 360) * (Math.PI / 180),
+      color: new THREE.Color(MEMORY_DOMAIN_COLORS[domain]),
+    };
+  }), [graphData]);
+
+  useFrame((state, delta) => {
+    const sig = live.current;
+    const t = state.clock.elapsedTime;
+    if (groupRef.current) groupRef.current.rotation.y += delta * 0.03;
+    orbs.forEach((o, i) => {
+      const sprite = sprites.current[i];
+      if (!sprite) return;
+      const a = t * o.speed + o.phase;
+      const ca = Math.cos(a), sa = Math.sin(a);
+      const si = Math.sin(o.incl), ci = Math.cos(o.incl);
+      const nx = Math.cos(o.node), nz = Math.sin(o.node);
+      const ox = ca * o.radius, oy = sa * o.radius * si, oz = sa * o.radius * ci;
+      sprite.position.set(ox * nx + oz * nz, oy, -ox * nz + oz * nx);
+      const m = sprite.material as THREE.SpriteMaterial;
+      const sel = selectedMemoryId === o.id;
+      sprite.scale.setScalar(sel ? 0.4 : 0.2 + 0.04 * Math.sin(t * 1.6 + i));
+      m.color.copy(sel ? c('#ffffff') : o.color);
+      m.opacity = sel ? 0.95 : 0.4 + sig.energy * 0.15;
+      if (!memoryWorldPositions[o.id]) memoryWorldPositions[o.id] = new THREE.Vector3();
+      sprite.getWorldPosition(memoryWorldPositions[o.id]);
+    });
+  });
+
+  return (
+    <group ref={groupRef}>
+      {orbs.map((o, i) => (
+        <sprite
+          key={o.id}
+          ref={(el) => { sprites.current[i] = el; }}
+          onClick={(e) => { e.stopPropagation(); onSelectMemory?.(selectedMemoryId === o.id ? null : o.id); }}
+        >
+          <spriteMaterial map={glowTexture()} transparent depthWrite={false} blending={THREE.AdditiveBlending} />
+        </sprite>
+      ))}
+    </group>
+  );
+}
+
+// ── Shockwaves — expanding rings on state kicks / discrete events ───────
+
+interface V2Shock { mesh: THREE.Mesh; t: number; maxR: number }
+
+function ShockwavesV2({ live }: { live: React.MutableRefObject<LiveSignalV2> }) {
+  const groupRef = useRef<THREE.Group>(null);
+  const shocks = useRef<V2Shock[]>([]);
+  const matProto = useMemo(() => new THREE.MeshBasicMaterial({
+    color: '#7dd3fc', transparent: true, opacity: 0,
+    blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide,
+  }), []);
+  const lastSeq = useRef(0);
+  const tmpDir = useMemo(() => new THREE.Vector3(), []);
+
+  const spawn = useCallback((dirY = 0) => {
+    const g = groupRef.current;
+    if (!g || shocks.current.length >= 6) return;
+    const dir = tmpDir.set(
+      Math.random() * 2 - 1, dirY + (Math.random() - 0.5) * 0.8, Math.random() * 2 - 1,
+    ).normalize();
+    const mesh = new THREE.Mesh(new THREE.RingGeometry(0.96, 1.0, 64), matProto.clone());
+    mesh.position.copy(dir).multiplyScalar(1.02);
+    mesh.lookAt(0, 0, 0);
+    g.add(mesh);
+    shocks.current.push({ mesh, t: 0, maxR: 2.2 + Math.random() * 1.6 });
+  }, [matProto, tmpDir]);
+
+  useFrame((_, delta) => {
+    const sig = live.current;
+    if (sig.eventSeq !== lastSeq.current) { lastSeq.current = sig.eventSeq; spawn(); }
+    else if (sig.kick > 0.55) spawn(0.3);
+    for (let i = shocks.current.length - 1; i >= 0; i--) {
+      const s = shocks.current[i];
+      s.t += delta * (1.6 + sig.energy);
+      const p = Math.min(1, s.t);
+      const e = 1 - Math.pow(1 - p, 3);
+      s.mesh.scale.setScalar(0.4 + e * s.maxR);
+      (s.mesh.material as THREE.MeshBasicMaterial).opacity = (1 - p) * 0.5;
+      if (p >= 1) {
+        s.mesh.geometry.dispose();
+        (s.mesh.material as THREE.Material).dispose();
+        groupRef.current?.remove(s.mesh);
+        shocks.current.splice(i, 1);
+      }
+    }
+  });
+
+  return <group ref={groupRef} />;
+}
+
 // ── Scene root ───────────────────────────────────────────────────────────
 
-function V2Scene({ live, headParallax }: {
+const CHRONO_SEG_V2 = 1.4;
+
+function V2Scene({ live, headParallax, visualMode, chronoTime, replayTrack, perfMode, selectedMemoryId, onSelectMemory }: {
   live: React.MutableRefObject<LiveSignalV2>;
   headParallax?: { x: number; y: number } | null;
+  visualMode?: 'fleet' | 'memory' | 'both';
+  chronoTime?: number | null;
+  replayTrack?: ReplayTrackEvent[] | null;
+  perfMode?: 'ultra' | 'smooth' | 'cinematic';
+  selectedMemoryId?: string | null;
+  onSelectMemory?: (id: string | null) => void;
 }) {
   const { scene, camera, gl } = useThree();
   React.useEffect(() => {
@@ -498,12 +659,51 @@ function V2Scene({ live, headParallax }: {
     };
   }, [gl]);
 
+  const chase = useRef({ pos: new THREE.Vector3(0, 0.3, 5.6), look: new THREE.Vector3() });
   useFrame((state, delta) => {
     const sig = live.current;
     const t = state.clock.elapsedTime;
     const o = orbit.current;
     const px = headParallax ? headParallax.x : 0;
     const py = headParallax ? headParallax.y : 0;
+
+    // 4D chrono replay: walk real persisted events, chase each agent.
+    if (chronoTime != null && chronoTime >= 0) {
+      if (replayTrack && replayTrack.length > 0) {
+        const idx = Math.min(Math.floor(chronoTime / CHRONO_SEG_V2), replayTrack.length - 1);
+        const ev = replayTrack[idx];
+        chronoNow.seq = ev.seq; chronoNow.type = ev.type; chronoNow.agentId = ev.agentId;
+        const pos = ev.agentId ? agentWorldPositions[ev.agentId] : null;
+        if (pos) {
+          chase.current.look.lerp(pos, Math.min(1, delta * 3.8));
+          const radial = pos.clone().normalize();
+          if (radial.lengthSq() < 0.001) radial.set(0, 0, 1);
+          const desired = pos.clone().addScaledVector(radial, 2.6);
+          desired.y += 0.65 + Math.sin(t * 1.5) * 0.04;
+          chase.current.pos.lerp(desired, Math.min(1, delta * 3.2));
+          state.camera.position.lerp(chase.current.pos, Math.min(1, delta * 3.2));
+          state.camera.lookAt(chase.current.look);
+        } else {
+          chronoNow.seq = ev.seq; chronoNow.type = ev.type; chronoNow.agentId = ev.agentId;
+          chase.current.look.lerp(new THREE.Vector3(0, 0, 0), Math.min(1, delta * 2.4));
+          chase.current.pos.lerp(new THREE.Vector3(0, 0.3, 5.6), Math.min(1, delta * 2.6));
+          state.camera.position.lerp(chase.current.pos, Math.min(1, delta * 2.6));
+          state.camera.lookAt(chase.current.look);
+        }
+        return;
+      }
+      chronoNow.seq = 0; chronoNow.type = ''; chronoNow.agentId = null;
+      // scripted fallback reel — gentle orbit pull-back
+      const p = Math.min(1, chronoTime / 8);
+      const ang = 0.5 + p * 0.8;
+      const dist = 5.2 - p * 0.8;
+      chase.current.pos.set(dist * Math.sin(ang), 1.8 - p * 0.4, dist * Math.cos(ang));
+      chase.current.look.set(0, 0, 0);
+      state.camera.position.lerp(chase.current.pos, Math.min(1, delta * 2.2));
+      state.camera.lookAt(chase.current.look);
+      return;
+    }
+    chronoNow.seq = 0; chronoNow.type = ''; chronoNow.agentId = null;
 
     // desired spherical position: slow drift yaw + user offsets
     const drift = t * 0.018 * (0.4 + sig.energy * 0.6);
@@ -538,16 +738,21 @@ function V2Scene({ live, headParallax }: {
       <color attach="background" args={['#03040a']} />
       <group ref={rigRef}>
         {!hidden.has('core') && <HeroCore live={live} />}
-        {!hidden.has('motes') && <MoteHaze live={live} />}
+        {!hidden.has('motes') && <MoteHaze live={live} perfMode={perfMode} />}
         {!hidden.has('rings') && <OrbitRings live={live} />}
-        {!hidden.has('agents') && <AgentField live={live} />}
+        {visualMode !== 'memory' && !hidden.has('agents') && <AgentField live={live} />}
+        {visualMode !== 'fleet' && <MemoryBankV2 live={live} selectedMemoryId={selectedMemoryId} onSelectMemory={onSelectMemory} />}
+        <ShockwavesV2 live={live} />
       </group>
-      {!postOff && <PostFXV2 live={live} />}
+      {!postOff && <PostFXV2 live={live} perfMode={perfMode} />}
     </>
   );
 }
 
-function PostFXV2({ live }: { live: React.MutableRefObject<LiveSignalV2> }) {
+function PostFXV2({ live, perfMode }: {
+  live: React.MutableRefObject<LiveSignalV2>;
+  perfMode?: 'ultra' | 'smooth' | 'cinematic';
+}) {
   const smooth = useRef(0);
   const smoothPhi = useRef(0);
   useFrame((_, delta) => {
@@ -555,16 +760,19 @@ function PostFXV2({ live }: { live: React.MutableRefObject<LiveSignalV2> }) {
     smoothPhi.current += ((live.current.phiS ?? 0) - smoothPhi.current) * Math.min(1, delta * 3.5);
   });
   const lvl = smooth.current;
+  const bloomMul = perfMode === 'smooth' ? 0.6 : perfMode === 'ultra' ? 1.2 : 1;
   return (
-    <EffectComposer multisampling={0}>
+    <EffectComposer multisampling={perfMode === 'cinematic' ? 4 : 0}>
       <Bloom
         mipmapBlur
-        intensity={0.7 + lvl * 0.5 + smoothPhi.current * 0.4}
+        intensity={(0.7 + lvl * 0.5 + smoothPhi.current * 0.4) * bloomMul}
         luminanceThreshold={0.32}
         luminanceSmoothing={0.3}
         radius={0.75}
       />
-      <ChromaticAberration offset={new THREE.Vector2(0.0004 + lvl * 0.0007, 0.0004 + lvl * 0.0007)} radialModulation />
+      {perfMode !== 'smooth' && (
+        <ChromaticAberration offset={new THREE.Vector2(0.0004 + lvl * 0.0007, 0.0004 + lvl * 0.0007)} radialModulation />
+      )}
       <Vignette offset={0.25} darkness={0.62 + lvl * 0.12} />
     </EffectComposer>
   );
@@ -579,7 +787,7 @@ export interface CortexCoreSceneV2Props {
   onSelectMemory?: (id: string | null) => void;
   visualMode?: 'fleet' | 'memory' | 'both';
   chronoTime?: number | null;
-  replayTrack?: unknown[] | null;
+  replayTrack?: ReplayTrackEvent[] | null;
   holoParallax?: boolean;
   headParallax?: { x: number; y: number } | null;
   perfMode?: 'ultra' | 'smooth' | 'cinematic';
@@ -634,7 +842,16 @@ export function CortexCoreSceneV2(props: CortexCoreSceneV2Props) {
         }}
       >
         <SignalTicker live={live} />
-        <V2Scene live={live} headParallax={props.headParallax} />
+        <V2Scene
+          live={live}
+          headParallax={props.headParallax}
+          visualMode={props.visualMode}
+          chronoTime={props.chronoTime}
+          replayTrack={props.replayTrack}
+          perfMode={props.perfMode}
+          selectedMemoryId={props.selectedMemoryId}
+          onSelectMemory={props.onSelectMemory}
+        />
       </Canvas>
     </div>
   );
