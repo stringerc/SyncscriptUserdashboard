@@ -102,6 +102,7 @@ Available tools:
 - create_document {format: "md"|"html"|"pdf"|"docx"|"csv", title: "...", content: "..."}
 - emit_artifact {artifacts: [{kind, ...}]} — kinds: stat{title,value,unit?,spark?}, chart{title,chartType:line|bar|area|pie,series:[{name,points:[{x,y}]}]}, table{title,columns:[],rows:[]}, document{title,format:markdown|code,content}, feed{title,items:[{label,value}]}, map{title,summary?}, splat{title,splat:"<file>.spz|.ply|.ksplat",caption?} — splat renders a live 3D Gaussian-splat scene (files in /splats, e.g. butterfly.spz, cortex-core.ply). MANDATORY whenever the user asks to see, pin, dock, show, or display a panel/stat/chart/table/image/document/feed/splat — including "pin a panel that says X". The tool call is what creates the panel; saying "pinned" or "done" without calling it is a lie the user will see.
 - generate_image {prompt, aspect?} — creates an image artifact card. Use when the user asks to generate/draw/create an image.
+- generate_splat {scene?, palette?, image?, seed?, count?, title?} — creates a NEW live 3D Gaussian-splat artifact. Procedural scenes: orb|butterfly|flower|helix|galaxy|ridge|flow with palettes aurora|ember|ocean|violet|mono|prism (instant, seed-reproducible). Photo mode: pass image (URL or /public path) to lift a photo into a splat via depth (first call downloads a ~100MB model, then ~4s). Use when the user asks for a splat, 3D scene, generative art, or immersive visual.
 - read_file {path: "relative/or/absolute", startLine?, endLine?}
 - write_file {path: "...", content: "..."}
 - edit_file {path: "...", targetContent: "...", replacementContent: "..."}
@@ -251,6 +252,7 @@ function friendlyToolDescription(tool: string, args: Record<string, any>): strin
   if (tool === 'create_document') return `Compiling: ${args?.title || 'Document'}…`;
   if (tool === 'emit_artifact') return `Creating ${args?.artifacts?.[0]?.kind || 'artifact'} panel…`;
   if (tool === 'generate_image') return `Generating visual artifact…`;
+  if (tool === 'generate_splat') return `Growing a ${args?.scene || 'splat'} scene…`;
   if (tool === 'read_file') return `Reading ${String(args?.path || '').slice(0, 28)}…`;
   if (tool === 'list_dir') return `Listing ${args?.path || '.'}…`;
   if (tool === 'search_code') return `Searching code: "${String(args?.query || '').slice(0, 26)}"…`;

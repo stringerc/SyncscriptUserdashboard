@@ -305,3 +305,6 @@ storefront/distribution-queue.json
 storefront/distribution-dashboard.html
 # Playwright CLI output (may contain credentials)
 .playwright-cli/
+
+# Runtime-generated splat scenes (regenerated on demand by generate_splat)
+public/splats/gen-*.ply

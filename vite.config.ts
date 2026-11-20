@@ -15,6 +15,7 @@ import os from 'os';
 import { execSync, execFile, spawn } from 'child_process';
 import { timingSafeEqual } from 'crypto';
 import { cortexObsidianMemory } from './src/lib/cortex-obsidian-memory';
+import { generateSplat } from './src/lib/cortex-splat-gen';
 import { recordForecastOutcome, loadCalibration } from './src/lib/cortex-agents/forecaster';
 import { getAutonomousVigilance } from './src/lib/cortex-autonomous-vigilance';
 import { deriveSomaticState, type SomaticSample } from './src/lib/cortex-somatic';
@@ -662,6 +663,24 @@ const CORTEX_TOOLS = [
           }
         },
         required: ['artifacts']
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'generate_splat',
+      description: 'Generate a NEW 3D Gaussian-splat scene and return it as a live splat artifact that renders in the UI. Two modes: (1) PROCEDURAL — params scene (orb|butterfly|flower|helix|galaxy|ridge|flow), palette (aurora|ember|ocean|violet|mono|prism), seed, count; instant, deterministic per seed, infinite variety. (2) PHOTO — pass image (https URL or /public path) to lift a single photo into a splat via monocular depth unprojection; first call downloads a ~100MB depth model then caches it. Use when the user asks to create/generate/make a splat, 3D scene, generative art, or an immersive visual. The returned artifact renders automatically — do not also call emit_artifact.',
+      parameters: {
+        type: 'object',
+        properties: {
+          scene: { type: 'string', enum: ['orb', 'butterfly', 'flower', 'helix', 'galaxy', 'ridge', 'flow'], description: 'Procedural scene kind (default orb). Ignored when image is set.' },
+          palette: { type: 'string', enum: ['aurora', 'ember', 'ocean', 'violet', 'mono', 'prism'], description: 'Color palette (default aurora)' },
+          image: { type: 'string', description: 'Image URL or /public path for photo→splat mode' },
+          seed: { type: 'number', description: 'Random seed for reproducibility (default random)' },
+          count: { type: 'number', description: 'Approximate splat count, 4000–200000 (default 60000)' },
+          title: { type: 'string', description: 'Display title for the artifact card' }
+        }
       }
     }
   },
@@ -3272,6 +3291,7 @@ function apiProxyPlugin(): Plugin {
             { name: 'render_video', description: 'Render a video composition via the governed Remotion pipeline (tools/remotion). Writes an .mp4 under .cortex-runtime/renders/ and returns the verified output path.', parameters: { composition: 'string? (default CortexPromo)', outputName: 'string? (.mp4, sanitized)', durationSeconds: 'number? (<=600)', props: 'object? (e.g. {title, subtitle})' } },
             { name: 'run_sandboxed', description: 'Run a command inside a hardware-isolated microsandbox microVM (CONTAINED lane). Returns stdout/stderr/exitCode. Use for untrusted or destructive-capable agent code.', parameters: { image: 'string? (default python:3.12-alpine)', command: 'string (binary, no shell)', args: 'string[]?', timeoutMs: 'number? (<=120000)', workdir: 'string?', env: 'object?' } },
             { name: 'sandbox_status', description: 'Probe microsandbox runtime availability (msb binary, SDK, VM round-trip).', parameters: {} },
+            { name: 'generate_splat', description: 'Generate a new 3D Gaussian-splat scene as a live splat artifact. Procedural scenes (orb|butterfly|flower|helix|galaxy|ridge|flow) with palette/seed/count, or photo mode via image URL/path (depth unprojection).', parameters: { scene: 'string?', palette: 'string?', image: 'string?', seed: 'number?', count: 'number?', title: 'string?' } },
           ];
           res.writeHead(200, {
             'Content-Type': 'application/json',
@@ -8569,6 +8589,45 @@ function triggerQuickAction() {
                   : 'No valid artifacts supplied (each needs a "kind" of stat|chart|table|image|document|map|feed|weather|splat).',
                 durationMs: Date.now() - startMs,
               }));
+            }
+
+            // 20b. generate_splat — procedural or photo→splat generation
+            if (tool === 'generate_splat') {
+              res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+              try {
+                const image = String(args?.image || '').trim();
+                const result = image
+                  ? await (await import('./src/lib/cortex-splat-depth')).generateSplatFromImage({
+                      image,
+                      seed: typeof args?.seed === 'number' ? args.seed : undefined,
+                      maxSplats: typeof args?.count === 'number' ? args.count : undefined,
+                    })
+                  : generateSplat({
+                      scene: typeof args?.scene === 'string' ? args.scene : undefined,
+                      palette: typeof args?.palette === 'string' ? args.palette : undefined,
+                      seed: typeof args?.seed === 'number' ? args.seed : undefined,
+                      count: typeof args?.count === 'number' ? args.count : undefined,
+                    });
+                const label = image ? 'photo splat' : `${result.scene} splat`;
+                return res.end(JSON.stringify({
+                  ok: true, tool: 'generate_splat',
+                  artifact: {
+                    kind: 'splat',
+                    title: String(args?.title || '').trim() || `Generated ${label}`,
+                    splat: result.url,
+                    caption: `${result.splats.toLocaleString()} splats · seed ${result.seed}${result.palette !== 'source' ? ` · ${result.palette}` : ''}`,
+                    source: 'generate_splat',
+                  },
+                  message: `Generated ${result.splats.toLocaleString()}-splat ${label} → ${result.url}`,
+                  durationMs: Date.now() - startMs,
+                }));
+              } catch (splatErr: any) {
+                return res.end(JSON.stringify({
+                  ok: false, tool: 'generate_splat',
+                  error: String(splatErr?.message || splatErr),
+                  durationMs: Date.now() - startMs,
+                }));
+              }
             }
 
             // 21. generate_image — NVIDIA NIM FLUX primary, Pollinations fallback
