@@ -20,7 +20,7 @@ import { NEXUS_LANDING_KOKORO_VOICE_ID } from '../utils/nexus-tts-prosody';
 import { playNexusLandingKokoroTTS } from '../utils/nexus-kokoro-landing-playback';
 import { ensureKokoroOriginsLoaded, getKokoroDirectBases, fetchKokoroBufferForNexusSegment } from '../utils/nexus-kokoro-tts-fetch';
 import { sentenceToNexusProsodySegment } from '../utils/nexus-tts-prosody';
-import { PcmQueue, pumpWavToPcm } from '../utils/wav-pcm-stream';
+import { PcmQueue, pumpWavToPcm, type PcmChunk } from '../utils/wav-pcm-stream';
 import { reportTtsRum } from '../utils/tts-rum-beacon';
 import { stepVuEnvelope } from '../utils/audio-vu-envelope';
 import { createSpeechArbiter, type SpeechArbiter } from '../lib/cortex-tts-arbiter';
@@ -1388,28 +1388,47 @@ export function useVoiceStream(options: UseVoiceStreamOptions = {}) {
     if (!graph) return false;
     const { ctx, analyser } = graph;
     let scheduled = 0;
+    const pending: PcmChunk[] = [];
+    let pendingSecs = 0;
+    const scheduleOne = (chunk: PcmChunk) => {
+      const audioBuf = ctx.createBuffer(1, chunk.samples.length, chunk.sampleRate);
+      audioBuf.getChannelData(0).set(chunk.samples);
+      const src = ctx.createBufferSource();
+      src.buffer = audioBuf;
+      src.connect(analyser);
+      const when = Math.max(ctx.currentTime + 0.03, gaplessNextStartRef.current);
+      src.start(when);
+      // PCM chunks are contiguous slices of ONE generation — schedule them
+      // exactly back-to-back. The 72ms tail trim is only correct for
+      // separately-generated sentence blobs; applied per ~340ms chunk it
+      // removed ~21% of the audio and overlapped every boundary 3-4x/sec =
+      // the "shaken sentence" warble.
+      gaplessNextStartRef.current = when + audioBuf.duration;
+      gaplessSourcesRef.current.add(src);
+      src.onended = () => {
+        gaplessSourcesRef.current.delete(src);
+        if (gaplessSourcesRef.current.size === 0) setTtsOutputLevel(0);
+        finalizeStreamSpeech();
+      };
+      scheduled += 1;
+    };
     try {
       for await (const chunk of queue.iterate()) {
         if (streamEpochRef.current !== epoch) return scheduled > 0;
         // Yield mid-sentence if another surface barged in — without this a
         // long synthesis holds scheduled audio while the thief plays.
         if ((scheduled & 7) === 0 && speechArbiter.heartbeat() === 'stolen') break;
-        const audioBuf = ctx.createBuffer(1, chunk.samples.length, chunk.sampleRate);
-        audioBuf.getChannelData(0).set(chunk.samples);
-        const src = ctx.createBufferSource();
-        src.buffer = audioBuf;
-        src.connect(analyser);
-        const when = Math.max(ctx.currentTime + 0.03, gaplessNextStartRef.current);
-        src.start(when);
-        gaplessNextStartRef.current = when + Math.max(0.02, audioBuf.duration - 0.072);
-        gaplessSourcesRef.current.add(src);
-        src.onended = () => {
-          gaplessSourcesRef.current.delete(src);
-          if (gaplessSourcesRef.current.size === 0) setTtsOutputLevel(0);
-          finalizeStreamSpeech();
-        };
-        scheduled += 1;
+        pending.push(chunk);
+        pendingSecs += chunk.samples.length / chunk.sampleRate;
+        // Prebuffer the head of the stream: pocket-tts delivers PCM in
+        // bursts, so the first second arrives unevenly — starting playback
+        // on the first ~340ms chunk guarantees an underrun gap moments
+        // later. Hold until ~0.7s is queued, then flush as one batch.
+        if (scheduled === 0 && pendingSecs < 0.7) continue;
+        for (const c of pending.splice(0)) scheduleOne(c);
+        pendingSecs = 0;
       }
+      for (const c of pending.splice(0)) scheduleOne(c);
       return scheduled > 0;
     } catch {
       return scheduled > 0;
