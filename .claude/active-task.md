@@ -19,6 +19,13 @@ ALSO SHIPPED:
   for clears. CortexDemo subscribes + merges with echo guard. Verified
   two-tab Playwright probe: turn on tab A rendered live in tab B drawer.
 
+ALSO SHIPPED:
+- Voice arbitration v2 (971d93e): full voice-branch audit — 6
+  useVoiceStream instances + proactive + drawer read-aloud + mobile
+  companion mapped. Arbiter is now per-instance factory with steal()
+  barge-in and heartbeat 'stolen' yield. speak() gated too (was bypass).
+  bargeSpeech() at all 4 user-turn entries. Verified 13/13 arbiter sim.
+
 UNVERIFIED / OPEN:
 - Real-browser two-tab typed-chat repro of the mutex (unit-level only).
 - OLED tuning: center luminance ~230 may read as blob; bloom/exposure knobs
