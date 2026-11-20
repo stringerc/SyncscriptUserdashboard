@@ -13,7 +13,7 @@ import { SparkRenderer, SplatMesh } from '@sparkjsdev/spark';
 
 const MONO = '"IBM Plex Mono", ui-monospace, monospace';
 
-function SparkStage({ url, onReady }: { url: string; onReady: () => void }) {
+function SparkStage({ url, onReady, onFail }: { url: string; onReady: () => void; onFail: () => void }) {
   const { gl, scene, invalidate } = useThree();
   useEffect(() => {
     const spark = new SparkRenderer({ renderer: gl, onDirty: () => invalidate() });
@@ -21,7 +21,19 @@ function SparkStage({ url, onReady }: { url: string; onReady: () => void }) {
     const mesh = new SplatMesh({ url });
     scene.add(mesh);
     let cancelled = false;
-    mesh.initialized.then(() => { if (!cancelled) onReady(); }).catch(() => {});
+    mesh.initialized.then(() => {
+      if (cancelled) return;
+      try {
+        const ps: any = (mesh as any).packedSplats;
+        const bb = (mesh as any).geometry?.boundingSphere;
+        console.log('[splat] initialized', {
+          numSplats: ps?.numSplats ?? ps?.splats?.length,
+          hasExt: !!(mesh as any).extSplats,
+          boundingSphere: bb ? { c: bb.center.toArray(), r: bb.radius } : null,
+        });
+      } catch (e) { console.log('[splat] init-log-fail', e); }
+      onReady();
+    }).catch((e) => { console.log('[splat] init FAILED', e); onFail(); });
     return () => {
       cancelled = true;
       scene.remove(spark);
@@ -35,8 +47,8 @@ function SparkStage({ url, onReady }: { url: string; onReady: () => void }) {
 }
 
 export default function CortexSplatScene({ splat }: { splat?: string }) {
-  const name = (splat || 'cortex-core').replace(/[^a-zA-Z0-9_-]/g, '');
-  const url = `/splats/${name}.ply`;
+  const raw = (splat || 'cortex-core').replace(/[^a-zA-Z0-9._-]/g, '');
+  const url = raw.includes('.') ? `/splats/${raw}` : `/splats/${raw}.ply`;
   const [ready, setReady] = useState(false);
   const [failed, setFailed] = useState(false);
 
@@ -47,7 +59,7 @@ export default function CortexSplatScene({ splat }: { splat?: string }) {
         camera={{ position: [0, 0.15, 3.1], fov: 45, near: 0.1, far: 60 }}
         dpr={[1, 1.75]}
       >
-        <SparkStage url={url} onReady={() => setReady(true)} />
+        <SparkStage url={url} onReady={() => setReady(true)} onFail={() => setFailed(true)} />
         <OrbitControls
           enablePan={false}
           autoRotate
@@ -66,7 +78,7 @@ export default function CortexSplatScene({ splat }: { splat?: string }) {
         color: 'rgba(125,240,255,0.6)', pointerEvents: 'none',
         textShadow: '0 0 14px rgba(103,232,249,0.4)',
       }}>
-        GAUSSIAN SPLAT // {name.toUpperCase()}
+        GAUSSIAN SPLAT // {raw.toUpperCase()}
       </div>
       <div style={{
         position: 'absolute', bottom: 18, left: '50%', transform: 'translateX(-50%)',

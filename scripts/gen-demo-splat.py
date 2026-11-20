@@ -14,7 +14,7 @@ import struct
 import sys
 
 OUT = sys.argv[1] if len(sys.argv) > 1 else "public/splats/cortex-core.ply"
-COUNT = int(sys.argv[2]) if len(sys.argv) > 2 else 42000
+COUNT = int(sys.argv[2]) if len(sys.argv) > 2 else 60000
 random.seed(7)
 
 
@@ -62,9 +62,9 @@ def main():
     inner_n = COUNT - outer_n
     pts = []
     for x, y, z in fib_sphere(outer_n, 1.0):
-        pts.append((x, y, z, 0.030 + random.random() * 0.022, 0.5 + random.random() * 0.2))
+        pts.append((x, y, z, 0.006 + random.random() * 0.005, 0.13 + random.random() * 0.11))
     for x, y, z in fib_sphere(inner_n, 0.52, squash=1.15):
-        pts.append((x, y, z, 0.020 + random.random() * 0.016, 0.75 + random.random() * 0.2))
+        pts.append((x, y, z, 0.004 + random.random() * 0.0035, 0.20 + random.random() * 0.16))
 
     header = (
         "ply\nformat binary_little_endian 1.0\n"
@@ -84,7 +84,9 @@ def main():
         f.write(header)
         for x, y, z, scale, op in pts:
             t = (y / 1.0 + 1.0) / 2.0  # -1..1 -> 0..1
-            rgb = shade(t)
+            # push saturation away from mid-grey so the grade survives
+            # alpha compositing instead of washing to pastel
+            rgb = tuple(max(0.0, min(1.0, 0.5 + (c - 0.5) * 1.7)) for c in shade(t))
             # per-splat brightness jitter keeps it from banding
             j = 0.85 + random.random() * 0.3
             emit(f, x, y, z, tuple(min(1.0, c * j) for c in rgb), scale, op)
