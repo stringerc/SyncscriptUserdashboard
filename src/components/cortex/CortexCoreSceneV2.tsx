@@ -15,7 +15,7 @@
 
 import React, { useCallback, useMemo, useRef } from 'react';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
-import { EffectComposer, Bloom, Vignette, ChromaticAberration } from '@react-three/postprocessing';
+import { EffectComposer, Bloom, Vignette, ChromaticAberration, BrightnessContrast } from '@react-three/postprocessing';
 import * as THREE from 'three';
 import {
   cortexSignalBus,
@@ -1153,6 +1153,8 @@ function V2Scene({ live, headParallax, visualMode, chronoTime, replayTrack, perf
     if (rigRef.current) {
       rigRef.current.rotation.y += delta * 0.02 * (0.4 + sig.energy);
     }
+    // Night mode's darkness lives in the composer (BrightnessContrast
+    // below) — renderer exposure is bypassed by the postprocessing chain.
   });
   // ?v2hide=core,motes,rings,agents — layer bisection for the equator hunt
   const hidden = useMemo(() => {
@@ -1194,15 +1196,19 @@ function PostFXV2({ live, perfMode, nightMode }: {
     smoothPhi.current += ((live.current.phiS ?? 0) - smoothPhi.current) * Math.min(1, delta * 3.5);
   });
   const lvl = smooth.current;
-  const bloomMul = (perfMode === 'smooth' ? 0.6 : perfMode === 'ultra' ? 1.2 : 1) * (nightMode ? 1.9 : 1);
-  // Night mode: Φ cap lifted to the raw 2.5 bus ceiling and the bloom
-  // threshold drops — this is the deliberate "neon" look users toggle.
+  const bloomMul = (perfMode === 'smooth' ? 0.6 : perfMode === 'ultra' ? 1.2 : 1) * (nightMode ? 1.4 : 1);
+  // Night mode: exposure drops to 0.5 so the stage crushes dark, while the
+  // bloom threshold drops and intensity rises — emissive core/orbs punch
+  // through as neon on a near-black field.
   const phiCap = nightMode ? 2.5 : 1.2;
-  const threshold = nightMode ? 0.20 : 0.32;
+  const threshold = nightMode ? 0.25 : 0.32;
   const radius = nightMode ? 0.95 : 0.75;
   const vigDarkness = nightMode ? 0.74 + lvl * 0.14 : 0.62 + lvl * 0.12;
   return (
     <EffectComposer multisampling={perfMode === 'cinematic' ? 4 : 0}>
+      {/* Night: crush mids BEFORE bloom so only true emissives (core,
+          working orbs) clear the threshold — dark field, neon sources. */}
+      {nightMode && <BrightnessContrast brightness={-0.30} contrast={0.10} />}
       <Bloom
         mipmapBlur
         intensity={(0.7 + lvl * 0.5 + Math.min(smoothPhi.current, phiCap) * 0.4) * bloomMul}

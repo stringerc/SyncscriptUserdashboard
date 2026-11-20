@@ -24,6 +24,7 @@ import {
   ChromaticAberration,
   Noise,
   Vignette,
+  BrightnessContrast,
 } from '@react-three/postprocessing';
 import CameraControls from 'camera-controls';
 import { N8AOPass } from 'n8ao';
@@ -185,7 +186,7 @@ const nebulaFragment = /* glsl */ `
   }
 `;
 
-function Nebula({ live }: { live: React.MutableRefObject<LiveSignal> }) {
+function Nebula({ live, nightMode }: { live: React.MutableRefObject<LiveSignal>; nightMode?: boolean }) {
   const mat = useMemo(
     () =>
       new THREE.ShaderMaterial({
@@ -209,7 +210,7 @@ function Nebula({ live }: { live: React.MutableRefObject<LiveSignal> }) {
     mat.uniforms.uTime.value += delta;
     mat.uniforms.uEnergy.value = sig.energy;
     mat.uniforms.uLevel.value = sig.level;
-    mat.uniforms.uDeep.value.copy(sig.colorDeep);
+    mat.uniforms.uDeep.value.copy(sig.colorDeep).multiplyScalar(nightMode ? 0.4 : 1);
     mat.uniforms.uRim.value.copy(sig.colorRim).multiplyScalar(0.55);
   });
 
@@ -3372,6 +3373,8 @@ function PostFX({
   if (qualityMode === 'smooth') {
     return (
       <EffectComposer multisampling={0}>
+        {/* Night: crush mids before bloom — dark field, neon emissives only */}
+        {nightMode && <BrightnessContrast brightness={-0.38} contrast={0.12} />}
         <Bloom
           mipmapBlur
           intensity={(nightMode ? 1.0 : 0.80) + lvl * 0.55 + phiFx * (nightMode ? 0.55 : 0.45)}
@@ -3396,6 +3399,7 @@ function PostFX({
 
   return (
     <EffectComposer multisampling={0}>
+      {nightMode && <BrightnessContrast brightness={-0.38} contrast={0.12} />}
       {ao && <primitive object={ao} />}
       {godRays && <primitive object={godRays} />}
       {dof && <primitive object={dof} />}
@@ -3509,7 +3513,7 @@ function CortexCoreInner({
       <LiveTicker live={live} />
       <Ignition fx={fx} />
       <color attach="background" args={['#03040a']} />
-      {!hide.has('nebula') && <Nebula live={live} />}
+      {!hide.has('nebula') && <Nebula live={live} nightMode={nightMode} />}
       {!hide.has('stars') && <>
         <StarLayer
           live={live}

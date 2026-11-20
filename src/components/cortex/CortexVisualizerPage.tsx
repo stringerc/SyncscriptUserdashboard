@@ -362,7 +362,7 @@ export default function CortexVisualizerPage() {
   };
   // Core scene: V1 (full equatorial rig) or V2 (clean-slate hero core).
   // ?scene=v1|v2 seeds the pick once; the nav toggle persists the choice.
-  const [coreScene, setCoreScene] = useState<'v1' | 'v2'>(() => {
+  const [coreScene] = useState<'v1' | 'v2'>(() => {
     if (typeof window === 'undefined') return 'v2';
     const qs = new URLSearchParams(window.location.search).get('scene');
     if (qs === 'v1' || qs === 'v2') return qs;
@@ -1346,34 +1346,6 @@ export default function CortexVisualizerPage() {
           <span>CORE</span>
         </button>
 
-        {/* DAY / NIGHT aesthetic toggle — night = neon postfx + orb glow */}
-        {faceMode === 'core' && !mapMode && (
-          <button
-            onClick={toggleNightMode}
-            title={nightMode ? 'Night mode active — neon bloom + glowing orbs. Click for day.' : 'Day mode active. Click for neon night.'}
-            style={{
-              padding: '4px 10px',
-              borderRadius: 12,
-              border: nightMode ? '1px solid rgba(192,132,252,0.55)' : '1px solid rgba(125,211,252,0.45)',
-              background: nightMode ? 'rgba(38,16,54,0.8)' : 'rgba(8,24,38,0.8)',
-              color: nightMode ? '#d8b4fe' : '#7dd3fc',
-              fontFamily: "'IBM Plex Mono', monospace",
-              fontSize: 8.5,
-              fontWeight: 700,
-              letterSpacing: '0.12em',
-              cursor: 'pointer',
-              display: 'flex',
-              alignItems: 'center',
-              gap: 5,
-              boxShadow: nightMode ? '0 0 10px rgba(192,132,252,0.28)' : '0 0 8px rgba(125,211,252,0.18)',
-              transition: 'all 0.2s',
-            }}
-          >
-            <span style={{ fontSize: 10 }}>{nightMode ? '☾' : '☀'}</span>
-            <span>{nightMode ? 'NIGHT' : 'DAY'}</span>
-          </button>
-        )}
-
         {/* FOUNDRY */}
         <button
           onClick={() => {
@@ -1439,20 +1411,16 @@ export default function CortexVisualizerPage() {
             <span>{mapMode ? 'MAP ACTIVE' : 'MAP'}</span>
           </button>
 
-          {/* CORE SCENE — V1 full rig ⇄ V2 clean hero (persisted) */}
+          {/* DAY / NIGHT — night dims the scene and ignites neon bloom + orb glow */}
           <button
-            onClick={() => setCoreScene(s => {
-              const next = s === 'v2' ? 'v1' : 'v2';
-              try { localStorage.setItem('cortex_core_scene', next); } catch {}
-              return next;
-            })}
-            title="Toggle core scene — V1 full equatorial rig / V2 clean-slate hero"
+            onClick={toggleNightMode}
+            title={nightMode ? 'Night mode — darkened scene, neon core & glowing orbs. Click for day.' : 'Day mode. Click for neon night.'}
             style={{
               padding: '5px 12px',
               borderRadius: 14,
-              border: `1px solid ${coreV2 ? '#a78bfa' : 'rgba(167,139,250,0.18)'}`,
-              background: coreV2 ? 'rgba(167,139,250,0.18)' : 'rgba(4,8,14,0.5)',
-              color: coreV2 ? '#ede9fe' : 'rgba(196,181,253,0.7)',
+              border: nightMode ? '1px solid rgba(192,132,252,0.6)' : '1px solid rgba(125,211,252,0.4)',
+              background: nightMode ? 'rgba(46,18,72,0.55)' : 'rgba(8,24,38,0.5)',
+              color: nightMode ? '#e9d5ff' : 'rgba(186,230,253,0.85)',
               fontFamily: "'IBM Plex Mono', monospace",
               fontSize: 9.5,
               fontWeight: 700,
@@ -1461,11 +1429,12 @@ export default function CortexVisualizerPage() {
               display: 'flex',
               alignItems: 'center',
               gap: 5,
-              transition: 'all 0.2s',
+              boxShadow: nightMode ? '0 0 12px rgba(192,132,252,0.3)' : 'none',
+              transition: 'all 0.25s',
             }}
           >
-            <span style={{ color: '#a78bfa' }}>◈</span>
-            <span>{coreV2 ? 'CORE V2' : 'CORE V1'}</span>
+            <span style={{ color: nightMode ? '#d8b4fe' : '#7dd3fc' }}>{nightMode ? '☾' : '☀'}</span>
+            <span>{nightMode ? 'NIGHT' : 'DAY'}</span>
           </button>
 
           {/* CHAT */}
