@@ -207,7 +207,7 @@ function buildDeck(a: DashboardArtifact): { group: THREE.Group; splatUrl?: strin
 interface DeckItem { deck: THREE.Group; mat: MaterializeRig; phase: number; baseY: number }
 
 export function CortexHoloDeck() {
-  const { gl, scene, invalidate } = useThree();
+  const { gl, scene, invalidate, camera } = useThree();
   const host = useRef<THREE.Group | null>(null);
   const items = useRef<DeckItem[]>([]);
   const sparkMod = useRef<{ SparkRenderer: any; SplatMesh: any } | null>(null);
@@ -233,7 +233,6 @@ export function CortexHoloDeck() {
         ? { rig: new THREE.Group(), burst: null, age: MATERIALIZE_DURATION }
         : makeMaterializeRig();
       mat.rig.position.set(Math.cos(ang) * rad, baseY, Math.sin(ang) * rad - 2.2);
-      group.lookAt(0, baseY, 0);
       mat.rig.add(group);
       host.current.add(mat.rig);
       items.current.push({ deck: group, mat, phase: idx * 2.1, baseY });
@@ -295,11 +294,37 @@ export function CortexHoloDeck() {
 
   useFrame((state, delta) => {
     const t = state.clock.elapsedTime;
+    const v = new THREE.Vector3();
+    const dbg: any[] = [];
     for (const it of items.current) {
       tickMaterialize(it.mat, delta);
       it.mat.rig.position.y = it.baseY + Math.sin(t * 0.4 + it.phase) * 0.12;
-      it.deck.rotation.y += 0.0016;
+      // Yaw-only billboard — the deck face tracks the CAMERA on the
+      // horizon plane so text stays readable from any orbit angle
+      // (a core-facing lookAt showed users the mirrored back face).
+      const dx = camera.position.x - it.mat.rig.position.x;
+      const dz = camera.position.z - it.mat.rig.position.z;
+      it.deck.rotation.y = Math.atan2(dx, dz);
+      // Screen-space debug projection — lets probes verify the deck is
+      // actually in front of the camera instead of trusting the ack.
+      // Projects the panel's four corners → CSS-pixel bbox for clipping.
+      const w = (window as any).innerWidth, h = (window as any).innerHeight;
+      const corners = [[-2.2, -1.375], [2.2, -1.375], [2.2, 1.375], [-2.2, 1.375]]
+        .map(([cx, cy]) => {
+          v.set(cx, cy, 0).applyMatrix4(it.deck.matrixWorld).project(camera);
+          return [((v.x + 1) / 2) * w, ((1 - v.y) / 2) * h];
+        });
+      const xs = corners.map((c) => c[0]), ys = corners.map((c) => c[1]);
+      const ctr = v.setFromMatrixPosition(it.mat.rig.matrixWorld).project(camera);
+      dbg.push({
+        cx: +(((ctr.x + 1) / 2) * w).toFixed(0), cy: +(((1 - ctr.y) / 2) * h).toFixed(0),
+        bbox: [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)].map((n) => Math.round(n)),
+        visible: ctr.z < 1 && Math.abs(ctr.x) < 1.2 && Math.abs(ctr.y) < 1.2,
+        scale: +it.mat.rig.scale.x.toFixed(3),
+        settled: it.mat.age >= MATERIALIZE_DURATION,
+      });
     }
+    (window as any).__cortexHoloDecks = dbg;
   });
 
   return null;

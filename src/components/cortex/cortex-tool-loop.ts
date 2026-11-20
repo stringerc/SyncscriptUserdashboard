@@ -483,6 +483,11 @@ export async function runCortexToolLoop(ctx: CortexToolLoopContext): Promise<{ a
                 const toolTimeoutMs = (currentToolCall?.tool === 'cortex_self_heal' || currentToolCall?.tool === 'cortex_escalate_bug' || currentToolCall?.tool === 'escalate_to_ide')
                   ? 120000
                   : 60000;
+                // Generative tools get a visible "matter incoming" swirl in
+                // the 3D scene while they compile — spawn burst lands it.
+                if (currentToolCall?.tool === 'generate_splat' || currentToolCall?.tool === 'compose_dashboard') {
+                  try { window.dispatchEvent(new CustomEvent('cortex-matter-incoming', { detail: { tool: currentToolCall.tool } })); } catch {}
+                }
                 const execRes = await fetch('/api/cortex/tools/execute', {
                   method: 'POST',
                   headers: {
@@ -579,9 +584,15 @@ export async function runCortexToolLoop(ctx: CortexToolLoopContext): Promise<{ a
 
             // Synchronize Polymorphic Canvas with tool execution results
             if (toolResult?.ok) {
+              // Skip artifacts that were consumed by the 3D scene — an
+              // acked spawn already renders live in the space; pinning
+              // its card too would resurrect the modal the user escaped.
+              const sceneConsumed = (a: any) =>
+                (spawnState.splatAcked && a?.kind === 'splat' && a?.splat === spawnState.splatUrl)
+                || (spawnState.holoAcked && a?.kind === 'dashboard' && a?.title === spawnState.holoClean?.title);
               if (currentToolCall.tool === 'emit_artifact' || toolResult.artifacts?.length || toolResult.artifact) {
                 const primaryArt = toolResult.artifacts?.[0] || toolResult.artifact;
-                if (primaryArt) {
+                if (primaryArt && !sceneConsumed(primaryArt)) {
                   if (ctx.setActiveArtifact) ctx.setActiveArtifact(primaryArt);
                   ctx.setCanvasTab('artifact');
                   ctx.setPreviewVisible(true);

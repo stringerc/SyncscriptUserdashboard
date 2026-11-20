@@ -1311,6 +1311,7 @@ export function CortexCoreSceneV2(props: CortexCoreSceneV2Props) {
         <SignalTicker live={live} />
         <SceneSplats />
         <CortexHoloDeck />
+        <MatterIngest />
         <V2Scene
           live={live}
           headParallax={props.headParallax}
@@ -1344,7 +1345,7 @@ function SignalTicker({ live }: { live: React.MutableRefObject<LiveSignalV2> }) 
 interface SceneSplatItem { g: THREE.Group; fit: THREE.Group; mat: MaterializeRig; spin: number; baseY: number; phase: number }
 
 function SceneSplats() {
-  const { gl, scene, invalidate } = useThree();
+  const { gl, scene, invalidate, camera } = useThree();
   const host = useRef<THREE.Group | null>(null);
   const items = useRef<SceneSplatItem[]>([]);
   const sparkMod = useRef<{ SparkRenderer: any; SplatMesh: any } | null>(null);
@@ -1434,10 +1435,124 @@ function SceneSplats() {
 
   useFrame((state, delta) => {
     const t = state.clock.elapsedTime;
+    const v = new THREE.Vector3();
+    const dbg: any[] = [];
     for (const it of items.current) {
       tickMaterialize(it.mat, delta);
       it.g.rotation.y += it.spin * 0.016;
       it.g.position.y = it.baseY + Math.sin(t * 0.45 + it.phase) * 0.18;
+      v.setFromMatrixPosition(it.g.matrixWorld).project(camera);
+      dbg.push({
+        x: +v.x.toFixed(3), y: +v.y.toFixed(3), z: +v.z.toFixed(3),
+        visible: v.z < 1 && Math.abs(v.x) < 1.2 && Math.abs(v.y) < 1.2,
+        scale: +it.mat.rig.scale.x.toFixed(3), born: +it.mat.age.toFixed(2),
+      });
+    }
+    (window as any).__cortexSceneSplats = dbg;
+  });
+
+  return null;
+}
+
+// ── MatterIngest — "generating" swirl while a splat/dashboard compiles ────
+// Tool paths dispatch `cortex-matter-incoming` when generate_splat or
+// compose_dashboard begins; each event claims an orbit slot and spins a
+// vortex of dust motes. The next cortex-spawn-* event consumes the oldest
+// mote — the materialize burst then finishes the "matter" beat. This is
+// the visible half of generation: swirl gathers → object condenses.
+interface IngestMote { g: THREE.Group; pts: THREE.Points; age: number; phase: number; baseY: number }
+
+function MatterIngest() {
+  const { scene, invalidate } = useThree();
+  const host = useRef<THREE.Group | null>(null);
+  const motes = useRef<IngestMote[]>([]);
+  const slot = useRef(0);
+
+  React.useEffect(() => {
+    const g = new THREE.Group();
+    scene.add(g);
+    host.current = g;
+    let cancelled = false;
+
+    const release = (m: IngestMote) => {
+      g.remove(m.g);
+      m.pts.geometry.dispose();
+      (m.pts.material as THREE.Material).dispose();
+    };
+
+    const spawn = () => {
+      if (!host.current || motes.current.length >= 3) return;
+      const idx = slot.current++;
+      const ang = idx * 2.39996 + 0.55;
+      const grp = new THREE.Group();
+      const rad = 3.2 + (idx % 3) * 0.9;
+      const baseY = ((idx % 3) - 1) * 0.75 + Math.sin(idx * 1.9) * 0.3;
+      grp.position.set(Math.cos(ang) * rad, baseY, Math.sin(ang) * rad - 1.0);
+
+      // Vortex disc — motes on a thin swirling disc, two-tone dust.
+      const N = 150;
+      const pos = new Float32Array(N * 3);
+      const col = new Float32Array(N * 3);
+      const c = new THREE.Color();
+      for (let i = 0; i < N; i++) {
+        const r = 0.12 + Math.pow(Math.random(), 0.6) * 0.55;
+        const th = Math.random() * Math.PI * 2;
+        pos[i * 3] = Math.cos(th) * r;
+        pos[i * 3 + 1] = (Math.random() - 0.5) * 0.1;
+        pos[i * 3 + 2] = Math.sin(th) * r;
+        c.setHex(i % 3 === 0 ? 0xe0f2fe : i % 3 === 1 ? 0x7dd3fc : 0xa5b4fc);
+        col[i * 3] = c.r; col[i * 3 + 1] = c.g; col[i * 3 + 2] = c.b;
+      }
+      const geo = new THREE.BufferGeometry();
+      geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+      geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
+      const pts = new THREE.Points(geo, new THREE.PointsMaterial({
+        size: 0.05, vertexColors: true, transparent: true, opacity: 0.85,
+        depthWrite: false, blending: THREE.AdditiveBlending, sizeAttenuation: true,
+      }));
+      pts.frustumCulled = false;
+      grp.add(pts);
+      g.add(grp);
+      motes.current.push({ g: grp, pts, age: 0, phase: idx * 1.3, baseY });
+      invalidate();
+    };
+
+    const onIncoming = () => { if (!cancelled) spawn(); };
+    const onConsume = () => {
+      const m = motes.current.shift();
+      if (m) { release(m); invalidate(); }
+    };
+    window.addEventListener('cortex-matter-incoming', onIncoming);
+    window.addEventListener('cortex-spawn-splat', onConsume);
+    window.addEventListener('cortex-spawn-holo', onConsume);
+    return () => {
+      cancelled = true;
+      window.removeEventListener('cortex-matter-incoming', onIncoming);
+      window.removeEventListener('cortex-spawn-splat', onConsume);
+      window.removeEventListener('cortex-spawn-holo', onConsume);
+      scene.remove(g);
+    };
+  }, [scene, invalidate]);
+
+  useFrame((state, delta) => {
+    const t = state.clock.elapsedTime;
+    for (let i = motes.current.length - 1; i >= 0; i--) {
+      const m = motes.current[i];
+      m.age += delta;
+      // Stale swirls dissolve rather than lingering forever.
+      if (m.age > 90) {
+        motes.current.splice(i, 1);
+        m.g.parent?.remove(m.g);
+        m.pts.geometry.dispose();
+        (m.pts.material as THREE.Material).dispose();
+        continue;
+      }
+      m.pts.rotation.y += delta * 2.6;
+      m.pts.rotation.x = Math.sin(t * 0.9 + m.phase) * 0.35;
+      const swell = Math.min(1, m.age * 1.8);
+      m.pts.scale.setScalar(swell * (1 + Math.sin(t * 3.2 + m.phase) * 0.12));
+      (m.pts.material as THREE.PointsMaterial).opacity = 0.85 * swell * (0.6 + 0.4 * Math.sin(t * 5 + m.phase));
+      m.g.position.y = m.baseY + Math.sin(t * 0.8 + m.phase) * 0.1;
     }
   });
 

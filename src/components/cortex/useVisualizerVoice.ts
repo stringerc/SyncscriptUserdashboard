@@ -46,7 +46,7 @@ import {
 } from '../../lib/cortex-artifacts';
 import {
   openSurfacePanel, closeAllSurfacePanels, closeSurfacePanel,
-  getSurfaceSnapshot, setSurfaceFocusMode,
+  getSurfaceSnapshot, setSurfaceFocusMode, updateSurfacePanel,
 } from '../../lib/cortex-surfaces';
 import { runSurfaceCommand, surfaceManifestSuffix } from '../../lib/cortex-surface-commands';
 import { sanitizeForNexusTTS } from '../../utils/nexus-tts-prosody';
@@ -776,6 +776,11 @@ async function execTool(tool: string, args: Record<string, any>, turnSignal?: Ab
 
     const isHeavyTool = tool === 'cortex_self_heal' || tool === 'cortex_escalate_bug' || tool === 'escalate_to_ide';
     const toolTimeoutMs = isHeavyTool ? 120000 : 30000;
+    // Generative tools get a visible "matter incoming" swirl in the 3D
+    // scene while they compile — the spawn's materialize burst lands it.
+    if (tool === 'generate_splat' || tool === 'compose_dashboard') {
+      try { window.dispatchEvent(new CustomEvent('cortex-matter-incoming', { detail: { tool } })); } catch {}
+    }
     const res = await fetch(TOOLS_URL, {
       method: 'POST',
       headers: {
