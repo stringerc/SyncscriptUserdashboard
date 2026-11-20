@@ -26,6 +26,7 @@ import { getGlobeEmbedUrl, configureGlobeBase, GLOBE_MODE_EVENT, setGlobeAvailab
 import { neuroAudio } from '../../lib/cortex-neuro-audio';
 import { cortexWebcamParallax, type HandPinchState } from '../../lib/cortex-webcam-parallax';
 import { CORTEX_COLORS, CORTEX_STATE_THEME, CORTEX_TYPOGRAPHY, CORTEX_ANIMATION } from '../../lib/cortex-design-tokens';
+import { A2uiDemoPanel } from './a2ui/A2uiDemoPanel';
 
 export type ActiveScene = 'core' | 'agents' | VisualizerFace;
 
@@ -1013,6 +1014,13 @@ export default function CortexVisualizerPage() {
     <div style={{ position: 'fixed', inset: 0, background: '#03040a', overflow: 'hidden', fontFamily: "'IBM Plex Mono', ui-monospace, monospace" }}>
       <style>{HUD_CSS}</style>
 
+      {/* A2UI generative-UI surface — opt-in demo via ?a2ui=demo */}
+      {typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('a2ui') === 'demo' && (
+        <div style={{ position: 'absolute', top: 96, right: 16, width: 360, zIndex: 40 }}>
+          <A2uiDemoPanel />
+        </div>
+      )}
+
       {/* God's Eye View globe — unmounts the R3F core to keep GPU headroom */}
       {mapMode ? (
         <>
@@ -1413,7 +1421,7 @@ export default function CortexVisualizerPage() {
             onClick={() => {
               const next = !micOn;
               setMicOn(next);
-              cortexAudioContext.setMic(next);
+              try { localStorage.setItem('cortex_viz_mic_on', String(next)); } catch {}
               cortexSpeak(next ? 'Voice listening active.' : 'Voice muted.');
             }}
             title={!micOn ? 'Microphone muted — click to enable' : 'Voice listening active — click to mute'}
