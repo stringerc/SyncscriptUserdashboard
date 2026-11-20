@@ -26,6 +26,8 @@ import {
 } from '../../lib/cortex-email-helpers';
 
 const ArtifactRenderer = lazy(() => import('./artifacts/ArtifactRenderer'));
+const NexusVoicePixieDust = lazy(() => import('../nexus/NexusVoicePixieDust'));
+import type { NexusPixiePath } from '../nexus/NexusVoicePixieDust';
 
 const MONO = '"IBM Plex Mono", ui-monospace, monospace';
 
@@ -299,17 +301,17 @@ function PanelChrome({
   return (
     <div style={{
       position: 'relative', width: '100%', height: '100%',
-      background: 'linear-gradient(165deg, rgba(6,10,18,0.94), rgba(4,8,14,0.92))',
-      border: `1px solid ${isFocused ? 'rgba(103,232,249,0.85)' : clusterBorder || (panel.pinned ? 'rgba(232,121,249,0.5)' : dragging ? 'rgba(103,232,249,0.65)' : 'rgba(103,232,249,0.22)')}`,
-      borderRadius: 6,
-      backdropFilter: 'blur(16px)', WebkitBackdropFilter: 'blur(16px)',
+      background: 'linear-gradient(165deg, rgba(10,18,30,0.5) 0%, rgba(6,12,22,0.42) 55%, rgba(14,10,30,0.46) 100%)',
+      border: `1px solid ${isFocused ? 'rgba(160,245,255,0.6)' : clusterBorder || (panel.pinned ? 'rgba(232,121,249,0.5)' : dragging ? 'rgba(160,245,255,0.55)' : 'rgba(255,255,255,0.14)')}`,
+      borderRadius: 10,
+      backdropFilter: 'blur(22px) saturate(1.6)', WebkitBackdropFilter: 'blur(22px) saturate(1.6)',
       boxShadow: isFocused
-        ? '0 0 60px rgba(0,0,0,0.9), 0 0 30px rgba(103,232,249,0.3)'
+        ? '0 0 60px rgba(0,0,0,0.7), 0 0 34px rgba(103,232,249,0.32), inset 0 1px 0 rgba(255,255,255,0.12)'
         : nudge
-          ? '0 0 0 2px rgba(103,232,249,0.55), 0 8px 32px rgba(0,0,0,0.45)'
+          ? '0 0 0 2px rgba(103,232,249,0.55), 0 8px 32px rgba(0,0,0,0.45), inset 0 1px 0 rgba(255,255,255,0.1)'
           : dragging
-            ? '0 18px 50px rgba(0,0,0,0.6), 0 0 0 1px rgba(103,232,249,0.12)'
-            : clusterGlowShadow || '0 8px 32px rgba(0,0,0,0.45)',
+            ? '0 18px 50px rgba(0,0,0,0.6), 0 0 0 1px rgba(103,232,249,0.12), inset 0 1px 0 rgba(255,255,255,0.1)'
+            : (clusterGlowShadow || '0 8px 32px rgba(0,0,0,0.45)') + ', inset 0 1px 0 rgba(255,255,255,0.1), inset 0 -1px 0 rgba(255,255,255,0.03)',
       display: 'flex', flexDirection: 'column', overflow: 'hidden',
       transition: 'border-color 0.2s, box-shadow 0.2s',
     }}>
@@ -1733,6 +1735,31 @@ export function CortexSurfaceLayer({ drawerOpen = false }: { drawerOpen?: boolea
   const resizeRef = useRef<{ id: string; startX: number; startY: number; startW: number; startH: number; rect: Rect } | null>(null);
   const rectsRef = useRef<Record<SurfaceZone, Rect>>(computeZoneRects(false));
   const [focusedPanelId, setFocusedPanelId] = useState<string | null>(null);
+  const [dockDust, setDockDust] = useState<{ path: NexusPixiePath; reduceMotion: boolean } | null>(null);
+  const seenPanelIdsRef = useRef<Set<string> | null>(null);
+
+  // Pixie-dust burst whenever a NEW panel docks (agent-generated UI materializing).
+  // Panels restored from the persisted snapshot on mount are marked seen silently.
+  useEffect(() => {
+    if (seenPanelIdsRef.current === null) {
+      seenPanelIdsRef.current = new Set(panels.map((p) => p.id));
+      return;
+    }
+    const fresh = panels.filter((p) => !seenPanelIdsRef.current!.has(p.id));
+    for (const p of panels) seenPanelIdsRef.current!.add(p.id);
+    if (!fresh.length) return;
+    const p = fresh[fresh.length - 1];
+    const zr = computeZoneRects(drawerOpen)[p.zone];
+    const ws = workspaceRect(drawerOpen);
+    const to = p.free
+      ? { x: ws.x + p.free.x * ws.w + 30, y: ws.y + p.free.y * ws.h + 16 }
+      : { x: zr.x + zr.w / 2, y: zr.y + 28 };
+    const reduceMotion = typeof window !== 'undefined' && window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+    setDockDust({
+      path: { from: { x: window.innerWidth * 0.5, y: window.innerHeight * 0.35 }, to },
+      reduceMotion,
+    });
+  }, [panels, drawerOpen]);
 
   // Pressing Escape restores any center-stage focused panel
   useEffect(() => {
@@ -2181,6 +2208,16 @@ export function CortexSurfaceLayer({ drawerOpen = false }: { drawerOpen?: boolea
           </motion.div>
         )}
       </AnimatePresence>
+      {/* Pixie-dust burst when a new panel docks (agent-generated UI). */}
+      {dockDust && (
+        <Suspense fallback={null}>
+          <NexusVoicePixieDust
+            path={dockDust.path}
+            reduceMotion={dockDust.reduceMotion}
+            onComplete={() => setDockDust(null)}
+          />
+        </Suspense>
+      )}
     </div>
   );
 }

@@ -165,11 +165,15 @@ export function MurmurationGather({ count = 96, duration = 1700 }: { count?: num
 
     const palette = [187, 318, 45, 265, 200];
     const parts = Array.from({ length: count }, (_, i) => {
-      const edge = Math.random() < 0.55;
+      // Orbs condense into a dense core at the panel's heart, then fling
+      // outward to their perimeter slots — the modal is assembled by the
+      // expanding swarm, not flown in from off-screen.
+      const spread = Math.min(w, h) * 0.16;
       return {
-        x: edge ? (Math.random() < 0.5 ? -8 - Math.random() * w * 0.15 : w + 8 + Math.random() * w * 0.15) : Math.random() * w,
-        y: edge ? Math.random() * h : Math.random() * h,
-        vx: 0, vy: 0,
+        x: w / 2 + (Math.random() - 0.5) * spread,
+        y: h / 2 + (Math.random() - 0.5) * spread,
+        vx: (Math.random() - 0.5) * 1.4,
+        vy: (Math.random() - 0.5) * 1.4,
         tx: ring.length ? ring[i % ring.length].x : w / 2,
         ty: ring.length ? ring[i % ring.length].y : h / 2,
         hue: palette[i % palette.length],
@@ -198,6 +202,17 @@ export function MurmurationGather({ count = 96, duration = 1700 }: { count?: num
       const globalAlpha = t < duration - FADE ? 1 : Math.max(0, (duration - t) / FADE);
       if (globalAlpha <= 0) { ro.disconnect(); return; }
       ctx.clearRect(0, 0, w, h);
+      // Reactor-core glow at the spawn centroid — sells the "energy ball"
+      // the orbs condense from before they expand into the frame.
+      const coreA = Math.max(0, 1 - t / 520) * globalAlpha;
+      if (coreA > 0.01 && w > 0 && h > 0) {
+        const g = ctx.createRadialGradient(w / 2, h / 2, 0, w / 2, h / 2, Math.min(w, h) * 0.4);
+        g.addColorStop(0, `rgba(140,220,255,${0.22 * coreA})`);
+        g.addColorStop(0.45, `rgba(232,121,249,${0.09 * coreA})`);
+        g.addColorStop(1, 'rgba(0,0,0,0)');
+        ctx.fillStyle = g;
+        ctx.fillRect(0, 0, w, h);
+      }
       for (const p of parts) {
         const lt = t - p.delay;
         if (lt < 0) continue; // not launched yet
@@ -321,16 +336,16 @@ export function ArtifactShell({
       onClick={onExpand}
       style={{
         position: 'relative',
-        background: 'linear-gradient(155deg, rgba(13,32,30,0.66) 0%, rgba(9,20,32,0.55) 52%, rgba(16,10,34,0.62) 100%)',
-        backdropFilter: 'blur(18px) saturate(1.5)', WebkitBackdropFilter: 'blur(18px) saturate(1.5)',
-        border: `1px solid ${hover ? 'rgba(125,240,255,0.5)' : C.border}`,
+        background: 'linear-gradient(155deg, rgba(13,32,30,0.46) 0%, rgba(9,20,32,0.38) 52%, rgba(16,10,34,0.44) 100%)',
+        backdropFilter: 'blur(22px) saturate(1.6)', WebkitBackdropFilter: 'blur(22px) saturate(1.6)',
+        border: `1px solid ${hover ? 'rgba(160,245,255,0.55)' : 'rgba(255,255,255,0.13)'}`,
         borderRadius: 10,
         padding: compact ? '8px 10px' : '10px 12px',
         cursor: onExpand ? 'pointer' : 'default',
         transition: 'border-color 0.2s ease, box-shadow 0.25s ease',
         boxShadow: hover
-          ? '0 14px 44px rgba(0,0,0,0.5), inset 0 1px 0 rgba(255,255,255,0.09), 0 0 26px rgba(103,232,249,0.1)'
-          : '0 10px 34px rgba(0,0,0,0.42), inset 0 1px 0 rgba(255,255,255,0.06)',
+          ? '0 18px 50px rgba(0,0,0,0.5), inset 0 1px 0 rgba(255,255,255,0.14), inset 0 -1px 0 rgba(255,255,255,0.04), 0 0 30px rgba(103,232,249,0.14)'
+          : '0 12px 38px rgba(0,0,0,0.42), inset 0 1px 0 rgba(255,255,255,0.1), inset 0 -1px 0 rgba(255,255,255,0.03)',
         fontFamily: "'DM Sans', ui-sans-serif, system-ui, sans-serif",
         overflow: 'hidden',
       }}
@@ -338,6 +353,11 @@ export function ArtifactShell({
       <CornerTicks />
       {/* Starling murmuration — ambient flock drifting behind the panel. */}
       <MurmurationField density={compact ? 0.45 : 0.8} />
+      {/* Glass sheen — top-light specular streak across the frosted surface. */}
+      <div aria-hidden="true" style={{
+        position: 'absolute', inset: 0, borderRadius: 'inherit', pointerEvents: 'none',
+        background: 'linear-gradient(180deg, rgba(255,255,255,0.11) 0%, rgba(255,255,255,0.03) 22%, transparent 42%)',
+      }} />
       {/* Entrance: orbs swarm in and assemble the panel frame, then dissolve. */}
       <MurmurationGather count={compact ? 64 : 96} />
       <div style={{ position: 'relative', zIndex: 1 }}>
