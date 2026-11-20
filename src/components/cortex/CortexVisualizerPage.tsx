@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useRef, useState } from 'react';
+import React, { Suspense, lazy, useEffect, useRef, useState } from 'react';
 import { cortexSignalBus, CortexVisualizer, type VisualizerFace, type CortexSignalBusPayload, type CortexVoiceState } from './CortexVisualizer';
 import { CortexAgentsScene } from './CortexAgentsScene';
 import {
@@ -31,6 +31,9 @@ import { cortexGaze } from '../../lib/cortex-gaze';
 import CortexGazeLayer from './CortexGazeLayer';
 import { CORTEX_COLORS, CORTEX_STATE_THEME, CORTEX_TYPOGRAPHY, CORTEX_ANIMATION } from '../../lib/cortex-design-tokens';
 import { A2uiDemoPanel } from './a2ui/A2uiDemoPanel';
+
+// Gaussian-splat viewer — lazy so @sparkjsdev/spark stays out of the main chunk.
+const CortexSplatScene = lazy(() => import('./CortexSplatScene'));
 
 export type ActiveScene = 'core' | 'agents' | VisualizerFace;
 
@@ -235,6 +238,13 @@ export default function CortexVisualizerPage() {
   const [gazeMode] = useState(() =>
     typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('gaze') === '1');
   const [gazeParallax, setGazeParallax] = useState<{ x: number; y: number } | null>(null);
+  // ?splat=1 → procedural cortex-core.ply; ?splat=<name> → /splats/<name>.ply
+  const [splatMode] = useState<string | null>(() => {
+    if (typeof window === 'undefined') return null;
+    const s = new URLSearchParams(window.location.search).get('splat');
+    if (!s || s === '0') return null;
+    return s === '1' || s === 'true' ? 'cortex-core' : s;
+  });
   const [hoveredPacket, setHoveredPacket] = useState<{
     agentId: string;
     agentName: string;
@@ -3109,6 +3119,13 @@ export default function CortexVisualizerPage() {
 
       {/* Eye-tracking layer — ?gaze=1 only; fixed overlay + parallax feed. */}
       {gazeMode && <CortexGazeLayer />}
+
+      {/* Gaussian-splat viewer — ?splat=1|<name>; lazy-loaded Spark renderer. */}
+      {splatMode && (
+        <Suspense fallback={null}>
+          <CortexSplatScene splat={splatMode} />
+        </Suspense>
+      )}
 
       {/* Bottom-right: sovereignty tag — suppressed on Foundry face */}
       {faceMode !== 'agents' && (
