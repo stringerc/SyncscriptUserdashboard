@@ -369,15 +369,42 @@ function Ring({ spec, live, index }: {
 
 const AGENT_COUNT = 14;
 const TRAIL_LEN = 26;
+
+// agent name-tag textures — canvas-backed, regenerated only on rename
+const labelTexCache = new Map<string, THREE.CanvasTexture>();
+function agentLabelTexture(name: string, color: string): THREE.CanvasTexture {
+  const key = `${name}|${color}`;
+  const hit = labelTexCache.get(key);
+  if (hit) return hit;
+  const cv = document.createElement('canvas');
+  cv.width = 256; cv.height = 56;
+  const ctx = cv.getContext('2d')!;
+  ctx.font = '600 22px "IBM Plex Mono", monospace';
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.shadowColor = 'rgba(0,0,0,0.9)'; ctx.shadowBlur = 6;
+  ctx.fillStyle = color;
+  ctx.fillText(name.toUpperCase().slice(0, 18), 128, 28);
+  const tex = new THREE.CanvasTexture(cv);
+  tex.anisotropy = 4;
+  labelTexCache.set(key, tex);
+  return tex;
+}
 const trailMat = new THREE.LineBasicMaterial({
   vertexColors: true, transparent: true, opacity: 0.5,
   blending: THREE.AdditiveBlending, depthWrite: false,
 });
 
-function AgentField({ live }: { live: React.MutableRefObject<LiveSignalV2> }) {
+function AgentField({ live, selectedAgentId, onSelectAgent }: {
+  live: React.MutableRefObject<LiveSignalV2>;
+  selectedAgentId?: string | null;
+  onSelectAgent?: (id: string | null) => void;
+}) {
   const { scene } = useThree();
   const groupRef = useRef<THREE.Group>(null);
   const sprites = useRef<(THREE.Sprite | null)[]>([]);
+  const labels = useRef<(THREE.Sprite | null)[]>([]);
+  const hoverRef = useRef<number>(-1);
+  const nameRefs = useRef<string[]>([]);
   const agentsRef = useRef<AgentClient[]>([]);
   const trailRefs = useRef<{ line: THREE.Line; pos: Float32Array; col: Float32Array; head: number }[]>([]);
   const params = useMemo(() => Array.from({ length: AGENT_COUNT }, (_, i) => ({
@@ -416,6 +443,8 @@ function AgentField({ live }: { live: React.MutableRefObject<LiveSignalV2> }) {
       const sprite = sprites.current[i];
       if (!sprite) return;
       const agent = agentsRef.current[i];
+      const id = agent?.id || `v2-agent-${i}`;
+      const boost = (hoverRef.current === i || selectedAgentId === id) ? 1.35 : 1;
       const a = t * p.speed + p.phase;
       const ca = Math.cos(a), sa = Math.sin(a);
       const si = Math.sin(p.incl), ci = Math.cos(p.incl);
@@ -428,16 +457,30 @@ function AgentField({ live }: { live: React.MutableRefObject<LiveSignalV2> }) {
         const err = agent.status === 'error';
         const dim = agent.status === 'offline' || agent.status === 'retired';
         const pulse = wrk ? 1 + 0.18 * Math.sin(t * 6 + i) : 1 + 0.05 * Math.sin(t * 2 + i);
-        sprite.scale.setScalar((wrk ? 0.34 : 0.24) * pulse);
+        sprite.scale.setScalar((wrk ? 0.34 : 0.24) * pulse * boost);
         m.color.copy(err ? c('#f43f5e') : p.color);
         m.opacity = dim ? 0.15 : wrk ? 0.9 : 0.55;
       } else {
-        sprite.scale.setScalar(0.14 + 0.03 * Math.sin(t * 2.2 + i));
+        sprite.scale.setScalar((0.14 + 0.03 * Math.sin(t * 2.2 + i)) * boost);
         m.color.copy(sig.colorRim).lerp(c('#ffffff'), 0.4);
         m.opacity = 0.25 + 0.1 * Math.sin(t * 1.8 + i);
       }
+      // name tag rides beneath the sprite
+      const label = labels.current[i];
+      if (label) {
+        label.position.set(sprite.position.x, sprite.position.y - 0.52, sprite.position.z);
+        const lname = agent?.name || agent?.id || `AGENT ${i + 1}`;
+        if (nameRefs.current[i] !== lname) {
+          nameRefs.current[i] = lname;
+          const lm = label.material as THREE.SpriteMaterial;
+          lm.map = agentLabelTexture(lname, m.color.getStyle());
+          lm.needsUpdate = true;
+        }
+        const lm = label.material as THREE.SpriteMaterial;
+        lm.opacity = selectedAgentId === id ? 0.95 : hoverRef.current === i ? 0.85 : agent ? 0.5 : 0;
+        label.visible = !!agent;
+      }
       // publish world position for chrono-replay camera chase (V1 contract)
-      const id = agent?.id || `v2-agent-${i}`;
       if (!agentWorldPositions[id]) agentWorldPositions[id] = new THREE.Vector3();
       sprite.getWorldPosition(agentWorldPositions[id]);
       // trail: shift-buffer recent world positions into a fading line
@@ -472,9 +515,24 @@ function AgentField({ live }: { live: React.MutableRefObject<LiveSignalV2> }) {
   return (
     <group ref={groupRef}>
       {params.map((p, i) => (
-        <sprite key={i} ref={(el) => { sprites.current[i] = el; }}>
-          <spriteMaterial map={glowTexture()} transparent depthWrite={false} blending={THREE.AdditiveBlending} />
-        </sprite>
+        <React.Fragment key={i}>
+          <sprite
+            ref={(el) => { sprites.current[i] = el; }}
+            onClick={(e) => {
+              e.stopPropagation();
+              const agent = agentsRef.current[i];
+              const id = agent?.id || `v2-agent-${i}`;
+              onSelectAgent?.(selectedAgentId === id ? null : id);
+            }}
+            onPointerOver={(e) => { e.stopPropagation(); hoverRef.current = i; document.body.style.cursor = 'pointer'; }}
+            onPointerOut={() => { if (hoverRef.current === i) hoverRef.current = -1; document.body.style.cursor = ''; }}
+          >
+            <spriteMaterial map={glowTexture()} transparent depthWrite={false} blending={THREE.AdditiveBlending} />
+          </sprite>
+          <sprite ref={(el) => { labels.current[i] = el; }} scale={[1.6, 0.35, 1]} visible={false}>
+            <spriteMaterial map={glowTexture()} transparent depthWrite={false} blending={THREE.AdditiveBlending} />
+          </sprite>
+        </React.Fragment>
       ))}
     </group>
   );
@@ -803,13 +861,15 @@ function ModelConstellationV2({ live }: { live: React.MutableRefObject<LiveSigna
 
 const CHRONO_SEG_V2 = 1.4;
 
-function V2Scene({ live, headParallax, visualMode, chronoTime, replayTrack, perfMode, selectedMemoryId, onSelectMemory }: {
+function V2Scene({ live, headParallax, visualMode, chronoTime, replayTrack, perfMode, selectedAgentId, onSelectAgent, selectedMemoryId, onSelectMemory }: {
   live: React.MutableRefObject<LiveSignalV2>;
   headParallax?: { x: number; y: number } | null;
   visualMode?: 'fleet' | 'memory' | 'both';
   chronoTime?: number | null;
   replayTrack?: ReplayTrackEvent[] | null;
   perfMode?: 'ultra' | 'smooth' | 'cinematic';
+  selectedAgentId?: string | null;
+  onSelectAgent?: (id: string | null) => void;
   selectedMemoryId?: string | null;
   onSelectMemory?: (id: string | null) => void;
 }) {
@@ -939,6 +999,13 @@ function V2Scene({ live, headParallax, visualMode, chronoTime, replayTrack, perf
       r * cp * Math.cos(cur.current.yaw)
     );
     state.camera.lookAt(0, 0, 0);
+    // energy-reactive FOV: the whole frame breathes with the voice
+    const cam = state.camera as THREE.PerspectiveCamera;
+    const fovT = 42 + sig.energy * 1.6 + sig.level * 2.4 + Math.min(sig.kick, 1) * 1.2;
+    if (Math.abs(cam.fov - fovT) > 0.01) {
+      cam.fov += (fovT - cam.fov) * Math.min(1, delta * 3);
+      cam.updateProjectionMatrix();
+    }
     if (rigRef.current) {
       rigRef.current.rotation.y += delta * 0.02 * (0.4 + sig.energy);
     }
@@ -956,7 +1023,9 @@ function V2Scene({ live, headParallax, visualMode, chronoTime, replayTrack, perf
         {!hidden.has('core') && <HeroCore live={live} />}
         {!hidden.has('motes') && <MoteHaze live={live} perfMode={perfMode} />}
         {!hidden.has('rings') && <OrbitRings live={live} />}
-        {visualMode !== 'memory' && !hidden.has('agents') && <AgentField live={live} />}
+        {visualMode !== 'memory' && !hidden.has('agents') && (
+          <AgentField live={live} selectedAgentId={selectedAgentId} onSelectAgent={onSelectAgent} />
+        )}
         {visualMode !== 'fleet' && <MemoryBankV2 live={live} selectedMemoryId={selectedMemoryId} onSelectMemory={onSelectMemory} />}
         {!hidden.has('models') && <ModelConstellationV2 live={live} />}
         {!hidden.has('web') && <NeuralWebV2 live={live} />}
@@ -1051,8 +1120,13 @@ export function CortexCoreSceneV2(props: CortexCoreSceneV2Props) {
         dpr={1.25}
         gl={{ antialias: true, alpha: false, powerPreference: 'high-performance', preserveDrawingBuffer: true }}
         camera={{ position: [0, 0.4, 8.4], fov: 42, near: 0.1, far: 120 }}
+        onPointerMissed={() => props.onSelectAgent?.(null)}
         style={{ position: 'absolute', inset: 0 }}
         onCreated={({ gl }) => {
+          // cinematic color pipeline: filmic tonemap + sRGB output
+          gl.toneMapping = THREE.ACESFilmicToneMapping;
+          gl.toneMappingExposure = 1.12;
+          gl.outputColorSpace = THREE.SRGBColorSpace;
           const dom = gl.domElement;
           const onLost = (e: Event) => { e.preventDefault(); setContextLost(true); };
           const onRestored = () => { setContextLost(false); setRestoreCount((c) => c + 1); };
@@ -1068,6 +1142,8 @@ export function CortexCoreSceneV2(props: CortexCoreSceneV2Props) {
           chronoTime={props.chronoTime}
           replayTrack={props.replayTrack}
           perfMode={props.perfMode}
+          selectedAgentId={props.selectedAgentId}
+          onSelectAgent={props.onSelectAgent}
           selectedMemoryId={props.selectedMemoryId}
           onSelectMemory={props.onSelectMemory}
         />
