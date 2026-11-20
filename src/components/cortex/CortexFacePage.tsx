@@ -572,10 +572,12 @@ export default function CortexFacePage() {
         style={{
           position: 'absolute', top: 18, left: 18, zIndex: 60,
           width: 38, height: 38, borderRadius: '50%', cursor: 'pointer',
-          background: 'rgba(4, 16, 10, 0.85)', border: '1px solid rgba(61,220,132,0.4)',
+          background: 'linear-gradient(160deg, rgba(10,26,18,0.72), rgba(4,12,9,0.66))',
+          border: '1px solid rgba(120,255,190,0.28)',
           color: '#3ddc84', fontSize: 16,
           fontFamily: '"SF Mono", Menlo, Consolas, monospace',
-          backdropFilter: 'blur(8px)',
+          backdropFilter: 'blur(18px) saturate(1.5)', WebkitBackdropFilter: 'blur(18px) saturate(1.5)',
+          boxShadow: '0 10px 28px rgba(0,0,0,0.45), inset 0 1px 0 rgba(255,255,255,0.08), 0 0 16px rgba(61,220,132,0.15)',
         }}
         title="Voice policy settings"
       >
@@ -587,9 +589,11 @@ export default function CortexFacePage() {
           onClick={(e) => e.stopPropagation()}
           style={{
             position: 'absolute', top: 66, left: 18, zIndex: 60, width: 290,
-            padding: '14px 16px', borderRadius: 14,
-            background: 'rgba(4, 16, 10, 0.94)', border: '1px solid rgba(61,220,132,0.3)',
-            backdropFilter: 'blur(12px)',
+            padding: '16px 18px', borderRadius: 18,
+            background: 'linear-gradient(160deg, rgba(10,26,18,0.78), rgba(4,12,9,0.72))',
+            border: '1px solid rgba(120,255,190,0.22)',
+            backdropFilter: 'blur(24px) saturate(1.6)', WebkitBackdropFilter: 'blur(24px) saturate(1.6)',
+            boxShadow: '0 18px 50px rgba(0,0,0,0.5), inset 0 1px 0 rgba(255,255,255,0.08), 0 0 32px rgba(61,220,132,0.08)',
             fontFamily: '"SF Mono", Menlo, Consolas, monospace', fontSize: 11,
             color: '#b8d4c8', lineHeight: 1.7,
           }}
@@ -669,11 +673,13 @@ export default function CortexFacePage() {
         href="/cortex/chat"
         style={{
           position: 'absolute', top: 18, right: 18, zIndex: 50, textDecoration: 'none',
-          padding: '8px 18px', borderRadius: 24,
-          background: 'rgba(4, 16, 10, 0.85)', border: '1px solid rgba(61, 220, 132, 0.5)',
+          padding: '9px 20px', borderRadius: 24,
+          background: 'linear-gradient(160deg, rgba(10,26,18,0.72), rgba(4,12,9,0.66))',
+          border: '1px solid rgba(120,255,190,0.3)',
           color: '#3ddc84', fontSize: 12, fontWeight: 700,
           fontFamily: '"SF Mono", Menlo, Consolas, monospace', letterSpacing: '0.15em',
-          backdropFilter: 'blur(8px)', boxShadow: '0 0 18px rgba(61,220,132,0.25)',
+          backdropFilter: 'blur(20px) saturate(1.5)', WebkitBackdropFilter: 'blur(20px) saturate(1.5)',
+          boxShadow: '0 12px 32px rgba(0,0,0,0.45), inset 0 1px 0 rgba(255,255,255,0.08), 0 0 22px rgba(61,220,132,0.22)',
         }}
       >
         ◈ OPEN CHAT
@@ -687,9 +693,12 @@ export default function CortexFacePage() {
       }}>
         {(lastHeard || lastReply) && (
           <div style={{
-            maxWidth: 560, padding: '10px 18px', borderRadius: 14,
-            background: 'rgba(4, 16, 10, 0.82)', border: '1px solid rgba(61,220,132,0.25)',
-            backdropFilter: 'blur(8px)', fontSize: 12, lineHeight: 1.5, color: '#b8d4c8',
+            maxWidth: 560, padding: '12px 20px', borderRadius: 18,
+            background: 'linear-gradient(160deg, rgba(10,26,18,0.74), rgba(4,12,9,0.68))',
+            border: '1px solid rgba(120,255,190,0.2)',
+            backdropFilter: 'blur(20px) saturate(1.5)', WebkitBackdropFilter: 'blur(20px) saturate(1.5)',
+            boxShadow: '0 14px 40px rgba(0,0,0,0.45), inset 0 1px 0 rgba(255,255,255,0.07)',
+            fontSize: 12, lineHeight: 1.5, color: '#b8d4c8',
             textAlign: 'center',
           }}>
             {lastHeard && <div style={{ color: '#e8f0f2' }}>◈ {lastHeard}</div>}
@@ -704,13 +713,15 @@ export default function CortexFacePage() {
               padding: '8px 16px', borderRadius: 20, cursor: 'pointer',
               border: `1px solid ${isConvoActive ? '#3ddc84' : 'rgba(61,220,132,0.35)'}`,
               background: isConvoActive
-                ? 'rgba(61,220,132,0.22)'
-                : 'rgba(4,16,10,0.85)',
+                ? 'linear-gradient(160deg, rgba(61,220,132,0.3), rgba(10,26,18,0.7))'
+                : 'linear-gradient(160deg, rgba(10,26,18,0.74), rgba(4,12,9,0.68))',
               color: isConvoActive ? '#e8f0f2' : '#3ddc84',
               fontSize: 11, fontWeight: 700, letterSpacing: '0.15em',
               fontFamily: '"SF Mono", Menlo, Consolas, monospace',
-              backdropFilter: 'blur(8px)',
-              boxShadow: isConvoActive ? '0 0 18px rgba(61,220,132,0.4)' : 'none',
+              backdropFilter: 'blur(18px) saturate(1.5)', WebkitBackdropFilter: 'blur(18px) saturate(1.5)',
+              boxShadow: isConvoActive
+                ? '0 10px 28px rgba(0,0,0,0.45), inset 0 1px 0 rgba(255,255,255,0.1), 0 0 20px rgba(61,220,132,0.45)'
+                : '0 10px 28px rgba(0,0,0,0.45), inset 0 1px 0 rgba(255,255,255,0.07), 0 0 14px rgba(61,220,132,0.12)',
             }}
             title="Conversation mode — open mic, just talk"
           >
@@ -725,8 +736,9 @@ export default function CortexFacePage() {
               width: 76, height: 76, borderRadius: '50%', cursor: 'pointer',
               border: `2px solid ${isPttActive ? '#3ddc84' : 'rgba(61,220,132,0.4)'}`,
               background: isPttActive
-                ? 'radial-gradient(circle, rgba(61,220,132,0.5), rgba(4,16,10,0.9))'
-                : 'radial-gradient(circle, rgba(61,220,132,0.18), rgba(4,16,10,0.92))',
+                ? 'radial-gradient(circle, rgba(61,220,132,0.5), rgba(10,26,18,0.55))'
+                : 'radial-gradient(circle, rgba(61,220,132,0.2), rgba(10,26,18,0.6))',
+              backdropFilter: 'blur(14px) saturate(1.4)', WebkitBackdropFilter: 'blur(14px) saturate(1.4)',
               color: '#e8f0f2', fontSize: 26,
               boxShadow: isPttActive ? '0 0 40px rgba(61,220,132,0.6)' : '0 0 18px rgba(61,220,132,0.2)',
               transition: 'all 0.15s ease',
