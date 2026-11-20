@@ -164,22 +164,27 @@ export function MurmurationGather({ count = 96, duration = 1700 }: { count?: num
     ro.observe(canvas);
 
     const palette = [187, 318, 45, 265, 200];
+    const ERUPT = 480; // ms of radial burst before seek takes over
+    const FRAME = 1000 / 60;
     const parts = Array.from({ length: count }, (_, i) => {
-      // Orbs condense into a dense core at the panel's heart, then fling
-      // outward to their perimeter slots — the modal is assembled by the
-      // expanding swarm, not flown in from off-screen.
-      const spread = Math.min(w, h) * 0.16;
+      // Starlings boil up from the panel's heart: each bird gets an evenly
+      // spread eruption bearing, bursts radially with swirl, then peels
+      // into its perimeter slot as the glass panel fades in beneath.
+      const tx = ring.length ? ring[i % ring.length].x : w / 2;
+      const ty = ring.length ? ring[i % ring.length].y : h / 2;
+      const spread = Math.min(w, h) * 0.1;
+      const eruptDist = Math.hypot(tx - w / 2, ty - h / 2) || 1;
       return {
         x: w / 2 + (Math.random() - 0.5) * spread,
         y: h / 2 + (Math.random() - 0.5) * spread,
-        vx: (Math.random() - 0.5) * 1.4,
-        vy: (Math.random() - 0.5) * 1.4,
-        tx: ring.length ? ring[i % ring.length].x : w / 2,
-        ty: ring.length ? ring[i % ring.length].y : h / 2,
+        vx: 0, vy: 0,
+        ang: (i / count) * Math.PI * 2 + (Math.random() - 0.5) * 0.7,
+        eruptSpeed: (eruptDist / (ERUPT / FRAME)) * 1.35,
+        tx, ty,
         hue: palette[i % palette.length],
-        r: 1.1 + Math.random() * 1.6,
+        r: 1.0 + Math.random() * 1.5,
         phase: Math.random() * Math.PI * 2,
-        delay: Math.random() * 260, // staggered launch
+        delay: Math.random() * 140, // tight stagger — one boiling flock
       };
     });
 
@@ -216,26 +221,49 @@ export function MurmurationGather({ count = 96, duration = 1700 }: { count?: num
       for (const p of parts) {
         const lt = t - p.delay;
         if (lt < 0) continue; // not launched yet
+        // Eruption → seek blend: pure radial burst for the first half of
+        // ERUPT, then smoothly hands off to perimeter seeking.
+        const b = Math.min(1, Math.max(0, (lt - ERUPT * 0.5) / (ERUPT * 0.9)));
+        const ramp = Math.min(1, lt / (ERUPT * 0.7));
+        const swirl = Math.sin(lt * 0.006 + p.phase) * 0.55;
+        const ea = p.ang + swirl;
+        const evx = Math.cos(ea) * p.eruptSpeed * ramp;
+        const evy = Math.sin(ea) * p.eruptSpeed * ramp;
         const dx = p.tx - p.x, dy = p.ty - p.y;
         const dist = Math.hypot(dx, dy) || 1;
         const speed = Math.min(3.4, dist * 0.006 + 0.15);
         // Perpendicular wander keeps the flock alive, not robotic.
         const wob = Math.sin(lt * 0.004 + p.phase) * 0.35;
         const nx = dx / dist, ny = dy / dist;
-        p.vx += (nx * speed - ny * wob - p.vx) * 0.09;
-        p.vy += (ny * speed + nx * wob - p.vy) * 0.09;
+        const svx = nx * speed - ny * wob;
+        const svy = ny * speed + nx * wob;
+        p.vx += ((evx * (1 - b) + svx * b) - p.vx) * 0.14;
+        p.vy += ((evy * (1 - b) + svy * b) - p.vy) * 0.14;
         p.x += p.vx; p.y += p.vy;
         const shimmer = 0.55 + 0.45 * Math.sin(lt * 0.012 + p.phase);
-        const a = Math.min(1, lt / 300) * globalAlpha * shimmer;
-        // Two-pass dot: soft halo + bright core.
+        const a = Math.min(1, lt / 200) * globalAlpha * shimmer;
+        if (a <= 0.01) continue;
+        // Starling dart: chevron wings swept along the velocity heading,
+        // orb glow at the body — reads as a glowing bird, not a dot.
+        const heading = Math.atan2(p.vy, p.vx);
+        const s = (1.4 + p.r * 1.5) * (Math.min(w, h) / 620 + 0.3);
+        const flap = Math.sin(lt * 0.028 + p.phase) * s * 0.8;
         ctx.beginPath();
-        ctx.arc(p.x, p.y, p.r * 3.2, 0, 6.2832);
-        ctx.fillStyle = `hsla(${p.hue}, 95%, 70%, ${a * 0.12})`;
+        ctx.arc(p.x, p.y, p.r * 2.4, 0, 6.2832);
+        ctx.fillStyle = `hsla(${p.hue}, 95%, 70%, ${a * 0.14})`;
         ctx.fill();
+        ctx.save();
+        ctx.translate(p.x, p.y);
+        ctx.rotate(heading);
+        ctx.strokeStyle = `hsla(${p.hue}, 95%, 74%, ${a * 0.9})`;
+        ctx.lineWidth = 1.15;
+        ctx.lineCap = 'round';
         ctx.beginPath();
-        ctx.arc(p.x, p.y, p.r, 0, 6.2832);
-        ctx.fillStyle = `hsla(${p.hue}, 95%, 78%, ${a * 0.9})`;
-        ctx.fill();
+        ctx.moveTo(-s * 1.5, -flap * 0.5);
+        ctx.quadraticCurveTo(-s * 0.3, -s * 0.85 - flap, 0, 0);
+        ctx.quadraticCurveTo(-s * 0.3, s * 0.85 + flap, -s * 1.5, flap * 0.5);
+        ctx.stroke();
+        ctx.restore();
       }
       raf = requestAnimationFrame(tick);
     };
@@ -327,14 +355,21 @@ export function ArtifactShell({
 }) {
   const [hover, setHover] = useState(false);
   return (
-    <motion.div
-      initial={{ opacity: 0, scale: 0.98, y: 4 }}
-      animate={{ opacity: 1, scale: 1, y: 0 }}
-      transition={{ duration: 0.22, ease: [0.16, 1, 0.3, 1] }}
+    <div
       onMouseEnter={() => setHover(true)}
       onMouseLeave={() => setHover(false)}
       onClick={onExpand}
-      style={{
+      style={{ position: 'relative', borderRadius: 10, overflow: 'hidden' }}
+    >
+      {/* Starling swarm erupts from the panel's heart and draws the frame
+          while the frosted glass fades in beneath it — canvas sits above
+          the panel so the flock is visible against the live visualizer. */}
+      <MurmurationGather count={compact ? 64 : 96} />
+      <motion.div
+        initial={{ opacity: 0, scale: 0.98, y: 4 }}
+        animate={{ opacity: 1, scale: 1, y: 0 }}
+        transition={{ duration: 0.6, ease: [0.16, 1, 0.3, 1] }}
+        style={{
         position: 'relative',
         background: 'linear-gradient(155deg, rgba(13,32,30,0.46) 0%, rgba(9,20,32,0.38) 52%, rgba(16,10,34,0.44) 100%)',
         backdropFilter: 'blur(22px) saturate(1.6)', WebkitBackdropFilter: 'blur(22px) saturate(1.6)',
@@ -349,7 +384,7 @@ export function ArtifactShell({
         fontFamily: "'DM Sans', ui-sans-serif, system-ui, sans-serif",
         overflow: 'hidden',
       }}
-    >
+      >
       <CornerTicks />
       {/* Starling murmuration — ambient flock drifting behind the panel. */}
       <MurmurationField density={compact ? 0.45 : 0.8} />
@@ -358,8 +393,6 @@ export function ArtifactShell({
         position: 'absolute', inset: 0, borderRadius: 'inherit', pointerEvents: 'none',
         background: 'linear-gradient(180deg, rgba(255,255,255,0.11) 0%, rgba(255,255,255,0.03) 22%, transparent 42%)',
       }} />
-      {/* Entrance: orbs swarm in and assemble the panel frame, then dissolve. */}
-      <MurmurationGather count={compact ? 64 : 96} />
       <div style={{ position: 'relative', zIndex: 1 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
         {live && (
@@ -400,7 +433,8 @@ export function ArtifactShell({
         </div>
       )}
       </div>
-    </motion.div>
+      </motion.div>
+    </div>
   );
 }
 
