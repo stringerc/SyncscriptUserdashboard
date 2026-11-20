@@ -18,7 +18,7 @@
 
 import { useState, useMemo } from 'react';
 import { useNavigate } from 'react-router';
-import { speakUtteranceArbitrated, stopArbitratedUtterance, releaseSpeech } from '../lib/cortex-tts-arbiter';
+import { useBriefingSpeech } from '../hooks/useBriefingSpeech';
 import { motion, AnimatePresence } from 'motion/react';
 import {
   Brain, Mic, Volume2, ArrowRight, Sparkles, Zap,
@@ -50,7 +50,6 @@ export function NexusProactiveBriefing() {
   const metrics = useDashboardMetrics();
   const { preferences } = useUserPreferences();
   const [isExpanded, setIsExpanded] = useState(false);
-  const [isSpeaking, setIsSpeaking] = useState(false);
 
   const chronotype = useMemo<'morning' | 'evening' | 'neutral'>(() => {
     if (preferences.peakEnergyTime === 'morning') return 'morning';
@@ -170,23 +169,8 @@ export function NexusProactiveBriefing() {
 
   // ─── TTS playback ──────────────────────────────────────────────────
 
-  const handleSpeak = () => {
-    if (isSpeaking) {
-      stopArbitratedUtterance();
-      releaseSpeech();
-      setIsSpeaking(false);
-      return;
-    }
-
-    const text = `${headline} ${insights.map(i => i.headline).join('. ')}`;
-    const started = speakUtteranceArbitrated(text, {
-      priority: 'barge',
-      rate: 1.05,
-      pitch: 0.95,
-      onDone: () => setIsSpeaking(false),
-    });
-    if (started) setIsSpeaking(true);
-  };
+  const briefText = `${headline} ${insights.map(i => i.headline).join('. ')}`;
+  const { speaking: isSpeaking, toggle: handleSpeak } = useBriefingSpeech(briefText, { pitch: 0.95 });
 
   // ─── Render ───────────────────────────────────────────────────────
 

@@ -26,6 +26,22 @@ const MAX_SPEED = 3.0;
 const GRID_CELL = 0.42;
 const MAX_NEIGHBORS = 10;
 const NEIGHBOR_RADIUS = 0.62;
+const STEP_HZ = 30;
+
+// Sine LUT — Math.sin in the per-particle hot loop was the single biggest
+// CPU cost; table lookup + lerp is ~10x cheaper and visually identical.
+const TAU = Math.PI * 2;
+const SIN_N = 512;
+const sinLut = new Float32Array(SIN_N + 1);
+for (let i = 0; i <= SIN_N; i++) sinLut[i] = Math.sin((i / SIN_N) * TAU);
+const INV_TAU = 1 / TAU;
+function fastSin(x: number): number {
+  const u = x * INV_TAU - Math.floor(x * INV_TAU);
+  const f = u * SIN_N;
+  const i = f | 0;
+  const frac = f - i;
+  return sinLut[i] + (sinLut[i + 1] - sinLut[i]) * frac;
+}
 
 export class SwarmSim {
   readonly n: number;
@@ -41,6 +57,7 @@ export class SwarmSim {
   private neighbors: number[][] = [];
   private packed: Uint32Array | null = null;
   private packedSplats: any = null;
+  private acc = 0;
   time = 0;
 
   constructor(anchors: THREE.Vector3[] | Float32Array, packedSplats: any) {
@@ -75,11 +92,19 @@ export class SwarmSim {
       if (cell) cell.push(i); else grid.set(k, [i]);
     }
     const r2 = NEIGHBOR_RADIUS * NEIGHBOR_RADIUS;
+    const K = MAX_NEIGHBORS;
+    // Allocation-free top-K: per particle keep the K smallest d2 via
+    // bounded insertion — no per-candidate objects, no full sort.
+    const topJ = new Int32Array(K);
+    const topD = new Float32Array(K);
+    const out = new Array<number>(K);
     for (let i = 0; i < n; i++) {
+      topJ.fill(-1);
+      topD.fill(Infinity);
+      let cnt = 0;
       const cx = Math.floor(this.hx[i] / GRID_CELL);
       const cy = Math.floor(this.hy[i] / GRID_CELL);
       const cz = Math.floor(this.hz[i] / GRID_CELL);
-      const scored: { j: number; d2: number }[] = [];
       for (let dx = -1; dx <= 1; dx++) for (let dy = -1; dy <= 1; dy++) for (let dz = -1; dz <= 1; dz++) {
         const cell = grid.get(`${cx + dx},${cy + dy},${cz + dz}`);
         if (!cell) continue;
@@ -89,15 +114,32 @@ export class SwarmSim {
           const ddy = this.hy[j] - this.hy[i];
           const ddz = this.hz[j] - this.hz[i];
           const d2 = ddx * ddx + ddy * ddy + ddz * ddz;
-          if (d2 < r2) scored.push({ j, d2 });
+          if (d2 >= r2) continue;
+          if (cnt === K && d2 >= topD[K - 1]) continue;
+          // insertion position — shift worse entries right
+          let p = cnt < K ? cnt : K - 1;
+          while (p > 0 && topD[p - 1] > d2) {
+            topD[p] = topD[p - 1]; topJ[p] = topJ[p - 1]; p--;
+          }
+          topD[p] = d2; topJ[p] = j;
+          if (cnt < K) cnt++;
         }
       }
-      scored.sort((a, b) => a.d2 - b.d2);
-      this.neighbors[i] = scored.slice(0, MAX_NEIGHBORS).map(s => s.j);
+      for (let k = 0; k < cnt; k++) out[k] = topJ[k];
+      this.neighbors[i] = out.slice(0, cnt);
     }
   }
 
   step(dt: number, cursor: THREE.Vector3, cursorStrength: number, gust: number, voice?: { speak?: number; listen?: number; think?: number }) {
+    // Substep at STEP_HZ — boids physics is visually identical at 30Hz but
+    // halves main-thread cost AND halves the packed-texture re-upload,
+    // which keeps the Web Audio TTS queue fed (audio glitches otherwise).
+    this.acc += dt;
+    const stepDt = 1 / STEP_HZ;
+    if (this.acc < stepDt) return;
+    const sdt = Math.min(this.acc, 0.12);
+    this.acc = 0;
+    dt = sdt;
     const n = this.n;
     const t = this.time;
     this.time += dt;
@@ -106,7 +148,6 @@ export class SwarmSim {
     const listen = voice?.listen ?? 0;
     const think = voice?.think ?? 0;
     const amb = AMB_K * (1 + gust * 1.8) * (1 + speak * 2.4 + think * 0.9) * (1 - listen * 0.35);
-    const cur = CURSOR_PUSH * cursorStrength * (1 + gust * 0.9);
     const swr = CURSOR_SWIRL * cursorStrength * (1 + gust * 0.9);
     const R2 = CURSOR_RADIUS * CURSOR_RADIUS;
     const px = this.px, py = this.py, pz = this.pz;
@@ -146,15 +187,15 @@ export class SwarmSim {
         az += sepZ * SEP_K * 0.01;
       }
 
-      // Ambient curl — cheap two-octave sine turbulence.
-      ax += (Math.sin(y * 1.9 + t * 0.6) + 0.45 * Math.sin(z * 3.3 - t * 0.9)) * amb;
-      ay += (Math.sin(z * 1.6 - t * 0.45) + 0.45 * Math.sin(x * 2.7 + t * 0.75)) * amb;
-      az += (Math.sin(x * 2.1 + t * 0.55) + 0.45 * Math.sin(y * 3.0 + t * 1.05)) * amb;
+      // Ambient curl — cheap two-octave sine turbulence (LUT).
+      ax += (fastSin(y * 1.9 + t * 0.6) + 0.45 * fastSin(z * 3.3 - t * 0.9)) * amb;
+      ay += (fastSin(z * 1.6 - t * 0.45) + 0.45 * fastSin(x * 2.7 + t * 0.75)) * amb;
+      az += (fastSin(x * 2.1 + t * 0.55) + 0.45 * fastSin(y * 3.0 + t * 1.05)) * amb;
 
       // Voice coupling — syllabic radial swell (per-particle phase via
       // index hash) + gentle implosion while listening.
       if (speak > 0.01 || listen > 0.01) {
-        const vl = speak * (0.6 + 0.4 * Math.sin(t * 6.3 + i * 1.71));
+        const vl = speak * (0.6 + 0.4 * fastSin(t * 6.3 + i * 1.71));
         const il = 1 / (Math.sqrt(x * x + y * y + z * z) + 0.08);
         const vr = (vl - listen * 0.55) * 2.0;
         ax += x * il * vr;
@@ -177,7 +218,7 @@ export class SwarmSim {
           // swirl tangent around world-up through the cursor point
           ax += (-ddz / d) * swr * w;
           az += (ddx / d) * swr * w;
-          ay += Math.sin(t * 3 + i * 0.7) * swr * w * 0.4;
+          ay += fastSin(t * 3 + i * 0.7) * swr * w * 0.4;
         }
       }
 

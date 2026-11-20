@@ -19,7 +19,7 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { createPortal } from 'react-dom';
-import { speakUtteranceArbitrated, stopArbitratedUtterance, releaseSpeech } from '../lib/cortex-tts-arbiter';
+import { useBriefingSpeech } from '../hooks/useBriefingSpeech';
 import { motion, AnimatePresence } from 'motion/react';
 import {
   X, Sun, Sunset, Moon, Brain, NotepadText, CheckCircle2,
@@ -118,7 +118,7 @@ export function DailyOpsModal({ isOpen, onClose }: DailyOpsModalProps) {
   const [debriefReflection, setDebriefReflection] = useState('');
   const [debriefTomorrow, setDebriefTomorrow] = useState('');
   const [winInput, setWinInput] = useState('');
-  const [speaking, setSpeaking] = useState(false);
+  const { speaking, toggle: handleSpeak } = useBriefingSpeech(briefing?.text);
   const [debriefSaved, setDebriefSaved] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
 
@@ -273,20 +273,6 @@ export function DailyOpsModal({ isOpen, onClose }: DailyOpsModalProps) {
     if (field === 'reflection') setDebriefReflection(value);
     else setDebriefTomorrow(value);
     saveDebrief(debriefWins, field === 'reflection' ? value : debriefReflection, field === 'tomorrow' ? value : debriefTomorrow);
-  };
-
-  const handleSpeak = () => {
-    if (!briefing?.text) return;
-    if (speaking) { stopArbitratedUtterance(); releaseSpeech(); setSpeaking(false); return; }
-    const voices = window.speechSynthesis.getVoices();
-    const premium = voices.find(v => v.name.includes('Google') || v.name.includes('Natural'));
-    const started = speakUtteranceArbitrated(briefing.text, {
-      priority: 'barge',
-      rate: 1.05,
-      voice: premium,
-      onDone: () => setSpeaking(false),
-    });
-    if (started) setSpeaking(true);
   };
 
   const handleSaveOffload = () => {

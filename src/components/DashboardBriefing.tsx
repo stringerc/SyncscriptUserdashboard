@@ -20,7 +20,7 @@ import { useMemo, useState, useEffect } from 'react';
 import { Flame, Zap, TrendingUp, Brain, Target, Volume2, RefreshCw, Phone, Activity, Calendar, DollarSign, CheckCircle2, AlertTriangle, Mail, Clock, ChevronRight } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { useDashboardMetrics } from '../hooks/useDashboardMetrics';
-import { speakUtteranceArbitrated, stopArbitratedUtterance, releaseSpeech } from '../lib/cortex-tts-arbiter';
+import { useBriefingSpeech } from '../hooks/useBriefingSpeech';
 import { useAuth } from '../contexts/AuthContext';
 import { toast } from 'sonner';
 import { Button } from './ui/button';
@@ -42,7 +42,7 @@ export function DashboardBriefing() {
   const [isOpen, setIsOpen] = useState(false);
   const [briefing, setBriefing] = useState<any>(null);
   const [loading, setLoading] = useState(false);
-  const [speaking, setSpeaking] = useState(false);
+  const { speaking, toggle: handleSpeak } = useBriefingSpeech(briefing?.text);
   const [calling, setCalling] = useState(false);
   const [view, setView] = useState<'summary' | 'timeline' | 'actions'>('summary');
 
@@ -86,27 +86,6 @@ export function DashboardBriefing() {
       fetchBriefing();
     }
   }, [accessToken, isOpen, briefing]);
-
-  const handleSpeak = () => {
-    if (!briefing?.text) return;
-    if (speaking) {
-      stopArbitratedUtterance();
-      releaseSpeech();
-      setSpeaking(false);
-      return;
-    }
-    const voices = window.speechSynthesis.getVoices();
-    const premiumVoice = voices.find(v =>
-      v.name.includes('Google') || v.name.includes('Natural') || v.name.includes('Samantha')
-    );
-    const started = speakUtteranceArbitrated(briefing.text, {
-      priority: 'barge',
-      rate: 1.05,
-      voice: premiumVoice,
-      onDone: () => setSpeaking(false),
-    });
-    if (started) setSpeaking(true);
-  };
 
   const handleCall = async () => {
     if (!accessToken || calling) return;
