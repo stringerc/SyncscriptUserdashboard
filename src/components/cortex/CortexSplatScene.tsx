@@ -14,13 +14,14 @@ import * as THREE from 'three';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import { OrbitControls } from '@react-three/drei';
 import { EffectComposer, Bloom, Vignette, ChromaticAberration } from '@react-three/postprocessing';
-import { SparkRenderer, SplatMesh } from '@sparkjsdev/spark';
+import { SparkRenderer, SplatMesh, generators } from '@sparkjsdev/spark';
 
 const MONO = '"IBM Plex Mono", ui-monospace, monospace';
 
 function SparkStage({ url, onReady, onFail }: { url: string; onReady: () => void; onFail: () => void }) {
   const { gl, scene, invalidate, pointer } = useThree();
   const holder = useRef<THREE.Group | null>(null);
+  const ambient = useRef<{ snow: any; fallVelocity: any; wanderScale: any; opacity: any }[]>([]);
 
   useEffect(() => {
     const g = new THREE.Group();
@@ -28,6 +29,45 @@ function SparkStage({ url, onReady, onFail }: { url: string; onReady: () => void
     holder.current = g;
     const spark = new SparkRenderer({ renderer: gl, onDirty: () => invalidate() });
     g.add(spark);
+
+    // Living ambient field — GPU-animated spore layers (dandelion seeds
+    // blown through the core). snowBox wraps positions in a box and
+    // perturbs them with sin-noise; uniforms stay live for gusts.
+    const box = new THREE.Box3(new THREE.Vector3(-3.4, -2.4, -3.4), new THREE.Vector3(3.4, 2.4, 3.4));
+    const mk = (opts: Parameters<typeof generators.snowBox>[0]) => {
+      const r = generators.snowBox(opts);
+      g.add(r.snow);
+      ambient.current.push(r as any);
+      return r;
+    };
+    // Spores — large slow seeds, ice<->amber, strong wander
+    mk({
+      box, numSplats: 12000,
+      fallDirection: new THREE.Vector3(0.22, -1, 0.12).normalize(),
+      fallVelocity: 0.03, wanderScale: 0.32, wanderVariance: 3.2,
+      anisoScale: new THREE.Vector3(1, 1.7, 1),
+      minScale: 0.005, maxScale: 0.014,
+      color1: new THREE.Color(0.55, 0.85, 1.0), color2: new THREE.Color(1.0, 0.72, 0.4),
+      opacity: 0.55,
+    });
+    // Motes — fine far dust, dim blue-white
+    mk({
+      box, numSplats: 14000,
+      fallDirection: new THREE.Vector3(-0.1, -1, 0.25).normalize(),
+      fallVelocity: 0.014, wanderScale: 0.1, wanderVariance: 4,
+      minScale: 0.0018, maxScale: 0.005,
+      color1: new THREE.Color(0.5, 0.75, 1.0), color2: new THREE.Color(0.85, 0.9, 1.0),
+      opacity: 0.35,
+    });
+    // Embers — warm sparks rising against the fall
+    mk({
+      box, numSplats: 4000,
+      fallDirection: new THREE.Vector3(0.08, 1, -0.04).normalize(),
+      fallVelocity: 0.045, wanderScale: 0.22, wanderVariance: 2.5,
+      minScale: 0.003, maxScale: 0.009,
+      color1: new THREE.Color(1.0, 0.55, 0.2), color2: new THREE.Color(1.0, 0.9, 0.6),
+      opacity: 0.7,
+    });
     const mesh = new SplatMesh({ url });
     g.add(mesh);
     let cancelled = false;
@@ -47,8 +87,8 @@ function SparkStage({ url, onReady, onFail }: { url: string; onReady: () => void
     return () => {
       cancelled = true;
       holder.current = null;
-      g.remove(spark);
-      g.remove(mesh);
+      ambient.current = [];
+      g.traverse((n: any) => { try { n.dispose?.(); } catch {} });
       scene.remove(g);
       try { spark.dispose(); } catch {}
       try { (mesh as any).dispose?.(); } catch {}
@@ -57,12 +97,25 @@ function SparkStage({ url, onReady, onFail }: { url: string; onReady: () => void
   }, [gl, scene, url]);
 
   // Pointer parallax — the whole splat field leans toward the cursor.
-  useFrame((_, dt) => {
+  // Plus gusts: layered sines push the spore fall velocity and wander
+  // so the field breathes instead of drifting on rails.
+  useFrame((state, dt) => {
     const g = holder.current;
     if (!g) return;
     const k = 1 - Math.exp(-4 * dt);
     g.rotation.y += (pointer.x * 0.14 - g.rotation.y) * k;
     g.rotation.x += (-pointer.y * 0.09 - g.rotation.x) * k;
+
+    const t = state.clock.elapsedTime;
+    const layers = ambient.current;
+    if (layers.length === 3) {
+      const gust = 0.65 + 0.5 * Math.sin(t * 0.31) + 0.25 * Math.sin(t * 0.83 + 1.7);
+      layers[0].fallVelocity.value = 0.03 * Math.max(0.15, gust);
+      layers[0].wanderScale.value = 0.32 * (0.8 + 0.35 * Math.sin(t * 0.47 + 0.6));
+      layers[0].opacity.value = 0.55 * (0.85 + 0.15 * Math.sin(t * 0.9));
+      layers[1].fallVelocity.value = 0.014 * (0.9 + 0.3 * Math.sin(t * 0.21 + 2.2));
+      layers[2].fallVelocity.value = 0.045 * (0.85 + 0.3 * Math.sin(t * 0.57 + 4.0));
+    }
   });
   return null;
 }
