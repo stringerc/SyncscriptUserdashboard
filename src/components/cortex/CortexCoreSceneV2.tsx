@@ -617,10 +617,11 @@ const murmurVert = /* glsl */ `
 
     vec4 mv = modelViewMatrix * vec4(p, 1.0);
     gl_Position = projectionMatrix * mv;
-    float size = (0.9 + khash(seed * 19.7) * 1.4) * (1.0 + uEnergy * 0.4);
-    gl_PointSize = size * uPixelRatio * (52.0 / -mv.z);
-    vGlow = 0.3 + 0.7 * khash(seed2 * 23.9);
-    vColor = mix(uColorA, uColorB, khash(seed * 29.1));
+    float size = (1.6 + khash(seed * 19.7) * 2.2) * (1.0 + uEnergy * 0.4);
+    gl_PointSize = size * uPixelRatio * (110.0 / -mv.z);
+    vGlow = 0.55 + 0.45 * khash(seed2 * 23.9);
+    // hot white core fading to rim-tinted edge — readable at any angle
+    vColor = mix(vec3(1.0), uColorB, khash(seed * 29.1) * 0.55);
   }
 `;
 const murmurFrag = /* glsl */ `
@@ -630,8 +631,9 @@ const murmurFrag = /* glsl */ `
   void main() {
     vec2 uv = gl_PointCoord - 0.5;
     float d = length(uv);
-    float a = smoothstep(0.5, 0.06, d) * vGlow * uOpacity;
-    gl_FragColor = vec4(vColor * a * 1.7, a);
+    // tighter falloff = denser-looking orb, less thin haze
+    float a = smoothstep(0.5, 0.0, d) * vGlow * uOpacity;
+    gl_FragColor = vec4(vColor * a * 2.2, a);
   }
 `;
 
@@ -644,7 +646,7 @@ function MurmurationV2({ live, perfMode }: {
     transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
     uniforms: {
       uTime: { value: 0 }, uPixelRatio: { value: 1 }, uEnergy: { value: 0.4 },
-      uKick: { value: 0 }, uOpacity: { value: 0.5 },
+      uKick: { value: 0 }, uOpacity: { value: 0.75 },
       uColorA: { value: c('#38d9f5') }, uColorB: { value: c('#a78bfa') },
     },
     vertexShader: murmurVert, fragmentShader: murmurFrag,
@@ -666,7 +668,7 @@ function MurmurationV2({ live, perfMode }: {
     material.uniforms.uEnergy.value = sig.energy;
     kickSmooth.current += (sig.kick - kickSmooth.current) * Math.min(1, delta * 3);
     material.uniforms.uKick.value = kickSmooth.current;
-    material.uniforms.uOpacity.value = 0.34 + sig.energy * 0.2;
+    material.uniforms.uOpacity.value = 0.55 + sig.energy * 0.3;
     material.uniforms.uColorA.value.copy(sig.colorRim);
     material.uniforms.uColorB.value.copy(sig.colorRim).lerp(c('#a78bfa'), 0.6);
   });
