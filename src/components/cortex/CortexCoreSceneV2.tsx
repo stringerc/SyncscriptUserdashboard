@@ -368,11 +368,18 @@ function Ring({ spec, live, index }: {
 // ── Agent constellation — glowing motes on inclined orbits ──────────────
 
 const AGENT_COUNT = 14;
+const TRAIL_LEN = 26;
+const trailMat = new THREE.LineBasicMaterial({
+  vertexColors: true, transparent: true, opacity: 0.5,
+  blending: THREE.AdditiveBlending, depthWrite: false,
+});
 
 function AgentField({ live }: { live: React.MutableRefObject<LiveSignalV2> }) {
+  const { scene } = useThree();
   const groupRef = useRef<THREE.Group>(null);
   const sprites = useRef<(THREE.Sprite | null)[]>([]);
   const agentsRef = useRef<AgentClient[]>([]);
+  const trailRefs = useRef<{ line: THREE.Line; pos: Float32Array; col: Float32Array; head: number }[]>([]);
   const params = useMemo(() => Array.from({ length: AGENT_COUNT }, (_, i) => ({
     radius: 2.0 + (i % 3) * 0.45 + ((i * 37) % 10) * 0.04,
     speed: (0.16 + ((i * 13) % 10) * 0.02) * (i % 2 === 0 ? 1 : -1),
@@ -390,6 +397,14 @@ function AgentField({ live }: { live: React.MutableRefObject<LiveSignalV2> }) {
     sync();
     return agentsClient.subscribe(sync);
   }, []);
+
+  React.useEffect(() => () => {
+    trailRefs.current.forEach((tr) => {
+      scene.remove(tr.line);
+      tr.line.geometry.dispose();
+    });
+    trailRefs.current = [];
+  }, [scene]);
 
   useFrame((state, delta) => {
     const sig = live.current;
@@ -425,6 +440,32 @@ function AgentField({ live }: { live: React.MutableRefObject<LiveSignalV2> }) {
       const id = agent?.id || `v2-agent-${i}`;
       if (!agentWorldPositions[id]) agentWorldPositions[id] = new THREE.Vector3();
       sprite.getWorldPosition(agentWorldPositions[id]);
+      // trail: shift-buffer recent world positions into a fading line
+      if (!trailRefs.current[i]) {
+        const pos = new Float32Array(TRAIL_LEN * 3);
+        const col = new Float32Array(TRAIL_LEN * 3);
+        const g = new THREE.BufferGeometry();
+        g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+        g.setAttribute('color', new THREE.BufferAttribute(col, 3));
+        const line = new THREE.Line(g, trailMat);
+        line.frustumCulled = false;
+        scene.add(line); // world-space positions — must NOT inherit rig rotation
+        trailRefs.current[i] = { line, pos, col, head: 0 };
+      }
+      const tr = trailRefs.current[i];
+      tr.pos.copyWithin(0, 3);
+      tr.pos[(TRAIL_LEN - 1) * 3] = agentWorldPositions[id].x;
+      tr.pos[(TRAIL_LEN - 1) * 3 + 1] = agentWorldPositions[id].y;
+      tr.pos[(TRAIL_LEN - 1) * 3 + 2] = agentWorldPositions[id].z;
+      const base = sig.colorRim;
+      for (let k = 0; k < TRAIL_LEN; k++) {
+        const f = (k / (TRAIL_LEN - 1)) * 0.8;
+        tr.col[k * 3] = base.r * f;
+        tr.col[k * 3 + 1] = base.g * f;
+        tr.col[k * 3 + 2] = base.b * f;
+      }
+      tr.line.geometry.attributes.position.needsUpdate = true;
+      tr.line.geometry.attributes.color.needsUpdate = true;
     });
   });
 
@@ -591,6 +632,173 @@ function ShockwavesV2({ live }: { live: React.MutableRefObject<LiveSignalV2> }) 
   return <group ref={groupRef} />;
 }
 
+// ── Neural web — drifting nodes + proximity filaments ───────────────────
+
+const WEB_NODES = 90;
+
+function NeuralWebV2({ live }: { live: React.MutableRefObject<LiveSignalV2> }) {
+  const lineRef = useRef<THREE.LineSegments>(null);
+  const nodesRef = useRef<{ p: THREE.Vector3; s: number }[]>([]);
+  const positions = useMemo(() => new Float32Array(WEB_NODES * WEB_NODES * 3), []);
+  const geo = useMemo(() => {
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    return g;
+  }, [positions]);
+  const mat = useMemo(() => new THREE.LineBasicMaterial({
+    color: '#38bdf8', transparent: true, opacity: 0.16,
+    blending: THREE.AdditiveBlending, depthWrite: false,
+  }), []);
+  const rebuildFrame = useRef(0);
+
+  if (nodesRef.current.length === 0) {
+    nodesRef.current = Array.from({ length: WEB_NODES }, (_, i) => {
+      const v = new THREE.Vector3().randomDirection().multiplyScalar(1.7 + ((i * 37) % 10) * 0.09);
+      return { p: v, s: 0.05 + ((i * 13) % 10) * 0.012 };
+    });
+  }
+
+  useFrame((state, delta) => {
+    const sig = live.current;
+    const t = state.clock.elapsedTime;
+    const nodes = nodesRef.current;
+    for (const n of nodes) {
+      n.p.x += Math.sin(t * n.s + n.p.y * 3.1) * delta * 0.35;
+      n.p.y += Math.cos(t * n.s * 0.8 + n.p.z * 2.7) * delta * 0.3;
+      n.p.z += Math.sin(t * n.s * 1.1 + n.p.x * 2.3) * delta * 0.35;
+      const l = n.p.length();
+      if (l > 2.9 || l < 1.2) n.p.multiplyScalar(2.0 / Math.max(l, 0.001));
+    }
+    rebuildFrame.current += delta;
+    if (rebuildFrame.current > 0.4 && lineRef.current) {
+      rebuildFrame.current = 0;
+      let w = 0;
+      for (let i = 0; i < WEB_NODES && w < positions.length / 3 - 6; i++) {
+        for (let j = i + 1; j < WEB_NODES && w < positions.length / 3 - 6; j++) {
+          if (nodes[i].p.distanceToSquared(nodes[j].p) < 0.35) {
+            positions[w * 3] = nodes[i].p.x; positions[w * 3 + 1] = nodes[i].p.y; positions[w * 3 + 2] = nodes[i].p.z;
+            positions[w * 3 + 3] = nodes[j].p.x; positions[w * 3 + 4] = nodes[j].p.y; positions[w * 3 + 5] = nodes[j].p.z;
+            w += 2;
+          }
+        }
+      }
+      // zero-fill the tail so stale segments don't linger
+      for (let k = w * 3; k < positions.length; k++) positions[k] = 0;
+      lineRef.current.geometry.attributes.position.needsUpdate = true;
+      lineRef.current.geometry.setDrawRange(0, w * 2);
+    }
+    mat.opacity = 0.08 + sig.energy * 0.12 + Math.min(sig.kick, 1) * 0.2;
+    mat.color.copy(sig.colorRim).lerp(c('#ffffff'), 0.35);
+  });
+
+  return <lineSegments ref={lineRef} geometry={geo} material={mat} frustumCulled={false} />;
+}
+
+// ── Thought swarm — particles spiralling into the core ──────────────────
+
+const thoughtVert = /* glsl */ `
+  attribute float aSeed;
+  uniform float uTime;
+  uniform float uPixelRatio;
+  uniform float uEnergy;
+  varying float vGlow;
+  float khash(float n) { return fract(sin(n) * 43758.5453); }
+  void main() {
+    float seed = aSeed;
+    float life = fract(uTime * (0.03 + khash(seed * 3.3) * 0.05) + seed);
+    float ang = seed * 40.0 + uTime * (0.25 + khash(seed * 7.1) * 0.4) * (khash(seed * 5.5) > 0.5 ? 1.0 : -1.0);
+    float rad = mix(3.6, 0.9, pow(life, 0.8)) * (0.7 + khash(seed * 9.9) * 0.6);
+    vec3 p = vec3(cos(ang) * rad, sin(ang * 0.7 + seed * 9.0) * rad * 0.55, sin(ang) * rad);
+    vec4 mv = modelViewMatrix * vec4(p, 1.0);
+    gl_Position = projectionMatrix * mv;
+    gl_PointSize = (0.6 + khash(seed * 11.3) * 1.1) * uPixelRatio * (40.0 / -mv.z) * (1.0 - life * 0.6);
+    vGlow = (1.0 - life) * (0.3 + uEnergy * 0.5);
+  }
+`;
+const thoughtFrag = /* glsl */ `
+  uniform vec3 uColor;
+  varying float vGlow;
+  void main() {
+    vec2 uv = gl_PointCoord - 0.5;
+    float a = smoothstep(0.5, 0.05, length(uv)) * vGlow * 0.55;
+    gl_FragColor = vec4(uColor * a * 1.6, a);
+  }
+`;
+
+function ThoughtSwarmV2({ live, perfMode }: {
+  live: React.MutableRefObject<LiveSignalV2>;
+  perfMode?: 'ultra' | 'smooth' | 'cinematic';
+}) {
+  const count = perfMode === 'ultra' ? 700 : perfMode === 'smooth' ? 300 : 500;
+  const material = useMemo(() => new THREE.ShaderMaterial({
+    transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
+    uniforms: {
+      uTime: { value: 0 }, uPixelRatio: { value: 1 }, uEnergy: { value: 0.4 },
+      uColor: { value: c('#c4b5fd') },
+    },
+    vertexShader: thoughtVert, fragmentShader: thoughtFrag,
+  }), []);
+  const geo = useMemo(() => {
+    const g = new THREE.BufferGeometry();
+    const seeds = new Float32Array(count);
+    for (let i = 0; i < count; i++) seeds[i] = Math.random();
+    g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(count * 3), 3));
+    g.setAttribute('aSeed', new THREE.BufferAttribute(seeds, 1));
+    return g;
+  }, [count]);
+  useFrame((state, delta) => {
+    const sig = live.current;
+    material.uniforms.uTime.value += delta;
+    material.uniforms.uPixelRatio.value = state.gl.getPixelRatio();
+    material.uniforms.uEnergy.value = sig.energy;
+    material.uniforms.uColor.value.copy(sig.colorRim).lerp(c('#c4b5fd'), 0.5);
+  });
+  return <points geometry={geo} material={material} frustumCulled={false} />;
+}
+
+// ── Distant model constellation — labelled-core glyphs on wide orbits ───
+
+function ModelConstellationV2({ live }: { live: React.MutableRefObject<LiveSignalV2> }) {
+  const groupRef = useRef<THREE.Group>(null);
+  const sprites = useRef<(THREE.Sprite | null)[]>([]);
+  const params = useMemo(() => Array.from({ length: 8 }, (_, i) => ({
+    radius: 6.2 + ((i * 29) % 10) * 0.22,
+    speed: (0.05 + ((i * 17) % 10) * 0.008) * (i % 2 === 0 ? 1 : -1),
+    incl: (((i * 41) % 100) / 100 - 0.5) * 1.8,
+    node: ((i * 23) % 100) / 100 * Math.PI * 2,
+    phase: ((i * 31) % 100) / 100 * Math.PI * 2,
+    color: new THREE.Color().setHSL((i * 0.11 + 0.55) % 1, 0.65, 0.6),
+  })), []);
+  useFrame((state, delta) => {
+    const sig = live.current;
+    const t = state.clock.elapsedTime;
+    if (groupRef.current) groupRef.current.rotation.y += delta * 0.02;
+    params.forEach((p, i) => {
+      const sprite = sprites.current[i];
+      if (!sprite) return;
+      const a = t * p.speed + p.phase;
+      const ca = Math.cos(a), sa = Math.sin(a);
+      const si = Math.sin(p.incl), ci = Math.cos(p.incl);
+      const nx = Math.cos(p.node), nz = Math.sin(p.node);
+      const ox = ca * p.radius, oy = sa * p.radius * si, oz = sa * p.radius * ci;
+      sprite.position.set(ox * nx + oz * nz, oy, -ox * nz + oz * nx);
+      const m = sprite.material as THREE.SpriteMaterial;
+      sprite.scale.setScalar(0.5 + 0.06 * Math.sin(t * 0.9 + i * 2));
+      m.color.copy(p.color).lerp(sig.colorRim, 0.3);
+      m.opacity = 0.28 + sig.energy * 0.2;
+    });
+  });
+  return (
+    <group ref={groupRef}>
+      {params.map((_, i) => (
+        <sprite key={i} ref={(el) => { sprites.current[i] = el; }}>
+          <spriteMaterial map={glowTexture()} transparent depthWrite={false} blending={THREE.AdditiveBlending} />
+        </sprite>
+      ))}
+    </group>
+  );
+}
+
 // ── Scene root ───────────────────────────────────────────────────────────
 
 const CHRONO_SEG_V2 = 1.4;
@@ -616,7 +824,7 @@ function V2Scene({ live, headParallax, visualMode, chronoTime, replayTrack, perf
   // added on top so the camera never stops breathing.
   const orbit = useRef({
     yaw: typeof window !== 'undefined' ? +(new URLSearchParams(window.location.search).get('v2yaw') || 0) : 0,
-    pitch: 0.06, zoom: 0, dragging: false, lx: 0, ly: 0,
+    pitch: 0.06, zoom: 5.5, dragging: false, lx: 0, ly: 0,
   });
   const cur = useRef({ yaw: 0, pitch: 0.06, zoom: 0 });
 
@@ -660,6 +868,7 @@ function V2Scene({ live, headParallax, visualMode, chronoTime, replayTrack, perf
   }, [gl]);
 
   const chase = useRef({ pos: new THREE.Vector3(0, 0.3, 5.6), look: new THREE.Vector3() });
+  const introT = useRef(0); // 0→1 cinematic dolly on mount (skipped during chrono)
   useFrame((state, delta) => {
     const sig = live.current;
     const t = state.clock.elapsedTime;
@@ -705,6 +914,13 @@ function V2Scene({ live, headParallax, visualMode, chronoTime, replayTrack, perf
     }
     chronoNow.seq = 0; chronoNow.type = ''; chronoNow.agentId = null;
 
+    // intro dolly: sweep in from deep space on first load
+    if (introT.current < 1 && !(chronoTime != null && chronoTime >= 0)) {
+      introT.current = Math.min(1, introT.current + delta / 2.4);
+      o.zoom *= Math.exp(-delta * 1.7);
+      if (introT.current >= 1) o.zoom = 0;
+    }
+
     // desired spherical position: slow drift yaw + user offsets
     const drift = t * 0.018 * (0.4 + sig.energy * 0.6);
     const yawT = o.yaw + drift;
@@ -742,6 +958,9 @@ function V2Scene({ live, headParallax, visualMode, chronoTime, replayTrack, perf
         {!hidden.has('rings') && <OrbitRings live={live} />}
         {visualMode !== 'memory' && !hidden.has('agents') && <AgentField live={live} />}
         {visualMode !== 'fleet' && <MemoryBankV2 live={live} selectedMemoryId={selectedMemoryId} onSelectMemory={onSelectMemory} />}
+        {!hidden.has('models') && <ModelConstellationV2 live={live} />}
+        {!hidden.has('web') && <NeuralWebV2 live={live} />}
+        {!hidden.has('thoughts') && <ThoughtSwarmV2 live={live} perfMode={perfMode} />}
         <ShockwavesV2 live={live} />
       </group>
       {!postOff && <PostFXV2 live={live} perfMode={perfMode} />}
