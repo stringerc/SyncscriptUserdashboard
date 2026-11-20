@@ -2393,9 +2393,10 @@ function AccretionDisk({ live }: { live: React.MutableRefObject<LiveSignal> }) {
     const pos = new Float32Array(COUNT * 3);
     const seed = new Float32Array(COUNT);
     for (let i = 0; i < COUNT; i++) {
-      // spherical shell: uniform direction * radius band — glow throughout
-      // the whole core volume instead of a flat equatorial ring.
-      const r = 2.1 + Math.pow(Math.random(), 0.7) * 1.6;
+      // filled volume: uniform random point INSIDE the ball (cbrt for
+      // uniform density). A shell projects as a limb ring — the equator
+      // band — while a filled volume reads as even glow throughout.
+      const r = 0.3 + Math.cbrt(Math.random()) * 3.3;
       const theta = Math.random() * Math.PI * 2;
       const phi = Math.acos(2 * Math.random() - 1);
       const sy = Math.sin(phi);
@@ -3480,42 +3481,51 @@ function CortexCoreInner({
     });
   }, [fx]);
 
+  // Debug: ?cxhide=nebula,stars,core,rings,sats,membank,models,accretion,web,thoughts,motes,postfx
+  const hide = React.useMemo(() => new Set(
+    (typeof window !== 'undefined'
+      ? new URLSearchParams(window.location.search).get('cxhide') || ''
+      : '').split(',').filter(Boolean)
+  ), []);
+
   return (
     <>
       <LiveTicker live={live} />
       <Ignition fx={fx} />
       <color attach="background" args={['#03040a']} />
-      <Nebula live={live} />
-      <StarLayer
-        live={live}
-        count={qualityMode === 'ultra' ? 400 : qualityMode === 'smooth' ? 800 : 1400}
-        rMin={14} rMax={30} sMin={0.7} sMax={1.8} rotSpeed={0.008} twinkle={0.8}
-      />
-      <StarLayer
-        live={live}
-        count={qualityMode === 'ultra' ? 150 : qualityMode === 'smooth' ? 300 : 500}
-        rMin={9} rMax={18} sMin={1.2} sMax={2.6} rotSpeed={-0.02} twinkle={1.0}
-      />
+      {!hide.has('nebula') && <Nebula live={live} />}
+      {!hide.has('stars') && <>
+        <StarLayer
+          live={live}
+          count={qualityMode === 'ultra' ? 400 : qualityMode === 'smooth' ? 800 : 1400}
+          rMin={14} rMax={30} sMin={0.7} sMax={1.8} rotSpeed={0.008} twinkle={0.8}
+        />
+        <StarLayer
+          live={live}
+          count={qualityMode === 'ultra' ? 150 : qualityMode === 'smooth' ? 300 : 500}
+          rMin={9} rMax={18} sMin={1.2} sMax={2.6} rotSpeed={-0.02} twinkle={1.0}
+        />
+      </>}
 
-      <group scale={0.75}>
+      {!hide.has('core') && <group scale={0.75}>
         <Core live={live} />
         <DetailShell live={live} />
-      </group>
-      {RINGS.map((r, i) => (
+      </group>}
+      {!hide.has('rings') && RINGS.map((r, i) => (
         <OrbitRing key={i} spec={r} live={live} index={i} />
       ))}
-      {visualMode !== 'memory' && <Satellites live={live} />}
-      {visualMode !== 'fleet' && <MemoryBankConstellation live={live} selectedMemoryId={selectedMemoryId} />}
-      <ModelConstellation live={live} />
-      <AccretionDisk live={live} />
-      <NeuralWeb live={live} />
-      <ThoughtSwarm live={live} />
-      <KineticMotes
+      {!hide.has('sats') && visualMode !== 'memory' && <Satellites live={live} />}
+      {!hide.has('membank') && visualMode !== 'fleet' && <MemoryBankConstellation live={live} selectedMemoryId={selectedMemoryId} />}
+      {!hide.has('models') && <ModelConstellation live={live} />}
+      {!hide.has('accretion') && <AccretionDisk live={live} />}
+      {!hide.has('web') && <NeuralWeb live={live} />}
+      {!hide.has('thoughts') && <ThoughtSwarm live={live} />}
+      {!hide.has('motes') && <KineticMotes
         live={live}
         fx={fx}
         count={qualityMode === 'ultra' ? 250 : qualityMode === 'smooth' ? 400 : 1400}
-      />
-      <Shockwaves fx={fx} />
+      />}
+      {!hide.has('shocks') && <Shockwaves fx={fx} />}
 
       <CameraRig
         live={live}
@@ -3526,7 +3536,7 @@ function CortexCoreInner({
         holoParallax={holoParallax}
         headParallax={headParallax}
       />
-      <PostFX live={live} qualityMode={qualityMode} />
+      {!hide.has('postfx') && <PostFX live={live} qualityMode={qualityMode} />}
     </>
   );
 }
