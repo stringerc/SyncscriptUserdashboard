@@ -1427,6 +1427,14 @@ export function useVoiceStream(options: UseVoiceStreamOptions = {}) {
       } else if (item.isFinal || streamSentenceQueueRef.current.length === 0) {
         // Neural TTS produced nothing — never leave Cortex mute. Browser
         // SpeechSynthesis is robotic but honest audio beats silence.
+        // Kill any gapless neural sources first: otherwise the browser voice
+        // talks over still-playing neural audio = two voices at once.
+        for (const src of gaplessSourcesRef.current) {
+          gaplessSourcesRef.current.delete(src);
+          try { src.stop(); } catch {}
+        }
+        gaplessNextStartRef.current = 0;
+        setTtsOutputLevel(0);
         try {
           await speakBrowserFallback(
             { text: item.text, config: { voice: item.voice, speed: item.speed } },
@@ -1624,6 +1632,13 @@ export function useVoiceStream(options: UseVoiceStreamOptions = {}) {
     // TTS Controls
     speak,
     speakStreamSentence,
+    /** One-shot utterance through the same gapless sentence queue — used by
+     *  proactive voice announcements so they share the single TTS mutex
+     *  instead of racing a parallel playback path. */
+    speakText: (text: string) => {
+      speakStreamSentence(text, true);
+      finishStreaming();
+    },
     finishStreaming,
     stopSpeaking,
     activeSpokenText: activeSpokenTextRef.current,

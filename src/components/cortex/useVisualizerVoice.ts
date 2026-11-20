@@ -2784,25 +2784,17 @@ export function useVisualizerVoice(enabled: boolean, onState: (speaking: boolean
       if (!proposal || cancelled) return;
       const engine = getCortexProactiveInitiative();
       publish({ state: 'working', level: 0.4, text: `Initiative: ${proposal.title}`.slice(0, 80) });
-      // Delayed ack: only speak "on it" if execution actually takes >2s —
-      // fast actions get a single outcome phrase instead of ack+done doubles.
-      const ackTimer = setTimeout(() => cortexSpeak(`On it — ${proposal.title}.`), 2000);
+      // Proposals execute silently — no spoken ack/outcome. The HUD caption
+      // and Initiative Inbox card carry the status; unprompted speech about
+      // internal proposals was noise.
       try {
         const res = await execTool(proposal.suggestedTool, proposal.suggestedArgs || {});
-        clearTimeout(ackTimer);
         const ok = !/^\s*(error|🛡)/i.test(res.text);
         engine.markExecuted(proposal.id, { ok, summary: res.text.slice(0, 300) });
         publish({ state: 'idle', level: 0, text: ok ? `Done: ${proposal.title}`.slice(0, 80) : '' });
-        const OUTCOMES = ['Done', 'All set', 'Handled', 'Sorted'];
-        const pick = OUTCOMES[Math.floor(Math.random() * OUTCOMES.length)];
-        cortexSpeak(ok
-          ? `${pick} — ${proposal.title}.`
-          : `Hit a snag on ${proposal.title} — ${res.text.replace(/\s+/g, ' ').slice(0, 140)}`);
       } catch (err: any) {
-        clearTimeout(ackTimer);
         engine.markExecuted(proposal.id, { ok: false, summary: String(err?.message || err).slice(0, 200) });
         publish({ state: 'idle', level: 0, text: '' });
-        cortexSpeak(`Something went wrong with ${proposal.title}.`);
       }
     };
     window.addEventListener('cortex-initiative-accept', onInitiativeAccept as EventListener);
