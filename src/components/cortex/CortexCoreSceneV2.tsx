@@ -23,6 +23,7 @@ import {
   type CortexVoiceState,
 } from './CortexVisualizer';
 import { agentsClient, type AgentClient } from '../../lib/cortex-agents-client';
+import { CortexHoloDeck } from './CortexHoloDeck';
 import {
   makeLiveForV2,
   tickLiveForV2,
@@ -1308,6 +1309,7 @@ export function CortexCoreSceneV2(props: CortexCoreSceneV2Props) {
       >
         <SignalTicker live={live} />
         <SceneSplats />
+        <CortexHoloDeck />
         <V2Scene
           live={live}
           headParallax={props.headParallax}

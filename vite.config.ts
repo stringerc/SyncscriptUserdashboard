@@ -703,7 +703,8 @@ const CORTEX_TOOLS = [
           splat: {
             type: 'object',
             description: 'Optional splat tile to generate: {scene:orb|butterfly|flower|helix|galaxy|ridge|flow, palette:aurora|ember|ocean|violet|mono|prism, image?:URL/path for photo mode, seed?, count?, title?}'
-          }
+          },
+          inSpace: { type: 'boolean', description: 'When true, render the dashboard as a holographic curved panel INSIDE the 3D visualizer space (CanvasTexture + live splat volume) instead of a DOM card. Falls back to a card automatically on surfaces with no 3D scene.' }
         },
         required: ['title']
       }
@@ -8706,6 +8707,17 @@ function triggerQuickAction() {
                   tiles,
                   source: 'compose_dashboard',
                 };
+                // inSpace: hand the dashboard to the 3D scene as a holo
+                // deck — client falls back to this same artifact as a card
+                // when no CortexHoloDeck consumer acknowledges.
+                if (args?.inSpace === true) {
+                  return res.end(JSON.stringify({
+                    ok: true, tool: 'compose_dashboard',
+                    holoSpawn: { dashboard },
+                    message: `Spawned holographic dashboard "${dashboard.title}" into the visualizer space (${tiles.length} modules).`,
+                    durationMs: Date.now() - startMs,
+                  }));
+                }
                 return res.end(JSON.stringify({
                   ok: true, tool: 'compose_dashboard',
                   artifacts: [dashboard],

@@ -457,6 +457,28 @@ export function dispatchSceneSpawn(
   });
 }
 
+/** Dispatch a holo-dashboard spawn; resolves true when a mounted
+ *  CortexHoloDeck acknowledges (cortex-holo-ack) within `timeoutMs`.
+ *  False on surfaces with no 3D scene → caller falls back to a card. */
+export function dispatchHoloSpawn(dashboard: unknown, timeoutMs = 800): Promise<boolean> {
+  if (typeof window === 'undefined') return Promise.resolve(false);
+  if (!isObj(dashboard)) return Promise.resolve(false);
+  return new Promise((resolve) => {
+    let done = false;
+    const finish = (ok: boolean) => {
+      if (done) return;
+      done = true;
+      clearTimeout(t);
+      window.removeEventListener('cortex-holo-ack', onAck);
+      resolve(ok);
+    };
+    const onAck = () => finish(true);
+    const t = setTimeout(() => finish(false), timeoutMs);
+    window.addEventListener('cortex-holo-ack', onAck);
+    window.dispatchEvent(new CustomEvent('cortex-spawn-holo', { detail: dashboard }));
+  });
+}
+
 /** Extract artifact list from a tool-execution result payload (any nesting). */
 export function extractArtifactsFromResult(result: unknown, source: string): CortexArtifact[] {
   if (!isObj(result)) return [];

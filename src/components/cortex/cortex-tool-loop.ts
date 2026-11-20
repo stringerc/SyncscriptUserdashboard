@@ -10,6 +10,7 @@ import { ConsciousAgent } from '../../lib/consciousness';
 import {
   extractArtifactsFromResult,
   dispatchSceneSpawn,
+  dispatchHoloSpawn,
   validateArtifacts,
   type CortexArtifact,
 } from '../../lib/cortex-artifacts';
@@ -498,6 +499,18 @@ export async function runCortexToolLoop(ctx: CortexToolLoopContext): Promise<{ a
                       splat: spawn.url,
                       caption: 'Generated splat — open the visualizer to place it in the 3D space.',
                     }], currentToolCall!.tool).accepted) {
+                      if (!collectedArtifacts.some((x) => x.id === a.id)) collectedArtifacts.push(a);
+                    }
+                  }
+                }
+                // Holo-dashboard spawn: compose_dashboard(inSpace:true)
+                // returns holoSpawn — curved glass panel in the 3D scene.
+                // No ack → dashboard falls back to a normal card.
+                const holo = (toolResult as any)?.holoSpawn?.dashboard;
+                if (holo && typeof holo === 'object' && typeof window !== 'undefined') {
+                  const acked = await dispatchHoloSpawn(holo);
+                  if (!acked) {
+                    for (const a of validateArtifacts([holo], currentToolCall!.tool).accepted) {
                       if (!collectedArtifacts.some((x) => x.id === a.id)) collectedArtifacts.push(a);
                     }
                   }
