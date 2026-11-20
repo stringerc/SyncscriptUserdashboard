@@ -82,7 +82,7 @@ import {
 import type { CortexVoiceState } from './CortexVisualizer';
 import { CortexMessageList } from './CortexMessageList';
 import { CortexTelemetryBar } from './CortexTelemetryBar';
-import { setCortexChatMessages } from '../../lib/cortex-chat-store';
+import { setCortexChatMessages, useCortexChatSnapshot, mergeChatMessages } from '../../lib/cortex-chat-store';
 import { getCortexObservabilityHUD } from '../../lib/cortex-observability-hud';
 import { readCortexSSE } from './cortex-stream';
 import { runCortexToolLoop, getOrInitConsciousAgent, parseCortexToolCall } from './cortex-tool-loop';
@@ -1137,6 +1137,29 @@ export default function CortexDemo() {
   useEffect(() => {
     setCortexChatMessages(messages);
   }, [messages]);
+
+  // ← Reverse direction: adopt messages written by OTHER tabs/surfaces
+  // (visualizer voice turns, other /cortex/chat tabs) so every open tab
+  // shows one live conversation. Epoch bump + empty store = remote clear.
+  const sharedChat = useCortexChatSnapshot();
+  const lastSharedEpochRef = useRef(sharedChat.epoch);
+  useEffect(() => {
+    const remoteCleared = sharedChat.epoch > lastSharedEpochRef.current
+      && sharedChat.messages.length === 0;
+    lastSharedEpochRef.current = sharedChat.epoch;
+    setMessages(prev => {
+      if (remoteCleared) return prev.length ? [] : prev;
+      // Echo guard: our own mirror write comes straight back through the
+      // snapshot — if local state already covers every shared message,
+      // return prev unchanged so React bails and no write loop forms.
+      const byId = new Map(prev.map(m => [m.id, m]));
+      const uncovered = sharedChat.messages.some(sm => {
+        const p = byId.get(sm.id);
+        return !p || p.content !== sm.content;
+      });
+      return uncovered ? mergeChatMessages(prev, sharedChat.messages) : prev;
+    });
+  }, [sharedChat]);
 
   // ?q= handoff from the visualizer chat drawer — prefill composer + focus.
   useEffect(() => {
