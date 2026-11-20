@@ -15,6 +15,7 @@ import {
 } from '../../lib/cortex-voice-policy';
 import { getWakeWordGate } from '../../lib/cortex-wake-word';
 import { isAcousticEcho } from '../../utils/cortex-efference-copy';
+import CortexStatusDeck from './CortexStatusDeck';
 
 /**
  * CortexFacePage — forward-facing CORTEX visualizer + zero-config voice.
@@ -562,6 +563,8 @@ export default function CortexFacePage() {
         style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', border: 'none', background: '#020705' }}
         allow="autoplay"
       />
+
+      <CortexStatusDeck speaking={Boolean(voiceStream.isSpeaking)} />
 
       {/* Top-left: voice policy settings */}
       <button
