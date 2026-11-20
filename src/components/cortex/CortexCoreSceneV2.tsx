@@ -1128,8 +1128,16 @@ export function CortexCoreSceneV2(props: CortexCoreSceneV2Props) {
           gl.toneMappingExposure = 1.12;
           gl.outputColorSpace = THREE.SRGBColorSpace;
           const dom = gl.domElement;
-          const onLost = (e: Event) => { e.preventDefault(); setContextLost(true); };
-          const onRestored = () => { setContextLost(false); setRestoreCount((c) => c + 1); };
+          const onLost = (e: Event) => {
+            e.preventDefault();
+            setContextLost(true);
+            cortexSignalBus.emit('webgl:contextlost', 'GPU context suspended');
+          };
+          const onRestored = () => {
+            setContextLost(false);
+            setRestoreCount((c) => c + 1);
+            cortexSignalBus.emit('webgl:contextrestored', 'GPU context restored');
+          };
           dom.addEventListener('webglcontextlost', onLost, false);
           dom.addEventListener('webglcontextrestored', onRestored, false);
         }}

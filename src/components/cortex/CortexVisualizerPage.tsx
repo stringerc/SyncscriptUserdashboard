@@ -710,6 +710,20 @@ export default function CortexVisualizerPage() {
     return () => { cancelled = true; clearInterval(t); };
   }, []);
 
+  // Auto-degrade GPU quality when the WebGL context is lost — cinematic's
+  // N8AO/GodRays/DOF stack can exceed weaker GPUs and freeze the canvas.
+  useEffect(() => {
+    return cortexSignalBus.subscribe((p) => {
+      if (p.event === 'webgl:contextlost') {
+        setCoreQuality((q) => {
+          if (q === 'smooth') return q;
+          try { localStorage.setItem('cortex_core_quality', 'smooth'); } catch {}
+          return 'smooth';
+        });
+      }
+    });
+  }, []);
+
   useEffect(() => {
     // Test/demo hook: lets tooling & the chat page drive the bus directly
     (window as unknown as { __cortexSignalBus?: typeof cortexSignalBus }).__cortexSignalBus = cortexSignalBus;
