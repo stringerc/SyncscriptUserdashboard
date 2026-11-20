@@ -14,6 +14,7 @@ import {
   type VoiceDecisionRecord,
 } from '../../lib/cortex-voice-policy';
 import { getWakeWordGate } from '../../lib/cortex-wake-word';
+import { isAcousticEcho } from '../../utils/cortex-efference-copy';
 
 /**
  * CortexFacePage — forward-facing CORTEX visualizer + zero-config voice.
@@ -147,6 +148,8 @@ export default function CortexFacePage() {
   const convoPendingRef = useRef('');
   const convoDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastSpeakEndRef = useRef(0);
+  const activeSpeechRef = useRef('');
+  const speechHistoryRef = useRef<string[]>([]);
   const isPttActiveRef = useRef(false);
   const isThinkingRef = useRef(false);
   const conversationRef = useRef<{ role: string; content: string }[]>([]);
@@ -231,7 +234,7 @@ export default function CortexFacePage() {
               voiceBuffer = match[2] || '';
               if (!sentence) break;
               if (!spokeFirst) { spokeFirst = true; publish('speaking'); }
-              voiceStreamRef.current?.speakStreamSentence(sentence, false, { voice: cortexVoice });
+              speakTrackedRef.current(sentence, false);
             }
           } catch {}
         }
@@ -259,7 +262,7 @@ export default function CortexFacePage() {
           await runAgentTurnSelf.current('', record, depth + 1);
           return;
         } catch (execErr: any) {
-          voiceStreamRef.current?.speakStreamSentence(`I couldn't complete that — ${execErr?.message || 'tool error'}.`, true, { voice: cortexVoice });
+          speakTrackedRef.current(`I couldn't complete that — ${execErr?.message || 'tool error'}.`, true);
         }
       }
 
@@ -269,7 +272,7 @@ export default function CortexFacePage() {
       const remainder = voiceBuffer.trim();
       if (remainder && !inToolCall) {
         if (!spokeFirst) publish('speaking');
-        voiceStreamRef.current?.speakStreamSentence(remainder, true, { voice: cortexVoice });
+        speakTrackedRef.current(remainder, true);
       } else {
         voiceStreamRef.current?.finishStreaming();
       }
@@ -283,7 +286,7 @@ export default function CortexFacePage() {
       setIsThinking(false);
       isThinkingRef.current = false;
     }
-  }, [cortexVoice, publish]);
+  }, [publish]);
 
   useEffect(() => { runAgentTurnSelf.current = runAgentTurn; }, [runAgentTurn]);
 
@@ -302,14 +305,20 @@ export default function CortexFacePage() {
     ttsModel: 'cartesia',
     ttsVoice: cortexVoice,
     onTranscript: (result) => {
-      // Conversation mode only; PTT owns the mic while held. Drop audio
-      // while Cortex is speaking plus a short reverb tail — the face page
-      // has no efference-copy matcher, so time-muting prevents self-hearing.
+      // Conversation mode only; PTT owns the mic while held. While Cortex is
+      // speaking (plus a short reverb tail), transcripts go through the
+      // efference-copy matcher: speaker bleed is dropped, genuine user speech
+      // barges in — stops playback and becomes a new turn.
       if (!isConvoActiveRef.current || isPttActiveRef.current) return;
-      if (voiceStreamRef.current?.isSpeaking) return;
-      if (Date.now() - lastSpeakEndRef.current < 1200) return;
       let text = result.text?.trim();
       if (!text) return;
+      if (voiceStreamRef.current?.isSpeaking || Date.now() - lastSpeakEndRef.current < 1200) {
+        const echo = isAcousticEcho(text, activeSpeechRef.current, speechHistoryRef.current);
+        if (echo.isEcho) return;
+        voiceStreamRef.current?.stopSpeaking();
+        lastSpeakEndRef.current = 0;
+        isThinkingRef.current = false;
+      }
       recordUserActivity();
 
       if (getVoicePolicy().wakeWordRequired) {
@@ -360,6 +369,19 @@ export default function CortexFacePage() {
 
   const voiceStreamRef = useRef(voiceStream);
   useEffect(() => { voiceStreamRef.current = voiceStream; });
+
+  // Record what Cortex vocalizes so the efference-copy matcher can tell
+  // speaker bleed apart from genuine user speech during playback. Ref-held so
+  // runAgentTurn (declared earlier) can call it without a dep cycle.
+  const speakTrackedRef = useRef<(sentence: string, isFinal: boolean) => void>(() => {});
+  useEffect(() => {
+    speakTrackedRef.current = (sentence, isFinal) => {
+      activeSpeechRef.current = sentence;
+      speechHistoryRef.current.push(sentence);
+      if (speechHistoryRef.current.length > 15) speechHistoryRef.current.shift();
+      voiceStreamRef.current?.speakStreamSentence(sentence, isFinal, { voice: cortexVoice });
+    };
+  }, [cortexVoice]);
 
   const pcmCaptureRef = useRef<PcmCapture | null>(null);
   const iframeRef = useRef<HTMLIFrameElement | null>(null);

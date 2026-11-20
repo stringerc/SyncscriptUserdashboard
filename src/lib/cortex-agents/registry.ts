@@ -28,6 +28,7 @@ export const SEED_MATRIX: Record<RouteTier, ModelCandidate[]> = {
   fast: [
     { provider: 'magpie', model: 'group/cortex-fast' },
     { provider: 'groq-fast', model: 'openai/gpt-oss-20b' },
+    { provider: 'groq-oss', model: 'openai/gpt-oss-120b' },
     { provider: 'nvidia-nim', model: 'nvidia/nemotron-3.5-lightning-30b-a3b' },
     { provider: 'nvidia-nim', model: 'nvidia/nemotron-3.5-bolt-e4b' },
     { provider: 'openrouter', model: 'meta-llama/llama-3.3-70b-instruct' },

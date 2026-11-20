@@ -8814,6 +8814,17 @@ function triggerQuickAction() {
               });
               return res.end();
             }
+            // TTS latency instrumentation — one line per synthesis request so
+            // voice-turn delays are diagnosable from the dev log.
+            const ttsStartMs = Date.now();
+            const __ttsEnd = res.end.bind(res);
+            (res as any).end = (...args: any[]) => {
+              try {
+                const engine = res.getHeader('X-TTS-Engine') || res.getHeader('x-tts-engine') || 'unknown';
+                console.info(`[tts] ${String(parsed.voice || 'default')} engine=${engine} ${Date.now() - ttsStartMs}ms`);
+              } catch { }
+              return __ttsEnd(...args);
+            };
             const { text: rawText, speed } = parsed;
             // Crew-pinned default voice when the caller doesn't specify one.
             const voice = parsed.voice || loadVoiceConfig().defaultVoice || undefined;
