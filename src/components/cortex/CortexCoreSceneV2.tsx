@@ -566,25 +566,18 @@ const murmurVert = /* glsl */ `
   uniform float uPixelRatio;
   uniform float uEnergy;
   uniform float uKick;
+  uniform vec3 uCenter;
   uniform vec3 uColorA;
   uniform vec3 uColorB;
   varying float vGlow;
   varying vec3 vColor;
   float khash(float n) { return fract(sin(n) * 43758.5453); }
-  float knoise(vec3 p) {
-    return fract(sin(dot(p, vec3(127.1, 311.7, 74.7))) * 43758.5453);
-  }
   void main() {
     float seed = aSeed;
     float seed2 = aSeed2;
 
-    // wandering attractor — slow lissajous drift around the core
-    float ct = uTime * 0.11;
-    vec3 center = vec3(
-      sin(ct * 1.7 + 1.3) * 1.5 + sin(ct * 3.1) * 0.5,
-      sin(ct * 1.3 + 4.2) * 1.1,
-      cos(ct * 1.9 + 2.4) * 1.5 + cos(ct * 2.7) * 0.5
-    );
+    // flock heading: attractor sweeps waypoint-to-waypoint across the sky
+    vec3 center = uCenter;
 
     // scarecrow: kicks inflate the whole cloud, then it regroups
     float scare = uKick * uKick * 2.4;
@@ -617,8 +610,8 @@ const murmurVert = /* glsl */ `
 
     vec4 mv = modelViewMatrix * vec4(p, 1.0);
     gl_Position = projectionMatrix * mv;
-    float size = (1.6 + khash(seed * 19.7) * 2.2) * (1.0 + uEnergy * 0.4);
-    gl_PointSize = size * uPixelRatio * (110.0 / -mv.z);
+    float size = (0.9 + khash(seed * 19.7) * 1.4) * (1.0 + uEnergy * 0.4);
+    gl_PointSize = size * uPixelRatio * (64.0 / -mv.z);
     vGlow = 0.55 + 0.45 * khash(seed2 * 23.9);
     // hot white core fading to rim-tinted edge — readable at any angle
     vColor = mix(vec3(1.0), uColorB, khash(seed * 29.1) * 0.55);
@@ -647,6 +640,7 @@ function MurmurationV2({ live, perfMode }: {
     uniforms: {
       uTime: { value: 0 }, uPixelRatio: { value: 1 }, uEnergy: { value: 0.4 },
       uKick: { value: 0 }, uOpacity: { value: 0.75 },
+      uCenter: { value: new THREE.Vector3(0, 0.4, -3.5) },
       uColorA: { value: c('#38d9f5') }, uColorB: { value: c('#a78bfa') },
     },
     vertexShader: murmurVert, fragmentShader: murmurFrag,
@@ -661,6 +655,13 @@ function MurmurationV2({ live, perfMode }: {
     return g;
   }, [count]);
   const kickSmooth = useRef(0);
+  // flock heading state: waypoint target + sweep direction
+  const wp = useRef({
+    pos: new THREE.Vector3(0, 0.4, -3.5),
+    target: new THREE.Vector3(4.5, 0.2, -2.0),
+    dir: 1,
+    timer: 0,
+  });
   useFrame((state, delta) => {
     const sig = live.current;
     material.uniforms.uTime.value += delta;
@@ -671,6 +672,23 @@ function MurmurationV2({ live, perfMode }: {
     material.uniforms.uOpacity.value = 0.55 + sig.energy * 0.3;
     material.uniforms.uColorA.value.copy(sig.colorRim);
     material.uniforms.uColorB.value.copy(sig.colorRim).lerp(c('#a78bfa'), 0.6);
+
+    // waypoint steering: long sweeps across the sky, alternating direction
+    const w = wp.current;
+    w.timer -= delta;
+    if (w.timer <= 0) {
+      w.dir *= -1; // turn around — dash left, then all the way right
+      w.target.set(
+        w.dir * (3.8 + Math.random() * 2.6),
+        (Math.random() - 0.5) * 2.0,
+        (Math.random() - 0.5) * 3.4 - 1.2
+      );
+      w.timer = 7 + Math.random() * 6;
+    }
+    // steady dash: ~7s travel matches the waypoint timer, always in motion
+    const k = Math.min(1, delta * 0.3);
+    w.pos.lerp(w.target, k);
+    material.uniforms.uCenter.value.copy(w.pos);
   });
   return <points geometry={geo} material={material} frustumCulled={false} />;
 }
