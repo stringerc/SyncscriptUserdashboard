@@ -15,6 +15,8 @@ import {
 } from '../../lib/cortex-voice-policy';
 import { getWakeWordGate } from '../../lib/cortex-wake-word';
 import { isAcousticEcho } from '../../utils/cortex-efference-copy';
+import { useEmotionDetection } from '../../hooks/useEmotionDetection';
+import type { EmotionState } from '../../types/voice-engine';
 import CortexStatusDeck from './CortexStatusDeck';
 
 /**
@@ -136,6 +138,30 @@ Rules for voice mode:
 - You have host tools (run_command, read_file, list_dir, system_info, cortex_lights, cortex_self_heal, etc.). When the user asks you to DO something on their machine, emit a \`\`\`tool_call block — it executes automatically and you will receive the result to speak. For pure conversation, just answer directly — no tool calls needed.
 - Around tool calls, speak naturally (e.g. "I'm looking into that for you now."), and when reporting results, explain what you found with clear context and helpful next steps.`;
 
+/** Per-turn user emotion → one-line tone directive + TTS rate mirror. */
+function faceEmotionSuffix(e: EmotionState | null): string {
+  if (!e || e.confidence < 0.45 || e.primary === 'neutral' || e.primary === 'calm') return '';
+  switch (e.primary) {
+    case 'stressed': return '\nThe user sounds stressed — stay calm, reassuring, brief; offer to simplify.';
+    case 'sad': return '\nThe user sounds down — be warm and gentle, acknowledge first, keep it short.';
+    case 'angry': return '\nThe user sounds frustrated — stay steady, solution-first, never defensive.';
+    case 'excited':
+    case 'happy': return '\nThe user is upbeat — match the energy, stay enthusiastic.';
+    case 'tired': return '\nThe user sounds drained — be soft, brief, suggest the smallest next step.';
+    case 'confused': return '\nThe user seems uncertain — slow down, clarify simply.';
+    default: return '';
+  }
+}
+
+function faceEmotionRate(e: EmotionState | null): number {
+  if (!e || e.confidence < 0.45) return 1.0;
+  if (e.primary === 'stressed' || e.primary === 'sad' || e.primary === 'angry') return 0.95;
+  if (e.primary === 'tired') return 0.93;
+  if (e.primary === 'excited' || e.primary === 'happy') return Math.min(1.06, 0.97 + e.arousal * 0.12);
+  if (e.primary === 'confused') return 0.96;
+  return 1.0;
+}
+
 export default function CortexFacePage() {
   const [isPttActive, setIsPttActive] = useState(false);
   const [isThinking, setIsThinking] = useState(false);
@@ -155,10 +181,12 @@ export default function CortexFacePage() {
   const isThinkingRef = useRef(false);
   const conversationRef = useRef<{ role: string; content: string }[]>([]);
   const lastTurnRef = useRef('');
+  const emotionApi = useEmotionDetection();
+  const turnEmotionRef = useRef<EmotionState | null>(null);
 
-  const cortexVoice = (() => {
-    try { return localStorage.getItem('cortex_cartesia_voice') || 'cortana'; } catch { return 'cortana'; }
-  })();
+  // One voice everywhere — the cortana Pocket clone. (Was a localStorage
+  // Cartesia picker; removed in the voice consolidation.)
+  const cortexVoice = 'cortana';
 
   const publish = useCallback((state: string, extra: Record<string, any> = {}) => {
     cortexSignalBus.publish({ state: state as any, agentName: 'CORTEX', channel: 'voice', ...extra });
@@ -169,7 +197,10 @@ export default function CortexFacePage() {
   const runAgentTurn = useCallback(async (userText: string, toolRecord?: string, depth = 0) => {
     const text = userText.trim();
     if (!text && !toolRecord) return;
-    if (text) setLastHeard(text);
+    if (text) {
+      setLastHeard(text);
+      try { turnEmotionRef.current = emotionApi.detectFromText(text); } catch {}
+    }
     setIsThinking(true);
     isThinkingRef.current = true;
     publish('thinking', { text: toolRecord ? 'Processing result…' : 'Processing…' });
@@ -196,7 +227,7 @@ export default function CortexFacePage() {
         signal: AbortSignal.any([AbortSignal.timeout(60000), turnAbort.signal]),
         body: JSON.stringify({
           context: 'cortex',
-          systemPrompt: VOICE_SYSTEM_PROMPT,
+          systemPrompt: VOICE_SYSTEM_PROMPT + faceEmotionSuffix(turnEmotionRef.current),
           // Voice replies are spoken aloud — skip the consciousness-theory
           // persona prefix server-side so jargon ("epistemic homeostasis",
           // IIT/Phi) never reaches the TTS.
@@ -393,7 +424,7 @@ export default function CortexFacePage() {
       activeSpeechRef.current = sentence;
       speechHistoryRef.current.push(sentence);
       if (speechHistoryRef.current.length > 15) speechHistoryRef.current.shift();
-      voiceStreamRef.current?.speakStreamSentence(sentence, isFinal, { voice: cortexVoice });
+      voiceStreamRef.current?.speakStreamSentence(sentence, isFinal, { voice: cortexVoice, speed: faceEmotionRate(turnEmotionRef.current) });
     };
   }, [cortexVoice]);
 
