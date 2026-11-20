@@ -554,6 +554,125 @@ function glowTexture(): THREE.CanvasTexture {
   return _glowTex;
 }
 
+// ── Murmuration — shape-shifting orb flocks (boids-lite, GPU) ───────────
+// Each particle orbits a wandering attractor on its own inclined plane
+// with differential rotation speed. Radii breathe through noise so the
+// cloud continuously morphs; energy kicks fire a scarecrow burst.
+
+const murmurVert = /* glsl */ `
+  attribute float aSeed;
+  attribute float aSeed2;
+  uniform float uTime;
+  uniform float uPixelRatio;
+  uniform float uEnergy;
+  uniform float uKick;
+  uniform vec3 uColorA;
+  uniform vec3 uColorB;
+  varying float vGlow;
+  varying vec3 vColor;
+  float khash(float n) { return fract(sin(n) * 43758.5453); }
+  float knoise(vec3 p) {
+    return fract(sin(dot(p, vec3(127.1, 311.7, 74.7))) * 43758.5453);
+  }
+  void main() {
+    float seed = aSeed;
+    float seed2 = aSeed2;
+
+    // wandering attractor — slow lissajous drift around the core
+    float ct = uTime * 0.11;
+    vec3 center = vec3(
+      sin(ct * 1.7 + 1.3) * 1.5 + sin(ct * 3.1) * 0.5,
+      sin(ct * 1.3 + 4.2) * 1.1,
+      cos(ct * 1.9 + 2.4) * 1.5 + cos(ct * 2.7) * 0.5
+    );
+
+    // scarecrow: kicks inflate the whole cloud, then it regroups
+    float scare = uKick * uKick * 2.4;
+
+    // per-boid orbital plane + radius band
+    float incl = (khash(seed * 3.7) - 0.5) * 2.4;
+    float node = khash(seed * 5.1) * 6.2831;
+    float baseR = (2.6 + khash(seed * 7.9) * 2.2) * (1.0 + scare * (0.4 + khash(seed2 * 9.3)));
+    // breathing radius — the murmuration never holds a shape
+    float breathe = 0.72 + 0.38 * sin(uTime * (0.14 + khash(seed * 11.7) * 0.22) + seed * 40.0);
+    float rad = baseR * breathe;
+
+    // differential rotation — inner faster, sheets shear past each other
+    float dir = khash(seed * 13.3) > 0.5 ? 1.0 : -1.0;
+    float ang = seed * 40.0 + uTime * dir * (0.22 + khash(seed * 17.9) * 0.4) * (2.8 / max(rad, 0.4));
+
+    // position on inclined circle, then slight vertical bob (wingbeat-ish)
+    float ca = cos(ang), sa = sin(ang);
+    float si = sin(incl), ci = cos(incl);
+    float ox = ca * rad, oy = sa * rad * si, oz = sa * rad * ci;
+    float nx = cos(node), nz = sin(node);
+    vec3 p = center + vec3(ox * nx + oz * nz, oy + sin(uTime * (2.0 + khash(seed2 * 3.1) * 3.0) + seed * 20.0) * 0.16, -ox * nz + oz * nx);
+
+    // mild separation jitter so the cloud isn't a perfect shell
+    p += vec3(
+      sin(seed * 91.0 + uTime * 0.9),
+      sin(seed * 57.0 - uTime * 0.7),
+      cos(seed * 73.0 + uTime * 0.8)
+    ) * 0.22;
+
+    vec4 mv = modelViewMatrix * vec4(p, 1.0);
+    gl_Position = projectionMatrix * mv;
+    float size = (0.9 + khash(seed * 19.7) * 1.4) * (1.0 + uEnergy * 0.4);
+    gl_PointSize = size * uPixelRatio * (52.0 / -mv.z);
+    vGlow = 0.3 + 0.7 * khash(seed2 * 23.9);
+    vColor = mix(uColorA, uColorB, khash(seed * 29.1));
+  }
+`;
+const murmurFrag = /* glsl */ `
+  uniform float uOpacity;
+  varying float vGlow;
+  varying vec3 vColor;
+  void main() {
+    vec2 uv = gl_PointCoord - 0.5;
+    float d = length(uv);
+    float a = smoothstep(0.5, 0.06, d) * vGlow * uOpacity;
+    gl_FragColor = vec4(vColor * a * 1.7, a);
+  }
+`;
+
+function MurmurationV2({ live, perfMode }: {
+  live: React.MutableRefObject<LiveSignalV2>;
+  perfMode?: 'ultra' | 'smooth' | 'cinematic';
+}) {
+  const count = perfMode === 'ultra' ? 5200 : perfMode === 'smooth' ? 1600 : 3200;
+  const material = useMemo(() => new THREE.ShaderMaterial({
+    transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
+    uniforms: {
+      uTime: { value: 0 }, uPixelRatio: { value: 1 }, uEnergy: { value: 0.4 },
+      uKick: { value: 0 }, uOpacity: { value: 0.5 },
+      uColorA: { value: c('#38d9f5') }, uColorB: { value: c('#a78bfa') },
+    },
+    vertexShader: murmurVert, fragmentShader: murmurFrag,
+  }), []);
+  const geo = useMemo(() => {
+    const g = new THREE.BufferGeometry();
+    const s1 = new Float32Array(count), s2 = new Float32Array(count);
+    for (let i = 0; i < count; i++) { s1[i] = Math.random(); s2[i] = Math.random(); }
+    g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(count * 3), 3));
+    g.setAttribute('aSeed', new THREE.BufferAttribute(s1, 1));
+    g.setAttribute('aSeed2', new THREE.BufferAttribute(s2, 1));
+    return g;
+  }, [count]);
+  const kickSmooth = useRef(0);
+  useFrame((state, delta) => {
+    const sig = live.current;
+    material.uniforms.uTime.value += delta;
+    material.uniforms.uPixelRatio.value = state.gl.getPixelRatio();
+    material.uniforms.uEnergy.value = sig.energy;
+    kickSmooth.current += (sig.kick - kickSmooth.current) * Math.min(1, delta * 3);
+    material.uniforms.uKick.value = kickSmooth.current;
+    material.uniforms.uOpacity.value = 0.34 + sig.energy * 0.2;
+    material.uniforms.uColorA.value.copy(sig.colorRim);
+    material.uniforms.uColorB.value.copy(sig.colorRim).lerp(c('#a78bfa'), 0.6);
+  });
+  return <points geometry={geo} material={material} frustumCulled={false} />;
+}
+
 // ── Memory engram constellation (V1 parity, V2-native) ──────────────────
 
 function MemoryBankV2({ live, selectedMemoryId, onSelectMemory }: {
@@ -1030,6 +1149,7 @@ function V2Scene({ live, headParallax, visualMode, chronoTime, replayTrack, perf
         {!hidden.has('models') && <ModelConstellationV2 live={live} />}
         {!hidden.has('web') && <NeuralWebV2 live={live} />}
         {!hidden.has('thoughts') && <ThoughtSwarmV2 live={live} perfMode={perfMode} />}
+        {!hidden.has('murmur') && <MurmurationV2 live={live} perfMode={perfMode} />}
         <ShockwavesV2 live={live} />
       </group>
       {!postOff && <PostFXV2 live={live} perfMode={perfMode} />}
