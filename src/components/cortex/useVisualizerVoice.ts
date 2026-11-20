@@ -18,6 +18,7 @@ import { cortexSignalBus } from './CortexVisualizer';
 import {
   appendCortexChatMessage, upsertCortexChatMessage,
 } from '../../lib/cortex-chat-store';
+import { claimTurn } from '../../lib/cortex-turn-arbiter';
 import type { ChatMessage } from './cortex-demo-helpers';
 import { useVoiceStream } from '../../hooks/useVoiceStream';
 import { isAcousticEcho, INTERRUPT_COMMANDS } from '../../utils/cortex-efference-copy';
@@ -1932,6 +1933,14 @@ export function useVisualizerVoice(enabled: boolean, onState: (speaking: boolean
 
     /** Execute one full turn (LLM stream → tools → streamed speech). */
     const runTurn = async (text: string) => {
+      // Cross-tab turn dedupe: if another surface already owns this exact
+      // input (e.g. two tabs' mics heard the same utterance), skip
+      // generation — the owner's reply arrives via the shared chat store.
+      const turnClaim = claimTurn(text, 'viz-voice');
+      if (!turnClaim.claimed) {
+        console.info('[turn] duplicate input suppressed — another surface owns this turn');
+        return;
+      }
       // User turn = barge-in: steal the cross-surface speech lock so this
       // reply speaks now and any other tab/surface yields on next heartbeat.
       try { vsRef.current?.bargeSpeech?.(); } catch {}
@@ -2316,6 +2325,7 @@ export function useVisualizerVoice(enabled: boolean, onState: (speaking: boolean
           toListening();
         }
       } finally {
+        turnClaim.release();
         clearTimeout(turnDeadline);
         // A newer turn already owns turnInFlight/liveTurnRef — a stale
         // finally must not clear them or drain the queue early.

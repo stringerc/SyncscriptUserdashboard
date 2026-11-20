@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { motion } from 'motion/react';
 import { AlertTriangle, ArrowRight, Camera, CheckCircle2, PauseCircle, PlayCircle, Rocket, Shield, Siren, Watch, Wrench } from 'lucide-react';
 import { toast } from 'sonner';
+import { speakUtteranceArbitrated } from '../../lib/cortex-tts-arbiter';
 import { Button } from '../ui/button';
 import { Card } from '../ui/card';
 import { Input } from '../ui/input';
@@ -430,11 +431,8 @@ export function MissionCockpitPage() {
         dialogue: 'Chris, motion detected in your room. Is that you?',
       });
       setSceneEvents((prev) => [event, ...prev]);
-      const utterance = new SpeechSynthesisUtterance(event.dialogue);
-      utterance.rate = 1;
-      utterance.pitch = 1;
-      window.speechSynthesis.cancel();
-      window.speechSynthesis.speak(utterance);
+      // Tactical alert = explicit user action → barge in on any active voice.
+      speakUtteranceArbitrated(event.dialogue, { priority: 'barge' });
       toast.success('Nexus tactical alert spoken');
     } catch {
       toast.error('Could not trigger tactical alert');

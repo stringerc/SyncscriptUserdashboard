@@ -20,6 +20,7 @@ import { useMemo, useState, useEffect } from 'react';
 import { Flame, Zap, TrendingUp, Brain, Target, Volume2, RefreshCw, Phone, Activity, Calendar, DollarSign, CheckCircle2, AlertTriangle, Mail, Clock, ChevronRight } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { useDashboardMetrics } from '../hooks/useDashboardMetrics';
+import { speakUtteranceArbitrated, stopArbitratedUtterance, releaseSpeech } from '../lib/cortex-tts-arbiter';
 import { useAuth } from '../contexts/AuthContext';
 import { toast } from 'sonner';
 import { Button } from './ui/button';
@@ -89,21 +90,22 @@ export function DashboardBriefing() {
   const handleSpeak = () => {
     if (!briefing?.text) return;
     if (speaking) {
-      window.speechSynthesis.cancel();
+      stopArbitratedUtterance();
+      releaseSpeech();
       setSpeaking(false);
       return;
     }
-    const utterance = new SpeechSynthesisUtterance(briefing.text);
     const voices = window.speechSynthesis.getVoices();
     const premiumVoice = voices.find(v =>
       v.name.includes('Google') || v.name.includes('Natural') || v.name.includes('Samantha')
     );
-    if (premiumVoice) utterance.voice = premiumVoice;
-    utterance.rate = 1.05;
-    utterance.onend = () => setSpeaking(false);
-    utterance.onerror = () => setSpeaking(false);
-    setSpeaking(true);
-    window.speechSynthesis.speak(utterance);
+    const started = speakUtteranceArbitrated(briefing.text, {
+      priority: 'barge',
+      rate: 1.05,
+      voice: premiumVoice,
+      onDone: () => setSpeaking(false),
+    });
+    if (started) setSpeaking(true);
   };
 
   const handleCall = async () => {

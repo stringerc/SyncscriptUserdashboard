@@ -19,6 +19,7 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { createPortal } from 'react-dom';
+import { speakUtteranceArbitrated, stopArbitratedUtterance, releaseSpeech } from '../lib/cortex-tts-arbiter';
 import { motion, AnimatePresence } from 'motion/react';
 import {
   X, Sun, Sunset, Moon, Brain, NotepadText, CheckCircle2,
@@ -276,16 +277,16 @@ export function DailyOpsModal({ isOpen, onClose }: DailyOpsModalProps) {
 
   const handleSpeak = () => {
     if (!briefing?.text) return;
-    if (speaking) { window.speechSynthesis.cancel(); setSpeaking(false); return; }
-    const utterance = new SpeechSynthesisUtterance(briefing.text);
+    if (speaking) { stopArbitratedUtterance(); releaseSpeech(); setSpeaking(false); return; }
     const voices = window.speechSynthesis.getVoices();
     const premium = voices.find(v => v.name.includes('Google') || v.name.includes('Natural'));
-    if (premium) utterance.voice = premium;
-    utterance.rate = 1.05;
-    utterance.onend = () => setSpeaking(false);
-    utterance.onerror = () => setSpeaking(false);
-    setSpeaking(true);
-    window.speechSynthesis.speak(utterance);
+    const started = speakUtteranceArbitrated(briefing.text, {
+      priority: 'barge',
+      rate: 1.05,
+      voice: premium,
+      onDone: () => setSpeaking(false),
+    });
+    if (started) setSpeaking(true);
   };
 
   const handleSaveOffload = () => {

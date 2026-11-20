@@ -21,6 +21,7 @@ import {
   NEXUS_POST_CALL_SUMMARY_PATH,
   NEXUS_USER_CHAT_PATH,
 } from '../config/nexus-vercel-ai-routes';
+import { createSpeechArbiter } from '../lib/cortex-tts-arbiter';
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Types
@@ -908,6 +909,22 @@ export function NexusVoiceCallProvider({ children }: { children: ReactNode }) {
   const processUserMessageRef = useRef<(text: string) => void>(() => {});
   const heardTextClearTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const endCallInProgressRef = useRef(false);
+  // Call-session voice lock: an active call owns the voice channel so
+  // Cortex TTS / briefings / other surfaces yield for the call duration.
+  const callArbiterRef = useRef<ReturnType<typeof createSpeechArbiter> | null>(null);
+  const callSpeechHbRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const holdCallSpeechLock = useCallback(() => {
+    if (!callArbiterRef.current) callArbiterRef.current = createSpeechArbiter('nexus-call');
+    callArbiterRef.current.steal();
+    if (callSpeechHbRef.current) clearInterval(callSpeechHbRef.current);
+    callSpeechHbRef.current = setInterval(() => {
+      try { callArbiterRef.current?.heartbeat(); } catch { /* ignore */ }
+    }, 1000);
+  }, []);
+  const dropCallSpeechLock = useCallback(() => {
+    if (callSpeechHbRef.current) { clearInterval(callSpeechHbRef.current); callSpeechHbRef.current = null; }
+    try { callArbiterRef.current?.release(); } catch { /* ignore */ }
+  }, []);
   const callToolTracesRef = useRef<Array<{ tool: string; ok: boolean; detail?: Record<string, unknown>; error?: string }>>([]);
   const assistantTurnsRef = useRef(0);
 
@@ -1516,8 +1533,9 @@ export function NexusVoiceCallProvider({ children }: { children: ReactNode }) {
       }
     } finally {
       endCallInProgressRef.current = false;
+      dropCallSpeechLock();
     }
-  }, [voiceStream, speakPhrase, callStatus, warmVoiceCaches, sessionId]);
+  }, [voiceStream, speakPhrase, callStatus, warmVoiceCaches, sessionId, dropCallSpeechLock]);
 
   // ── Process user message ───────────────────────────────────────────────
 
@@ -1617,6 +1635,7 @@ export function NexusVoiceCallProvider({ children }: { children: ReactNode }) {
     activeRef.current = true;
     setCallStatus('active');
     callWallClockStartRef.current = Date.now();
+    holdCallSpeechLock();
 
     timerRef.current = setInterval(() => {
       if (!activeRef.current) return;
@@ -1672,7 +1691,7 @@ export function NexusVoiceCallProvider({ children }: { children: ReactNode }) {
       voiceStream.clearTranscript();
       voiceStream.startListening();
     }
-  }, [voiceStream, addMessage, endCallInternal, speakPhrase, speakStaticGreeting, startTypewriter, stopTypewriter]);
+  }, [voiceStream, addMessage, endCallInternal, speakPhrase, speakStaticGreeting, startTypewriter, stopTypewriter, holdCallSpeechLock]);
 
   // ── sendTextMessage ────────────────────────────────────────────────────
 
@@ -1699,8 +1718,9 @@ export function NexusVoiceCallProvider({ children }: { children: ReactNode }) {
       if (heardTextClearTimerRef.current) clearTimeout(heardTextClearTimerRef.current);
       voiceStream.stopListening();
       voiceStream.stopSpeaking();
+      dropCallSpeechLock();
     };
-  }, []);
+  }, [dropCallSpeechLock]);
 
   // ── Context value ──────────────────────────────────────────────────────
 

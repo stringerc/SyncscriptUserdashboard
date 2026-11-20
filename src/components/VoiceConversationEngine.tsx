@@ -66,6 +66,7 @@ import { EventModal } from './EventModal';
 import { LinkedCalendarEventModal } from './calendar/LinkedCalendarEventModal';
 import { buildPrimaryEventFromNexusCalendarHold } from '../utils/nexus-voice-calendar-event';
 import { fetchCalendarSyncGroups, postCalendarHold } from '../lib/calendar-linked-api';
+import { claimTurn } from '../lib/cortex-turn-arbiter';
 import { CURRENT_USER } from '../utils/user-constants';
 import type { Event } from '../utils/event-task-types';
 import {
@@ -570,6 +571,12 @@ export function VoiceConversationEngine({
 
   const handleUserMessage = useCallback(async (text: string) => {
     if (!text.trim() || isProcessingAI) return;
+    // Cross-tab turn dedupe: skip if another surface owns this input.
+    const turnClaim = claimTurn(text, 'voice-engine');
+    if (!turnClaim.claimed) {
+      console.info('[turn] duplicate input suppressed — another surface owns this turn');
+      return;
+    }
     // User turn = barge-in across tabs/surfaces.
     try { voiceStream.bargeSpeech?.(); } catch {}
 
@@ -893,6 +900,7 @@ export function VoiceConversationEngine({
       });
       voiceStream.finishStreaming();
     } finally {
+      turnClaim.release();
       setIsProcessingAI(false);
       // Resume listening
       if (isActiveRef.current) {

@@ -17,12 +17,13 @@ import type { AgentsSnapshotClient, AgentClient, AgentTaskClient } from '../../l
 import { getCortexGoals, type LifeGoal } from '../../lib/cortex-goals';
 import { CortexTowerPanel } from './CortexTowerPanel';
 import { CortexFoundryCalendar } from './CortexFoundryCalendar';
+import { playAudioArbitrated } from '../../lib/cortex-tts-arbiter';
 
 const MONO = "'IBM Plex Mono', monospace";
 const INK = '#e0f2fe';
 const DIM = 'rgba(148,163,184,0.55)';
 
-type FoundryView = 'dashboard' | 'tasks' | 'goals' | 'calendar' | 'agents' | 'missions' | 'counsel' | 'simulation' | 'recon' | 'reel' | 'inbox' | 'incidents' | 'pipeline' | 'standup' | 'messages' | 'ventures' | 'evolution' | 'voice';
+type FoundryView = 'dashboard' | 'tasks' | 'goals' | 'calendar' | 'agents' | 'missions' | 'counsel' | 'simulation' | 'recon' | 'reel' | 'campaigns' | 'inbox' | 'incidents' | 'pipeline' | 'standup' | 'messages' | 'ventures' | 'evolution' | 'voice';
 
 const NAV_ITEMS: { id: FoundryView; glyph: string; label: string; hint: string }[] = [
   { id: 'dashboard', glyph: '◈', label: 'DASHBOARD', hint: 'Mission Control tower board' },
@@ -478,9 +479,12 @@ export function CortexFoundryNav({ snap, onSelectAgent, selectedAgent, onOpenTow
       const blob = await r.blob();
       if (blob.size < 200) throw new Error('empty audio');
       const url = URL.createObjectURL(blob);
-      const audio = new Audio(url);
-      audio.onended = () => URL.revokeObjectURL(url);
-      await audio.play();
+      const { started } = playAudioArbitrated(url, {
+        priority: 'barge',
+        onDone: () => URL.revokeObjectURL(url),
+        onError: () => URL.revokeObjectURL(url),
+      });
+      if (!started) { URL.revokeObjectURL(url); throw new Error('voice busy'); }
       setVoiceTest((m) => ({ ...m, [voiceId]: 'ok' }));
       console.info(`[voice-test] ${voiceId} ok — ${blob.size}b in ${Date.now() - t0}ms`);
     } catch (e: any) {

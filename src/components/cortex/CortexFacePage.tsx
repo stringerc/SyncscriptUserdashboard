@@ -4,6 +4,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useVoiceStream } from '../../hooks/useVoiceStream';
 import { cortexSignalBus } from './CortexVisualizer';
 import { cortexProactiveVoice } from '../../lib/cortex-proactive-voice';
+import { claimTurn } from '../../lib/cortex-turn-arbiter';
 import {
   getVoicePolicy,
   updateVoicePolicy,
@@ -197,6 +198,12 @@ export default function CortexFacePage() {
   const runAgentTurn = useCallback(async (userText: string, toolRecord?: string, depth = 0) => {
     const text = userText.trim();
     if (!text && !toolRecord) return;
+    // Cross-tab turn dedupe: skip if another surface owns this input.
+    const turnClaim = claimTurn(text || toolRecord || '', 'face-page');
+    if (!turnClaim.claimed) {
+      console.info('[turn] duplicate input suppressed — another surface owns this turn');
+      return;
+    }
     // User turn = barge-in across tabs/surfaces.
     try { voiceStreamRef.current?.bargeSpeech?.(); } catch {}
     if (text) {
@@ -329,6 +336,7 @@ export default function CortexFacePage() {
       }
       publish('idle');
     } finally {
+      turnClaim.release();
       setIsThinking(false);
       isThinkingRef.current = false;
     }

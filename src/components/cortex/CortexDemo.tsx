@@ -83,6 +83,7 @@ import type { CortexVoiceState } from './CortexVisualizer';
 import { CortexMessageList } from './CortexMessageList';
 import { CortexTelemetryBar } from './CortexTelemetryBar';
 import { setCortexChatMessages, useCortexChatSnapshot, mergeChatMessages } from '../../lib/cortex-chat-store';
+import { claimTurn } from '../../lib/cortex-turn-arbiter';
 import { getCortexObservabilityHUD } from '../../lib/cortex-observability-hud';
 import { readCortexSSE } from './cortex-stream';
 import { runCortexToolLoop, getOrInitConsciousAgent, parseCortexToolCall } from './cortex-tool-loop';
@@ -1488,6 +1489,13 @@ export default function CortexDemo() {
     const rawContent = typeof overrideText === 'string' ? overrideText : (input || domVal || '');
     if (!rawContent.trim()) return;
     recordUserActivity();
+    // Cross-tab turn dedupe: skip generation if another surface already
+    // owns this exact input — its reply arrives via the shared chat store.
+    const turnClaim = claimTurn(rawContent, 'cortex-demo');
+    if (!turnClaim.claimed) {
+      console.info('[turn] duplicate input suppressed — another surface owns this turn');
+      return;
+    }
     // User turn = barge-in across tabs/surfaces: steal the speech lock so
     // this reply speaks and whichever tab was talking yields.
     try { voiceStream.bargeSpeech?.(); } catch {}
@@ -2230,6 +2238,7 @@ FORMATTING: clean structured markdown, bold subheadings, concise bullets; avoid 
         meta: { realityScore: 0.9, hallucinationRisk: 0.1, awareness: 'tuned', source: 'error_recovery' },
       }]);
     } finally {
+      turnClaim.release();
       setIsSending(false);
       // Guarantee streaming flag is reset on all AI messages so Thinking animation never gets stuck
       setMessages(prev => prev.map(m => m.streaming ? { ...m, streaming: false } : m));

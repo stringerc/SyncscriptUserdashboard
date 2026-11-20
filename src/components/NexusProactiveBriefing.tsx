@@ -18,6 +18,7 @@
 
 import { useState, useMemo } from 'react';
 import { useNavigate } from 'react-router';
+import { speakUtteranceArbitrated, stopArbitratedUtterance, releaseSpeech } from '../lib/cortex-tts-arbiter';
 import { motion, AnimatePresence } from 'motion/react';
 import {
   Brain, Mic, Volume2, ArrowRight, Sparkles, Zap,
@@ -171,20 +172,20 @@ export function NexusProactiveBriefing() {
 
   const handleSpeak = () => {
     if (isSpeaking) {
-      window.speechSynthesis?.cancel();
+      stopArbitratedUtterance();
+      releaseSpeech();
       setIsSpeaking(false);
       return;
     }
 
     const text = `${headline} ${insights.map(i => i.headline).join('. ')}`;
-    if (window.speechSynthesis) {
-      const utterance = new SpeechSynthesisUtterance(text);
-      utterance.rate = 1.05;
-      utterance.pitch = 0.95;
-      utterance.onend = () => setIsSpeaking(false);
-      window.speechSynthesis.speak(utterance);
-      setIsSpeaking(true);
-    }
+    const started = speakUtteranceArbitrated(text, {
+      priority: 'barge',
+      rate: 1.05,
+      pitch: 0.95,
+      onDone: () => setIsSpeaking(false),
+    });
+    if (started) setIsSpeaking(true);
   };
 
   // ─── Render ───────────────────────────────────────────────────────

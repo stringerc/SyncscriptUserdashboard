@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   CheckCircle2, Circle, Flame, Moon, Sparkles, AlertCircle,
   Play, Pause, XCircle, Send, ChevronRight, ChevronLeft, Activity, Cpu, Layers,
@@ -12,6 +12,7 @@ import type { MorningTrajectoryBrief } from '../../lib/cortex-morning-trajectory
 import { CortexMeetingTeleprompter } from './CortexMeetingTeleprompter';
 import { CortexMobilePairingModal } from './CortexMobilePairingModal';
 import { getCortexNativePhoneService, type AudioDeviceState } from '../../lib/cortex-native-phone';
+import { playAudioArbitrated, speakUtteranceArbitrated, stopArbitratedUtterance, releaseSpeech } from '../../lib/cortex-tts-arbiter';
 import type { AutonomousMission } from '../../lib/cortex-mission-engine';
 import { getAutonomousVigilance } from '../../lib/cortex-autonomous-vigilance';
 import { getCortexEmotionalIntelligence, type UserLatentState } from '../../lib/cortex-emotional-intelligence';
@@ -202,16 +203,19 @@ export const CortexMissionRailDrawer: React.FC<CortexMissionRailDrawerProps> = (
   const [audioVoiceSource, setAudioVoiceSource] = useState<'Kokoro-82M' | 'SpeechSynthesis'>('Kokoro-82M');
   const [showDossierModal, setShowDossierModal] = useState(false);
 
+  const briefAudioRef = useRef<HTMLAudioElement | null>(null);
+
   const fallbackSpeechSynthesis = () => {
     if (typeof window !== 'undefined' && window.speechSynthesis) {
       setAudioVoiceSource('SpeechSynthesis');
       window.speechSynthesis.cancel();
-      const utterance = new SpeechSynthesisUtterance(morningBrief.spokenAudioScript);
-      utterance.rate = 1.05;
-      utterance.pitch = 1.0;
-      utterance.onend = () => setIsPlayingBrief(false);
-      utterance.onerror = () => setIsPlayingBrief(false);
-      window.speechSynthesis.speak(utterance);
+      const started = speakUtteranceArbitrated(morningBrief.spokenAudioScript, {
+        priority: 'barge',
+        rate: 1.05,
+        pitch: 1.0,
+        onDone: () => setIsPlayingBrief(false),
+      });
+      if (!started) setIsPlayingBrief(false);
     } else {
       setIsPlayingBrief(false);
     }
@@ -219,9 +223,9 @@ export const CortexMissionRailDrawer: React.FC<CortexMissionRailDrawerProps> = (
 
   const handleTogglePlayBrief = async () => {
     if (isPlayingBrief) {
-      if (typeof window !== 'undefined' && window.speechSynthesis) {
-        window.speechSynthesis.cancel();
-      }
+      try { briefAudioRef.current?.pause(); } catch { /* ignore */ }
+      stopArbitratedUtterance();
+      releaseSpeech();
       setIsPlayingBrief(false);
       return;
     }
@@ -242,15 +246,23 @@ export const CortexMissionRailDrawer: React.FC<CortexMissionRailDrawerProps> = (
         setAudioVoiceSource('Kokoro-82M');
         const blob = await response.blob();
         const audioUrl = URL.createObjectURL(blob);
-        const audio = new Audio(audioUrl);
-        audio.onended = () => {
-          setIsPlayingBrief(false);
+        const { audio, started } = playAudioArbitrated(audioUrl, {
+          priority: 'barge',
+          onDone: () => {
+            setIsPlayingBrief(false);
+            URL.revokeObjectURL(audioUrl);
+          },
+          onError: () => {
+            URL.revokeObjectURL(audioUrl);
+            fallbackSpeechSynthesis();
+          },
+        });
+        if (!started) {
           URL.revokeObjectURL(audioUrl);
-        };
-        audio.onerror = () => {
           fallbackSpeechSynthesis();
-        };
-        await audio.play();
+          return;
+        }
+        briefAudioRef.current = audio;
         return;
       }
     } catch {

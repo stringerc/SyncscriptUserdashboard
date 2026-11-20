@@ -165,3 +165,94 @@ export function releaseSpeech(): void {
 export function speechLockedElsewhere(): boolean {
   return defaultArbiter.lockedElsewhere();
 }
+
+// ── Gated one-shot players ─────────────────────────────────────────
+// For surfaces that bypass useVoiceStream entirely (speechSynthesis
+// utterances, HTMLAudioElement). 'yield' = skip when another voice is
+// active; 'barge' = steal the lock first (explicit user action).
+
+export interface ArbitratedSpeechOpts {
+  priority?: 'yield' | 'barge';
+  rate?: number;
+  pitch?: number;
+  voice?: SpeechSynthesisVoice;
+  onDone?: () => void;
+  onError?: () => void;
+}
+
+const ARBITER_HEARTBEAT_MS = 900;
+
+function startHeartbeat(
+  finish: () => void,
+  cancelPlayback?: () => void,
+): ReturnType<typeof setInterval> {
+  return setInterval(() => {
+    const status = defaultArbiter.heartbeat();
+    if (status === 'stolen') {
+      try { cancelPlayback?.(); } catch { /* ignore */ }
+      finish();
+    }
+  }, ARBITER_HEARTBEAT_MS);
+}
+
+export function speakUtteranceArbitrated(
+  text: string,
+  opts: ArbitratedSpeechOpts = {},
+): boolean {
+  if (typeof window === 'undefined' || !window.speechSynthesis) return false;
+  if (opts.priority === 'barge') defaultArbiter.steal();
+  else if (!defaultArbiter.tryClaim()) return false;
+
+  const utterance = new SpeechSynthesisUtterance(text);
+  if (opts.rate != null) utterance.rate = opts.rate;
+  if (opts.pitch != null) utterance.pitch = opts.pitch;
+  if (opts.voice) utterance.voice = opts.voice;
+
+  let done = false;
+  let hb: ReturnType<typeof setInterval> | null = null;
+  const finish = (failed: boolean) => {
+    if (done) return;
+    done = true;
+    if (hb) clearInterval(hb);
+    defaultArbiter.release();
+    try { (failed ? opts.onError : opts.onDone)?.(); } catch { /* ignore */ }
+  };
+  utterance.onend = () => finish(false);
+  utterance.onerror = () => finish(true);
+  hb = startHeartbeat(() => finish(false), () => {
+    try { window.speechSynthesis.cancel(); } catch { /* ignore */ }
+  });
+  window.speechSynthesis.speak(utterance);
+  return true;
+}
+
+export function stopArbitratedUtterance(): void {
+  try { window.speechSynthesis?.cancel(); } catch { /* ignore */ }
+}
+
+export function playAudioArbitrated(
+  src: string,
+  opts: ArbitratedSpeechOpts = {},
+): { audio: HTMLAudioElement; started: boolean } {
+  const audio = new Audio(src);
+  if (typeof Audio === 'undefined') return { audio, started: false };
+  if (opts.priority === 'barge') defaultArbiter.steal();
+  else if (!defaultArbiter.tryClaim()) return { audio, started: false };
+
+  let done = false;
+  let hb: ReturnType<typeof setInterval> | null = null;
+  const finish = (failed: boolean) => {
+    if (done) return;
+    done = true;
+    if (hb) clearInterval(hb);
+    defaultArbiter.release();
+    try { (failed ? opts.onError : opts.onDone)?.(); } catch { /* ignore */ }
+  };
+  audio.onended = () => finish(false);
+  audio.onerror = () => finish(true);
+  hb = startHeartbeat(() => finish(false), () => {
+    try { audio.pause(); } catch { /* ignore */ }
+  });
+  audio.play().catch(() => finish(true));
+  return { audio, started: true };
+}
