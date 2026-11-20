@@ -15,6 +15,8 @@ Single place to resume without re-explaining the whole thread. Update **Current 
 
 SyncScript dashboard and **Nexus** (App AI): voice + tools-backed UI (canvas, tasks, maps), Vercel `api/*`, Supabase Edge where applicable. Continuity lives in **`MEMORY.md`** (ops + decisions) and this file (session handoff).
 
+**Voice: one engine, affective loop live** (2026-11-20, commits `6367670`/`7291963`/`2dd9329`/`6f2c21f`). All conversational surfaces run `useVoiceStream` (Web Speech STT + Silero VAD + smart-turn EOU in; Pocket `cortana` clone out via `/api/ai/tts`→`/api/cortex/tts`). Deleted parallel paths: `cartesia-tts.ts`, `orpheus-tts-adapter.ts`, `cortex-multimodal-speech.ts`, `cortana-audio.ts`; voice pickers removed (`/cortex/chat`, `/cortex/mobile`, `/cortex/face`). `/cortana` no longer needs the :5212 bridge for voice/brain (bridge = lights/stats only) and now has 6-turn rolling memory. Emotion loop: `useEmotionDetection.detectFromText` per turn → system-prompt tone directive + ±6% TTS rate mirror + `emotion` on `cortexSignalBus` (V2 rim tint). `npm test` has 26 PRE-EXISTING failures — stale tests read `api/ai/nexus-guest.ts` which doesn't exist (route lives in `src/server/nexus-guest.ts` + vite.config.ts); unrelated to voice work. `verify:cortex` PASSED.
+
 **Cortex core scene: V2 is now default** (2026-11-21, commit `f39543c`). `CortexCoreSceneV2` replaced V1 as the `/cortex/visualizer` core — equatorial-band bug was a world/view space mismatch in the fresnel term (`887b897`). V1 remains reachable via `?scene=v1` / CORE V1 nav toggle. V2 has parity for memory engrams, agent field, chrono replay camera, shockwaves, perf modes; V1-only extras not yet ported: orbital trails, synapse lines, model constellation, thought swarm, intro dolly, click-shockwaves, DOF post. Bisection params: `?v2hide=`, `?v2yaw=`, `?v2post=off`, `?v2disp=`.
 
 ## Product priority (this cycle)
@@ -42,7 +44,7 @@ SyncScript dashboard and **Nexus** (App AI): voice + tools-backed UI (canvas, ta
 - **Regression fix (same day):** “Heavy” wrongly = `tools≥20` → **every** Claude agent turn flagged (always ~27 tools). Chain → deepseek 32k first; reserve math set **`attempt_timeout=0`** for every model while remaining budget ~90s → **blank SSE / empty HTTP 200**. Fix: heavy = **`msgs≥80` only**; fair-share probe budgets never starve current attempt; skip/no empty stream path emits error SSE. Verified: opus+27 tools → `message_start`+`OK`+`message_stop` via **glm-5.2**.
 
 <!-- cortex-gate:start -->
-**Last cortex gate (2026-11-19T16:10:46.338Z):** **PASS** · cortex-70 59/59 · coverage AVG **1.00** (GWT 1.00 · AST 1.00 · PP 1.00 · RPT 1.00 · HOT 1.00 · IIT 1.00) · git `8204aa9` · source: `npm run verify:cortex` · **not a consciousness score**
+**Last cortex gate (2026-11-20T06:39:24.531Z):** **PASS** · cortex-70 59/59 · coverage AVG **1.00** (GWT 1.00 · AST 1.00 · PP 1.00 · RPT 1.00 · HOT 1.00 · IIT 1.00) · git `6f2c21f` · source: `npm run verify:cortex` · **not a consciousness score**
 <!-- cortex-gate:end -->
 
 <!-- epistemic-gate:start -->
