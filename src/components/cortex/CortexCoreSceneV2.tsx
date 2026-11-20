@@ -94,7 +94,7 @@ const coreVert = /* glsl */ `
     vec4 wp = modelMatrix * vec4(displaced, 1.0);
     vWorld = wp.xyz;
     vec4 mv = viewMatrix * wp;
-    vNormal = normalize(mat3(modelMatrix) * n);
+    vNormal = normalize(normalMatrix * n);
     vView = -mv.xyz;
     gl_Position = projectionMatrix * mv;
   }
