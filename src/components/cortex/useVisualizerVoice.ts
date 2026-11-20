@@ -100,9 +100,9 @@ Available tools:
 - get_weather {location?: "City, ST" or "here", hours?: number} — real NWS forecast for US locations; returns data AND auto-docks weather panels. Use whenever the user asks about weather, temperature, or forecast.
 - fetch_url {url: "https://..."}
 - create_document {format: "md"|"html"|"pdf"|"docx"|"csv", title: "...", content: "..."}
-- emit_artifact {artifacts: [{kind, ...}]} — kinds: stat{title,value,unit?,spark?}, chart{title,chartType:line|bar|area|pie,series:[{name,points:[{x,y}]}]}, table{title,columns:[],rows:[]}, document{title,format:markdown|code,content}, feed{title,items:[{label,value}]}, map{title,summary?}, splat{title,splat:"<file>.spz|.ply|.ksplat",caption?} — splat renders a live 3D Gaussian-splat scene (files in /splats, e.g. butterfly.spz, cortex-core.ply). dashboard{title,tiles:[<stat|chart|feed|image|splat artifacts>]} — composite mission-control grid, ONE panel holding up to 6 tiles; use whenever the user wants a dashboard, overview, or multi-metric view. MANDATORY whenever the user asks to see, pin, dock, show, or display a panel/stat/chart/table/image/document/feed/splat — including "pin a panel that says X". The tool call is what creates the panel; saying "pinned" or "done" without calling it is a lie the user will see.
+- emit_artifact {artifacts: [{kind, ...}]} — kinds: stat{title,value,unit?,spark?}, chart{title,chartType:line|bar|area|pie,series:[{name,points:[{x,y}]}]}, table{title,columns:[],rows:[]}, document{title,format:markdown|code,content}, feed{title,items:[{label,value}]}, map{title,summary?}, splat{title,splat:"<file>.spz|.ply|.ksplat",caption?} — splat renders a live 3D Gaussian-splat scene (files in /splats, e.g. butterfly.spz, cortex-core.ply). dashboard{title,tiles:[<stat|chart|feed|image|splat artifacts>]} — composite mission-control grid, ONE panel holding up to 6 tiles; tiles are full artifact objects e.g. {kind:"stat",title:"Agents",value:"7"}, {kind:"chart",title:"Tokens",chartType:"area",series:[{name:"tok/s",points:[{x:"00",y:12},{x:"12",y:44}]}]}, {kind:"splat",title:"Scene",splat:"/splats/gen-galaxy-x.ply"} — splat tiles accept any /splats file INCLUDING one just returned by generate_splat. Use whenever the user wants a dashboard, overview, or multi-metric view — PREFER dashboard over emitting 2-3 separate artifacts when the request has multiple parts. MANDATORY whenever the user asks to see, pin, dock, show, or display a panel/stat/chart/table/image/document/feed/splat — including "pin a panel that says X". The tool call is what creates the panel; saying "pinned" or "done" without calling it is a lie the user will see.
 - generate_image {prompt, aspect?} — creates an image artifact card. Use when the user asks to generate/draw/create an image.
-- generate_splat {scene?, palette?, image?, seed?, count?, title?} — creates a NEW live 3D Gaussian-splat artifact. Procedural scenes: orb|butterfly|flower|helix|galaxy|ridge|flow with palettes aurora|ember|ocean|violet|mono|prism (instant, seed-reproducible). Photo mode: pass image (URL or /public path) to lift a photo into a splat via depth (first call downloads a ~100MB model, then ~4s). Use when the user asks for a splat, 3D scene, generative art, or immersive visual.
+- generate_splat {scene?, palette?, image?, seed?, count?, inSpace?, title?} — creates a NEW live 3D Gaussian-splat. Procedural scenes: orb|butterfly|flower|helix|galaxy|ridge|flow with palettes aurora|ember|ocean|violet|mono|prism (instant, seed-reproducible). Photo mode: pass image (URL or /public path) to lift a photo into a splat via depth (first call downloads a ~100MB model, then ~4s). DEFAULT renders a card artifact. Set inSpace:true when the user wants the splat IN the 3D space/scene itself (orbiting the core, no modal) — e.g. "spawn a galaxy in the space", "make a butterfly float in the scene". Use when the user asks for a splat, 3D scene, generative art, or immersive visual. COMPOSITION: when the user wants a dashboard/overview CONTAINING a new splat, call generate_splat FIRST, then emit_artifact kind:"dashboard" with the returned splatUrl in a splat tile — both calls in the same turn, generate_splat first.
 - read_file {path: "relative/or/absolute", startLine?, endLine?}
 - write_file {path: "...", content: "..."}
 - edit_file {path: "...", targetContent: "...", replacementContent: "..."}
@@ -784,6 +784,13 @@ async function execTool(tool: string, args: Record<string, any>, turnSignal?: Ab
         : AbortSignal.timeout(toolTimeoutMs),
     });
     const data = await res.json().catch(() => ({}));
+    // Scene-spawn side channel: generate_splat(inSpace:true) returns
+    // sceneSpawn instead of an artifact — place it as a live 3D object
+    // in the visualizer space, not a card.
+    const spawn = (data as any)?.sceneSpawn;
+    if (spawn && typeof spawn.url === 'string') {
+      window.dispatchEvent(new CustomEvent('cortex-spawn-splat', { detail: spawn }));
+    }
     const artifacts = extractArtifactsFromResult(data, tool);
     const r = (data as any)?.result ?? data;
     const s = r?.stdout ? String(r.stdout)

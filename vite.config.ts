@@ -671,7 +671,7 @@ const CORTEX_TOOLS = [
     type: 'function',
     function: {
       name: 'generate_splat',
-      description: 'Generate a NEW 3D Gaussian-splat scene and return it as a live splat artifact that renders in the UI. Two modes: (1) PROCEDURAL — params scene (orb|butterfly|flower|helix|galaxy|ridge|flow), palette (aurora|ember|ocean|violet|mono|prism), seed, count; instant, deterministic per seed, infinite variety. (2) PHOTO — pass image (https URL or /public path) to lift a single photo into a splat via monocular depth unprojection; first call downloads a ~100MB depth model then caches it. Use when the user asks to create/generate/make a splat, 3D scene, generative art, or an immersive visual. The returned artifact renders automatically — do not also call emit_artifact.',
+      description: 'Generate a NEW 3D Gaussian-splat scene and return it as a live splat artifact that renders in the UI. Two modes: (1) PROCEDURAL — params scene (orb|butterfly|flower|helix|galaxy|ridge|flow), palette (aurora|ember|ocean|violet|mono|prism), seed, count; instant, deterministic per seed, infinite variety. (2) PHOTO — pass image (https URL or /public path) to lift a single photo into a splat via monocular depth unprojection; first call downloads a ~100MB depth model then caches it. Use when the user asks to create/generate/make a splat, 3D scene, generative art, or an immersive visual. The returned artifact renders automatically. COMPOSITION: if the user wants the splat inside a dashboard or alongside other tiles, FIRST call this tool, THEN call emit_artifact with kind:"dashboard" and put the returned splat URL (artifact.splat / splatUrl) into a splat tile — you may do both in the same turn (this tool first).',
       parameters: {
         type: 'object',
         properties: {
@@ -680,6 +680,7 @@ const CORTEX_TOOLS = [
           image: { type: 'string', description: 'Image URL or /public path for photo→splat mode' },
           seed: { type: 'number', description: 'Random seed for reproducibility (default random)' },
           count: { type: 'number', description: 'Approximate splat count, 4000–200000 (default 60000)' },
+          inSpace: { type: 'boolean', description: 'When true, spawn the splat as a live 3D object inside the visualizer space (orbiting the core) instead of a card panel. Use when the user wants the splat IN the scene/space, not in a modal.' },
           title: { type: 'string', description: 'Display title for the artifact card' }
         }
       }
@@ -8610,8 +8611,19 @@ function triggerQuickAction() {
                       count: typeof args?.count === 'number' ? args.count : undefined,
                     });
                 const label = image ? 'photo splat' : `${result.scene} splat`;
+                // inSpace mode: no card — the client spawns this as a live
+                // 3D SplatMesh inside the visualizer scene itself.
+                if (args?.inSpace === true) {
+                  return res.end(JSON.stringify({
+                    ok: true, tool: 'generate_splat',
+                    sceneSpawn: { url: result.url, title: String(args?.title || '').trim() || `Generated ${label}`, scale: 1.4 },
+                    message: `Spawned ${result.splats.toLocaleString()}-splat ${label} into the visualizer space → ${result.url}`,
+                    durationMs: Date.now() - startMs,
+                  }));
+                }
                 return res.end(JSON.stringify({
                   ok: true, tool: 'generate_splat',
+                  splatUrl: result.url,
                   artifact: {
                     kind: 'splat',
                     title: String(args?.title || '').trim() || `Generated ${label}`,

@@ -1307,6 +1307,7 @@ export function CortexCoreSceneV2(props: CortexCoreSceneV2Props) {
         }}
       >
         <SignalTicker live={live} />
+        <SceneSplats />
         <V2Scene
           live={live}
           headParallax={props.headParallax}
@@ -1327,5 +1328,104 @@ export function CortexCoreSceneV2(props: CortexCoreSceneV2Props) {
 
 function SignalTicker({ live }: { live: React.MutableRefObject<LiveSignalV2> }) {
   useFrame((state, delta) => tickLiveForV2(live.current, delta, state.clock.elapsedTime));
+  return null;
+}
+
+// ── SceneSplats — generated splats as live 3D objects in the space ────────
+// Listens for `cortex-spawn-splat` events (dispatched by the tool pipeline
+// when generate_splat runs with inSpace:true). Each spawn becomes a
+// SparkRenderer/SplatMesh pair inside this R3F scene — rendered by the
+// same WebGL pass and post stack as the core, not trapped in a panel.
+// @sparkjsdev/spark is dynamically imported so it stays out of the main
+// chunk until the first scene splat is actually requested.
+interface SceneSplatItem { g: THREE.Group; spin: number; baseY: number; phase: number }
+
+function SceneSplats() {
+  const { gl, scene, invalidate } = useThree();
+  const host = useRef<THREE.Group | null>(null);
+  const items = useRef<SceneSplatItem[]>([]);
+  const sparkMod = useRef<{ SparkRenderer: any; SplatMesh: any } | null>(null);
+  const pending = useRef<{ url: string; scale?: number }[]>([]);
+
+  React.useEffect(() => {
+    const g = new THREE.Group();
+    scene.add(g);
+    host.current = g;
+    let cancelled = false;
+    let spark: any = null;
+
+    const flush = () => {
+      const mod = sparkMod.current;
+      if (!mod || !spark || cancelled) return;
+      while (pending.current.length) {
+        const p = pending.current.shift()!;
+        spawnMesh(mod, p.url, p.scale);
+      }
+    };
+
+    const spawnMesh = (mod: { SparkRenderer: any; SplatMesh: any }, url: string, scale?: number) => {
+      if (!host.current) return;
+      const holder = new THREE.Group();
+      // Golden-angle orbit slots around the core — each new splat claims
+      // the next slot so multiple scene splats never overlap.
+      const idx = items.current.length;
+      const ang = idx * 2.39996 + (url.length % 7) * 0.13;
+      const rad = 3.6 + (idx % 3) * 1.1;
+      const baseY = ((idx % 3) - 1) * 0.9 + Math.sin(idx * 2.1) * 0.4;
+      holder.position.set(Math.cos(ang) * rad, baseY, Math.sin(ang) * rad - 1.2);
+      const mesh = new mod.SplatMesh({ url });
+      holder.add(mesh);
+      host.current.add(holder);
+      console.log('[scene-splat] spawned', url);
+      const item: SceneSplatItem = { g: holder, spin: 0.06 + (idx % 4) * 0.03, baseY, phase: idx * 1.7 };
+      items.current.push(item);
+      mesh.initialized?.then(() => {
+        const bs = (mesh as any).geometry?.boundingSphere;
+        if (bs && bs.radius > 0.0001) {
+          holder.scale.setScalar(Math.min(2.2, Math.max(0.4, (scale ?? 1.4) / bs.radius)));
+        }
+      }).catch(() => {});
+      // Cap the scene at 4 spawned splats — oldest is released.
+      while (items.current.length > 4) {
+        const old = items.current.shift()!;
+        host.current.remove(old.g);
+      }
+      invalidate();
+    };
+
+    void (async () => {
+      const mod = await import('@sparkjsdev/spark');
+      if (cancelled) return;
+      sparkMod.current = mod as any;
+      spark = new mod.SparkRenderer({ renderer: gl, onDirty: () => invalidate() });
+      g.add(spark as any);
+      flush();
+    })().catch((e) => console.warn('[scene-splats] spark load failed', e));
+
+    const onSpawn = (e: Event) => {
+      const d = (e as CustomEvent).detail || {};
+      const url = String(d.url || '');
+      if (!/^\/splats\/[\w./-]+\.(ply|splat|spz|ksplat)$/i.test(url)) return;
+      const scale = Number.isFinite(Number(d.scale)) ? Number(d.scale) : undefined;
+      if (sparkMod.current && spark) spawnMesh(sparkMod.current, url, scale);
+      else pending.current.push({ url, scale });
+      if (pending.current.length > 4) pending.current.shift();
+    };
+    window.addEventListener('cortex-spawn-splat', onSpawn);
+    return () => {
+      cancelled = true;
+      window.removeEventListener('cortex-spawn-splat', onSpawn);
+      scene.remove(g);
+    };
+  }, [gl, scene, invalidate]);
+
+  useFrame((state) => {
+    const t = state.clock.elapsedTime;
+    for (const it of items.current) {
+      it.g.rotation.y += it.spin * 0.016;
+      it.g.position.y = it.baseY + Math.sin(t * 0.45 + it.phase) * 0.18;
+    }
+  });
+
   return null;
 }
