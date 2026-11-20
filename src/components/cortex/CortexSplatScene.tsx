@@ -186,11 +186,15 @@ function SparkStage({ url, onReady, onFail, onGust }: {
       flow.gust.value = gust;
       const cam = state.camera;
       pointerToSphere(pointer, cam, new THREE.Vector3(0, 0, 0), 1.5, mouseTarget.current);
-      const mk = 1 - Math.exp(-7 * dt);
+      const active = cursorActive.current && t - lastMoveAt.current < 6;
+      // Asymmetric easing: track the cursor tightly while active, but
+      // let the disturbance blob drift away slowly on idle — particles
+      // take seconds to relax home instead of snapping back.
+      const trackRate = active ? 6 : 1.1;
+      const mk = 1 - Math.exp(-trackRate * dt);
       (flow.mouse.value as THREE.Vector3).lerp(mouseTarget.current, mk);
-      const active = cursorActive.current && t - lastMoveAt.current < 4;
       const targetStrength = active ? 1 : 0;
-      const sk = 1 - Math.exp(-(active ? 9 : 2.2) * dt);
+      const sk = 1 - Math.exp(-(active ? 9 : 0.55) * dt);
       flow.strength.value += (targetStrength - flow.strength.value) * sk;
     }
 
