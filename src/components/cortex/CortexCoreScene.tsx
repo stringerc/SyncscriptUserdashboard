@@ -384,14 +384,22 @@ const coreFragment = /* glsl */ `
     // Brightness responds mostly to STATE; level drives displacement/bloom instead
     float energy = 0.5 + uEnergy * 0.55 + uLevel * 0.35;
 
-    // plasma bands flowing over the displaced surface — Φ quickens the flow
+    // plasma bands flowing over the displaced surface — Φ quickens the flow.
+    // Bands are locked to surface normals around a slowly-precessing axis,
+    // not world-Y: no permanent equator, the banding drifts around the sphere.
     float flow = 1.4 + uPhi * 1.5;
-    float bands = 0.5 + 0.5 * sin(vWorldPos.y * 7.0 + uTime * flow + vDisp * 18.0);
-    float bands2 = 0.5 + 0.5 * sin(vWorldPos.x * 5.0 - uTime * flow * 0.8 + vDisp * 12.0);
+    vec3 bandAxis = normalize(vec3(
+      sin(uTime * 0.11) * 0.9,
+      0.45 + 0.3 * sin(uTime * 0.07),
+      cos(uTime * 0.13) * 0.9
+    ));
+    vec3 bandAxis2 = normalize(vec3(bandAxis.z, bandAxis.x * 0.7 + 0.3, -bandAxis.y));
+    float bands = 0.5 + 0.5 * sin(dot(n, bandAxis) * 9.0 + uTime * flow + vDisp * 18.0);
+    float bands2 = 0.5 + 0.5 * sin(dot(n, bandAxis2) * 6.0 - uTime * flow * 0.8 + vDisp * 12.0);
     float centerGlow = pow(max(dot(n, viewDir), 0.0), 1.4);
     // crest highlight where displacement peaks; Φ adds a consciousness shimmer
     float crest = smoothstep(0.10, 0.42, vDisp);
-    float shimmer = 0.5 + 0.5 * sin(uTime * (2.0 + uPhi * 3.0) + vWorldPos.y * 9.0);
+    float shimmer = 0.5 + 0.5 * sin(uTime * (2.0 + uPhi * 3.0) + dot(n, bandAxis) * 9.0);
 
     vec3 col = uColorCore * (0.6 + centerGlow * 1.25);
     col += uColorHot * crest * (0.28 + uLevel * 0.3);
