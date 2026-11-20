@@ -112,6 +112,124 @@ function MurmurationField({ density = 1, className }: { density?: number; classN
   return <canvas ref={ref} className={className} style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', pointerEvents: 'none' }} aria-hidden="true" />;
 }
 
+// ── MurmurationGather — orbs swarm in and assemble the panel frame ───────
+// On mount, ~100 glowing motes spawn scattered (some beyond the edges),
+// seek their slot on the panel's perimeter ring with arrival damping and
+// perpendicular wander, shimmer in formation, then dissolve — the "modal
+// creates itself out of nothing" entrance. Self-terminating: the rAF loop
+// stops and the canvas goes transparent once the fade completes.
+export function MurmurationGather({ count = 96, duration = 1700 }: { count?: number; duration?: number }) {
+  const ref = useRef<HTMLCanvasElement>(null);
+  useEffect(() => {
+    const canvas = ref.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    const reduced = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+    let raf = 0;
+    let w = 0, h = 0;
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    const PAD = 7; // ring inset — sits inside the panel's padding channel
+
+    const resize = () => {
+      const r = canvas.getBoundingClientRect();
+      w = r.width; h = r.height;
+      canvas.width = Math.max(1, Math.round(w * dpr));
+      canvas.height = Math.max(1, Math.round(h * dpr));
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    };
+    resize();
+
+    // Ring targets: even spacing around the rectangle perimeter.
+    const ring: { x: number; y: number }[] = [];
+    const buildRing = () => {
+      ring.length = 0;
+      const x0 = PAD, y0 = PAD, x1 = w - PAD, y1 = h - PAD;
+      if (x1 <= x0 || y1 <= y0) return;
+      const top = x1 - x0, side = y1 - y0;
+      const per = 2 * top + 2 * side;
+      const n = Math.max(24, Math.min(count * 2, Math.round(per / 9)));
+      for (let i = 0; i < n; i++) {
+        let d = (i / n) * per;
+        let x: number, y: number;
+        if (d < top) { x = x0 + d; y = y0; }
+        else if ((d -= top) < side) { x = x1; y = y0 + d; }
+        else if ((d -= side) < top) { x = x1 - d; y = y1; }
+        else { d -= top; x = x0; y = y1 - d; }
+        ring.push({ x: x + (Math.random() - 0.5) * 3, y: y + (Math.random() - 0.5) * 3 });
+      }
+    };
+    buildRing();
+    const ro = new ResizeObserver(() => { resize(); buildRing(); });
+    ro.observe(canvas);
+
+    const palette = [187, 318, 45, 265, 200];
+    const parts = Array.from({ length: count }, (_, i) => {
+      const edge = Math.random() < 0.55;
+      return {
+        x: edge ? (Math.random() < 0.5 ? -8 - Math.random() * w * 0.15 : w + 8 + Math.random() * w * 0.15) : Math.random() * w,
+        y: edge ? Math.random() * h : Math.random() * h,
+        vx: 0, vy: 0,
+        tx: ring.length ? ring[i % ring.length].x : w / 2,
+        ty: ring.length ? ring[i % ring.length].y : h / 2,
+        hue: palette[i % palette.length],
+        r: 1.1 + Math.random() * 1.6,
+        phase: Math.random() * Math.PI * 2,
+        delay: Math.random() * 260, // staggered launch
+      };
+    });
+
+    if (reduced) {
+      ctx.clearRect(0, 0, w, h);
+      for (const p of parts) {
+        ctx.beginPath();
+        ctx.arc(p.tx, p.ty, p.r, 0, 6.2832);
+        ctx.fillStyle = `hsla(${p.hue}, 95%, 75%, 0.5)`;
+        ctx.fill();
+      }
+      ro.disconnect();
+      return () => ro.disconnect();
+    }
+
+    const start = performance.now();
+    const FADE = 420;
+    const tick = (now: number) => {
+      const t = now - start;
+      const globalAlpha = t < duration - FADE ? 1 : Math.max(0, (duration - t) / FADE);
+      if (globalAlpha <= 0) { ro.disconnect(); return; }
+      ctx.clearRect(0, 0, w, h);
+      for (const p of parts) {
+        const lt = t - p.delay;
+        if (lt < 0) continue; // not launched yet
+        const dx = p.tx - p.x, dy = p.ty - p.y;
+        const dist = Math.hypot(dx, dy) || 1;
+        const speed = Math.min(3.4, dist * 0.006 + 0.15);
+        // Perpendicular wander keeps the flock alive, not robotic.
+        const wob = Math.sin(lt * 0.004 + p.phase) * 0.35;
+        const nx = dx / dist, ny = dy / dist;
+        p.vx += (nx * speed - ny * wob - p.vx) * 0.09;
+        p.vy += (ny * speed + nx * wob - p.vy) * 0.09;
+        p.x += p.vx; p.y += p.vy;
+        const shimmer = 0.55 + 0.45 * Math.sin(lt * 0.012 + p.phase);
+        const a = Math.min(1, lt / 300) * globalAlpha * shimmer;
+        // Two-pass dot: soft halo + bright core.
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, p.r * 3.2, 0, 6.2832);
+        ctx.fillStyle = `hsla(${p.hue}, 95%, 70%, ${a * 0.12})`;
+        ctx.fill();
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, p.r, 0, 6.2832);
+        ctx.fillStyle = `hsla(${p.hue}, 95%, 78%, ${a * 0.9})`;
+        ctx.fill();
+      }
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => { cancelAnimationFrame(raf); ro.disconnect(); };
+  }, [count, duration]);
+  return <canvas ref={ref} style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', pointerEvents: 'none', zIndex: 2 }} aria-hidden="true" />;
+}
+
 interface TelemetrySample { state: string; level: number; text: string; ts: number }
 let telemetryCache: TelemetrySample | null = null;
 const telemetrySubs = new Set<(t: TelemetrySample) => void>();
@@ -220,6 +338,8 @@ export function ArtifactShell({
       <CornerTicks />
       {/* Starling murmuration — ambient flock drifting behind the panel. */}
       <MurmurationField density={compact ? 0.45 : 0.8} />
+      {/* Entrance: orbs swarm in and assemble the panel frame, then dissolve. */}
+      <MurmurationGather count={compact ? 64 : 96} />
       <div style={{ position: 'relative', zIndex: 1 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
         {live && (
@@ -1196,7 +1316,12 @@ export function ArtifactRenderer({
   bare?: boolean;
 }) {
   const shell = (title: string, children: React.ReactNode) => (
-    bare ? <div style={{ width: '100%' }}>{children}</div> : (
+    bare ? (
+      <div style={{ position: 'relative', width: '100%' }}>
+        <MurmurationGather />
+        {children}
+      </div>
+    ) : (
       <ArtifactShell
         title={title}
         source={artifact.source}
