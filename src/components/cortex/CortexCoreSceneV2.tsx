@@ -1342,7 +1342,7 @@ function SignalTicker({ live }: { live: React.MutableRefObject<LiveSignalV2> }) 
 // same WebGL pass and post stack as the core, not trapped in a panel.
 // @sparkjsdev/spark is dynamically imported so it stays out of the main
 // chunk until the first scene splat is actually requested.
-interface SceneSplatItem { g: THREE.Group; fit: THREE.Group; mat: MaterializeRig; spin: number; baseY: number; phase: number }
+interface SceneSplatItem { g: THREE.Group; fit: THREE.Group; mat: MaterializeRig; spin: number; baseY: number; phase: number; vel: THREE.Vector3 }
 
 function SceneSplats() {
   const { gl, scene, invalidate, camera } = useThree();
@@ -1387,7 +1387,14 @@ function SceneSplats() {
       mat.rig.add(holder);
       host.current.add(mat.rig);
       console.log('[scene-splat] spawned', url);
-      const item: SceneSplatItem = { g: mat.rig, fit: holder, mat, spin: 0.06 + (idx % 4) * 0.03, baseY, phase: idx * 1.7 };
+      // Free drift — the orbit slot is only the entry point; the splat
+      // then wanders the space under its own slow momentum.
+      const vel = new THREE.Vector3(
+        (Math.random() - 0.5) * 0.24,
+        (Math.random() - 0.5) * 0.12,
+        (Math.random() - 0.5) * 0.24,
+      );
+      const item: SceneSplatItem = { g: mat.rig, fit: holder, mat, spin: 0.06 + (idx % 4) * 0.03, baseY, phase: idx * 1.7, vel };
       items.current.push(item);
       mesh.initialized?.then(() => {
         const bs = (mesh as any).geometry?.boundingSphere;
@@ -1440,7 +1447,19 @@ function SceneSplats() {
     for (const it of items.current) {
       tickMaterialize(it.mat, delta);
       it.g.rotation.y += it.spin * 0.016;
-      it.g.position.y = it.baseY + Math.sin(t * 0.45 + it.phase) * 0.18;
+      // Drift: integrate velocity, soft-bounce inside the habitat sphere
+      // (radius ~7 around the core) so splats never escape or overlap core.
+      it.g.position.addScaledVector(it.vel, delta);
+      const r = it.g.position.length();
+      if (r > 7) {
+        it.g.position.multiplyScalar(7 / r);
+        it.vel.multiplyScalar(-0.6);
+      } else if (r < 1.5 && r > 0.001) {
+        it.g.position.multiplyScalar(1.5 / r);
+        it.vel.multiplyScalar(-0.6);
+      }
+      // Bob lives on the inner holder so it layers over drift, not replaces it.
+      it.fit.position.y = Math.sin(t * 0.45 + it.phase) * 0.18;
       v.setFromMatrixPosition(it.g.matrixWorld).project(camera);
       dbg.push({
         x: +v.x.toFixed(3), y: +v.y.toFixed(3), z: +v.z.toFixed(3),

@@ -204,7 +204,7 @@ function buildDeck(a: DashboardArtifact): { group: THREE.Group; splatUrl?: strin
 }
 
 // ── Component ────────────────────────────────────────────────────────────
-interface DeckItem { deck: THREE.Group; mat: MaterializeRig; phase: number; baseY: number }
+interface DeckItem { deck: THREE.Group; mat: MaterializeRig; phase: number; baseY: number; vel: THREE.Vector3 }
 
 export function CortexHoloDeck() {
   const { gl, scene, invalidate, camera } = useThree();
@@ -235,7 +235,13 @@ export function CortexHoloDeck() {
       mat.rig.position.set(Math.cos(ang) * rad, baseY, Math.sin(ang) * rad - 2.2);
       mat.rig.add(group);
       host.current.add(mat.rig);
-      items.current.push({ deck: group, mat, phase: idx * 2.1, baseY });
+      // Free drift — orbit slot is the entry point; the deck then wanders.
+      const vel = new THREE.Vector3(
+        (Math.random() - 0.5) * 0.16,
+        (Math.random() - 0.5) * 0.08,
+        (Math.random() - 0.5) * 0.16,
+      );
+      items.current.push({ deck: group, mat, phase: idx * 2.1, baseY, vel });
       while (items.current.length > MAX_DECKS) {
         const old = items.current.shift()!;
         host.current.remove(old.mat.rig);
@@ -298,7 +304,19 @@ export function CortexHoloDeck() {
     const dbg: any[] = [];
     for (const it of items.current) {
       tickMaterialize(it.mat, delta);
-      it.mat.rig.position.y = it.baseY + Math.sin(t * 0.4 + it.phase) * 0.12;
+      // Drift through the habitat sphere; soft walls keep decks clear of
+      // the core and inside the orbit space.
+      it.mat.rig.position.addScaledVector(it.vel, delta);
+      const r = it.mat.rig.position.length();
+      if (r > 8) {
+        it.mat.rig.position.multiplyScalar(8 / r);
+        it.vel.multiplyScalar(-0.6);
+      } else if (r < 2.4 && r > 0.001) {
+        it.mat.rig.position.multiplyScalar(2.4 / r);
+        it.vel.multiplyScalar(-0.6);
+      }
+      // Bob on the inner deck so it layers over drift.
+      it.deck.position.y = Math.sin(t * 0.4 + it.phase) * 0.12;
       // Yaw-only billboard — the deck face tracks the CAMERA on the
       // horizon plane so text stays readable from any orbit angle
       // (a core-facing lookAt showed users the mirrored back face).
