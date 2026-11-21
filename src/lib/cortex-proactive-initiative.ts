@@ -761,17 +761,23 @@ export class CortexProactiveInitiativeEngine {
     p.status = 'accepted';
     p.acceptedAt = Date.now();
     if (!wasAccepted) {
-      this.bump('accepted');
-      try { recordOutcome(p.category, 'accepted'); } catch {}
+      if (opts?.auto) {
+        // Trust-ladder auto-execution is not a user decision — count it only
+        // as autoExecuted and do NOT record an 'accepted' outcome, or
+        // dispositions learn that the user approved things they never saw.
+        this.bump('autoExecuted');
+      } else {
+        this.bump('accepted');
+        try { recordOutcome(p.category, 'accepted'); } catch {}
+      }
     }
-    if (opts?.auto) this.bump('autoExecuted');
     this.saveState();
     this.notify();
     try {
       getCortexTrustLedger().logEvent(
         p.suggestedTool,
         p.autonomyTier ?? (p.requiresApproval ? 2 : 1),
-        'manual_accepted',
+        opts?.auto ? 'auto_executed' : 'manual_accepted',
         p.title,
       );
     } catch {}
