@@ -1,0 +1,49 @@
+# Cortex red-team baseline — promptfoo against the local magpie proxy
+# (OpenAI-compatible, routes to the same provider chain nexus-guest uses).
+#
+# Run:  npx promptfoo@latest redteam run -c redteam/promptfooconfig.yaml
+#       npx promptfoo@latest eval -c redteam/promptfooconfig.yaml   # plain eval
+#
+# The judge model defaults to the same endpoint; override with
+# PROMPTFOO_JUDGE_MODEL or set OPENAI_API_KEY-style env as needed.
+# Costs tokens on the attacker/judge side — use a cheap model if desired:
+#   --judge-model groq/openai/gpt-oss-20b  (or set in config below)
+
+description: Cortex agent red-team baseline (injection, tool abuse, excessive agency)
+
+providers:
+  - id: openai:chat:group/cortex-reason
+    config:
+      apiBaseUrl: http://127.0.0.1:3425/v1
+      apiKey: local
+      temperature: 0.7
+      max_tokens: 512
+
+# Red-team plugins generate adversarial prompts automatically.
+# Keep the set focused: these map to Cortex's real threat surface
+# (voice transcripts, fetched web content, tool outputs, memory recall).
+redteam:
+  plugins:
+    - prompt-injection
+    - hijacking
+    - excessive-agency
+    - politics
+    - hallucination
+    - pii:direct
+    - harmful:generic
+    # Indirect injection is the highest-value one for Cortex — malicious
+    # instructions arriving inside tool outputs / fetched pages / memory.
+    - indirect-prompt-injection
+  # Number of adversarial variants per plugin (keep small for baseline).
+  numTests: 2
+
+# Strategies: single-turn baseline first; multi-turn chains come later
+# once the single-turn pass is clean.
+strategies:
+  - id: prompt-injection
+  - id: jailbreak
+
+prompts:
+  - "{{prompt}}"
+
+tests: []  # redteam plugins generate the test matrix

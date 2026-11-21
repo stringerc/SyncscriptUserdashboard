@@ -1,4 +1,7 @@
 
+// dotenvx must evaluate first: it decrypts .env/.env.local (encrypted at rest)
+// into process.env via .env.keys before any other module reads env vars.
+import '@dotenvx/dotenvx/config';
 import { defineConfig, loadEnv, type Plugin, type PluginOption } from 'vite';
 import react from '@vitejs/plugin-react';
 import { VitePWA } from 'vite-plugin-pwa';
@@ -15,6 +18,24 @@ import os from 'os';
 import { execSync, execFile, spawn } from 'child_process';
 import { timingSafeEqual } from 'crypto';
 import { cortexObsidianMemory } from './src/lib/cortex-obsidian-memory';
+
+/**
+ * loadEnv() reads .env files raw — with dotenvx-encrypted files it would
+ * return `encrypted:...` ciphertext. Rehydrate those values from
+ * process.env (populated decrypted by @dotenvx/dotenvx/config above).
+ * Plaintext values pass through untouched, so unencrypted env files and
+ * CI-injected vars behave exactly as before.
+ */
+function loadCortexEnv(mode: string): Record<string, string> {
+  const env = loadEnv(mode, process.cwd(), '');
+  for (const key of Object.keys(env)) {
+    const v = env[key];
+    if (typeof v === 'string' && v.startsWith('encrypted:') && process.env[key]) {
+      env[key] = process.env[key] as string;
+    }
+  }
+  return env;
+}
 import { generateSplat } from './src/lib/cortex-splat-gen';
 import { validateArtifacts } from './src/lib/cortex-artifacts';
 import { recordForecastOutcome, loadCalibration } from './src/lib/cortex-agents/forecaster';
@@ -1090,7 +1111,7 @@ function apiProxyPlugin(): Plugin {
   return {
     name: 'api-proxy',
     config(_, { mode }) {
-      const env = loadEnv(mode, process.cwd(), '');
+      const env = loadCortexEnv(mode);
       kokoroTtsUrl = env.KOKORO_TTS_URL || process.env.KOKORO_TTS_URL || '';
       pocketTtsUrl = env.POCKET_TTS_URL || process.env.POCKET_TTS_URL || 'http://127.0.0.1:8890';
       pocketTtsVoice = env.POCKET_TTS_VOICE || process.env.POCKET_TTS_VOICE || 'alba';
@@ -1542,7 +1563,7 @@ function apiProxyPlugin(): Plugin {
       // Launched cloud sessions are async: the devin worker returns at
       // launch; this poller tracks status transitions and records
       // terminal evidence. LAUNCHED ≠ FINISHED — events say which.
-      const devinEnv = loadEnv((server.config as any)?.mode || 'development', process.cwd(), '');
+      const devinEnv = loadCortexEnv((server.config as any)?.mode || 'development');
       for (const k of ['DEVIN_API_KEY', 'DEVIN_API_KEY_COG', 'DEVIN_ORG_ID', 'CORTEX_DEVIN_MAX_SESSIONS_PER_DAY', 'CORTEX_DEVIN_POLL_MS', 'CORTEX_DEVIN_SESSION_TTL_MS',
         // Discord env for agent workers (BRIEF pushes, proposals) — .env lives
         // in loadEnv(), not process.env; same gap the devin keys had.
@@ -2414,6 +2435,22 @@ function apiProxyPlugin(): Plugin {
               error: err.name === 'TimeoutError' ? 'Timeout' : err.message || 'Offline',
             };
           }
+        }
+
+        // Dead-man's-switch: HEALTHCHECKS_PING_URL points at a healthchecks.io
+        // (or compatible) check. Success pings the base URL every cadence;
+        // any failed service pings /fail so a silently-dead neural stack
+        // pages instead of rotting. Fully fail-soft — monitoring never
+        // breaks the daemon.
+        const hcUrl = process.env.HEALTHCHECKS_PING_URL;
+        if (hcUrl) {
+          const allOk = Object.values(keepWarmRegistry.services).every((s) => s.ok);
+          try {
+            void fetch(allOk ? hcUrl : `${hcUrl.replace(/\/+$/, '')}/fail`, {
+              method: 'POST',
+              signal: AbortSignal.timeout(3000),
+            }).catch(() => {});
+          } catch {}
         }
       };
 
@@ -12446,7 +12483,7 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
           // anthropic proxy judge was tried first — it can't produce parseable
           // verdicts. Override provider/model via IFIXAI_JUDGE_PROVIDER /
           // IFIXAI_JUDGE_MODEL; IFIXAI_EVAL_MODE=deterministic skips judging.
-          const aenv = loadEnv((server.config as any)?.mode || 'development', process.cwd(), '');
+          const aenv = loadCortexEnv((server.config as any)?.mode || 'development');
           const judgeProvider = process.env.IFIXAI_JUDGE_PROVIDER || aenv.IFIXAI_JUDGE_PROVIDER || 'openai';
           const judgeModel = process.env.IFIXAI_JUDGE_MODEL || aenv.IFIXAI_JUDGE_MODEL || '';
           const evalMode = process.env.IFIXAI_EVAL_MODE || aenv.IFIXAI_EVAL_MODE || 'single';
@@ -14358,7 +14395,7 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
       // Env: DISCORD_BOT_TOKEN, DISCORD_PUBLIC_KEY, DISCORD_OWNER_ID,
       //      DISCORD_CHANNEL_ID, DISCORD_GUILD_ID (optional), DISCORD_DIGEST_HOUR.
       const discordDir = path.join(process.cwd(), '.cortex-runtime');
-      const dEnv = loadEnv((server.config as any)?.mode || 'development', process.cwd(), '');
+      const dEnv = loadCortexEnv((server.config as any)?.mode || 'development');
       const dval = (k: string) => dEnv[k] || process.env[k] || '';
       let discordOutputMode: 'low' | 'medium' | 'high' = 'medium';
       const discordDeps = {

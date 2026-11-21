@@ -308,3 +308,7 @@ storefront/distribution-dashboard.html
 
 # Runtime-generated splat scenes (regenerated on demand by generate_splat)
 public/splats/gen-*.ply
+
+# dotenvx private keys — NEVER commit
+.env.keys
+.env.*.keys
