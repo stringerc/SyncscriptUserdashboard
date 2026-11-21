@@ -15,6 +15,7 @@
 import { persistentStore } from './persistent-store';
 import { getCortexMetacognitionCalibration } from './cortex-metacognition-calibration';
 import { getCortexTrustLedger } from './cortex-trust-ledger';
+import { getAdjustment, recordOutcome } from './cortex-dispositions';
 
 // ── Types ──────────────────────────────────────────────────────────
 
@@ -653,6 +654,7 @@ export class CortexProactiveInitiativeEngine {
     p.dismissed = true;
     p.status = 'dismissed';
     this.bump('dismissed');
+    try { recordOutcome(p.category, 'dismissed'); } catch {}
     this.saveState();
     this.notify();
     return true;
@@ -664,6 +666,7 @@ export class CortexProactiveInitiativeEngine {
     p.status = 'snoozed';
     p.snoozedUntil = untilMs;
     this.bump('snoozed');
+    try { recordOutcome(p.category, 'snoozed'); } catch {}
     this.saveState();
     this.notify();
     return true;
@@ -708,8 +711,30 @@ export class CortexProactiveInitiativeEngine {
     this.bump('proposed');
     this.bump('admitted');
 
+    // Learned dispositions — consolidation-altered behavior: categories the
+    // user keeps rejecting get softened/deprioritized, proven ones get slack.
+    let adjustedInput = input;
+    try {
+      const adj = getAdjustment(input.category);
+      if (adj) {
+        const urgRank = { high: 3, medium: 2, low: 1 } as const;
+        if (adj.urgency && urgRank[adj.urgency] < urgRank[input.urgency ?? 'medium']) {
+          adjustedInput = { ...adjustedInput, urgency: adj.urgency };
+        }
+        if (adj.tier !== undefined && adj.tier > tierFor(input)) {
+          adjustedInput = { ...adjustedInput, autonomyTier: adj.tier, requiresApproval: true };
+        }
+        // Strong negative evidence + low confidence → suppress outright
+        if (adj.suppressBias >= 0.7 && (input.epistemicConfidence ?? 0) < 0.8) {
+          this.bump('proposed');
+          this.bump('suppressedDedupe');
+          return null;
+        }
+      }
+    } catch {}
+
     const proposal: ProactiveProposal = {
-      ...input,
+      ...adjustedInput,
       id: input.id || `init-ext-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
       createdAt: Date.now(),
       autonomyTier: tierFor(input),
@@ -735,7 +760,10 @@ export class CortexProactiveInitiativeEngine {
     const wasAccepted = p.status === 'accepted';
     p.status = 'accepted';
     p.acceptedAt = Date.now();
-    if (!wasAccepted) this.bump('accepted');
+    if (!wasAccepted) {
+      this.bump('accepted');
+      try { recordOutcome(p.category, 'accepted'); } catch {}
+    }
     if (opts?.auto) this.bump('autoExecuted');
     this.saveState();
     this.notify();
@@ -760,6 +788,7 @@ export class CortexProactiveInitiativeEngine {
     if (!p) return;
     p.status = result.ok ? 'executed' : 'failed';
     p.executionResult = { ok: result.ok, summary: result.summary.slice(0, 300), at: Date.now() };
+    try { recordOutcome(p.category, result.ok ? 'executed' : 'failed'); } catch {}
     try {
       getCortexTrustLedger().recordExecution(
         p.suggestedTool,

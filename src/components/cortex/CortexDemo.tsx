@@ -91,6 +91,8 @@ import { getIntegratedInformation, type PhiResult } from '../../lib/integrated-i
 import { cortexProactiveVoice } from '../../lib/cortex-proactive-voice';
 import { getCortexProactiveInitiative } from '../../lib/cortex-proactive-initiative';
 import { startMemorySurfacing } from '../../lib/cortex-memory-surfacing';
+import { startSelfConcerns } from '../../lib/cortex-self-concerns';
+import { runDreamConsolidation, getLastDreamRun } from '../../lib/cortex-dream-engine';
 import { recordUserActivity, getVoicePolicy } from '../../lib/cortex-voice-policy';
 import { getWakeWordGate } from '../../lib/cortex-wake-word';
 
@@ -1363,6 +1365,21 @@ export default function CortexDemo() {
     // Memory surfacing fusion — temporal memory × somatic strain × restraint
     const stopMemorySurfacing = startMemorySurfacing();
 
+    // Self-concern engine — trend-aware proposals from ongoing trajectories
+    const stopSelfConcerns = startSelfConcerns();
+
+    // Dream consolidation scheduler — runs when >20h since last cycle,
+    // checks hourly. Real consolidation mutating dispositions, not a stub.
+    const dreamTick = async () => {
+      try {
+        const last = getLastDreamRun();
+        if (last?.at && Date.now() - last.at < 20 * 3600_000) return;
+        await runDreamConsolidation('deep');
+      } catch {}
+    };
+    const dreamBoot = setTimeout(dreamTick, 180_000);
+    const dreamInterval = setInterval(dreamTick, 3600_000);
+
     // Boot-up episodic continuity load
     fetch('/api/cortex/tools/execute', {
       method: 'POST',
@@ -1419,6 +1436,9 @@ export default function CortexDemo() {
       clearInterval(phiInterval);
       clearInterval(proactiveInterval);
       stopMemorySurfacing();
+      stopSelfConcerns();
+      clearTimeout(dreamBoot);
+      clearInterval(dreamInterval);
       cortexProactiveVoice.stop();
       // Cortex Persistence: final save on unmount (consciousness sleeps)
       stopCortexPersistence();

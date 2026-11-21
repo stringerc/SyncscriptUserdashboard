@@ -8817,20 +8817,55 @@ function triggerQuickAction() {
               const reportFileName = `dream-report-${timestampStr}.md`;
               const reportFilePath = path.join(dreamDir, reportFileName);
 
+              // Real consolidation inputs — server-readable state only.
+              // Client-side disposition consolidation runs in the browser
+              // engine (cortex-dream-engine.ts); this report covers the
+              // infrastructure layer honestly.
+              let resonanceStats = 'observer offline';
+              try {
+                const histPath = path.join(workspaceRoot, '.cortex-runtime', 'resonance', 'history.jsonl');
+                const lines = (await fs.readFile(histPath, 'utf-8')).trim().split('\n').filter(Boolean);
+                const recent = lines.slice(-100).map(l => { try { return JSON.parse(l); } catch { return null; } }).filter(Boolean);
+                if (recent.length) {
+                  const rs = recent.map((r: any) => r.R).filter((x: any) => typeof x === 'number');
+                  const tails = recent.map((r: any) => r.tail).filter((x: any) => typeof x === 'number');
+                  resonanceStats = `${recent.length} cycles observed | mean R=${(rs.reduce((a: number, b: number) => a + b, 0) / rs.length).toFixed(3)} | mean tailHealth=${tails.length ? (tails.reduce((a: number, b: number) => a + b, 0) / tails.length).toFixed(3) : 'warming'}`;
+                }
+              } catch {}
+              let recTransitions = 0;
+              try {
+                const recPath = path.join(workspaceRoot, '.cortex-runtime', 'resonance', 'recommendations.jsonl');
+                recTransitions = (await fs.readFile(recPath, 'utf-8')).trim().split('\n').filter(Boolean).length;
+              } catch {}
+              let vaultNotes = 0;
+              try {
+                const vaultDir = process.env.OBSIDIAN_VAULT_PATH || path.join(os.homedir(), '.cortex', 'vault');
+                const walk = async (d: string): Promise<number> => {
+                  let n = 0;
+                  for (const e of await fs.readdir(d, { withFileTypes: true })) {
+                    if (e.isDirectory()) n += await walk(path.join(d, e.name));
+                    else if (e.name.endsWith('.md')) n++;
+                  }
+                  return n;
+                };
+                vaultNotes = await walk(vaultDir);
+              } catch {}
+
               const dreamReport = `# Cortex Circadian Dream Consolidation
 **Timestamp:** ${now.toLocaleString()}
 **Depth:** ${depth}
-**Cognitive State:** Epistemic Homeostasis Established
 
-## 1. Consolidated Epistemic Highlights
-- **Polymorphic Canvas Integration:** Spreadsheets, Markdown Document Studios, Sandbox Web Apps, and Code motions verified in active memory.
-- **Sensorimotor Host Agency:** Hardware telemetry, Darwin clipboard integration, tab deduplication, and workspace ripgrep routines reconciled.
-- **Metacognitive Equilibrium:** Zero error drift detected. Causal graph weights normalized.
+## 1. Infrastructure Layer (server-observed)
+- **Resonance fleet:** ${resonanceStats}
+- **Shadow recommendation transitions logged:** ${recTransitions}
+- **Vault notes on disk:** ${vaultNotes}
 
-## 2. Morning Briefing & Focus Trajectory
-- System allostasis: Optimal.
-- Scratch assets pruned and durable anchors verified against MEMORY.md.
-- Ready for high-velocity human-AI co-creation.
+## 2. Behavioral Layer
+Disposition consolidation (learned urgency/tier adjustments from proposal outcomes) runs in the client engine — see cortex-dream-engine.ts. This server report covers only what the host can verify directly; it does not claim cognitive states it cannot measure.
+
+## 3. Honest Gaps
+- Episodic/procedural consolidation happens client-side; this report does not duplicate it.
+- No claims of "error drift" or "synaptic downscaling" — those metrics are not instrumented.
 `;
               await fs.writeFile(reportFilePath, dreamReport, 'utf-8');
 
@@ -8840,9 +8875,7 @@ function triggerQuickAction() {
                 tool: 'cortex_dream_consolidate',
                 depth,
                 report_path: `.cache/dream-consolidation/${reportFileName}`,
-                summary: `Completed ${depth} dream consolidation cycle. Epistemic memory synchronized into ${reportFileName}.`,
-                sleepOutcome: 'synaptic_downscaling_complete',
-                downscaledRatio: 0.18,
+                summary: `Completed ${depth} infrastructure consolidation. Report: ${reportFileName}. Behavioral disposition consolidation runs client-side.`,
                 durationMs: Date.now() - startMs
               }));
             }
