@@ -12969,6 +12969,7 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
                   id: String(r?.id ?? ''), name: String(r?.name ?? r?.title ?? '').slice(0, 120),
                   type: r?.type ? String(r.type).slice(0, 40) : undefined,
                 })).filter((r: any) => r.id || r.name) : undefined,
+                ventureId: t?.ventureId || t?.input?.ventureId || undefined,
               }))
               .filter((t: any) => t.id && t.title);
             fsSync.mkdirSync(path.dirname(file), { recursive: true });

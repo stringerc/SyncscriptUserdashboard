@@ -190,6 +190,7 @@ export function TasksProvider({ children }: TasksProviderProps) {
                 priority: t.priority, dueDate: t.dueDate, createdAt: t.createdAt, completedAt: t.completedAt,
                 description: t.description, category: t.category, progress: t.progress,
                 milestones: t.milestones, subtasks: t.subtasks, resources: t.resources,
+                ventureId: t.ventureId || t.input?.ventureId,
               })),
             }),
           }).catch(() => { /* mirror is best-effort */ });

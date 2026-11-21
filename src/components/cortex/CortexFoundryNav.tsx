@@ -393,7 +393,7 @@ export function CortexFoundryNav({ snap, onSelectAgent, selectedAgent, onOpenTow
         .then((d) => { if (Array.isArray(d?.campaigns)) setCampaignsData(d.campaigns); })
         .catch(() => {});
     }
-    if (view === 'goals') {
+    if (view === 'goals' || view === 'ventures') {
       goalsUnsub.current?.();
       goalsUnsub.current = goals.subscribe(() => setGoalsTick((t) => t + 1));
       setGoalsTick((t) => t + 1);
@@ -456,7 +456,7 @@ export function CortexFoundryNav({ snap, onSelectAgent, selectedAgent, onOpenTow
   // snapshot is pushed by TasksContext; Foundry just reads it. Calendar needs
   // it too so due-dated tasks render as scheduled items.
   useEffect(() => {
-    if (view !== 'tasks' && view !== 'calendar') return;
+    if (view !== 'tasks' && view !== 'calendar' && view !== 'ventures') return;
     const load = () => {
       fetch('/api/cortex/tasks/snapshot', { cache: 'no-store' })
         .then((r) => r.json())
@@ -2702,6 +2702,35 @@ export function CortexFoundryNav({ snap, onSelectAgent, selectedAgent, onOpenTow
                   ← ALL VENTURES
                 </button>
               </div>
+              {/* Embedded live panes — this venture's tasks & goals, no navigation */}
+              {(() => {
+                const vcTasks = (userTasks || []).filter((t: any) => String(t.ventureId || t.input?.ventureId || 'cortex') === vc.id);
+                const vcOpen = vcTasks.filter((t: any) => !t.completed);
+                const vcGoals = goals.list().filter((g: any) => String((g as any).ventureId || 'cortex') === vc.id);
+                if (!vcOpen.length && !vcGoals.length) return null;
+                return (
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 6 }}>
+                    <div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 8, fontWeight: 800, letterSpacing: '0.2em', color: '#fcd34d', borderBottom: '1px solid rgba(251,191,36,0.2)', paddingBottom: 2, marginBottom: 3 }}>
+                        <span>TASKS · {vcOpen.length} OPEN</span>
+                        <button onClick={() => openVentureView(vc.id, 'tasks')} style={{ background: 'none', border: 'none', color: '#7dd3fc', fontFamily: MONO, fontSize: 8, cursor: 'pointer' }}>OPEN FULL ▸</button>
+                      </div>
+                      {userTasks === null && <div style={{ fontSize: 9, color: DIM, padding: '4px 0' }}>LOADING…</div>}
+                      {vcOpen.slice(0, 6).map((t: any) => <CortexFoundryTaskCard key={t.id} task={t} />)}
+                      {vcOpen.length > 6 && <div style={{ fontSize: 8, color: DIM, padding: '2px 0' }}>+{vcOpen.length - 6} more</div>}
+                      {userTasks !== null && !vcOpen.length && <div style={{ fontSize: 9, color: DIM, padding: '4px 0' }}>NO OPEN TASKS</div>}
+                    </div>
+                    <div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 8, fontWeight: 800, letterSpacing: '0.2em', color: '#7dd3fc', borderBottom: '1px solid rgba(56,189,248,0.2)', paddingBottom: 2, marginBottom: 3 }}>
+                        <span>GOALS · {vcGoals.length}</span>
+                        <button onClick={() => openVentureView(vc.id, 'goals')} style={{ background: 'none', border: 'none', color: '#7dd3fc', fontFamily: MONO, fontSize: 8, cursor: 'pointer' }}>OPEN FULL ▸</button>
+                      </div>
+                      {vcGoals.slice(0, 4).map((g: any) => <CortexFoundryGoalCard key={g.id} goal={g} />)}
+                      {!vcGoals.length && <div style={{ fontSize: 9, color: DIM, padding: '4px 0' }}>NO GOALS</div>}
+                    </div>
+                  </div>
+                );
+              })()}
               {vc.health?.reasons?.length > 0 && (
                 <div style={{ fontSize: 8, color: DIM, marginBottom: 4 }}>{vc.health.reasons.join(' · ')}</div>
               )}
