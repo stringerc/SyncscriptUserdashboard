@@ -22,6 +22,7 @@ import { cortexObsidianMemory } from './src/lib/cortex-obsidian-memory';
 import { assertFact, factsAsOf, activeFacts, recallFacts, factHistory, getMemoryBlock, setMemoryBlock, listMemoryBlocks } from './src/lib/cortex-fact-store';
 import { surfaceSpecToMessages } from './src/lib/a2ui-emit';
 import { promptGuardCheck } from './src/lib/prompt-guard';
+import { imsgRpcChats, imsgRpcHistory, imsgRpcSend, imsgRpcHealth } from './src/lib/imsg-rpc';
 
 /**
  * loadEnv() reads .env files raw — with dotenvx-encrypted files it would
@@ -3487,6 +3488,18 @@ function apiProxyPlugin(): Plugin {
           normalizeAudio: z.boolean().optional(),
           srtPath: z.string().optional(),
         }).passthrough(),
+        imessage_status: z.object({}).passthrough(),
+        imessage_chats: z.object({ limit: z.number().optional() }).passthrough(),
+        imessage_history: z.object({ chat_id: z.number().optional(), chatId: z.number().optional(), limit: z.number().optional() }).passthrough(),
+        imessage_send: z.object({
+          to: z.string().optional(),
+          chat_id: z.number().optional(),
+          chat_guid: z.string().optional(),
+          chat_identifier: z.string().optional(),
+          text: z.string().optional(),
+          file: z.string().optional(),
+          service: z.enum(['imessage', 'sms', 'auto']).optional(),
+        }).passthrough(),
         run_sandboxed: z.object({
           image: z.string().optional(),
           command: z.string(),
@@ -3567,6 +3580,10 @@ function apiProxyPlugin(): Plugin {
             { name: 'create_document', description: 'Create real document files (md/html always; pdf via Chrome; docx via textutil; csv)', parameters: { format: 'string?', title: 'string?', content: 'string?' } },
             { name: 'render_video', description: 'Render a video composition via the governed Remotion pipeline (tools/remotion). Writes an .mp4 under .cortex-runtime/renders/ and returns the verified output path.', parameters: { composition: 'string? (default CortexPromo)', outputName: 'string? (.mp4, sanitized)', durationSeconds: 'number? (<=600)', props: 'object? (e.g. {title, subtitle})' } },
             { name: 'postprocess_video', description: 'Post-process a rendered MP4 with ffmpeg: EBU R128 loudnorm on audio (video stream copied unless subtitles are burned), optional SRT subtitle burn-in. Returns verified output path.', parameters: { input: 'string (mp4 path)', output: 'string?', normalizeAudio: 'boolean? (default true)', srtPath: 'string? (burn subtitles)' } },
+            { name: 'imessage_status', description: 'Check the imsg-rpc daemon health (chats probe).', parameters: {} },
+            { name: 'imessage_chats', description: 'List recent iMessage/SMS chats via the imsg-rpc daemon (returns chat ids for imessage_history/send).', parameters: { limit: 'number?' } },
+            { name: 'imessage_history', description: 'Read recent messages for an iMessage chat (chat_id from imessage_chats).', parameters: { chat_id: 'number', limit: 'number?' } },
+            { name: 'imessage_send', description: 'Send a real iMessage/SMS via the imsg-rpc daemon. Target: to | chat_id | chat_guid | chat_identifier (to defaults to CORTEX_IMESSAGE_TO). Requires text or file.', parameters: { to: 'string?', chat_id: 'number?', chat_guid: 'string?', text: 'string?', file: 'string?', service: 'imessage|sms|auto?' } },
             { name: 'run_sandboxed', description: 'Run a command inside a hardware-isolated microsandbox microVM (CONTAINED lane). Returns stdout/stderr/exitCode. Use for untrusted or destructive-capable agent code. net:{mode:allow|deny|allowlist,allowHosts?} controls egress (deny = air-gap, allowlist = domain allowlist, default allow). secrets:[{envVar,hostEnv|value,allowedHosts[]}] injects host secrets as $MSB_ placeholders substituted only at allowed hosts — guests never see raw values.', parameters: { image: 'string? (default python:3.12-alpine)', command: 'string (binary, no shell)', args: 'string[]?', timeoutMs: 'number? (<=120000)', workdir: 'string?', env: 'object?', net: 'object?', secrets: 'object[]?' } },
             { name: 'sandbox_status', description: 'Probe microsandbox runtime availability (msb binary, SDK, VM round-trip).', parameters: {} },
             { name: 'generate_splat', description: 'Generate or mount a 3D Gaussian-splat. asset:"/splats/butterfly.spz" etc mounts curated high-fidelity splats (PREFERRED for known subjects like butterfly/cortex core). Procedural scenes (orb|flower|helix|galaxy|ridge|flow — abstract art) with palette/seed/count, or photo mode via image URL/path (depth unprojection). By default mounts LIVE in the visualizer 3D space (card fallback elsewhere); inSpace:false forces a card.', parameters: { asset: 'string?', scene: 'string?', palette: 'string?', image: 'string?', seed: 'number?', count: 'number?', inSpace: 'boolean?', title: 'string?' } },
@@ -9559,6 +9576,62 @@ function triggerQuickAction() {
                 res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
                 return res.end(JSON.stringify({ ok: false, tool, error: `ffmpeg failed: ${String(e?.message || e).slice(0, 300)}`, durationMs: Date.now() - startMs }));
               }
+            }
+
+            // 30c. imessage_* — iMessage via the imsg-rpc daemon (HTTP bridge
+            // over `imsg rpc`; the daemon owns the long-lived child so nothing
+            // spawns imsg inside this process — the documented hang). Honest
+            // degrade: ok:false when the daemon isn't running.
+            if (tool === 'imessage_status' || tool === 'imessage_chats' || tool === 'imessage_history' || tool === 'imessage_send') {
+              if (tool === 'imessage_status') {
+                const h = await imsgRpcHealth();
+                res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+                return res.end(JSON.stringify({ ok: h.ok, tool, daemon: h.data ?? null, error: h.error, durationMs: Date.now() - startMs }));
+              }
+              if (tool === 'imessage_chats') {
+                const r = await imsgRpcChats(Number(args?.limit) || 20);
+                res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+                return res.end(JSON.stringify(r.ok
+                  ? { ok: true, tool, chats: r.data, count: (r.data || []).length, durationMs: Date.now() - startMs }
+                  : { ok: false, tool, error: r.error, durationMs: Date.now() - startMs }));
+              }
+              if (tool === 'imessage_history') {
+                const chatId = Number(args?.chat_id ?? args?.chatId);
+                if (!Number.isFinite(chatId)) {
+                  res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+                  return res.end(JSON.stringify({ ok: false, tool, error: 'chat_id (number) required — see imessage_chats' }));
+                }
+                const r = await imsgRpcHistory(chatId, Number(args?.limit) || 20);
+                res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+                return res.end(JSON.stringify(r.ok
+                  ? { ok: true, tool, chat_id: chatId, messages: r.data, count: (r.data || []).length, durationMs: Date.now() - startMs }
+                  : { ok: false, tool, error: r.error, durationMs: Date.now() - startMs }));
+              }
+              // imessage_send — real outbound iMessage/SMS. `to` defaults to
+              // CORTEX_IMESSAGE_TO; chat_id/chat_guid/chat_identifier target
+              // existing threads. Returns the observed message id/guid.
+              const sendArgs: any = {
+                to: args?.to ? String(args.to) : (process.env.CORTEX_IMESSAGE_TO || undefined),
+                chat_id: args?.chat_id != null ? Number(args.chat_id) : undefined,
+                chat_guid: args?.chat_guid ? String(args.chat_guid) : undefined,
+                chat_identifier: args?.chat_identifier ? String(args.chat_identifier) : undefined,
+                text: args?.text != null ? String(args.text) : undefined,
+                file: args?.file ? String(args.file) : undefined,
+                service: ['imessage', 'sms', 'auto'].includes(String(args?.service)) ? String(args.service) : undefined,
+              };
+              if (!sendArgs.to && sendArgs.chat_id == null && !sendArgs.chat_guid && !sendArgs.chat_identifier) {
+                res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+                return res.end(JSON.stringify({ ok: false, tool, error: 'recipient required: to | chat_id | chat_guid | chat_identifier (or set CORTEX_IMESSAGE_TO)' }));
+              }
+              if (!sendArgs.text && !sendArgs.file) {
+                res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+                return res.end(JSON.stringify({ ok: false, tool, error: 'text or file required' }));
+              }
+              const sr = await imsgRpcSend(sendArgs);
+              res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+              return res.end(JSON.stringify(sr.ok
+                ? { ok: true, tool, sent: sr.data, durationMs: Date.now() - startMs }
+                : { ok: false, tool, error: sr.error, durationMs: Date.now() - startMs }));
             }
 
             if (!res.headersSent && !res.writableEnded) {

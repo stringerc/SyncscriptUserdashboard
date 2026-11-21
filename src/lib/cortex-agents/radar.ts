@@ -63,19 +63,30 @@ async function gatherSources(deps: {
     out.push({ source: 'gmail', label: 'gmail', ok: false, note: String(e?.message || 'fetch failed').slice(0, 80), text: '' });
   }
 
-  // ── iMessage via imsg CLI (permission-gated — honest degrade) ──
+  // ── iMessage — prefer the imsg-rpc daemon (single long-lived `imsg rpc`
+  // child; avoids spawning imsg inside this process). Falls back to the
+  // direct CLI when the daemon isn't running. Permission-gated — honest degrade.
   try {
-    const chats = await sh('/opt/homebrew/bin/imsg', ['chats', '--limit', '15', '--json'], 15000);
-    if (!chats.ok) {
-      out.push({ source: 'imessage', label: 'imessage', ok: false, note: (chats.err || 'imsg failed').slice(0, 100), text: '' });
-    } else {
-      let items: any = [];
-      try { items = JSON.parse(chats.out); } catch { items = []; }
-      const arr: any[] = Array.isArray(items) ? items : (items?.chats || []);
-      const text = arr.slice(0, 15).map((c: any) =>
-        `${c?.displayName || c?.chatIdentifier || c?.identifier || ''} | ${c?.lastMessage?.text || c?.lastMessage || ''}`
+    const { imsgRpcChats } = await import('../imsg-rpc');
+    const rpcChats = await imsgRpcChats(15);
+    if (rpcChats.ok) {
+      const text = (rpcChats.data || []).slice(0, 15).map((c: any) =>
+        `${c?.name || c?.identifier || ''} | ${c?.last_message_at || ''}`
       ).join('\n');
-      out.push({ source: 'imessage', label: 'imessage recent chats', ok: text.length > 0, note: text.length ? undefined : 'no chats', text: text.slice(0, 8000), ref: 'imsg-chats' });
+      out.push({ source: 'imessage', label: 'imessage recent chats (rpc)', ok: text.length > 0, note: text.length ? undefined : 'no chats', text: text.slice(0, 8000), ref: 'imsg-rpc-chats' });
+    } else {
+      const chats = await sh('/opt/homebrew/bin/imsg', ['chats', '--limit', '15', '--json'], 15000);
+      if (!chats.ok) {
+        out.push({ source: 'imessage', label: 'imessage', ok: false, note: (chats.err || 'imsg failed').slice(0, 100), text: '' });
+      } else {
+        let items: any = [];
+        try { items = JSON.parse(chats.out); } catch { items = []; }
+        const arr: any[] = Array.isArray(items) ? items : (items?.chats || []);
+        const text = arr.slice(0, 15).map((c: any) =>
+          `${c?.displayName || c?.chatIdentifier || c?.identifier || ''} | ${c?.lastMessage?.text || c?.lastMessage || ''}`
+        ).join('\n');
+        out.push({ source: 'imessage', label: 'imessage recent chats', ok: text.length > 0, note: text.length ? undefined : 'no chats', text: text.slice(0, 8000), ref: 'imsg-chats' });
+      }
     }
   } catch (e: any) {
     out.push({ source: 'imessage', label: 'imessage', ok: false, note: String(e?.message || 'error').slice(0, 80), text: '' });

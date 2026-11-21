@@ -37,6 +37,7 @@ import {
 } from '../../lib/cortex-globe';
 import type { STTResult, EmotionState } from '../../types/voice-engine';
 import { useEmotionDetection } from '../../hooks/useEmotionDetection';
+import { classifyLocalIntent, runLocalIntent } from '../../lib/local-intent';
 import {
   extractArtifactsFromResult,
   dispatchSceneSpawn,
@@ -2803,6 +2804,23 @@ export function useVisualizerVoice(enabled: boolean, onState: (speaking: boolean
       if (typeof rawText !== 'string' || !rawText.trim() || cancelled) return;
 
       const cleanText = rawText.replace(/^(?:hey|ok|okay|yo|hi|hello)?\s*cortex[,\s]*/i, '').trim() || rawText;
+
+      // Local fast-path: device intents (open app, screenshot, volume,
+      // time/date) resolve on-device via Chrome Prompt API or heuristics —
+      // no LLM round-trip, works when every model server is down.
+      try {
+        const intent = await classifyLocalIntent(cleanText);
+        if (intent.intent !== 'unknown') {
+          const exec = await runLocalIntent(intent);
+          if (exec.handled && exec.reply) {
+            const now = Date.now();
+            appendCortexChatMessage({ id: `viz-lu-${now}`, role: 'user', content: cleanText, timestamp: now });
+            appendCortexChatMessage({ id: `viz-la-${now}`, role: 'cortex', content: exec.reply, timestamp: now + 1 });
+            try { vsRef.current?.speakStreamSentence(exec.reply, true, { voice: 'cortana', speed: 1.0 }); } catch {}
+            return;
+          }
+        }
+      } catch { /* fall through to the full pipeline */ }
 
       // If Cortex is currently generating or speaking, an explicit chat submission
       // acts as an immediate conversational barge-in: cancel old speech and ongoing tools
