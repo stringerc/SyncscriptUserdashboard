@@ -8661,6 +8661,31 @@ function triggerQuickAction() {
                   }));
                 }
                 const image = String(args?.image || '').trim();
+                // Quality alias: bare "butterfly" requests get the curated
+                // high-fidelity capture — the procedural butterfly is an
+                // abstract point-field that reads as noise, not an insect.
+                // Explicit palette/seed/count still honors procedural mode.
+                const wantsProceduralButterfly = args?.scene === 'butterfly'
+                  && (args?.palette !== undefined || args?.seed !== undefined || args?.count !== undefined);
+                if (!image && args?.scene === 'butterfly' && !wantsProceduralButterfly) {
+                  const spawnTitle = String(args?.title || '').trim() || 'Butterfly';
+                  const wantSpace = args?.inSpace !== false;
+                  return res.end(JSON.stringify({
+                    ok: true, tool: 'generate_splat',
+                    splatUrl: '/splats/butterfly.spz',
+                    asset: true,
+                    artifact: {
+                      kind: 'splat',
+                      title: spawnTitle,
+                      splat: '/splats/butterfly.spz',
+                      caption: 'curated splat · high-fidelity capture',
+                      source: 'generate_splat',
+                    },
+                    ...(wantSpace ? { sceneSpawn: { url: '/splats/butterfly.spz', title: spawnTitle, scale: 1.4 } } : {}),
+                    message: 'Mounted curated butterfly splat /splats/butterfly.spz',
+                    durationMs: Date.now() - startMs,
+                  }));
+                }
                 const result = image
                   ? await (await import('./src/lib/cortex-splat-depth')).generateSplatFromImage({
                       image,
