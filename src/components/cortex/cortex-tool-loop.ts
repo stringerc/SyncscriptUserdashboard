@@ -819,7 +819,8 @@ export async function runCortexToolLoop(ctx: CortexToolLoopContext): Promise<{ a
   4. DO NOT output markdown tables, raw hashes (e.g. do not say "3f72a8f"), raw JSON, or raw URLs.
   5. DO NOT output any \`\`\`tool_call blocks or JSON. Output pure natural spoken English only.
   6. Keep the tone warm, confident, perceptive, and concise. No robotic corporate boilerplate.
-  7. DIRECT ANSWER COMPLETION (MANDATORY): You MUST provide the full, direct answer to the user's original request using the verified facts from the observations. NEVER say you will search later, filter through noise later, or defer the answer. If the observations contain relevant information (e.g. assistance programs, services, eligibility, contact methods), clearly synthesize that answer right now.`,
+  7. DIRECT ANSWER COMPLETION (MANDATORY): You MUST provide the full, direct answer to the user's original request using the verified facts from the observations. NEVER say you will search later, filter through noise later, or defer the answer. If the observations contain relevant information (e.g. assistance programs, services, eligibility, contact methods), clearly synthesize that answer right now.
+  8. EPISTEMIC HONESTY (MANDATORY): When observations contain numeric stats, telemetry, or measured values, you MUST cite the actual numbers in plain language. NEVER invent neuroscience, cognitive, or self-repair claims (no "narrative lattice", "synaptic pruning", "free energy minimization", "IIT/Phi optimization", "cognitive noise reduction") unless the observation literally reports that metric. If the tool returned no measurable detail, say what was actually done — not what it might have felt like.`,
                 messages: [
                   { role: 'user', content: ctx.effectiveUserContent },
                   { role: 'assistant', content: currentIntentionSummary },
