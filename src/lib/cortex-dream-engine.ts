@@ -98,8 +98,8 @@ Dispositions with sufficient evidence now bias submitProposal: rejected categori
 
     const note = await execTool('cortex_memory', {
       action: 'vault_write_note',
-      title: `Dream Consolidation ${dateStr}`,
-      folder: '02 - Reflexive Memory',
+      filename: `Dream Consolidation ${dateStr}`,
+      folder: '03 - Learnings',
       content: report,
       tags: 'dream,consolidation,reflexive',
     });
