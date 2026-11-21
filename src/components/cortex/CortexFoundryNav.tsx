@@ -19,6 +19,7 @@ import { CortexTowerPanel } from './CortexTowerPanel';
 import { CortexFoundryCalendar } from './CortexFoundryCalendar';
 import { CortexFoundryTaskCard, RecommendNextStrip } from './CortexFoundryTaskCard';
 import { CortexFoundryGoalCard } from './CortexFoundryGoalCard';
+import { CortexCouncilFloor } from './CortexCouncilFloor';
 import { playAudioArbitrated } from '../../lib/cortex-tts-arbiter';
 
 const MONO = "'IBM Plex Mono', monospace";
@@ -1839,6 +1840,23 @@ export function CortexFoundryNav({ snap, onSelectAgent, selectedAgent, onOpenTow
           {counsel && !counsel.sessions.length && <div style={{ padding: '12px 0', color: DIM }}>NO SESSIONS — CONVENE FROM THE TOWER BOARD</div>}
           {(counsel?.sessions || []).map((s: any) => {
             const stanceCounts = (s.positions || []).reduce((m: any, p: any) => { m[p.stance] = (m[p.stance] || 0) + 1; return m; }, {} as Record<string, number>);
+            // Active deliberations render the living council floor; decided
+            // sessions keep the compact card.
+            if (['positions', 'rebuttal', 'poll', 'cleared'].includes(s.status)) {
+              return (
+                <div key={s.id}>
+                  <div style={{ fontSize: 9.5, color: '#c084fc', fontWeight: 700, margin: '0 2px 4px' }}>{s.id} · {s.status.toUpperCase()} · {s.lane.toUpperCase()}</div>
+                  <div style={{ fontSize: 10.5, color: INK, margin: '0 2px 6px' }}>{s.question}</div>
+                  <CortexCouncilFloor session={s} />
+                  {s.status === 'poll' && (
+                    <div style={{ display: 'flex', gap: 6, margin: '-2px 0 8px' }}>
+                      <button onClick={() => decidePoll(s.id, 'go')} style={{ flex: 1, background: 'rgba(52,211,153,0.12)', border: '1px solid rgba(52,211,153,0.5)', color: '#34d399', fontFamily: MONO, fontSize: 10, fontWeight: 700, padding: '4px 0', borderRadius: 2, cursor: 'pointer', letterSpacing: '0.15em' }}>GO</button>
+                      <button onClick={() => decidePoll(s.id, 'no-go')} style={{ flex: 1, background: 'rgba(248,113,113,0.1)', border: '1px solid rgba(248,113,113,0.5)', color: '#f87171', fontFamily: MONO, fontSize: 10, fontWeight: 700, padding: '4px 0', borderRadius: 2, cursor: 'pointer', letterSpacing: '0.15em' }}>NO-GO</button>
+                    </div>
+                  )}
+                </div>
+              );
+            }
             return (
               <div key={s.id} style={{ border: '1px solid rgba(192,132,252,0.2)', borderRadius: 3, padding: '7px 9px', marginBottom: 7, background: 'rgba(192,132,252,0.04)' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
