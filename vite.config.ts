@@ -14405,12 +14405,12 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
         try {
           let body = '';
           for await (const chunk of req) body += chunk;
-          const { id, paused, scheduleMinutes, budgetPerDay, status } = JSON.parse(body || '{}');
+          const { id, paused, scheduleMinutes, budgetPerDay, taskBudgetPerDay, status } = JSON.parse(body || '{}');
           if (!isValidVenture(id)) {
             res.writeHead(400, { 'Content-Type': 'application/json' });
             return res.end(JSON.stringify({ ok: false, error: 'unknown venture' }));
           }
-          const v = updateVenture(id, { paused, scheduleMinutes, budgetPerDay, status });
+          const v = updateVenture(id, { paused, scheduleMinutes, budgetPerDay, taskBudgetPerDay, status });
           res.writeHead(v ? 200 : 400, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify(v ? { ok: true, venture: v } : { ok: false, error: 'invalid patch' }));
         } catch (e: any) {

@@ -17,7 +17,7 @@ import { ModelSentinel } from './sentinel';
 import { DETERMINISTIC_TASKS } from './lights';
 import { ackMentioned, directivesBlock, markDelivered } from './directives';
 import { consumeMentioned, extractAndSendMessages, markMessagesDelivered, messagesBlock } from './messages';
-import { isValidVenture } from '../cortex-ventures';
+import { isValidVenture, listVentures } from '../cortex-ventures';
 import type {
   AgentEvent, AgentId, AgentRoutine, AgentState, AgentStatus, AgentTask, AgentsSnapshot, SpawnProposal, SpawnSpec, TaskFailureClass, TaskStatus, TaskTelemetry,
 } from './types';
@@ -444,6 +444,22 @@ export class AgentRuntime {
     const ventureId = input?.ventureId;
     if (ventureId !== undefined && ventureId !== null && ventureId !== '' && !isValidVenture(ventureId)) {
       return { ok: false, error: `unknown venture: ${String(ventureId).slice(0, 40)}` };
+    }
+    // Per-venture daily task budget — the enterprise's economic boundary.
+    // Counts every task admitted today carrying this ventureId, regardless
+    // of outcome; attempted work consumes budget.
+    if (ventureId) {
+      const v = listVentures().find((x) => x.id === ventureId);
+      if (v?.taskBudgetPerDay) {
+        const today = new Date().toISOString().slice(0, 10);
+        let used = 0;
+        for (const t of this.tasks.values()) {
+          if (t.input?.ventureId === ventureId && new Date(t.createdAt).toISOString().slice(0, 10) === today) used++;
+        }
+        if (used >= v.taskBudgetPerDay) {
+          return { ok: false, error: `${v.name} daily task budget exhausted (${v.taskBudgetPerDay} tasks)` };
+        }
+      }
     }
     if (!BOOKKEEPING_KINDS.has(kind) && this.dailyCount(agentId) >= agent.dailyBudget) {
       const error = `${agent.name} daily budget exhausted (${agent.dailyBudget} tasks)`;

@@ -144,6 +144,7 @@ export function CortexFoundryNav({ snap, onSelectAgent, selectedAgent, onOpenTow
   const [ventureConsole, setVentureConsole] = useState<string | null>(null);
   const [ventureSchedInput, setVentureSchedInput] = useState('');
   const [ventureBudgetInput, setVentureBudgetInput] = useState('');
+  const [ventureTaskBudgetInput, setVentureTaskBudgetInput] = useState('');
   const [evoEvals, setEvoEvals] = useState<any[] | null>(null);
   const [evoRuns, setEvoRuns] = useState<any[] | null>(null);
   const [evoInstincts, setEvoInstincts] = useState<{ instincts?: any[]; promotable?: number } | null>(null);
@@ -2670,6 +2671,7 @@ export function CortexFoundryNav({ snap, onSelectAgent, selectedAgent, onOpenTow
                   <span>NEXT CYCLE <b style={{ color: '#7dd3fc' }}>{vc.nextRunAt ? new Date(vc.nextRunAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : '—'}</b> · every {vc.scheduleMinutes >= 60 ? `${Math.round(vc.scheduleMinutes / 60)}h` : `${vc.scheduleMinutes}m`}</span>
                 ) : <span style={{ color: DIM }}>MANUAL — no schedule</span>}
                 <span>CYCLES TODAY <b style={{ color: INK }}>{vc.cyclesToday ?? 0}{vc.budgetPerDay ? `/${vc.budgetPerDay}` : ''}</b></span>
+                {vc.taskBudgetPerDay ? <span>TASK BUDGET <b style={{ color: INK }}>{vc.taskBudgetPerDay}/day</b></span> : null}
                 <button onClick={() => updateVentureField(vc.id, { paused: !vc.paused })}
                   style={{ background: vc.paused ? 'rgba(52,211,153,0.15)' : 'rgba(248,113,113,0.12)', border: `1px solid ${vc.paused ? '#34d399' : '#f87171'}`, color: vc.paused ? '#6ee7b7' : '#fca5a5', fontFamily: MONO, fontSize: 8.5, fontWeight: 800, padding: '1px 8px', borderRadius: 2, cursor: 'pointer', letterSpacing: '0.08em' }}>
                   {vc.paused ? 'RESUME' : 'PAUSE'}
@@ -2687,7 +2689,11 @@ export function CortexFoundryNav({ snap, onSelectAgent, selectedAgent, onOpenTow
                 <input value={ventureBudgetInput} onChange={(e) => setVentureBudgetInput(e.target.value)} placeholder="cycles/day cap"
                   style={{ width: 90, background: 'rgba(15,23,42,0.8)', border: '1px solid rgba(167,139,250,0.35)', color: INK, fontFamily: MONO, fontSize: 9, padding: '2px 6px', borderRadius: 2, outline: 'none' }} />
                 <button onClick={() => { const b = parseInt(ventureBudgetInput, 10); if (b > 0) { updateVentureField(vc.id, { budgetPerDay: b }); setVentureBudgetInput(''); } }}
-                  style={{ background: 'rgba(167,139,250,0.12)', border: '1px solid #a78bfa', color: '#c4b5fd', fontFamily: MONO, fontSize: 8.5, fontWeight: 800, padding: '2px 8px', borderRadius: 2, cursor: 'pointer', letterSpacing: '0.08em' }}>SET BUDGET</button>
+                  style={{ background: 'rgba(167,139,250,0.12)', border: '1px solid #a78bfa', color: '#c4b5fd', fontFamily: MONO, fontSize: 8.5, fontWeight: 800, padding: '2px 8px', borderRadius: 2, cursor: 'pointer', letterSpacing: '0.08em' }}>SET CYCLE CAP</button>
+                <input value={ventureTaskBudgetInput} onChange={(e) => setVentureTaskBudgetInput(e.target.value)} placeholder="tasks/day cap"
+                  style={{ width: 90, background: 'rgba(15,23,42,0.8)', border: '1px solid rgba(52,211,153,0.35)', color: INK, fontFamily: MONO, fontSize: 9, padding: '2px 6px', borderRadius: 2, outline: 'none' }} />
+                <button onClick={() => { const b = parseInt(ventureTaskBudgetInput, 10); if (b > 0) { updateVentureField(vc.id, { taskBudgetPerDay: b }); setVentureTaskBudgetInput(''); } }}
+                  style={{ background: 'rgba(52,211,153,0.12)', border: '1px solid #34d399', color: '#6ee7b7', fontFamily: MONO, fontSize: 8.5, fontWeight: 800, padding: '2px 8px', borderRadius: 2, cursor: 'pointer', letterSpacing: '0.08em' }}>SET TASK CAP</button>
               </div>
               {/* Scoped shortcuts — open existing views pre-filtered to this venture */}
               <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginBottom: 4 }}>

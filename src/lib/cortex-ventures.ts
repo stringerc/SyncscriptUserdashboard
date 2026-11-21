@@ -37,6 +37,9 @@ export interface Venture {
   nextRunAt?: number;
   /** Max governed proposals admitted per venture per 24h. Absent = global cap only. */
   budgetPerDay?: number;
+  /** Max agent tasks admitted per venture per UTC day — the enterprise's
+   *  economic boundary, enforced in AgentRuntime.submitTask. */
+  taskBudgetPerDay?: number;
   /** Scheduler bookkeeping — admitted cycle count for the current UTC day. */
   cyclesToday?: number;
   cycleDay?: string;
@@ -87,7 +90,7 @@ function writeVentures(list: Venture[]): void {
 }
 
 /** Patch a venture's governance fields. Returns the updated venture or null. */
-export function updateVenture(id: string, patch: Partial<Pick<Venture, 'paused' | 'scheduleMinutes' | 'budgetPerDay' | 'status'>>): Venture | null {
+export function updateVenture(id: string, patch: Partial<Pick<Venture, 'paused' | 'scheduleMinutes' | 'budgetPerDay' | 'taskBudgetPerDay' | 'status'>>): Venture | null {
   const list = listVentures();
   const v = list.find((x) => x.id === id);
   if (!v) return null;
@@ -103,6 +106,10 @@ export function updateVenture(id: string, patch: Partial<Pick<Venture, 'paused' 
   if (patch.budgetPerDay !== undefined) {
     const b = Math.floor(Number(patch.budgetPerDay));
     v.budgetPerDay = Number.isFinite(b) && b > 0 ? b : undefined;
+  }
+  if (patch.taskBudgetPerDay !== undefined) {
+    const b = Math.floor(Number(patch.taskBudgetPerDay));
+    v.taskBudgetPerDay = Number.isFinite(b) && b > 0 ? b : undefined;
   }
   writeVentures(list);
   return v;
