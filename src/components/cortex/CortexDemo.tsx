@@ -1989,7 +1989,6 @@ ${activeDocument.content ? activeDocument.content.slice(0, 1500) : '(empty)'}
 """
 ${activeArtifact ? `Active Artifact on Canvas: "${activeArtifact.title || activeArtifact.kind}" (${activeArtifact.kind})` : 'Active Artifact: None (invoke emit_artifact to display visual data cards directly in the Artifact tab)'}
 Somatic: load ${somaticState.allostaticLoad.toFixed(2)} (${somaticState.emotionalValence.toUpperCase()})
-${stateOfBeingTelemetry}
 Goals: ${copilotGoals.map(g => `- [${g.category.toUpperCase()}] "${g.title}" (${g.progress}%)`).join('; ') || 'none'}
 Tasks: ${copilotTasks.filter(t => !t.completed).map(t => `- [${t.priority.toUpperCase()}] "${t.title}"`).join('; ') || 'all done'}
 ${affectiveInjection}
@@ -2014,7 +2013,10 @@ Internal substrate: GW coalition active | IIT Φ=${phi.toFixed(3)} | AST trackin
 Host telemetry: RAM ${proactiveAuditData?.system?.usedPercent ?? '—'}% (${proactiveAuditData?.system?.freeGB ?? '—'}GB free) | ${proactiveAuditData?.productivity?.tabCount ?? 0} tabs | branch ${proactiveAuditData?.codebase?.branch ?? '—'} (${proactiveAuditData?.codebase?.totalChanges ?? 0} WIP)
 ${restraintLine ? `Proactivity: ${restraintLine}` : ''}
 
-FORMATTING: clean structured markdown, bold subheadings, concise bullets; avoid dense tables unless asked; no raw HTML; tone: sharp, executive, Cortana-like.`,
+FORMATTING: clean structured markdown, bold subheadings, concise bullets; avoid dense tables unless asked; no raw HTML; tone: sharp, executive, Cortana-like.${stateOfBeingTelemetry ? `
+
+${stateOfBeingTelemetry}
+MANDATORY: your reply MUST cite at least one concrete number from EACH of the four telemetry sections above (memory recall, fleet resonance R/entropy, somatic, restraint). No section may be omitted.` : ''}`,
           messages: conversationMessages,
           maxTokens: 1200,
         }),
