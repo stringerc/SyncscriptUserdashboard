@@ -3669,6 +3669,11 @@ function apiProxyPlugin(): Plugin {
             { name: 'sandbox_status', description: 'Probe microsandbox runtime availability (msb binary, SDK, VM round-trip).', parameters: {} },
             { name: 'generate_splat', description: 'Generate or mount a 3D Gaussian-splat. asset:"/splats/butterfly.spz" etc mounts curated high-fidelity splats (PREFERRED for known subjects like butterfly/cortex core). Procedural scenes (orb|flower|helix|galaxy|ridge|flow — abstract art) with palette/seed/count, or photo mode via image URL/path (depth unprojection). By default mounts LIVE in the visualizer 3D space (card fallback elsewhere); inSpace:false forces a card.', parameters: { asset: 'string?', scene: 'string?', palette: 'string?', image: 'string?', seed: 'number?', count: 'number?', inSpace: 'boolean?', title: 'string?' } },
             { name: 'compose_dashboard', description: 'Atomically build and render a dashboard: tiles (stat|chart|feed|image) plus optional auto-generated splat tile. By default mounts as a holographic panel inside the visualizer 3D space (card fallback elsewhere); inSpace:false forces a card. One call for any multi-part visual request.', parameters: { title: 'string', tiles: 'object[]?', splat: 'object?', inSpace: 'boolean?' } },
+            { name: 'notify', description: 'Push a notification to the user via configured channels (ntfy.sh topic via NTFY_TOPIC, or Apprise via APPRISE_URL). Use for proactive alerts, task completion, reminders.', parameters: { title: 'string?', message: 'string', priority: 'number? (1-5)', tags: 'string?' } },
+            { name: 'calendar', description: 'macOS Calendar via EventKit: list upcoming events, view today/week, create events, delete events by title.', parameters: { action: 'list|today|week|create|delete', days: 'number?', title: 'string? (event title / search)', start: 'string? (ISO datetime for create)', durationMinutes: 'number?', calendar: 'string?', notes: 'string?' } },
+            { name: 'see_image', description: 'Analyze a local image with the local vision model (mlx-vlm / Qwen3-VL via perception sidecar :8940). Answers questions about image content.', parameters: { image: 'string (path in workspace)', question: 'string? (what to ask about the image)' } },
+            { name: 'analyze_audio_emotion', description: 'Detect emotion/affect in a local audio file via emotion2vec+ (perception sidecar :8940). Returns emotion labels + scores.', parameters: { audio: 'string (path in workspace)' } },
+            { name: 'speaker_diarize', description: 'Speaker diarization on a local audio file via sherpa-onnx (perception sidecar :8940). Returns speaker segments with labels.', parameters: { audio: 'string (path in workspace)', numSpeakers: 'number?' } },
           ];
           res.writeHead(200, {
             'Content-Type': 'application/json',
@@ -9437,6 +9442,19 @@ function triggerQuickAction() {
                 message: `Fleet: ${snap.agents.map(a => `${a.id}=${a.status}`).join(', ')}. Models healthy: ${models}/${snap.models.length}. Working: ${working.join(', ') || 'none'}.`,
                 durationMs: Date.now() - startMs,
               }));
+            }
+
+            // 29a2. Live external integrations — notify/calendar/vision/emotion/speaker.
+            if (tool === 'notify' || tool === 'calendar' || tool === 'see_image' || tool === 'analyze_audio_emotion' || tool === 'speaker_diarize') {
+              const live = await import('./src/lib/cortex-live-tools');
+              const result =
+                tool === 'notify' ? await live.notify(args || {}) :
+                tool === 'calendar' ? await live.calendar(args || {}) :
+                tool === 'see_image' ? await live.vision(args || {}) :
+                tool === 'analyze_audio_emotion' ? await live.emotion(args || {}) :
+                await live.speaker(args || {});
+              res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+              return res.end(JSON.stringify({ ok: (result as any)?.ok !== false, tool, ...result, durationMs: Date.now() - startMs }));
             }
 
             // 29b. sandbox_status — probe the microsandbox microVM runtime.
