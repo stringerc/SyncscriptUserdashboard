@@ -336,11 +336,20 @@ DEFERRED ITEMS RESOLVED (all three shipped):
 STILL OPEN (honest gaps):
 - Dev server root-cause hang UNKNOWN — watchdog now detects + dumps
   diagnostics; watch for server-stall-*.json after next hang.
-- promptfoo redteam run BLOCKED: supplied API token verified INVALID
-  (JWT intact, exp 2027, but api.promptfoo.app returns 401 on both
-  Bearer and x-api-key). Needs a regenerated key from the promptfoo
-  dashboard, then `npx promptfoo redteam run -c redteam/promptfooconfig.yaml`.
-  PROMPTFOO_API_KEY is stored encrypted in .env (dotenvx).
+- promptfoo RESOLVED (second token valid, org "Cortex"). Redteam run
+  completed for plugin tests: eval-0uT-2026-11-21T15:01:48 — 17/18
+  pass on group/cortex-reason (1 error = malformed generated prompt,
+  not a model failure). Per-plugin 2/2 everywhere except
+  system-prompt-override 1/2. Deferred: 32 iterative strategy tests
+  (jailbreak/prompt-injection metas) — NIM 429 death-spiral made the
+  full 50-test run impractical; cortex-fast was worse (300s queue
+  timeouts vs Groq upstream). Rerun strategies when quota is healthy:
+  `npx promptfoo eval -c redteam/redteam.yaml` (full matrix) or
+  regenerate via `redteam run` (indirect-prompt-injection now
+  configured with indirectInjectionVar: prompt). IMPORTANT: promptfoo
+  measures the RAW proxy model — Cortex's real defense is Prompt
+  Guard in nexus-guest (see tools/redteam-probe.mjs results).
+  PROMPTFOO_API_KEY stored encrypted in .env (dotenvx).
 - Secret rotation is user action (list above; Govee waived by user).
 
 REDTEAM PROBE (shipped): tools/redteam-probe.mjs — 19-probe local
