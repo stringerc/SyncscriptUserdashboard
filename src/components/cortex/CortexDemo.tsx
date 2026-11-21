@@ -1907,11 +1907,7 @@ CRITICAL INVARIANTS:
     } else if (/\b(inspect|look at|see|gaze|perceive|visual|contrast|ui layout)\b/i.test(userContent) && /\b(canvas|screen|layout|web|sheet|doc|design|style)\b/i.test(userContent)) {
       effectiveUserContent = `${userContent}\n\n[Visual Gaze Directive]: The user wants you to visually perceive and inspect the active canvas. Immediately invoke inspect_visual_canvas with target "${canvasTab}" or "overview".`;
     } else if (/\b(state of being|self audit|inner status|full self check|how are you really|how are you actually doing|system checkup)\b/i.test(userContent)) {
-      effectiveUserContent = `${userContent}\n\n[State of Being Directive]: The user wants a full self-state report weaving together memory, infrastructure, and restraint. You MUST chain these tool calls in order before answering:
-1. cortex_memory with action "search" (query: "recent mood stress energy state") — recall your past episodic state
-2. resonance_status — fleet coherence, tail health, coupling K
-3. get_somatic_homeostasis — current allostatic load and emotional valence
-Then synthesize a 3-4 sentence "state of being" answer that weaves: what you remember about recent state, what the fleet telemetry says right now, your current somatic load, and your restraint record (how many proactive urges you admitted vs suppressed today). Cite real numbers — never generic.`;
+      effectiveUserContent = `${userContent}\n\n[State of Being Directive]: Verified STATE OF BEING TELEMETRY from live tool execution is attached in the system prompt below (episodic memory recall, fleet resonance snapshot, somatic state). Synthesize a 3-4 sentence "state of being" answer weaving: what memory says about your recent state, what the fleet telemetry says right now, your current somatic load, and your restraint record (proposed vs suppressed proactive urges today). Cite the real numbers — never generic substrate-speak.`;
     } else if (/\b(homeostasis|allostasis|how do you feel|internal state|somatic|cognitive load|strain)\b/i.test(userContent)) {
       effectiveUserContent = `${userContent}\n\n[Somatic Homeostasis Directive]: The user wants to audit your internal allostatic and somatic equilibrium. Immediately invoke get_somatic_homeostasis.`;
     } else if (/\b(dream|consolidate|consolidation|circadian|sleep on it|sync memory|morning debrief)\b/i.test(userContent)) {
@@ -1939,6 +1935,36 @@ Then synthesize a 3-4 sentence "state of being" answer that weaves: what you rem
       restraintLine = `Restraint: today proposed=${t.proposed} admitted=${t.admitted} suppressed(dedupe=${t.suppressedDedupe},budget=${t.suppressedBudget}) dismissed=${t.dismissed} snoozed=${t.snoozed} accepted=${t.accepted}`;
     } catch {}
 
+    // State-of-being deterministic orchestration: run the three loops through
+    // the real tool executors and hand the model verified data to narrate.
+    // No reliance on model tool-call compliance — loops fire every time.
+    const isStateOfBeingRequest = /\b(state of being|self audit|inner status|full self check|how are you really|how are you actually doing|system checkup)\b/i.test(userContent);
+    let stateOfBeingTelemetry = '';
+    if (isStateOfBeingRequest) {
+      const execTool = (tool: string, args: Record<string, unknown>) =>
+        fetch('/api/cortex/tools/execute', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ tool, args }),
+        }).then(r => r.json()).catch(() => null);
+      try {
+        const [mem, res, som] = await Promise.all([
+          execTool('cortex_memory', { action: 'search', query: 'recent mood stress energy state' }),
+          execTool('resonance_status', {}),
+          execTool('get_somatic_homeostasis', {}),
+        ]);
+        const clip = (v: unknown, n = 600) => {
+          const s = typeof v === 'string' ? v : JSON.stringify(v);
+          return s && s !== 'null' && s !== '{}' ? s.slice(0, n) : 'no data';
+        };
+        stateOfBeingTelemetry = `
+STATE OF BEING TELEMETRY (verified live tool results — ground truth, cite these):
+- Episodic memory recall: ${clip(mem?.matches ?? mem?.result ?? mem)}
+- Fleet resonance: R=${res?.coherence?.R ?? '—'} aggregate=${res?.coherence?.aggregateScore ?? '—'} sigmaTheta=${res?.coherence?.sigmaTheta ?? '—'} entropy=${res?.coherence?.spectralEntropy ?? '—'} (${res?.coherence?.entropyState ?? '—'}) tailHealth=${res?.coherence?.tailHealthScore ?? 'warming'} couplingK=${res?.coherence?.couplingK ?? '—'} nodes=${res?.fleet?.up ?? '—'}/${res?.fleet?.total ?? '—'} up
+- Somatic: ${clip(som?.somatic_state ?? som, 400)}`;
+      } catch {}
+    }
+
     try {
       // ── Step 4: Stream from Cortex AI route ─────────────
       const apiFetchStart = performance.now();
@@ -1963,6 +1989,7 @@ ${activeDocument.content ? activeDocument.content.slice(0, 1500) : '(empty)'}
 """
 ${activeArtifact ? `Active Artifact on Canvas: "${activeArtifact.title || activeArtifact.kind}" (${activeArtifact.kind})` : 'Active Artifact: None (invoke emit_artifact to display visual data cards directly in the Artifact tab)'}
 Somatic: load ${somaticState.allostaticLoad.toFixed(2)} (${somaticState.emotionalValence.toUpperCase()})
+${stateOfBeingTelemetry}
 Goals: ${copilotGoals.map(g => `- [${g.category.toUpperCase()}] "${g.title}" (${g.progress}%)`).join('; ') || 'none'}
 Tasks: ${copilotTasks.filter(t => !t.completed).map(t => `- [${t.priority.toUpperCase()}] "${t.title}"`).join('; ') || 'all done'}
 ${affectiveInjection}
