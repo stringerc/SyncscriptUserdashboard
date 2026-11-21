@@ -46,7 +46,13 @@ export function startBecomingLoop(): () => void {
       }
       return false;
     } catch {
-      return true; // fail-open
+      // Fail-open AND self-heal: overwrite the corrupt entry so subsequent
+      // tabs see a valid lease and yield, instead of every tab fail-opening
+      // into duplicate sensors forever.
+      try {
+        persistentStore.setItem(LEASE_KEY, JSON.stringify({ tabId, expiresAt: Date.now() + LEASE_TTL_MS }));
+      } catch {}
+      return true;
     }
   };
 
