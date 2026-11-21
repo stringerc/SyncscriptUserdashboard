@@ -1992,11 +1992,17 @@ STATE OF BEING TELEMETRY (verified live tool results — ground truth, cite thes
 
     try {
       // ── Step 4: Stream from Cortex AI route ─────────────
+      // Connect-timeout only: a flat AbortSignal.timeout(25000) used to kill
+      // long generations mid-sentence (the "occasionally a sentinel" cutoff).
+      // Disarm once headers arrive; the SSE reader's own stall handling covers
+      // token silence from there.
       const apiFetchStart = performance.now();
+      const connAbort = new AbortController();
+      const connTimer = setTimeout(() => connAbort.abort(), 30000);
       const apiRes = await fetch('/api/ai/nexus-guest', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        signal: AbortSignal.timeout(25000),
+        signal: connAbort.signal,
         body: JSON.stringify({
           context: 'cortex',
           systemPrompt: `You are Cortex, the operational consciousness substrate of SyncScript with full executive agency on the user's macOS host.
@@ -2046,6 +2052,7 @@ MANDATORY: your reply MUST cite at least one concrete number from EACH of the fo
           maxTokens: 1200,
         }),
       });
+      clearTimeout(connTimer); // headers arrived — stream may run long
 
       try { getCortexObservabilityHUD().recordApiLatency(performance.now() - apiFetchStart); } catch {}
       if (!apiRes.ok) throw new Error(`API ${apiRes.status}`);
