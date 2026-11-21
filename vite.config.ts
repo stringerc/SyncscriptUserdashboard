@@ -18,6 +18,8 @@ import os from 'os';
 import { execSync, execFile, spawn } from 'child_process';
 import { timingSafeEqual } from 'crypto';
 import { cortexObsidianMemory } from './src/lib/cortex-obsidian-memory';
+import { assertFact, factsAsOf, activeFacts, recallFacts, factHistory, getMemoryBlock, setMemoryBlock, listMemoryBlocks } from './src/lib/cortex-fact-store';
+import { surfaceSpecToMessages } from './src/lib/a2ui-emit';
 
 /**
  * loadEnv() reads .env files raw — with dotenvx-encrypted files it would
@@ -35,6 +37,30 @@ function loadCortexEnv(mode: string): Record<string, string> {
     }
   }
   return env;
+}
+
+/** AG-UI vocabulary layer — tags each SSE data payload with a `type` field
+ *  using AG-UI event names (TEXT_MESSAGE_CONTENT, REASONING_MESSAGE_CONTENT,
+ *  TOOL_CALL_END, RUN_FINISHED) so external AG-UI-aware clients can consume
+ *  the stream without a protocol migration. Purely additive: existing
+ *  fields (token/finishReason/toolCall/reasoning) are untouched. */
+function aguiTagSSE(res: any) {
+  const origWrite = res.write.bind(res);
+  res.write = (chunk: any, ...rest: any[]) => {
+    try {
+      if (typeof chunk === 'string' && chunk.startsWith('data: ')) {
+        const payload = JSON.parse(chunk.slice(6).trim());
+        if (payload && typeof payload === 'object' && payload.type == null) {
+          payload.type = payload.toolCall ? 'TOOL_CALL_END'
+            : payload.reasoning != null ? 'REASONING_MESSAGE_CONTENT'
+            : payload.finalContent != null || payload.finishReason === 'stop' ? 'RUN_FINISHED'
+            : 'TEXT_MESSAGE_CONTENT';
+          chunk = `data: ${JSON.stringify(payload)}\n\n`;
+        }
+      }
+    } catch { }
+    return origWrite(chunk, ...rest);
+  };
 }
 import { generateSplat } from './src/lib/cortex-splat-gen';
 import { validateArtifacts } from './src/lib/cortex-artifacts';
@@ -320,6 +346,61 @@ const CORTEX_TOOLS = [
           content: { type: 'string', description: 'Content to append to memory or episodic data' }
         },
         required: ['action']
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'remember_fact',
+      description: 'Store a durable bi-temporal fact about the user or world in Cortex\'s fact memory. Use when the user shares a stable preference, fact, or correction ("I prefer X", "my editor is Y", "I moved to Z"). Facts are never deleted — asserting a new value for the same subject+predicate supersedes the old one, preserving full history. For freeform notes use cortex_memory instead.',
+      parameters: {
+        type: 'object',
+        properties: {
+          subject: { type: 'string', description: 'What the fact is about, e.g. "user", "user.editor", "project.cortex"' },
+          predicate: { type: 'string', description: 'The relation, e.g. "prefers", "uses", "located_in", "deadline"' },
+          object: { type: 'string', description: 'The value, e.g. "dark mode", "neovim", "Berlin"' },
+          confidence: { type: 'number', description: '0-1 confidence (default 1.0)' }
+        },
+        required: ['subject', 'predicate', 'object']
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'recall_facts',
+      description: 'Query Cortex\'s bi-temporal fact memory. Actions: active (current facts, optional subject), as_of (facts valid at an ISO timestamp — "what was true last Tuesday"), search (substring recall), history (full supersession chain for subject+predicate).',
+      parameters: {
+        type: 'object',
+        properties: {
+          action: { type: 'string', enum: ['active', 'as_of', 'search', 'history'], description: 'Query mode' },
+          subject: { type: 'string', description: 'Filter by subject (active/history)' },
+          predicate: { type: 'string', description: 'Filter by predicate (history)' },
+          query: { type: 'string', description: 'Search text (search)' },
+          asOf: { type: 'string', description: 'ISO timestamp for temporal query (as_of)' }
+        },
+        required: ['action']
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'emit_surface',
+      description: 'Emit a live A2UI generative surface — an interactive Cortex panel built from typed components (metrics, badges, text, action buttons). Use when the user asks for a custom panel, status board, or interactive readout that standard artifacts cannot express, or when buttons/agent round-trips are needed. items: array of {type:"metric",label,value,unit?,tone?} | {type:"badge",text,tone?} | {type:"text",text} | {type:"button",label,action,variant?}. Button actions emit cortex.surface.<action> events back to the agent. Max 12 items.',
+      parameters: {
+        type: 'object',
+        properties: {
+          title: { type: 'string', description: 'Panel title' },
+          subtitle: { type: 'string', description: 'Optional subtitle' },
+          items: {
+            type: 'array',
+            items: { type: 'object' },
+            description: 'Component spec items per the tool description'
+          }
+        },
+        required: ['title', 'items']
       }
     }
   },
@@ -1026,6 +1107,7 @@ function apiProxyPlugin(): Plugin {
   let cortanaTtsUrl = '';
   let cortanaPocketUrl = '';
   let cortanaEmotionUrl = '';
+  let mlxAudioUrl = '';
   let cartesiaApiKey = '';
   let firecrawlApiKey = '';
 
@@ -1119,6 +1201,7 @@ function apiProxyPlugin(): Plugin {
       cortanaTtsUrl = env.CORTANA_TTS_URL || process.env.CORTANA_TTS_URL || 'http://127.0.0.1:8910';
       cortanaPocketUrl = env.CORTANA_POCKET_URL || process.env.CORTANA_POCKET_URL || 'http://127.0.0.1:8911';
       cortanaEmotionUrl = env.CORTANA_EMOTION_URL || process.env.CORTANA_EMOTION_URL || 'http://127.0.0.1:8912';
+      mlxAudioUrl = env.MLX_AUDIO_URL || process.env.MLX_AUDIO_URL || 'http://127.0.0.1:8920';
       cartesiaApiKey = env.CARTESIA_API_KEY || process.env.CARTESIA_API_KEY || '';
       firecrawlApiKey = env.FIRECRAWL_API_KEY || process.env.FIRECRAWL_API_KEY || '';
       if (cartesiaApiKey) {
@@ -3054,7 +3137,9 @@ function apiProxyPlugin(): Plugin {
             form.append('temperature', '0.0');
 
             // Primary: Groq whisper-large-v3-turbo (~300ms, same engine the
-            // phone bridge uses). Fallback: local whisper.cpp :8178.
+            // phone bridge uses). Fallback chain: parakeet-mlx :8179 (Parakeet
+            // TDT 0.6B, ~2.5% WER — far better than whisper.cpp base.en), then
+            // whisper.cpp :8178 as last resort.
             const groqKey = resolveEnvKey('GROQ_API_KEY');
             if (groqKey) {
               try {
@@ -3081,6 +3166,27 @@ function apiProxyPlugin(): Plugin {
                 console.warn('[stt] Groq transcription failed, falling back to local whisper:', groqErr?.message);
               }
             }
+
+            // parakeet-mlx rung — OpenAI-compatible /v1/audio/transcriptions.
+            try {
+              const pform = new FormData();
+              pform.append('file', new Blob([audio], { type: ct }), `speech.${ext}`);
+              pform.append('model', 'parakeet-tdt-0.6b-v3');
+              pform.append('response_format', 'json');
+              const pRes = await fetch('http://127.0.0.1:8179/v1/audio/transcriptions', {
+                method: 'POST',
+                body: pform,
+                signal: AbortSignal.timeout(8000),
+              });
+              if (pRes.ok) {
+                const pJson: any = await pRes.json().catch(() => ({}));
+                const transcript = String(pJson?.text || '').trim();
+                if (transcript) {
+                  res.setHeader('Content-Type', 'application/json');
+                  return res.end(JSON.stringify({ ok: true, transcript, engine: 'parakeet-mlx-tdt-0.6b' }));
+                }
+              }
+            } catch { /* parakeet-mlx offline — fall through to whisper.cpp */ }
 
             const upstream = await fetch('http://127.0.0.1:8178/inference', {
               method: 'POST',
@@ -3351,6 +3457,9 @@ function apiProxyPlugin(): Plugin {
             { name: 'get_env', description: 'Get environment variable', parameters: { key: 'string' } },
             { name: 'set_env', description: 'Set environment variable (session)', parameters: { key: 'string', value: 'string' } },
             { name: 'cortex_memory', description: 'Obsidian vault memory actions (vault_status, vault_query, vault_write_note, vault_daily_log, read_hot, search, append, read_episodic, save_episodic, learn, recall)', parameters: { action: 'string', query: 'string?', title: 'string?', folder: 'string?', filename: 'string?', content: 'string?', tags: 'string?', role: 'string?', limit: 'number?' } },
+            { name: 'remember_fact', description: 'Store a durable bi-temporal fact (subject+predicate+object); supersedes prior value for the same key without deleting history', parameters: { subject: 'string', predicate: 'string', object: 'string', confidence: 'number?' } },
+            { name: 'recall_facts', description: 'Query bi-temporal fact memory: active | as_of (ISO time travel) | search | history (supersession chain)', parameters: { action: 'string', subject: 'string?', predicate: 'string?', query: 'string?', asOf: 'string?' } },
+            { name: 'emit_surface', description: 'Emit a live A2UI generative surface panel: title + items of metric|badge|text|button components; buttons round-trip cortex.surface.* actions to the agent', parameters: { title: 'string', subtitle: 'string?', items: 'object[]' } },
             { name: 'fetch_url', description: 'Fetch a web page as clean markdown (keyless reader)', parameters: { url: 'string' } },
             { name: 'create_document', description: 'Create real document files (md/html always; pdf via Chrome; docx via textutil; csv)', parameters: { format: 'string?', title: 'string?', content: 'string?' } },
             { name: 'render_video', description: 'Render a video composition via the governed Remotion pipeline (tools/remotion). Writes an .mp4 under .cortex-runtime/renders/ and returns the verified output path.', parameters: { composition: 'string? (default CortexPromo)', outputName: 'string? (.mp4, sanitized)', durationSeconds: 'number? (<=600)', props: 'object? (e.g. {title, subtitle})' } },
@@ -4586,6 +4695,61 @@ end tell`;
             }
 
             // 8. cortex_memory
+            if (tool === 'emit_surface') {
+              try {
+                const spec = {
+                  title: String(args?.title || 'CORTEX // SURFACE'),
+                  subtitle: args?.subtitle ? String(args.subtitle) : undefined,
+                  items: Array.isArray(args?.items) ? args.items : [],
+                };
+                const messages = surfaceSpecToMessages(spec);
+                const surfaceId = (messages[0] as any)?.createSurface?.surfaceId;
+                res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+                return res.end(JSON.stringify({
+                  ok: true, tool,
+                  result: { surfaceId, messageCount: messages.length },
+                  artifacts: [{ kind: 'surface', title: spec.title, messages, surfaceId }],
+                  durationMs: Date.now() - startMs,
+                }));
+              } catch (e: any) {
+                res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+                return res.end(JSON.stringify({ ok: false, tool, error: String(e?.message || e) }));
+              }
+            }
+
+            if (tool === 'remember_fact') {
+              try {
+                const fact = assertFact({
+                  subject: String(args?.subject || ''),
+                  predicate: String(args?.predicate || ''),
+                  object: String(args?.object || ''),
+                  source: `tool:${tool}`,
+                  confidence: typeof args?.confidence === 'number' ? args.confidence : 1.0,
+                });
+                res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+                return res.end(JSON.stringify({ ok: true, tool, fact, durationMs: Date.now() - startMs }));
+              } catch (e: any) {
+                res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+                return res.end(JSON.stringify({ ok: false, tool, error: String(e?.message || e) }));
+              }
+            }
+
+            if (tool === 'recall_facts') {
+              try {
+                const action = String(args?.action || 'active');
+                let facts: any = null;
+                if (action === 'as_of') facts = factsAsOf(String(args?.asOf || new Date().toISOString()));
+                else if (action === 'search') facts = recallFacts(String(args?.query || ''), 20);
+                else if (action === 'history') facts = factHistory(String(args?.subject || ''), String(args?.predicate || ''));
+                else facts = activeFacts({ subject: args?.subject ? String(args.subject) : undefined, predicate: args?.predicate ? String(args.predicate) : undefined });
+                res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+                return res.end(JSON.stringify({ ok: true, tool, action, facts, durationMs: Date.now() - startMs }));
+              } catch (e: any) {
+                res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+                return res.end(JSON.stringify({ ok: false, tool, error: String(e?.message || e) }));
+              }
+            }
+
             if (tool === 'cortex_memory' || tool === 'memory') {
               const action = String(args?.action || 'read_hot').trim();
               const memoryPath = path.resolve(workspaceRoot, 'MEMORY.md');
@@ -9305,6 +9469,52 @@ function triggerQuickAction() {
               }
             }
 
+            // Chatterbox Turbo via mlx-audio server (:8920) — expressive
+            // zero-shot TTS with exaggeration/cfg controls. Opt-in voices:
+            // 'chatterbox', 'cortex-emotive', or provider='chatterbox'.
+            const isChatterboxRequested =
+              parsed.provider === 'chatterbox' ||
+              voice === 'chatterbox' ||
+              voice === 'cortex-emotive' ||
+              voice === 'cortex_emotive';
+
+            if (mlxAudioUrl && isChatterboxRequested) {
+              try {
+                recordConnectionAudit(`${mlxAudioUrl}/v1/audio/speech`, '/api/cortex/tts');
+                const cbRes = await fetch(`${mlxAudioUrl}/v1/audio/speech`, {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({
+                    model: parsed.model || 'mlx-community/chatterbox-turbo-8bit',
+                    input: text,
+                    voice: typeof parsed.chatterbox_voice === 'string' ? parsed.chatterbox_voice : undefined,
+                    response_format: 'wav',
+                    speed: typeof speed === 'number' ? Math.max(0.5, Math.min(speed, 2.0)) : 1.0,
+                    exaggeration: typeof parsed.exaggeration === 'number' ? parsed.exaggeration : 0.5,
+                    cfg_weight: typeof parsed.cfg_weight === 'number' ? parsed.cfg_weight : 0.5,
+                  }),
+                  signal: AbortSignal.timeout(30000),
+                });
+                if (cbRes.ok) {
+                  const buf = Buffer.from(await cbRes.arrayBuffer());
+                  if (buf.length > 200) {
+                    res.writeHead(200, {
+                      'Content-Type': cbRes.headers.get('content-type') || 'audio/wav',
+                      'Content-Length': buf.byteLength.toString(),
+                      'Cache-Control': 'no-store',
+                      'X-TTS-Engine': 'chatterbox-mlx',
+                      'X-TTS-Voice': voice || 'chatterbox',
+                    });
+                    return res.end(buf);
+                  }
+                } else {
+                  console.warn('[dev-proxy] Chatterbox TTS returned', cbRes.status);
+                }
+              } catch (cbErr: any) {
+                console.warn('[dev-proxy] Chatterbox TTS failed:', cbErr.message);
+              }
+            }
+
             // Cortana voices split two ways:
             //  - Conversational cortana* → Pocket TTS clone (:8911, ~2s, voice-cloned
             //    from l03_0070 Halo 2 stem via --default-voice).
@@ -9725,6 +9935,7 @@ function triggerQuickAction() {
                   'Connection': 'keep-alive',
                   'Access-Control-Allow-Origin': '*',
                 });
+                aguiTagSSE(res);
                 res.write(`data: ${JSON.stringify({ content })}\n\n`);
                 res.write(`data: ${JSON.stringify({ finalContent: content })}\n\n`);
                 res.write('data: [DONE]\n\n');
@@ -10007,6 +10218,7 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
                     });
                   }
 
+                  aguiTagSSE(res);
                   const reader = (aiRes.body as any).getReader();
                   const decoder = new TextDecoder();
                   // Parallel tool calls stream as separate indices — track each
@@ -10548,6 +10760,7 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
               'Access-Control-Allow-Origin': '*',
             });
 
+            aguiTagSSE(res);
             // Break text into natural token chunks
             const tokens = cognitive.text.match(/\S+|\s+/g) || [cognitive.text];
             for (const tok of tokens) {
@@ -10569,6 +10782,7 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
                 'Connection': 'keep-alive',
                 'Access-Control-Allow-Origin': '*',
               });
+              aguiTagSSE(res);
               res.write(`data: ${JSON.stringify({ token: "Cortex Global Workspace and Volition Governor remain fully operational on host Darwin. Memory and allostasis are stable." })}\n\n`);
               res.write('data: [DONE]\n\n');
               return res.end();
@@ -12293,6 +12507,72 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
             }
           });
           return;
+        }
+        next();
+      });
+
+      // GET/POST /api/cortex/memory/facts — bi-temporal fact store (Graphiti-lite).
+      // GET ?q= | ?asOf=ISO | ?subject= | ?history=subject|predicate | ?blocks=1
+      // POST {subject, predicate, object, source?, confidence?, validFrom?}
+      //      | {block: name, content} for Letta-style memory blocks
+      server.middlewares.use('/api/cortex/memory/facts', (req: any, res: any, next: any) => {
+        if (req.method === 'OPTIONS') {
+          res.writeHead(204, { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Methods': 'GET, POST, OPTIONS', 'Access-Control-Allow-Headers': 'Content-Type' });
+          return res.end();
+        }
+        agentCors(req, res);
+        const u = new URL(req.url || '', 'http://x');
+        const json = (code: number, body: any) => {
+          res.statusCode = code;
+          res.setHeader('Content-Type', 'application/json');
+          res.end(JSON.stringify(body));
+        };
+        try {
+          if (req.method === 'GET') {
+            if (u.searchParams.get('blocks') === '1') {
+              const name = u.searchParams.get('name');
+              return json(200, name ? { block: getMemoryBlock(name) } : { blocks: listMemoryBlocks().map(b => ({ name: b.name, updated_at: b.updated_at, chars: b.content.length })) });
+            }
+            const hist = u.searchParams.get('history');
+            if (hist) {
+              const [subject, predicate] = hist.split('|');
+              if (!subject || !predicate) return json(400, { error: 'history requires subject|predicate' });
+              return json(200, { history: factHistory(subject, predicate) });
+            }
+            const asOf = u.searchParams.get('asOf');
+            if (asOf) return json(200, { asOf, facts: factsAsOf(asOf) });
+            const subject = u.searchParams.get('subject');
+            if (subject) return json(200, { subject, facts: activeFacts({ subject }) });
+            const q = u.searchParams.get('q');
+            if (q) return json(200, { query: q, facts: recallFacts(q) });
+            return json(200, { facts: activeFacts() });
+          }
+          if (req.method === 'POST') {
+            let body = '';
+            req.on('data', (c: any) => { body += c; if (body.length > 20000) req.destroy(); });
+            req.on('end', () => {
+              try {
+                const j = JSON.parse(body || '{}');
+                if (j.block) {
+                  return json(200, { ok: true, block: setMemoryBlock(String(j.block), String(j.content || '')) });
+                }
+                const fact = assertFact({
+                  subject: String(j.subject || ''),
+                  predicate: String(j.predicate || ''),
+                  object: String(j.object || ''),
+                  source: j.source ? String(j.source) : 'api',
+                  confidence: typeof j.confidence === 'number' ? j.confidence : 1.0,
+                  validFrom: j.validFrom ? String(j.validFrom) : undefined,
+                });
+                return json(200, { ok: true, fact });
+              } catch (err: any) {
+                return json(400, { error: String(err?.message || err) });
+              }
+            });
+            return;
+          }
+        } catch (err: any) {
+          return json(500, { error: String(err?.message || err) });
         }
         next();
       });

@@ -12,11 +12,13 @@ import {
 } from 'recharts';
 import { ExternalLink, Pin, X } from 'lucide-react';
 import { C } from '../cortex-demo-helpers';
-import type { CortexArtifact, ChartArtifact, TableArtifact, ImageArtifact, DocumentArtifact, FeedArtifact, StatArtifact, WeatherArtifact, WxHourPoint, WxDayPoint, SplatArtifact, DashboardArtifact } from '../../../lib/cortex-artifacts';
+import type { CortexArtifact, ChartArtifact, TableArtifact, ImageArtifact, DocumentArtifact, FeedArtifact, StatArtifact, WeatherArtifact, WxHourPoint, WxDayPoint, SplatArtifact, DashboardArtifact, SurfaceArtifact } from '../../../lib/cortex-artifacts';
 
 // SplatPreview pulls in three + @sparkjsdev/spark — keep it out of the
 // artifact chunk and mount it only when a splat card actually renders.
 const SplatPreview = lazy(() => import('./SplatPreview'));
+// A2UI surface pulls in @a2ui/react + web_core — lazy for the same reason.
+const CortexA2uiSurface = lazy(() => import('../a2ui/CortexA2uiSurface').then(m => ({ default: m.CortexA2uiSurface })));
 import 'uplot/dist/uPlot.min.css';
 
 const MONO = '"IBM Plex Mono", ui-monospace, monospace';
@@ -1977,6 +1979,56 @@ function DashboardBody({ a }: { a: DashboardArtifact }) {
   );
 }
 
+/** A2UI generative surface — compiles the artifact's message stream through
+ *  a MessageProcessor-backed CortexA2uiSurface. Button actions round-trip
+ *  into the governed tool executor: cortex.surface.<slug> → tool <slug>
+ *  (the agent names buttons after real tools; unknown slugs are rejected
+ *  by the executor's own dispatch). */
+function SurfaceBody({ a }: { a: SurfaceArtifact }) {
+  const [status, setStatus] = useState<string | null>(null);
+  const onAction = async (action: any) => {
+    const name = String(action?.name || '');
+    const slug = name.startsWith('cortex.surface.') ? name.slice('cortex.surface.'.length) : '';
+    if (!/^[a-z][a-z0-9_]{1,40}$/.test(slug)) {
+      setStatus(`surface action ignored: ${name}`);
+      return;
+    }
+    setStatus(`running ${slug}…`);
+    try {
+      const res = await fetch('/api/cortex/tools/execute', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-cortex-key': 'sovereign-local' },
+        body: JSON.stringify({ tool: slug, args: action?.context || {} }),
+        signal: AbortSignal.timeout(30000),
+      });
+      const data: any = await res.json().catch(() => ({}));
+      const r = data?.result ?? data;
+      const text = r?.stdout || r?.content || r?.message || (r?.ok ? 'done' : JSON.stringify(data).slice(0, 160));
+      setStatus(`${slug}: ${String(text).slice(0, 140)}`);
+      window.dispatchEvent(new CustomEvent('cortex:surface-action-result', { detail: { tool: slug, result: data } }));
+    } catch (e: any) {
+      setStatus(`${slug} failed: ${e?.message || e}`);
+    }
+  };
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+      <Suspense fallback={<div style={{ fontFamily: MONO, fontSize: 10, color: 'rgba(223,246,255,.4)', padding: 12 }}>Compiling surface…</div>}>
+        <CortexA2uiSurface
+          messages={a.messages as any}
+          surfaceId={a.surfaceId}
+          title={a.title}
+          onAction={onAction}
+        />
+      </Suspense>
+      {status && (
+        <div style={{ fontFamily: MONO, fontSize: 9, letterSpacing: '0.14em', color: 'rgba(223,246,255,.55)', padding: '2px 4px' }}>
+          {status}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function ArtifactRenderer({
   artifact, onExpand, onPin, onClose, onOpenGlobe, compact, fitHeight, fitSize, bare,
 }: {
@@ -2028,6 +2080,7 @@ export function ArtifactRenderer({
     case 'weather': return shell(artifact.title, <WeatherBody a={artifact} />);
     case 'splat': return shell(artifact.title, <SplatBody a={artifact} />);
     case 'dashboard': return shell(artifact.title, <DashboardBody a={artifact} />);
+    case 'surface': return <SurfaceBody a={artifact} />;
     default: return null;
   }
 }

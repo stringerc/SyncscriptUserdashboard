@@ -169,6 +169,16 @@ export interface DashboardArtifact extends ArtifactBase {
   tiles: CortexArtifact[];
 }
 
+/** A2UI generative surface — a compiled v0.9 message stream rendered by
+ *  CortexA2uiSurface. Emitted by the emit_surface tool. */
+export interface SurfaceArtifact extends ArtifactBase {
+  kind: 'surface';
+  title: string;
+  /** A2UI v0.9 message stream (createSurface/updateComponents/updateDataModel). */
+  messages: unknown[];
+  surfaceId?: string;
+}
+
 export type CortexArtifact =
   | StatArtifact
   | ChartArtifact
@@ -179,9 +189,10 @@ export type CortexArtifact =
   | FeedArtifact
   | WeatherArtifact
   | SplatArtifact
-  | DashboardArtifact;
+  | DashboardArtifact
+  | SurfaceArtifact;
 
-export const ARTIFACT_KINDS = ['stat', 'chart', 'table', 'image', 'document', 'map', 'feed', 'weather', 'splat', 'dashboard'] as const;
+export const ARTIFACT_KINDS = ['stat', 'chart', 'table', 'image', 'document', 'map', 'feed', 'weather', 'splat', 'dashboard', 'surface'] as const;
 
 /** Tile kinds allowed inside a dashboard — light renderers only. */
 export const DASHBOARD_TILE_KINDS = new Set(['stat', 'chart', 'feed', 'image', 'splat']);
@@ -417,6 +428,17 @@ export function validateArtifacts(input: unknown, source = 'emit_artifact', max 
         const tiles = sub.accepted.filter((t) => DASHBOARD_TILE_KINDS.has(t.kind)).slice(0, 6);
         if (!tiles.length) { rejected++; continue; }
         accepted.push({ ...base, kind: 'dashboard', title, tiles });
+        break;
+      }
+      case 'surface': {
+        if (!title || !Array.isArray(item.messages) || !item.messages.length) { rejected++; continue; }
+        const messages = item.messages.slice(0, 60).filter(isObj);
+        if (!messages.length) { rejected++; continue; }
+        accepted.push({
+          ...base, kind: 'surface', title,
+          messages,
+          ...(typeof item.surfaceId === 'string' && item.surfaceId ? { surfaceId: item.surfaceId.slice(0, 120) } : {}),
+        });
         break;
       }
     }
