@@ -362,7 +362,7 @@ export default function CortexVisualizerPage() {
   };
   // Core scene: V1 (full equatorial rig) or V2 (clean-slate hero core).
   // ?scene=v1|v2 seeds the pick once; the nav toggle persists the choice.
-  const [coreScene] = useState<'v1' | 'v2'>(() => {
+  const [coreScene, setCoreScene] = useState<'v1' | 'v2'>(() => {
     if (typeof window === 'undefined') return 'v2';
     const qs = new URLSearchParams(window.location.search).get('scene');
     if (qs === 'v1' || qs === 'v2') return qs;
@@ -1435,6 +1435,35 @@ export default function CortexVisualizerPage() {
           >
             <span style={{ color: nightMode ? '#d8b4fe' : '#7dd3fc' }}>{nightMode ? '☾' : '☀'}</span>
             <span>{nightMode ? 'NIGHT' : 'DAY'}</span>
+          </button>
+
+          {/* CORE SCENE — V1 full rig ⇄ V2 clean hero (persisted) */}
+          <button
+            onClick={() => setCoreScene(s => {
+              const next = s === 'v2' ? 'v1' : 'v2';
+              try { localStorage.setItem('cortex_core_scene', next); } catch {}
+              return next;
+            })}
+            title="Toggle core scene — V1 full equatorial rig / V2 clean-slate hero"
+            style={{
+              padding: '5px 12px',
+              borderRadius: 14,
+              border: `1px solid ${coreV2 ? '#a78bfa' : 'rgba(167,139,250,0.18)'}`,
+              background: coreV2 ? 'rgba(167,139,250,0.18)' : 'rgba(4,8,14,0.5)',
+              color: coreV2 ? '#ede9fe' : 'rgba(196,181,253,0.7)',
+              fontFamily: "'IBM Plex Mono', monospace",
+              fontSize: 9.5,
+              fontWeight: 700,
+              letterSpacing: '0.14em',
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              gap: 5,
+              transition: 'all 0.2s',
+            }}
+          >
+            <span style={{ color: '#a78bfa' }}>◈</span>
+            <span>{coreV2 ? 'CORE V2' : 'CORE V1'}</span>
           </button>
 
           {/* CHAT */}

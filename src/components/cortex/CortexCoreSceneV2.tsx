@@ -1167,6 +1167,9 @@ function V2Scene({ live, headParallax, visualMode, chronoTime, replayTrack, perf
     if (typeof window === 'undefined') return new Set<string>();
     return new Set((new URLSearchParams(window.location.search).get('v2hide') || '').split(',').filter(Boolean));
   }, []);
+  // Murmuration (starling-flock experiment) is opt-in only: ?v2murmur=1
+  const showMurmur = useMemo(() =>
+    typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('v2murmur') === '1', []);
   const postOff = typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('v2post') === 'off';
   return (
     <>
@@ -1182,7 +1185,7 @@ function V2Scene({ live, headParallax, visualMode, chronoTime, replayTrack, perf
         {!hidden.has('models') && <ModelConstellationV2 live={live} nightMode={nightMode} />}
         {!hidden.has('web') && <NeuralWebV2 live={live} />}
         {!hidden.has('thoughts') && <ThoughtSwarmV2 live={live} perfMode={perfMode} nightMode={nightMode} />}
-        {!hidden.has('murmur') && <MurmurationV2 live={live} perfMode={perfMode} nightMode={nightMode} />}
+        {!hidden.has('murmur') && showMurmur && <MurmurationV2 live={live} perfMode={perfMode} nightMode={nightMode} />}
         <ShockwavesV2 live={live} />
       </group>
       {!postOff && <PostFXV2 live={live} perfMode={perfMode} nightMode={nightMode} />}
