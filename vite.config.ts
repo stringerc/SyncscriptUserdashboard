@@ -22,6 +22,8 @@ import { cortexObsidianMemory } from './src/lib/cortex-obsidian-memory';
 import { assertFact, factsAsOf, activeFacts, recallFacts, semanticRecallFacts, factHistory, getMemoryBlock, setMemoryBlock, listMemoryBlocks } from './src/lib/cortex-fact-store';
 import { surfaceSpecToMessages } from './src/lib/a2ui-emit';
 import { promptGuardCheck, screenUntrustedContent } from './src/lib/prompt-guard';
+import { parseToolCallArgs } from './src/lib/cortex-tool-args';
+import { obsidianRestEnabled, obsidianRestStatus, obsidianRestList, obsidianRestRead, obsidianRestWrite, obsidianRestSearch } from './src/lib/cortex-obsidian-rest';
 import { imsgRpcChats, imsgRpcHistory, imsgRpcSend, imsgRpcHealth } from './src/lib/imsg-rpc';
 
 /**
@@ -461,8 +463,8 @@ const CORTEX_TOOLS = [
         properties: {
           action: {
             type: 'string',
-            enum: ['read_hot', 'search', 'read_section', 'append', 'read_episodic', 'save_episodic', 'vault_status', 'vault_query', 'vault_graph', 'vault_write_note', 'vault_daily_log', 'vault_write_surface', 'vault_auto_organize'],
-            description: 'Action: read_hot, search, read_section, append, read_episodic, save_episodic, vault_status, vault_query, vault_graph, vault_write_note, vault_daily_log, vault_write_surface, vault_auto_organize'
+            enum: ['read_hot', 'search', 'read_section', 'append', 'read_episodic', 'save_episodic', 'vault_status', 'vault_query', 'vault_graph', 'vault_write_note', 'vault_daily_log', 'vault_write_surface', 'vault_auto_organize', 'obsidian_status', 'obsidian_list', 'obsidian_read', 'obsidian_write', 'obsidian_search'],
+            description: 'Action: read_hot, search, read_section, append, read_episodic, save_episodic, vault_status, vault_query, vault_graph, vault_write_note, vault_daily_log, vault_write_surface, vault_auto_organize, obsidian_status, obsidian_list, obsidian_read, obsidian_write, obsidian_search'
           },
           query: { type: 'string', description: 'Topic or keyword to search in MEMORY.md' },
           section: { type: 'string', description: 'Section name for read_section (e.g. "Key Infrastructure", "Cortex consciousness")' },
@@ -3653,7 +3655,7 @@ function apiProxyPlugin(): Plugin {
             { name: 'kill_process', description: 'Kill process by PID', parameters: { pid: 'number' } },
             { name: 'get_env', description: 'Get environment variable', parameters: { key: 'string' } },
             { name: 'set_env', description: 'Set environment variable (session)', parameters: { key: 'string', value: 'string' } },
-            { name: 'cortex_memory', description: 'Obsidian vault memory actions (vault_status, vault_query, vault_write_note, vault_daily_log, read_hot, search, append, read_episodic, save_episodic, learn, recall)', parameters: { action: 'string', query: 'string?', title: 'string?', folder: 'string?', filename: 'string?', content: 'string?', tags: 'string?', role: 'string?', limit: 'number?' } },
+            { name: 'cortex_memory', description: 'Obsidian vault memory actions (vault_status, vault_query, vault_write_note, vault_daily_log, read_hot, search, append, read_episodic, save_episodic, learn, recall). obsidian_* actions reach the real Obsidian app vault via Local REST API when OBSIDIAN_REST_API_KEY is set: obsidian_status, obsidian_list, obsidian_read (path), obsidian_write (path+content), obsidian_search (query)', parameters: { action: 'string', query: 'string?', path: 'string?', title: 'string?', folder: 'string?', filename: 'string?', content: 'string?', tags: 'string?', role: 'string?', limit: 'number?', contextLength: 'number?' } },
             { name: 'remember_fact', description: 'Store a durable bi-temporal fact (subject+predicate+object); supersedes prior value for the same key without deleting history', parameters: { subject: 'string', predicate: 'string', object: 'string', confidence: 'number?' } },
             { name: 'recall_facts', description: 'Query bi-temporal fact memory: active | as_of (ISO time travel) | search | history (supersession chain)', parameters: { action: 'string', subject: 'string?', predicate: 'string?', query: 'string?', asOf: 'string?' } },
             { name: 'emit_surface', description: 'Emit a live A2UI generative surface panel: title + items of metric|badge|text|button components; buttons round-trip cortex.surface.* actions to the agent', parameters: { title: 'string', subtitle: 'string?', items: 'object[]' } },
@@ -5351,6 +5353,44 @@ end tell`;
                   report,
                   durationMs: Date.now() - startMs,
                 }));
+              }
+
+              // ── Obsidian Local REST API bridge (opt-in via OBSIDIAN_REST_API_KEY) ──
+              if (action === 'obsidian_status') {
+                const status = await obsidianRestStatus();
+                return res.end(JSON.stringify({ ok: status.enabled ? status.reachable : true, tool, action, ...status, durationMs: Date.now() - startMs }));
+              }
+
+              if (action === 'obsidian_list') {
+                if (!obsidianRestEnabled()) {
+                  return res.end(JSON.stringify({ ok: false, error: 'OBSIDIAN_REST_API_KEY not set — Obsidian REST bridge disabled' }));
+                }
+                const r = await obsidianRestList();
+                return res.end(JSON.stringify({ ok: r.ok, tool, action, count: r.files?.length, files: r.files?.slice(0, 500), error: r.error, durationMs: Date.now() - startMs }));
+              }
+
+              if (action === 'obsidian_read') {
+                const notePath = String(args?.path || args?.filename || '').trim();
+                if (!notePath) return res.end(JSON.stringify({ ok: false, error: 'path is required for obsidian_read' }));
+                const r = await obsidianRestRead(notePath);
+                return res.end(JSON.stringify({ ok: r.ok, tool, action, path: notePath, content: r.content?.slice(0, 20000), error: r.error, durationMs: Date.now() - startMs }));
+              }
+
+              if (action === 'obsidian_write') {
+                const notePath = String(args?.path || args?.filename || '').trim();
+                const content = String(args?.content || '').trim();
+                if (!notePath || !content) {
+                  return res.end(JSON.stringify({ ok: false, error: 'path and content are required for obsidian_write' }));
+                }
+                const r = await obsidianRestWrite(notePath, content);
+                return res.end(JSON.stringify({ ok: r.ok, tool, action, path: notePath, error: r.error, durationMs: Date.now() - startMs }));
+              }
+
+              if (action === 'obsidian_search') {
+                const query = String(args?.query || '').trim();
+                if (!query) return res.end(JSON.stringify({ ok: false, error: 'query is required for obsidian_search' }));
+                const r = await obsidianRestSearch(query, typeof args?.contextLength === 'number' ? args.contextLength : 120);
+                return res.end(JSON.stringify({ ok: r.ok, tool, action, query, results: r.results?.slice(0, 20), error: r.error, durationMs: Date.now() - startMs }));
               }
 
               return res.end(JSON.stringify({ ok: false, error: `Unknown memory action: ${action}` }));
@@ -10696,10 +10736,17 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
                     if (!toolCallSlots.size) return;
                     for (const [, slot] of toolCallSlots) {
                       if (!slot.name) continue;
-                      let argsObj = {};
-                      try { argsObj = JSON.parse(slot.args); } catch { }
-                      const block = `\`\`\`tool_call\n${JSON.stringify({ tool: slot.name, args: argsObj })}\n\`\`\`\n`;
-                      res.write(`data: ${JSON.stringify({ token: block, finishReason: 'tool_calls', toolCall: { tool: slot.name, args: argsObj } })}\n\n`);
+                      // Structured-output hardening: repair malformed JSON and
+                      // validate required params instead of silently emitting {}.
+                      const parsedArgs = parseToolCallArgs(slot.name, slot.args, CORTEX_TOOLS);
+                      const argsObj = parsedArgs.ok ? parsedArgs.args : {};
+                      if (!parsedArgs.ok) {
+                        console.warn(`[dev-proxy] tool_call args invalid for ${slot.name}: ${parsedArgs.error}`);
+                      }
+                      const toolCallPayload: any = { tool: slot.name, args: argsObj };
+                      if (!parsedArgs.ok) toolCallPayload.argError = parsedArgs.error;
+                      const block = `\`\`\`tool_call\n${JSON.stringify({ tool: slot.name, args: argsObj, ...(parsedArgs.ok ? {} : { argError: parsedArgs.error }) })}\n\`\`\`\n`;
+                      res.write(`data: ${JSON.stringify({ token: block, finishReason: 'tool_calls', toolCall: toolCallPayload })}\n\n`);
                       forwardedTokens++;
                     }
                     toolCallSlots.clear();
