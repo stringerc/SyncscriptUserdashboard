@@ -672,11 +672,12 @@ const CORTEX_TOOLS = [
     type: 'function',
     function: {
       name: 'generate_splat',
-      description: 'Generate a NEW 3D Gaussian-splat scene and return it as a live splat. Two modes: (1) PROCEDURAL — params scene (orb|butterfly|flower|helix|galaxy|ridge|flow), palette (aurora|ember|ocean|violet|mono|prism), seed, count; instant, deterministic per seed, infinite variety. (2) PHOTO — pass image (https URL or /public path) to lift a single photo into a splat via monocular depth unprojection; first call downloads a ~100MB depth model then caches it. Use when the user asks to create/generate/make a splat, 3D scene, generative art, or an immersive visual. RENDERING: by default the splat mounts LIVE inside the 3D visualizer space (orbiting the core) when a scene is present, and falls back to a card automatically on surfaces without one — no extra param needed. Set inSpace:false only when the user explicitly wants a card/modal instead of the 3D space. COMPOSITION: if the user wants the splat inside a dashboard or alongside other tiles, FIRST call this tool, THEN call compose_dashboard (preferred) or emit_artifact kind:"dashboard" with the returned splat URL (artifact.splat / splatUrl) in a splat tile — you may do both in the same turn (this tool first).',
+      description: 'Generate a NEW 3D Gaussian-splat scene and return it as a live splat. CURATED LIBRARY FIRST: for well-known subjects prefer asset — the high-fidelity captured splats in /splats: asset:"/splats/butterfly.spz" (real butterfly), "/splats/cortex-core.ply", "/splats/cortex-ring.ply", "/splats/cortex-swarm.ply". When the user names a known subject ("the butterfly", "cortex core") use asset, NOT procedural generation — procedural scenes are abstract point-fields, not recognizable objects. GENERATION modes: (1) PROCEDURAL — scene (orb|flower|helix|galaxy|ridge|flow — abstract art only), palette (aurora|ember|ocean|violet|mono|prism), seed, count; instant, deterministic per seed. (2) PHOTO — pass image (https URL or /public path) to lift a single photo into a splat via monocular depth unprojection; first call downloads a ~100MB depth model then caches it. Use when the user asks to create/generate/make a splat, 3D scene, generative art, or an immersive visual. RENDERING: by default the splat mounts LIVE inside the 3D visualizer space when a scene is present, and falls back to a card automatically on surfaces without one — no extra param needed. Set inSpace:false only when the user explicitly wants a card/modal instead of the 3D space. COMPOSITION: if the user wants the splat inside a dashboard, FIRST call this tool, THEN call compose_dashboard (preferred) or emit_artifact kind:"dashboard" with the returned splat URL (artifact.splat / splatUrl) in a splat tile — you may do both in the same turn (this tool first).',
       parameters: {
         type: 'object',
         properties: {
-          scene: { type: 'string', enum: ['orb', 'butterfly', 'flower', 'helix', 'galaxy', 'ridge', 'flow'], description: 'Procedural scene kind (default orb). Ignored when image is set.' },
+          asset: { type: 'string', description: 'Curated splat path from /splats (e.g. "/splats/butterfly.spz", "/splats/cortex-core.ply"). Mounts the high-fidelity captured splat instantly — PREFERRED over generation for known subjects. Mutually exclusive with scene/image.' },
+          scene: { type: 'string', enum: ['orb', 'butterfly', 'flower', 'helix', 'galaxy', 'ridge', 'flow'], description: 'Procedural scene kind (default orb). Abstract art only — for recognizable objects use asset or image. Ignored when image/asset is set.' },
           palette: { type: 'string', enum: ['aurora', 'ember', 'ocean', 'violet', 'mono', 'prism'], description: 'Color palette (default aurora)' },
           image: { type: 'string', description: 'Image URL or /public path for photo→splat mode' },
           seed: { type: 'number', description: 'Random seed for reproducibility (default random)' },
@@ -703,7 +704,7 @@ const CORTEX_TOOLS = [
           },
           splat: {
             type: 'object',
-            description: 'Optional splat tile to generate: {scene:orb|butterfly|flower|helix|galaxy|ridge|flow, palette:aurora|ember|ocean|violet|mono|prism, image?:URL/path for photo mode, seed?, count?, title?}'
+            description: 'Optional splat tile: {asset:"/splats/butterfly.spz"} mounts a curated high-fidelity splat, or {scene:orb|flower|helix|galaxy|ridge|flow, palette:aurora|ember|ocean|violet|mono|prism, image?:URL/path for photo mode, seed?, count?, title?} generates a new one. PREFER asset for known subjects (butterfly, cortex core/ring/swarm).'
           },
           inSpace: { type: 'boolean', description: 'Rendering control: DEFAULT mounts the dashboard as a holographic curved glass panel INSIDE the 3D visualizer space (CanvasTexture + live splat volume) when a scene is present, with automatic card fallback elsewhere. Set false ONLY when the user explicitly wants a card/modal.' }
         },
@@ -3318,7 +3319,7 @@ function apiProxyPlugin(): Plugin {
             { name: 'render_video', description: 'Render a video composition via the governed Remotion pipeline (tools/remotion). Writes an .mp4 under .cortex-runtime/renders/ and returns the verified output path.', parameters: { composition: 'string? (default CortexPromo)', outputName: 'string? (.mp4, sanitized)', durationSeconds: 'number? (<=600)', props: 'object? (e.g. {title, subtitle})' } },
             { name: 'run_sandboxed', description: 'Run a command inside a hardware-isolated microsandbox microVM (CONTAINED lane). Returns stdout/stderr/exitCode. Use for untrusted or destructive-capable agent code.', parameters: { image: 'string? (default python:3.12-alpine)', command: 'string (binary, no shell)', args: 'string[]?', timeoutMs: 'number? (<=120000)', workdir: 'string?', env: 'object?' } },
             { name: 'sandbox_status', description: 'Probe microsandbox runtime availability (msb binary, SDK, VM round-trip).', parameters: {} },
-            { name: 'generate_splat', description: 'Generate a new 3D Gaussian-splat scene. Procedural scenes (orb|butterfly|flower|helix|galaxy|ridge|flow) with palette/seed/count, or photo mode via image URL/path (depth unprojection). By default mounts LIVE in the visualizer 3D space (card fallback elsewhere); inSpace:false forces a card.', parameters: { scene: 'string?', palette: 'string?', image: 'string?', seed: 'number?', count: 'number?', inSpace: 'boolean?', title: 'string?' } },
+            { name: 'generate_splat', description: 'Generate or mount a 3D Gaussian-splat. asset:"/splats/butterfly.spz" etc mounts curated high-fidelity splats (PREFERRED for known subjects like butterfly/cortex core). Procedural scenes (orb|flower|helix|galaxy|ridge|flow — abstract art) with palette/seed/count, or photo mode via image URL/path (depth unprojection). By default mounts LIVE in the visualizer 3D space (card fallback elsewhere); inSpace:false forces a card.', parameters: { asset: 'string?', scene: 'string?', palette: 'string?', image: 'string?', seed: 'number?', count: 'number?', inSpace: 'boolean?', title: 'string?' } },
             { name: 'compose_dashboard', description: 'Atomically build and render a dashboard: tiles (stat|chart|feed|image) plus optional auto-generated splat tile. By default mounts as a holographic panel inside the visualizer 3D space (card fallback elsewhere); inSpace:false forces a card. One call for any multi-part visual request.', parameters: { title: 'string', tiles: 'object[]?', splat: 'object?', inSpace: 'boolean?' } },
           ];
           res.writeHead(200, {
@@ -8633,6 +8634,32 @@ function triggerQuickAction() {
             if (tool === 'generate_splat') {
               res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
               try {
+                // Curated-asset mode: mount a known high-fidelity splat from
+                // /splats instead of generating — same dual-channel contract.
+                const assetPath = String(args?.asset || '').trim();
+                if (assetPath) {
+                  const okAsset = /^\/splats\/[\w./-]+\.(ply|splat|spz|ksplat)$/i.test(assetPath);
+                  if (!okAsset) {
+                    return res.end(JSON.stringify({ ok: false, tool: 'generate_splat', error: `asset must be a /splats/*.{ply,splat,spz,ksplat} path, got "${assetPath.slice(0, 80)}"` }));
+                  }
+                  const spawnTitle = String(args?.title || '').trim() || `Splat ${assetPath.split('/').pop()}`;
+                  const wantSpace = args?.inSpace !== false;
+                  return res.end(JSON.stringify({
+                    ok: true, tool: 'generate_splat',
+                    splatUrl: assetPath,
+                    asset: true,
+                    artifact: {
+                      kind: 'splat',
+                      title: spawnTitle,
+                      splat: assetPath,
+                      caption: 'curated splat · high-fidelity capture',
+                      source: 'generate_splat',
+                    },
+                    ...(wantSpace ? { sceneSpawn: { url: assetPath, title: spawnTitle, scale: 1.4 } } : {}),
+                    message: `Mounted curated splat ${assetPath}`,
+                    durationMs: Date.now() - startMs,
+                  }));
+                }
                 const image = String(args?.image || '').trim();
                 const result = image
                   ? await (await import('./src/lib/cortex-splat-depth')).generateSplatFromImage({
@@ -8687,6 +8714,19 @@ function triggerQuickAction() {
                 const tiles: any[] = Array.isArray(args?.tiles) ? args.tiles.slice(0, 5) : [];
                 const sp = args?.splat;
                 if (sp && typeof sp === 'object') {
+                  // Curated asset tile — mount a known splat directly.
+                  const spAsset = String(sp.asset || '').trim();
+                  if (spAsset) {
+                    if (!/^\/splats\/[\w./-]+\.(ply|splat|spz|ksplat)$/i.test(spAsset)) {
+                      return res.end(JSON.stringify({ ok: false, tool: 'compose_dashboard', error: `splat.asset must be a /splats/*.{ply,splat,spz,ksplat} path` }));
+                    }
+                    tiles.push({
+                      kind: 'splat',
+                      title: String(sp.title || 'Splat').slice(0, 80),
+                      splat: spAsset,
+                      caption: 'curated splat · high-fidelity capture',
+                    });
+                  } else {
                   const image = String(sp.image || '').trim();
                   const result = image
                     ? await (await import('./src/lib/cortex-splat-depth')).generateSplatFromImage({
@@ -8706,6 +8746,7 @@ function triggerQuickAction() {
                     splat: result.url,
                     caption: `${result.splats.toLocaleString()} splats · seed ${result.seed}${result.palette !== 'source' ? ` · ${result.palette}` : ''}`,
                   });
+                  }
                 }
                 if (!tiles.length) {
                   return res.end(JSON.stringify({ ok: false, tool: 'compose_dashboard', error: 'Needs at least one tile or a splat spec.' }));
