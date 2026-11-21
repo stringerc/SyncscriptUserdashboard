@@ -1317,8 +1317,45 @@ export function useVisualizerVoice(enabled: boolean, onState: (speaking: boolean
         }
       } catch {}
 
-      const sysSuffix = [worldStateHeader, emotionGuidanceSuffix(turnEmotionRef.current), turnMemorySuffix, surfaceManifestSuffix()].filter(Boolean).join('\n\n') || undefined;
+      let sysSuffix = [worldStateHeader, emotionGuidanceSuffix(turnEmotionRef.current), turnMemorySuffix, surfaceManifestSuffix()].filter(Boolean).join('\n\n') || undefined;
       turnMemorySuffix = '';
+
+      // State-of-being deterministic orchestration — same contract as the
+      // chat surface: run the three loops through real executors, hand the
+      // model verified data to narrate. Fires every time, any model.
+      const lastUserText = [...historyRef.current].reverse().find(m => m.role === 'user')?.content || '';
+      if (/\b(state of being|self audit|inner status|full self check|how are you really|how are you actually doing|system checkup)\b/i.test(lastUserText)) {
+        const execTool = (tool: string, args: Record<string, unknown>) =>
+          fetch(TOOLS_URL, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'x-cortex-key': 'sovereign-local' },
+            body: JSON.stringify({ tool, args }),
+            signal: AbortSignal.timeout(6000),
+          }).then(r => r.json()).catch(() => null);
+        try {
+          const [mem, res, som] = await Promise.all([
+            execTool('cortex_memory', { action: 'search', query: 'recent mood stress energy state' }),
+            execTool('resonance_status', {}),
+            execTool('get_somatic_homeostasis', {}),
+          ]);
+          const clip = (v: unknown, n = 600) => {
+            const s = typeof v === 'string' ? v : JSON.stringify(v);
+            return s && s !== 'null' && s !== '{}' ? s.slice(0, n) : 'no data';
+          };
+          let restraint = '';
+          try {
+            const t = getCortexProactiveInitiative().getRestraintMetrics().today;
+            restraint = `Restraint today: proposed=${t.proposed} admitted=${t.admitted} suppressed=${t.suppressedDedupe + t.suppressedBudget} dismissed=${t.dismissed} snoozed=${t.snoozed} accepted=${t.accepted}`;
+          } catch {}
+          const telemetry = `STATE OF BEING TELEMETRY (verified live tool results — ground truth):
+- Episodic memory recall: ${clip(mem?.matches ?? mem?.result ?? mem)}
+- Fleet resonance: R=${res?.coherence?.R ?? '—'} aggregate=${res?.coherence?.aggregateScore ?? '—'} sigmaTheta=${res?.coherence?.sigmaTheta ?? '—'} entropy=${res?.coherence?.spectralEntropy ?? '—'} (${res?.coherence?.entropyState ?? '—'}) tailHealth=${res?.coherence?.tailHealthScore ?? 'warming'} couplingK=${res?.coherence?.couplingK ?? '—'} nodes=${res?.fleet?.up ?? '—'}/${res?.fleet?.total ?? '—'} up
+- Somatic: ${clip(som?.somatic_state ?? som, 400)}
+${restraint}
+MANDATORY: weave a 3-4 sentence spoken "state of being" answer citing at least one concrete number from EACH section. No generic substrate-speak.`;
+          sysSuffix = [sysSuffix, telemetry].filter(Boolean).join('\n\n');
+        } catch {}
+      }
       let accumulatedThought = '';
       const onReasoning = (chunk: string) => {
         accumulatedThought = (accumulatedThought + chunk).slice(-200);
