@@ -391,3 +391,41 @@ server-stall-*.json diagnostics to .cortex-runtime/eventlog/.
 Dead-port tested: correctly emitted 3 failures + NOTIFY. Live job
 uses default URL http://127.0.0.1:5173/api/cortex/healthz (no env
 override in plist — the 59999 test was a manual foreground run).
+
+=== 2026-11-21 LIVE INTEGRATIONS + CORTEX-REPOS PROGRAM ===
+
+ADOPTED (implemented + committed 730ea335):
+- notify tool: ntfy/Apprise push (NTFY_TOPIC or APPRISE_URL env; fail-soft)
+- calendar tool: EventKit via osascript — list/today/week/create/delete,
+  writable-calendars only (verified live: found real event, 7.4s cold)
+- see_image: mlx-vlm Qwen3-VL-4B-4bit via tools/perception-server.py :8940
+  (VERIFIED: real VLM answer, 382s cold incl. ~3GB model load, warm ~5-15s)
+- analyze_audio_emotion: emotion2vec+ via tools/emotion-server.py :8941
+  (funasr needs python<=3.13 — torch lacks cp315 wheels; venv at
+  /tmp/cortex-emotion-venv, funasr install was in-flight at session pause)
+- speaker_diarize: sherpa-onnx pyannote-segmentation-3.0 + 3dspeaker
+  eres2net embeddings (~46MB in ~/.cache/cortex/sherpa-onnx-pyannote)
+- perception-server.py runs on py3.15 venv /tmp/cortex-ai-venv
+- sherpa model URLs: HF onemira/eres2net-base-3dspeaker-onnx (k2-fsa
+  release URLs 404 — use HF)
+
+CORTEX-REPOS (12 build-own candidates — ALL CREATED + TESTED at
+/Users/Apple/cortex-repos/, each git-init'd + committed):
+  cortex-memory-tiers, cortex-router, cortex-proactivity, cortex-affect,
+  cortex-voice-memory, cortex-trajectory, cortex-screen, cortex-integrations,
+  cortex-durable, cortex-context, cortex-registry, cortex-runtime
+All 12 smoke tests PASS via tsx. SQLite repos use node:sqlite (zero deps,
+better-sqlite3 has no Node 26 prebuilds). NOT yet integrated into Cortex —
+repos are standalone libs awaiting adoption wiring.
+
+INCIDENT: Mac froze from RAM pressure (Qwen3-VL ~4GB + torch install +
+dev server 2.4GB). Stall diagnostic captured (server-stall-*.json showed
+32s transient stall, not dead loop). Dev server restarted healthy.
+Lesson: run heavy model sidecars on-demand, not always-on.
+
+STILL OPEN (external adopts not yet implemented): ACE-Step music,
+Docling doc parsing, Phoenix tracing, garak/snyk-agent-scan evals,
+BlueBubbles iMessage upgrade, Uptime Kuma/Beszel dashboards, Obsidian
+REST, Tailscale funnel exposure, Wan2.1 video, stable-diffusion.cpp
+images, GBNF structured output, DBOS (superseded by cortex-durable for
+local scope — revisit if Postgres workflows needed).
