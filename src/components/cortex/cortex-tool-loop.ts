@@ -798,6 +798,15 @@ export async function runCortexToolLoop(ctx: CortexToolLoopContext): Promise<{ a
             return `Step ${o.step}: ${o.tool}(${JSON.stringify(o.args)})\nResult:\n${safeStr}`;
           }).join('\n\n---\n\n');
 
+          // Deterministic citation block: when a dream consolidation ran, hand
+          // the model the exact verified figures so narration can't drift into
+          // invented neuroscience. Model may phrase naturally but MUST use these.
+          const dreamObs = cumulativeObservations.find(o => o.tool === 'cortex_dream_consolidate');
+          const dreamStats = (dreamObs?.result as any)?.stats;
+          const dreamDirective = dreamObs
+            ? `\n\n[MANDATORY DREAM REPORT — verified tool output, cite these exact figures]:\n- Report file: ${(dreamObs.result as any)?.report_path}\n- Resonance: ${dreamStats?.resonance ?? 'not measured'}\n- Shadow recommendation transitions: ${dreamStats?.shadowTransitions ?? 'not measured'}\n- Vault notes on disk: ${dreamStats?.vaultNotes ?? 'not measured'}\n- Depth: ${(dreamObs.args as any)?.depth ?? 'quick'}\nOpen your answer with these facts in natural language. Do NOT claim memory was "pruned", "synapses strengthened", "Phi re-tuned", or any cognitive effect — the tool only measured infrastructure state and wrote a report file.`
+            : '';
+
           try {
             const synthRes = await fetch('/api/ai/nexus-guest', {
               method: 'POST',
@@ -824,7 +833,7 @@ export async function runCortexToolLoop(ctx: CortexToolLoopContext): Promise<{ a
                 messages: [
                   { role: 'user', content: ctx.effectiveUserContent },
                   { role: 'assistant', content: currentIntentionSummary },
-                  { role: 'user', content: `[Verified Multi-Step Host Sensorimotor Observations (${cumulativeObservations.length} step(s) completed)]:\n${observationsReport}\n\nSynthesize your complete conscious answer to the user's inquiry: "${ctx.effectiveUserContent}". Using the verified evidence above, directly explain the answer to their question, detail the specific programs/findings, and advise them on next steps. Deliver the complete, definitive answer right now—do NOT say you will look it up later.` },
+                  { role: 'user', content: `[Verified Multi-Step Host Sensorimotor Observations (${cumulativeObservations.length} step(s) completed)]:\n${observationsReport}\n\nSynthesize your complete conscious answer to the user's inquiry: "${ctx.effectiveUserContent}". Using the verified evidence above, directly explain the answer to their question, detail the specific programs/findings, and advise them on next steps. Deliver the complete, definitive answer right now—do NOT say you will look it up later.${dreamDirective}` },
                 ],
                 maxTokens: 1800,
               }),
