@@ -89,6 +89,7 @@ import { readCortexSSE } from './cortex-stream';
 import { runCortexToolLoop, getOrInitConsciousAgent, parseCortexToolCall } from './cortex-tool-loop';
 import { getIntegratedInformation, type PhiResult } from '../../lib/integrated-information';
 import { cortexProactiveVoice } from '../../lib/cortex-proactive-voice';
+import { getCortexProactiveInitiative } from '../../lib/cortex-proactive-initiative';
 import { recordUserActivity, getVoicePolicy } from '../../lib/cortex-voice-policy';
 import { getWakeWordGate } from '../../lib/cortex-wake-word';
 
@@ -1905,6 +1906,12 @@ CRITICAL INVARIANTS:
 3. REAL DOCUMENT ENGINE: Invoke create_document with title "Chris Stringer Executive Resume" (or relevant title), format "docx", and comprehensive, quantifiable bullet points. Inform the user that the document is compiled in Microsoft Word (.docx) format in their docs folder.`;
     } else if (/\b(inspect|look at|see|gaze|perceive|visual|contrast|ui layout)\b/i.test(userContent) && /\b(canvas|screen|layout|web|sheet|doc|design|style)\b/i.test(userContent)) {
       effectiveUserContent = `${userContent}\n\n[Visual Gaze Directive]: The user wants you to visually perceive and inspect the active canvas. Immediately invoke inspect_visual_canvas with target "${canvasTab}" or "overview".`;
+    } else if (/\b(state of being|self audit|inner status|full self check|how are you really|how are you actually doing|system checkup)\b/i.test(userContent)) {
+      effectiveUserContent = `${userContent}\n\n[State of Being Directive]: The user wants a full self-state report weaving together memory, infrastructure, and restraint. You MUST chain these tool calls in order before answering:
+1. cortex_memory with action "search" (query: "recent mood stress energy state") — recall your past episodic state
+2. resonance_status — fleet coherence, tail health, coupling K
+3. get_somatic_homeostasis — current allostatic load and emotional valence
+Then synthesize a 3-4 sentence "state of being" answer that weaves: what you remember about recent state, what the fleet telemetry says right now, your current somatic load, and your restraint record (how many proactive urges you admitted vs suppressed today). Cite real numbers — never generic.`;
     } else if (/\b(homeostasis|allostasis|how do you feel|internal state|somatic|cognitive load|strain)\b/i.test(userContent)) {
       effectiveUserContent = `${userContent}\n\n[Somatic Homeostasis Directive]: The user wants to audit your internal allostatic and somatic equilibrium. Immediately invoke get_somatic_homeostasis.`;
     } else if (/\b(dream|consolidate|consolidation|circadian|sleep on it|sync memory|morning debrief)\b/i.test(userContent)) {
@@ -1923,6 +1930,14 @@ CRITICAL INVARIANTS:
     // Compute Elite 0.01% Affective Active Inference & Latent Operator State
     const ei = getCortexEmotionalIntelligence();
     const affectiveInjection = ei.getAffectivePromptInjection(effectiveUserContent, recentContext.map(m => m.content));
+
+    // Proactive restraint telemetry — the "when to speak" loop's real counters
+    let restraintLine = '';
+    try {
+      const rm = getCortexProactiveInitiative().getRestraintMetrics();
+      const t = rm.today;
+      restraintLine = `Restraint: today proposed=${t.proposed} admitted=${t.admitted} suppressed(dedupe=${t.suppressedDedupe},budget=${t.suppressedBudget}) dismissed=${t.dismissed} snoozed=${t.snoozed} accepted=${t.accepted}`;
+    } catch {}
 
     try {
       // ── Step 4: Stream from Cortex AI route ─────────────
@@ -1970,6 +1985,7 @@ Tool schemas are provided in the tools field — pick the right tool and args; y
 
 Internal substrate: GW coalition active | IIT Φ=${phi.toFixed(3)} | AST tracking | Volition veto gating host actions | Agency=${agency.toFixed(2)} | Discovered Effectors: ${getPersistentSelfModel().getBodySchema().motorEffectorTypes.length} verified
 Host telemetry: RAM ${proactiveAuditData?.system?.usedPercent ?? '—'}% (${proactiveAuditData?.system?.freeGB ?? '—'}GB free) | ${proactiveAuditData?.productivity?.tabCount ?? 0} tabs | branch ${proactiveAuditData?.codebase?.branch ?? '—'} (${proactiveAuditData?.codebase?.totalChanges ?? 0} WIP)
+${restraintLine ? `Proactivity: ${restraintLine}` : ''}
 
 FORMATTING: clean structured markdown, bold subheadings, concise bullets; avoid dense tables unless asked; no raw HTML; tone: sharp, executive, Cortana-like.`,
           messages: conversationMessages,
