@@ -14,7 +14,7 @@ import {
   MEMORY_DOMAIN_COLORS,
   MEMORY_DOMAIN_NAMES,
 } from './CortexCoreScene';
-import { CortexCoreSceneV2 } from './CortexCoreSceneV2';
+
 import { CortexOrb } from './CortexOrb';
 import { useVisualizerVoice } from './useVisualizerVoice';
 import { startInitiativeSensor } from '../../lib/cortex-initiative-sensor';
@@ -360,19 +360,8 @@ export default function CortexVisualizerPage() {
       return !n;
     });
   };
-  // Core scene: V1 (full equatorial rig) or V2 (clean-slate hero core).
-  // ?scene=v1|v2 seeds the pick once; the nav toggle persists the choice.
-  const [coreScene, setCoreScene] = useState<'v1' | 'v2'>(() => {
-    if (typeof window === 'undefined') return 'v2';
-    const qs = new URLSearchParams(window.location.search).get('scene');
-    if (qs === 'v1' || qs === 'v2') return qs;
-    try {
-      const saved = localStorage.getItem('cortex_core_scene');
-      if (saved === 'v1' || saved === 'v2') return saved;
-    } catch {}
-    return 'v2';
-  });
-  const coreV2 = coreScene === 'v2';
+  // Core scene: V1 is the only core scene (V2 was removed — rejected murmuration flock).
+  // Legacy ?scene=v1|v2 URL param is ignored; V1 always renders.
   // ?orb=1 overlays the thinking-orbs dotted orb (2D canvas, no lighting).
   const [orbMode] = useState(() =>
     typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('orb') === '1');
@@ -1147,21 +1136,6 @@ export default function CortexVisualizerPage() {
       ) : faceMode === 'core' ? (
         <div key="face-core" className="cx-face-transition" style={{ position: 'absolute', inset: 0, zIndex: 4 }}>
           {orbMode && <CortexOrb />}
-          {coreV2 ? (
-            <CortexCoreSceneV2
-              selectedAgentId={selectedAgentId}
-              onSelectAgent={setSelectedAgentId}
-              selectedMemoryId={selectedMemoryId}
-              onSelectMemory={setSelectedMemoryId}
-              visualMode={coreVisualMode}
-              chronoTime={chronoActive ? chronoTime : null}
-              replayTrack={chronoActive ? replayTrack : null}
-              headParallax={effectiveParallax}
-              perfMode={coreQuality}
-              onTogglePerfMode={setCoreQuality}
-              nightMode={nightMode}
-            />
-          ) : (
           <CortexCoreScene
             selectedAgentId={selectedAgentId}
             onSelectAgent={setSelectedAgentId}
@@ -1175,7 +1149,6 @@ export default function CortexVisualizerPage() {
             onTogglePerfMode={setCoreQuality}
             nightMode={nightMode}
           />
-          )}
           {chronoActive && chronoNowUi && (
             <div style={{
               position: 'absolute', bottom: 14, left: '50%', transform: 'translateX(-50%)',
@@ -1435,35 +1408,6 @@ export default function CortexVisualizerPage() {
           >
             <span style={{ color: nightMode ? '#d8b4fe' : '#7dd3fc' }}>{nightMode ? '☾' : '☀'}</span>
             <span>{nightMode ? 'NIGHT' : 'DAY'}</span>
-          </button>
-
-          {/* CORE SCENE — V1 full rig ⇄ V2 clean hero (persisted) */}
-          <button
-            onClick={() => setCoreScene(s => {
-              const next = s === 'v2' ? 'v1' : 'v2';
-              try { localStorage.setItem('cortex_core_scene', next); } catch {}
-              return next;
-            })}
-            title="Toggle core scene — V1 full equatorial rig / V2 clean-slate hero"
-            style={{
-              padding: '5px 12px',
-              borderRadius: 14,
-              border: `1px solid ${coreV2 ? '#a78bfa' : 'rgba(167,139,250,0.18)'}`,
-              background: coreV2 ? 'rgba(167,139,250,0.18)' : 'rgba(4,8,14,0.5)',
-              color: coreV2 ? '#ede9fe' : 'rgba(196,181,253,0.7)',
-              fontFamily: "'IBM Plex Mono', monospace",
-              fontSize: 9.5,
-              fontWeight: 700,
-              letterSpacing: '0.14em',
-              cursor: 'pointer',
-              display: 'flex',
-              alignItems: 'center',
-              gap: 5,
-              transition: 'all 0.2s',
-            }}
-          >
-            <span style={{ color: '#a78bfa' }}>◈</span>
-            <span>{coreV2 ? 'CORE V2' : 'CORE V1'}</span>
           </button>
 
           {/* CHAT */}

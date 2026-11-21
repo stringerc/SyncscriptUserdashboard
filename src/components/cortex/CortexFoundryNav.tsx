@@ -35,7 +35,8 @@ const NAV_ITEMS: { id: FoundryView; glyph: string; label: string; hint: string }
   { id: 'calendar', glyph: '▦', label: 'CALENDAR', hint: 'Upcoming events (48h)' },
   { id: 'agents', glyph: '✦', label: 'AGENTS', hint: 'Mission Control roster' },
   { id: 'missions', glyph: '▶', label: 'MISSIONS', hint: 'Deep-work mission log' },
-  { id: 'reel', glyph: '🎬', label: 'REEL', hint: '1-Click Kinetic Motion Sprint Briefing' },
+  { id: 'reel', glyph: '🎬', label: 'REEL', hint: 'Sprint briefing + rendered video library' },
+  { id: 'campaigns', glyph: '📣', label: 'CAMPAIGNS', hint: 'Launch campaigns — funnel, verified posts & kill-switch' },
   { id: 'standup', glyph: '⚡', label: 'STANDUP', hint: 'Fleet roll call & daily bids' },
   { id: 'inbox', glyph: '✉', label: 'INBOX', hint: 'Proposals awaiting your decision' },
   { id: 'incidents', glyph: '⚠', label: 'INCIDENTS', hint: 'Failure ticket ledger' },
@@ -115,6 +116,11 @@ export function CortexFoundryNav({ snap, onSelectAgent, selectedAgent, onOpenTow
   const [incidents, setIncidents] = useState<any[] | null>(null);
   const [missions, setMissions] = useState<any[] | null>(null);
   const [pipeline, setPipeline] = useState<any | null>(null);
+  const [campaignsData, setCampaignsData] = useState<any[] | null>(null);
+  const [videoLib, setVideoLib] = useState<any[] | null>(null);
+  const [campForm, setCampForm] = useState({ name: '', productUrl: '', price: '', niche: '' });
+  const [campNote, setCampNote] = useState('');
+  const [scrapeBusy, setScrapeBusy] = useState<string | null>(null);
   const [counsel, setCounsel] = useState<{ sessions: any[]; consoles: any[]; scorecard?: any[] } | null>(null);
   const [inbox, setInbox] = useState<any[] | null>(null);
   const [agentMsgs, setAgentMsgs] = useState<any[] | null>(null);
@@ -369,6 +375,16 @@ export function CortexFoundryNav({ snap, onSelectAgent, selectedAgent, onOpenTow
         .then((r) => r.json())
         .then((d) => { if (d?.manifest) setSprintReel(d.manifest); })
         .catch(() => {});
+      fetch('/api/cortex/videos', { cache: 'no-store' })
+        .then((r) => r.json())
+        .then((d) => { if (Array.isArray(d?.videos)) setVideoLib(d.videos); })
+        .catch(() => setVideoLib([]));
+    }
+    if (view === 'campaigns') {
+      fetch('/api/cortex/campaigns', { cache: 'no-store' })
+        .then((r) => r.json())
+        .then((d) => { if (Array.isArray(d?.campaigns)) setCampaignsData(d.campaigns); })
+        .catch(() => {});
     }
     if (view === 'goals') {
       goalsUnsub.current?.();
@@ -378,6 +394,17 @@ export function CortexFoundryNav({ snap, onSelectAgent, selectedAgent, onOpenTow
       goalsUnsub.current?.(); goalsUnsub.current = null;
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [view]);
+
+  // Campaigns poll — 30s refresh while CAMPAIGNS is open (funnel moves live).
+  useEffect(() => {
+    if (view !== 'campaigns') return;
+    const loadC = () => fetch('/api/cortex/campaigns', { cache: 'no-store' })
+      .then((r) => r.json())
+      .then((d) => { if (Array.isArray(d?.campaigns)) setCampaignsData(d.campaigns); })
+      .catch(() => {});
+    const iv = setInterval(loadC, 30_000);
+    return () => clearInterval(iv);
   }, [view]);
 
   // Venture registry poll — needed by VENTURES cards AND the scope chips
@@ -1705,6 +1732,37 @@ export function CortexFoundryNav({ snap, onSelectAgent, selectedAgent, onOpenTow
               </div>
             </div>
           ))}
+
+          {/* Rendered video library — every mp4 under storefront/, newest first */}
+          <div style={{ fontSize: 8.5, fontWeight: 800, letterSpacing: '0.2em', color: '#94a3b8', margin: '12px 0 6px' }}>
+            RENDERED LIBRARY ({videoLib?.length ?? '…'})
+          </div>
+          {videoLib === null && <div style={{ color: DIM, fontSize: 9.5 }}>LOADING…</div>}
+          {videoLib?.length === 0 && <div style={{ color: DIM, fontSize: 9.5 }}>NO RENDERED VIDEOS YET</div>}
+          {(videoLib || []).slice(0, 12).map((v: any) => {
+            const mb = (v.sizeBytes / 1048576).toFixed(1);
+            const d = v.modifiedAt ? new Date(v.modifiedAt).toLocaleDateString() : '';
+            return (
+              <div key={v.path} style={{ border: '1px solid rgba(148,163,184,0.18)', borderRadius: 3, padding: '6px 8px', marginBottom: 6, background: 'rgba(8,14,24,0.6)' }}>
+                {v.campaignId && (
+                  <div style={{ fontSize: 8, color: '#34d399', letterSpacing: '0.12em', marginBottom: 3, fontWeight: 700 }}>
+                    CAMPAIGN: {v.campaignId.toUpperCase()}
+                  </div>
+                )}
+                <video
+                  src={v.url}
+                  controls
+                  preload="metadata"
+                  style={{ width: '100%', borderRadius: 2, background: '#000', display: 'block' }}
+                />
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 4 }}>
+                  <span style={{ fontSize: 9, color: INK, fontWeight: 700, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{v.name}</span>
+                  <span style={{ fontSize: 8, color: DIM, flexShrink: 0 }}>{mb}MB · {d}</span>
+                </div>
+                <div style={{ fontSize: 7.5, color: 'rgba(148,163,184,0.5)', marginTop: 1 }}>{v.project}</div>
+              </div>
+            );
+          })}
         </Panel>
       )}
 
@@ -1939,6 +1997,120 @@ export function CortexFoundryNav({ snap, onSelectAgent, selectedAgent, onOpenTow
                 )}
               </div>
             ))}
+          </Panel>
+        );
+      })()}
+
+      {view === 'campaigns' && (() => {
+        const KS_COLOR: Record<string, string> = { ARMED: '#34d399', 'AT-RISK': '#fbbf24', TRIPPED: '#f87171', UNMEASURED: '#64748b' };
+        const fmt = (n: any) => (typeof n === 'number' ? n : '—');
+        return (
+          <Panel title="CAMPAIGNS // LAUNCH FUNNEL & KILL-SWITCH" onClose={() => setView(null)} right={
+            <button
+              onClick={async () => {
+                setScrapeBusy('all'); setCampNote('');
+                try {
+                  const r = await fetch('/api/cortex/distribution/enqueue', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ type: 'campaign_metrics', payload: {} }),
+                  });
+                  const d = await r.json();
+                  setCampNote(d?.ok ? 'metrics scrape queued — distributor will pull Pinterest + Gumroad' : `enqueue failed: ${d?.error || r.status}`);
+                } catch (e: any) { setCampNote(`enqueue failed: ${e?.message}`); }
+                setScrapeBusy(null);
+              }}
+              disabled={!!scrapeBusy}
+              style={{ background: 'rgba(52,211,153,0.12)', border: '1px solid rgba(52,211,153,0.5)', color: '#34d399', fontFamily: MONO, fontSize: 8.5, padding: '2px 7px', borderRadius: 2, cursor: scrapeBusy ? 'wait' : 'pointer', letterSpacing: '0.1em' }}
+            >{scrapeBusy ? 'QUEUING…' : '↻ SCRAPE METRICS'}</button>
+          }>
+            {campaignsData === null && <div style={{ padding: '12px 0', color: DIM }}>LOADING…</div>}
+            {campaignsData?.length === 0 && <div style={{ padding: '12px 0', color: DIM }}>NO CAMPAIGNS — add to storefront/campaigns.json</div>}
+            {(campaignsData || []).map((c: any) => {
+              const f = c.funnel || {};
+              const m = c.metrics || {};
+              const ks = c.killSwitch || {};
+              return (
+                <div key={c.id} style={{ border: '1px solid rgba(52,211,153,0.25)', borderRadius: 3, padding: '8px 10px', marginBottom: 10, background: 'rgba(6,28,22,0.5)' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <span style={{ fontSize: 10.5, fontWeight: 800, color: INK }}>{c.name}</span>
+                    <span style={{ fontSize: 8.5, fontWeight: 800, color: c.status === 'live' ? '#34d399' : '#fbbf24', letterSpacing: '0.1em' }}>{String(c.status || 'draft').toUpperCase()}</span>
+                  </div>
+                  <div style={{ fontSize: 9, color: '#67e8f9', marginTop: 2 }}>
+                    <a href={c.productUrl} target="_blank" rel="noreferrer" style={{ color: '#67e8f9' }}>{c.product}</a>
+                    {' '}· {c.price} · {c.niche}
+                  </div>
+                  {c.counselSession && <div style={{ fontSize: 8, color: DIM, marginTop: 1 }}>counsel: {c.counselSession}{c.upsellTarget ? ` · upsell → ${c.upsellTarget}` : ''}</div>}
+
+                  {/* Funnel: queue items by status */}
+                  <div style={{ display: 'flex', gap: 8, marginTop: 6, fontSize: 9 }}>
+                    <span style={{ color: '#34d399' }}>✓{f.done || 0} posted</span>
+                    <span style={{ color: '#fbbf24' }}>◌{(f.pending || 0) + (f.queued || 0) + (f.running || 0)} in-flight</span>
+                    <span style={{ color: '#f87171' }}>✗{f.failed || 0} failed</span>
+                  </div>
+
+                  {/* Verified live URLs — the only "posted" truth */}
+                  {(c.verifiedUrls || []).length > 0 && (
+                    <div style={{ marginTop: 6 }}>
+                      <div style={{ fontSize: 8.5, fontWeight: 800, letterSpacing: '0.15em', color: '#34d399', marginBottom: 2 }}>VERIFIED LIVE</div>
+                      {c.verifiedUrls.map((u: string) => (
+                        <div key={u} style={{ fontSize: 8.5 }}>
+                          <a href={u} target="_blank" rel="noreferrer" style={{ color: '#7dd3fc' }}>{u.length > 70 ? u.slice(0, 70) + '…' : u}</a>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* Metrics — explicit fields, UNMEASURED until data lands */}
+                  <div style={{ display: 'flex', gap: 12, marginTop: 6, fontSize: 9 }}>
+                    <span style={{ color: '#e0f2fe' }}>clicks <b>{fmt(m.clicks)}</b></span>
+                    <span style={{ color: '#e0f2fe' }}>sales <b>{fmt(m.sales)}</b></span>
+                    <span style={{ color: '#e0f2fe' }}>upsells <b>{fmt(m.upsells)}</b></span>
+                  </div>
+
+                  {/* Kill-switch */}
+                  {ks.metric && (
+                    <div style={{ marginTop: 6, fontSize: 8.5, borderTop: '1px solid rgba(148,163,184,0.1)', paddingTop: 5 }}>
+                      <span style={{ color: KS_COLOR[c.killStatus] || DIM, fontWeight: 800, letterSpacing: '0.1em' }}>KILL-SWITCH {c.killStatus}</span>
+                      <span style={{ color: DIM }}> · {ks.rule || `${ks.threshold} ${ks.metric} → kill`}{ks.windowDays ? ` · ${ks.windowDays}d window` : ''}</span>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+            {/* New campaign — registry entry only; publishing stays Hard-lane */}
+            <div style={{ borderTop: '1px solid rgba(148,163,184,0.12)', marginTop: 8, paddingTop: 8 }}>
+              <div style={{ fontSize: 8.5, fontWeight: 800, letterSpacing: '0.18em', color: '#94a3b8', marginBottom: 5 }}>NEW CAMPAIGN</div>
+              <input value={campForm.name} onChange={(e) => setCampForm({ ...campForm, name: e.target.value })} placeholder="Campaign name"
+                style={{ width: '100%', background: 'rgba(8,14,24,0.8)', border: '1px solid rgba(148,163,184,0.25)', color: INK, fontFamily: MONO, fontSize: 9.5, padding: '4px 7px', borderRadius: 2, marginBottom: 4, boxSizing: 'border-box' }} />
+              <input value={campForm.productUrl} onChange={(e) => setCampForm({ ...campForm, productUrl: e.target.value })} placeholder="Product URL (gumroad etc.)"
+                style={{ width: '100%', background: 'rgba(8,14,24,0.8)', border: '1px solid rgba(148,163,184,0.25)', color: INK, fontFamily: MONO, fontSize: 9.5, padding: '4px 7px', borderRadius: 2, marginBottom: 4, boxSizing: 'border-box' }} />
+              <div style={{ display: 'flex', gap: 4 }}>
+                <input value={campForm.price} onChange={(e) => setCampForm({ ...campForm, price: e.target.value })} placeholder="Price"
+                  style={{ flex: 1, background: 'rgba(8,14,24,0.8)', border: '1px solid rgba(148,163,184,0.25)', color: INK, fontFamily: MONO, fontSize: 9.5, padding: '4px 7px', borderRadius: 2, boxSizing: 'border-box' }} />
+                <input value={campForm.niche} onChange={(e) => setCampForm({ ...campForm, niche: e.target.value })} placeholder="Niche"
+                  style={{ flex: 2, background: 'rgba(8,14,24,0.8)', border: '1px solid rgba(148,163,184,0.25)', color: INK, fontFamily: MONO, fontSize: 9.5, padding: '4px 7px', borderRadius: 2, boxSizing: 'border-box' }} />
+              </div>
+              <button
+                onClick={async () => {
+                  if (!campForm.name || !campForm.productUrl) { setCampNote('name + product URL required'); return; }
+                  setCampNote('creating…');
+                  try {
+                    const r = await fetch('/api/cortex/campaigns', {
+                      method: 'POST', headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ name: campForm.name, productUrl: campForm.productUrl, price: campForm.price, niche: campForm.niche }),
+                    });
+                    const d = await r.json();
+                    if (d?.ok) { setCampNote(`created: ${d.id}`); setCampForm({ name: '', productUrl: '', price: '', niche: '' }); }
+                    else setCampNote(`failed: ${d?.error || r.status}`);
+                  } catch (e: any) { setCampNote(`failed: ${e?.message}`); }
+                }}
+                style={{ width: '100%', marginTop: 5, background: 'rgba(56,189,248,0.15)', border: '1px solid rgba(56,189,248,0.5)', color: '#7dd3fc', fontFamily: MONO, fontSize: 9.5, fontWeight: 700, padding: '5px 0', borderRadius: 2, cursor: 'pointer', letterSpacing: '0.15em' }}
+              >+ CREATE CAMPAIGN</button>
+              {campNote && <div style={{ fontSize: 8.5, color: '#fbbf24', marginTop: 4 }}>{campNote}</div>}
+            </div>
+            <div style={{ fontSize: 8, color: 'rgba(148,163,184,0.45)', marginTop: 6 }}>
+              Metrics are agent/Crew-updated — SCRAPE METRICS pulls live Pinterest + Gumroad via the automation Chrome. Verified URLs come from queue item results only.
+            </div>
           </Panel>
         );
       })()}
