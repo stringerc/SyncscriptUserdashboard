@@ -756,7 +756,7 @@ async function execTool(tool: string, args: Record<string, any>, turnSignal?: Ab
           const data = await res.json().catch(() => ({}));
           return {
             text: data?.ok
-              ? `Wellness sample logged. Stress score now ${(data.somatic?.stressScore * 100 ?? 0).toFixed(0)}%.`
+              ? `Wellness sample logged. Stress score now ${((data.somatic?.stressScore ?? 0) * 100).toFixed(0)}%.`
               : `Somatic ingest failed: ${data?.error || res.status}`,
             artifacts: [],
           };
@@ -2799,7 +2799,7 @@ export function useVisualizerVoice(enabled: boolean, onState: (speaking: boolean
     window.addEventListener('cortex-viz-interrupt', onInterrupt);
 
     // Debug/automation hook: `cortex-viz-turn` runs a full text→LLM→voice turn.
-    const onVizTurn = (e: Event) => {
+    const onVizTurn = async (e: Event) => {
       const rawText = (e as CustomEvent).detail;
       if (typeof rawText !== 'string' || !rawText.trim() || cancelled) return;
 

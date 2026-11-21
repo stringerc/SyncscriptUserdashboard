@@ -160,11 +160,16 @@ export function assertFact(input: {
 
 /** Facts valid at a specific instant (bi-temporal "as of" query). */
 export function factsAsOf(isoInstant: string): Fact[] {
+  // Stored timestamps are always `new Date().toISOString()` (millis). A
+  // caller-supplied instant like "...T10:51:55Z" (no millis) compares
+  // lexically WRONG against "...T10:51:55.830Z" — normalise through Date.
+  const parsed = new Date(isoInstant);
+  const t = Number.isNaN(parsed.getTime()) ? isoInstant : parsed.toISOString();
   const rows = db().prepare(
     `SELECT * FROM facts
      WHERE valid_from <= ? AND (valid_to IS NULL OR valid_to > ?)
      ORDER BY subject, predicate`
-  ).all(isoInstant, isoInstant) as any[];
+  ).all(t, t) as any[];
   return rows.map(rowToFact);
 }
 

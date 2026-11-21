@@ -16088,6 +16088,10 @@ export default defineConfig({
       '@': path.resolve(__dirname, './src'),
     },
   },
+  worker: {
+    // turn-detector.worker.ts code-splits shared chunks — iife can't, es can.
+    format: 'es',
+  },
   build: {
     target: 'esnext',
     outDir: 'build',
