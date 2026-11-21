@@ -188,6 +188,8 @@ export function TasksProvider({ children }: TasksProviderProps) {
               tasks: (allTasks || []).map((t: any) => ({
                 id: t.id, title: t.title, status: t.status, completed: t.completed ?? t.status === 'completed',
                 priority: t.priority, dueDate: t.dueDate, createdAt: t.createdAt, completedAt: t.completedAt,
+                description: t.description, category: t.category, progress: t.progress,
+                milestones: t.milestones, subtasks: t.subtasks, resources: t.resources,
               })),
             }),
           }).catch(() => { /* mirror is best-effort */ });

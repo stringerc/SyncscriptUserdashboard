@@ -12925,6 +12925,22 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
                 dueDate: t?.dueDate || t?.due_date || undefined,
                 createdAt: t?.createdAt || t?.created_at || undefined,
                 completedAt: t?.completedAt || t?.completed_at || undefined,
+                // Rich fields for the Foundry task card — bounded passthrough
+                description: t?.description ? String(t.description).slice(0, 500) : undefined,
+                category: t?.category ? String(t.category).slice(0, 60) : undefined,
+                progress: typeof t?.progress === 'number' ? Math.max(0, Math.min(100, t.progress)) : undefined,
+                milestones: Array.isArray(t?.milestones) ? t.milestones.slice(0, 20).map((m: any) => ({
+                  id: String(m?.id ?? ''), title: String(m?.title ?? '').slice(0, 120),
+                  completed: !!m?.completed, order: typeof m?.order === 'number' ? m.order : 0,
+                })).filter((m: any) => m.id && m.title) : undefined,
+                subtasks: Array.isArray(t?.subtasks) ? t.subtasks.slice(0, 30).map((s: any) => ({
+                  id: String(s?.id ?? ''), title: String(s?.title ?? '').slice(0, 120),
+                  completed: !!s?.completed,
+                })).filter((s: any) => s.id && s.title) : undefined,
+                resources: Array.isArray(t?.resources) ? t.resources.slice(0, 20).map((r: any) => ({
+                  id: String(r?.id ?? ''), name: String(r?.name ?? r?.title ?? '').slice(0, 120),
+                  type: r?.type ? String(r.type).slice(0, 40) : undefined,
+                })).filter((r: any) => r.id || r.name) : undefined,
               }))
               .filter((t: any) => t.id && t.title);
             fsSync.mkdirSync(path.dirname(file), { recursive: true });

@@ -17,6 +17,8 @@ import type { AgentsSnapshotClient, AgentClient, AgentTaskClient } from '../../l
 import { getCortexGoals, type LifeGoal } from '../../lib/cortex-goals';
 import { CortexTowerPanel } from './CortexTowerPanel';
 import { CortexFoundryCalendar } from './CortexFoundryCalendar';
+import { CortexFoundryTaskCard, RecommendNextStrip } from './CortexFoundryTaskCard';
+import { CortexFoundryGoalCard } from './CortexFoundryGoalCard';
 import { playAudioArbitrated } from '../../lib/cortex-tts-arbiter';
 
 const MONO = "'IBM Plex Mono', monospace";
@@ -447,10 +449,11 @@ export function CortexFoundryNav({ snap, onSelectAgent, selectedAgent, onOpenTow
     return () => clearInterval(iv);
   }, [view]);
 
-  // User-task mirror poll while the ledger view is open — the snapshot is
-  // pushed by TasksContext; Foundry just reads it.
+  // User-task mirror poll while the ledger or calendar view is open — the
+  // snapshot is pushed by TasksContext; Foundry just reads it. Calendar needs
+  // it too so due-dated tasks render as scheduled items.
   useEffect(() => {
-    if (view !== 'tasks') return;
+    if (view !== 'tasks' && view !== 'calendar') return;
     const load = () => {
       fetch('/api/cortex/tasks/snapshot', { cache: 'no-store' })
         .then((r) => r.json())
@@ -1070,6 +1073,11 @@ export function CortexFoundryNav({ snap, onSelectAgent, selectedAgent, onOpenTow
             </div>
           )}
 
+          {/* RECOMMEND NEXT — intelligent pick across user tasks */}
+          {taskSource !== 'agents' && userTasks !== null && (
+            <RecommendNextStrip tasks={userLedger.filter((t: any) => !t.completed)} />
+          )}
+
           {/* USER TASKS (Chris's tasks) */}
           {taskSource !== 'agents' && (
             <div style={{ marginTop: 8 }}>
@@ -1078,7 +1086,6 @@ export function CortexFoundryNav({ snap, onSelectAgent, selectedAgent, onOpenTow
               {userTasks !== null && userLedger.slice(0, 60).map((t: any, i: number, arr: any[]) => {
                 const prev = i > 0 ? arr[i - 1] : null;
                 const showHeader = !prev || userGroupKey(prev) !== userGroupKey(t);
-                const ts = t.createdAt || t.dueDate;
                 return (
                   <React.Fragment key={t.id}>
                     {showHeader && (
@@ -1086,13 +1093,7 @@ export function CortexFoundryNav({ snap, onSelectAgent, selectedAgent, onOpenTow
                         {userGroupLabel(t)}
                       </div>
                     )}
-                    <Row>
-                      <Lamp status={t.completed ? 'completed' : t.status === 'in-progress' ? 'running' : 'queued'} />
-                      <span style={{ color: 'rgba(252,211,77,0.85)', minWidth: 70, fontSize: 9 }}>USER</span>
-                      <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: t.completed ? DIM : INK }}>{t.title}</span>
-                      <span style={{ color: DIM, fontSize: 8 }}>{ts ? new Date(toMs(ts)).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : '—'}</span>
-                      <span style={{ color: t.completed ? '#34d399' : DIM, fontSize: 8 }}>{t.completed ? 'DONE' : (t.status || 'OPEN').toUpperCase()}</span>
-                    </Row>
+                    <CortexFoundryTaskCard task={t} />
                   </React.Fragment>
                 );
               })}
@@ -1248,16 +1249,7 @@ export function CortexFoundryNav({ snap, onSelectAgent, selectedAgent, onOpenTow
           )}
 
           {ventureChips}
-          {goalList.map((g) => (
-            <Row key={g.id}>
-              <Lamp status={g.status === 'active' ? 'healthy' : g.status === 'achieved' ? 'completed' : 'idle'} />
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ color: INK, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{g.title}</div>
-                <div style={{ fontSize: 9, color: DIM }}>{g.horizon.toUpperCase()} · {g.status.toUpperCase()}{g.driftScore != null ? ` · DRIFT ${Math.round(g.driftScore * 100)}%` : ''}</div>
-              </div>
-              {g.targetDate && <span style={{ fontSize: 9, color: DIM }}>{new Date(g.targetDate).toLocaleDateString()}</span>}
-            </Row>
-          ))}
+          {goalList.map((g) => <CortexFoundryGoalCard key={g.id} goal={g} />)}
           {!goalList.length && <div style={{ padding: '12px 0', color: DIM }}>NO GOALS DECLARED — USE VOICE: "set a goal to …"</div>}
         </Panel>
       )}
@@ -1270,7 +1262,19 @@ export function CortexFoundryNav({ snap, onSelectAgent, selectedAgent, onOpenTow
         >
           {ventureChips}
           <CortexFoundryCalendar
-            events={(calendar || []).filter((e: any) => ventureFilter === 'all' || String(e?.ventureId || 'cortex') === ventureFilter)}
+            events={[
+              ...(calendar || []).filter((e: any) => ventureFilter === 'all' || String(e?.ventureId || 'cortex') === ventureFilter),
+              // Scheduled user tasks — dueDate renders as a calendar item.
+              ...(userTasks || [])
+                .filter((t: any) => !t.completed && t.dueDate && !Number.isNaN(Date.parse(t.dueDate)))
+                .map((t: any) => ({
+                  id: `task-${t.id}`,
+                  title: `◈ ${t.title}`,
+                  start: Date.parse(t.dueDate),
+                  end: Date.parse(t.dueDate) + 30 * 60 * 1000,
+                  kind: 'task',
+                })),
+            ]}
             loading={calendar === null}
             onAddEvent={(newEvt) => setCalendar((prev) => [...(prev || []), newEvt])}
           />
