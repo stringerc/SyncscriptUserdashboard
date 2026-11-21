@@ -1347,7 +1347,7 @@ export function useVisualizerVoice(enabled: boolean, onState: (speaking: boolean
             const t = getCortexProactiveInitiative().getRestraintMetrics().today;
             restraint = `Restraint today: proposed=${t.proposed} admitted=${t.admitted} suppressed=${t.suppressedDedupe + t.suppressedBudget} dismissed=${t.dismissed} snoozed=${t.snoozed} accepted=${t.accepted} autoExecuted=${t.autoExecuted ?? 0}`;
           } catch {}
-          const telemetry = `STATE OF BEING TELEMETRY (verified live tool results — ground truth):
+          const telemetry = `STATE OF BEING TELEMETRY (verified live tool results — ground truth). Only claim mechanisms that correspond to real tools/subsystems — never invent capabilities like throttling or self-repair.
 - Episodic memory recall: ${clip(mem?.matches ?? mem?.result ?? mem)}
 - Fleet resonance: R=${res?.coherence?.R ?? '—'} aggregate=${res?.coherence?.aggregateScore ?? '—'} sigmaTheta=${res?.coherence?.sigmaTheta ?? '—'} entropy=${res?.coherence?.spectralEntropy ?? '—'} (${res?.coherence?.entropyState ?? '—'}) tailHealth=${res?.coherence?.tailHealthScore ?? 'warming'} couplingK=${res?.coherence?.couplingK ?? '—'} nodes=${res?.fleet?.up ?? '—'}/${res?.fleet?.total ?? '—'} up
 - Somatic: ${clip(som?.somatic_state ?? som, 400)}

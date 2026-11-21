@@ -16,6 +16,19 @@ const ACRONYM_MAP: Record<string, string> = {
   TTS: 'T T S', STT: 'S T T', VAD: 'V A D', SSE: 'S S E',
   LLM: 'L L M', SQL: 'S Q L', DB: 'D B', ID: 'I D',
   AI: 'A I', ML: 'M L', RAG: 'R A G',
+  // Common words models capitalize for emphasis — without these they fell
+  // through to TTS letter-spelling ("I… S" for IS).
+  IS: 'is', ARE: 'are', WAS: 'was', WERE: 'were', AM: 'am',
+  BE: 'be', BEEN: 'been', HAS: 'has', HAVE: 'have', HAD: 'had',
+  DO: 'do', DOES: 'does', DID: 'did', CAN: 'can', WILL: 'will',
+  WOULD: 'would', SHOULD: 'should', COULD: 'could', NOT: 'not',
+  ALL: 'all', ANY: 'any', BUT: 'but', FOR: 'for', NOR: 'nor',
+  YET: 'yet', SO: 'so', IF: 'if', OR: 'or', AS: 'as', AT: 'at',
+  BY: 'by', MY: 'my', ME: 'me', WE: 'we', HE: 'he', SHE: 'she',
+  THEY: 'they', THEM: 'them', THIS: 'this', THAT: 'that',
+  THESE: 'these', THOSE: 'those', THERE: 'there', HERE: 'here',
+  WHAT: 'what', WHEN: 'when', WHERE: 'where', WHY: 'why', HOW: 'how',
+  WHO: 'who', WHOM: 'whom', WHOSE: 'whose', WHICH: 'which',
   OK: 'okay', VS: 'versus', ETC: 'et cetera',
 };
 
@@ -74,7 +87,9 @@ export function normalizeForSpeech(input: string): string {
   for (const [k, v] of Object.entries(JARGON_MAP)) {
     t = t.replace(new RegExp(k.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi'), v);
   }
-  t = t.replace(/\b[A-Z]{2,5}\b/g, (m) => ACRONYM_MAP[m] ?? m);
+  // Unmapped all-caps tokens: lowercase them so TTS reads the word, not
+  // spelled letters ("IMPORTANT" → "important", never "I M P…").
+  t = t.replace(/\b[A-Z]{2,}\b/g, (m) => ACRONYM_MAP[m] ?? m.toLowerCase());
 
   // 6. Cleanup: collapse whitespace, orphan punctuation, stray dots.
   t = t.replace(/\s+/g, ' ')

@@ -1963,7 +1963,7 @@ CRITICAL INVARIANTS:
           return s && s !== 'null' && s !== '{}' ? s.slice(0, n) : 'no data';
         };
         stateOfBeingTelemetry = `
-STATE OF BEING TELEMETRY (verified live tool results — ground truth, cite these):
+STATE OF BEING TELEMETRY (verified live tool results — ground truth, cite these). Only claim mechanisms that correspond to real tools/subsystems you can name — never invent capabilities (e.g. do not claim throttling, self-repair, or learning unless a real tool performed it).
 - Episodic memory recall: ${clip(mem?.matches ?? mem?.result ?? mem)}
 - Fleet resonance: R=${res?.coherence?.R ?? '—'} aggregate=${res?.coherence?.aggregateScore ?? '—'} sigmaTheta=${res?.coherence?.sigmaTheta ?? '—'} entropy=${res?.coherence?.spectralEntropy ?? '—'} (${res?.coherence?.entropyState ?? '—'}) tailHealth=${res?.coherence?.tailHealthScore ?? 'warming'} couplingK=${res?.coherence?.couplingK ?? '—'} nodes=${res?.fleet?.up ?? '—'}/${res?.fleet?.total ?? '—'} up
 - Somatic: ${clip(som?.somatic_state ?? som, 400)}`;

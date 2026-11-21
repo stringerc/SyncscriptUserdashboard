@@ -25,8 +25,11 @@ describe('normalizeForSpeech', () => {
     expect(normalizeForSpeech('use JSON output')).toBe('use J son output');
   });
 
-  it('leaves unknown ALLCAPS words untouched', () => {
-    expect(normalizeForSpeech('NASA launched')).toBe('NASA launched');
+  it('lowercases unknown ALLCAPS words so TTS reads them, not spells them', () => {
+    // Uppercase passthrough made TTS spell tokens letter-by-letter
+    // ("IS" → "I… S"). Lowercase reads as a natural word.
+    expect(normalizeForSpeech('NASA launched')).toBe('nasa launched');
+    expect(normalizeForSpeech('this IS important')).toBe('this is important');
   });
 
   it('handles percentages, currency, versions, phi', () => {
