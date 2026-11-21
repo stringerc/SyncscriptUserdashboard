@@ -141,6 +141,9 @@ export function CortexFoundryNav({ snap, onSelectAgent, selectedAgent, onOpenTow
   const [standupNote, setStandupNote] = useState('');
   const [ventures, setVentures] = useState<{ ventures?: any[]; unregisteredYield?: string[] } | null>(null);
   const [ventureFilter, setVentureFilter] = useState<string>('all');
+  const [ventureConsole, setVentureConsole] = useState<string | null>(null);
+  const [ventureSchedInput, setVentureSchedInput] = useState('');
+  const [ventureBudgetInput, setVentureBudgetInput] = useState('');
   const [evoEvals, setEvoEvals] = useState<any[] | null>(null);
   const [evoRuns, setEvoRuns] = useState<any[] | null>(null);
   const [evoInstincts, setEvoInstincts] = useState<{ instincts?: any[]; promotable?: number } | null>(null);
@@ -659,6 +662,21 @@ export function CortexFoundryNav({ snap, onSelectAgent, selectedAgent, onOpenTow
 
   const agents = snap.agents || [];
   const allTasks = snap.tasks || [];
+  // Venture console helpers — governance writes go through the registry API;
+  // shortcuts preset the shared ventureFilter then open the existing view.
+  const reloadVentures = () => fetch('/api/cortex/ventures', { cache: 'no-store' })
+    .then((r) => r.json()).then(setVentures).catch(() => {});
+  const updateVentureField = (id: string, patch: Record<string, unknown>) =>
+    fetch('/api/cortex/ventures/update', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id, ...patch }),
+    }).then(() => reloadVentures()).catch(() => {});
+  const openVentureView = (v: string, target: FoundryView) => {
+    setVentureFilter(v);
+    setVentureConsole(null);
+    setView(target);
+  };
+
   // Venture scope (enterprise console): 'all' shows everything; a venture id
   // filters to that scope; untagged work counts under 'cortex' — never dropped.
   const ventureOf = (t: any): string => String(t?.input?.ventureId || t?.ventureId || 'cortex');
@@ -2626,24 +2644,89 @@ export function CortexFoundryNav({ snap, onSelectAgent, selectedAgent, onOpenTow
         );
       })()}
 
-      {view === 'ventures' && (
-        <Panel title="VENTURES — ENTERPRISE SCOPE" onClose={() => setView(null)} right={
+      {view === 'ventures' && (() => {
+        const vc = ventureConsole ? (ventures?.ventures || []).find((v: any) => v.id === ventureConsole) : null;
+        return (
+        <Panel title={vc ? `VENTURE — ${vc.callSign || vc.name}` : "VENTURES — ENTERPRISE SCOPE"} onClose={() => { setView(null); setVentureConsole(null); }} right={
           ventures === null ? <span style={{ fontSize: 9.5, color: DIM }}>LOADING…</span> : <span style={{ fontSize: 9.5, color: DIM }}>{(ventures.ventures || []).length} REGISTERED</span>
         }>
+          {vc && (
+            <div style={{ marginBottom: 10 }}>
+              {/* Console header — live autonomy state */}
+              <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', fontSize: 9, color: DIM, marginBottom: 6 }}>
+                <span>OPEN TASKS <b style={{ color: INK }}>{vc.openTasks ?? 0}</b></span>
+                <span>GOALS <b style={{ color: INK }}>{vc.goals ?? 0}</b></span>
+                <span>OPS <b style={{ color: INK }}>{vc.opsItems ?? 0}</b></span>
+                <span>BLOCKS <b style={{ color: INK }}>{vc.openBlocks ?? 0}</b></span>
+                <span>PENDING DECISIONS <b style={{ color: (vc.pendingProposals || 0) > 0 ? '#fbbf24' : INK }}>{vc.pendingProposals ?? 0}</b></span>
+                <span>STALLED <b style={{ color: (vc.stalledGoals || 0) > 0 ? '#f87171' : INK }}>{vc.stalledGoals ?? 0}</b></span>
+                <span>DIST <b style={{ color: INK }}>{vc.distribution?.pending ?? 0}◌ {vc.distribution?.done ?? 0}✓ {vc.distribution?.failed ?? 0}✗</b></span>
+                <span>YIELD 7D <b style={{ color: INK }}>{vc.yield7d?.runs ?? 0} runs{vc.yield7d?.runs ? ` · ${Math.round(((vc.yield7d.completions || 0) / vc.yield7d.runs) * 100)}%` : ''}</b></span>
+              </div>
+              {/* Autonomy strip — schedule, cycles, budget, kill switch */}
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center', fontSize: 9, color: DIM, marginBottom: 6 }}>
+                <span style={{ color: vc.paused ? '#f87171' : '#34d399', fontWeight: 800, letterSpacing: '0.1em' }}>{vc.paused ? '⏸ PAUSED' : '▶ LIVE'}</span>
+                {vc.scheduleMinutes ? (
+                  <span>NEXT CYCLE <b style={{ color: '#7dd3fc' }}>{vc.nextRunAt ? new Date(vc.nextRunAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : '—'}</b> · every {vc.scheduleMinutes >= 60 ? `${Math.round(vc.scheduleMinutes / 60)}h` : `${vc.scheduleMinutes}m`}</span>
+                ) : <span style={{ color: DIM }}>MANUAL — no schedule</span>}
+                <span>CYCLES TODAY <b style={{ color: INK }}>{vc.cyclesToday ?? 0}{vc.budgetPerDay ? `/${vc.budgetPerDay}` : ''}</b></span>
+                <button onClick={() => updateVentureField(vc.id, { paused: !vc.paused })}
+                  style={{ background: vc.paused ? 'rgba(52,211,153,0.15)' : 'rgba(248,113,113,0.12)', border: `1px solid ${vc.paused ? '#34d399' : '#f87171'}`, color: vc.paused ? '#6ee7b7' : '#fca5a5', fontFamily: MONO, fontSize: 8.5, fontWeight: 800, padding: '1px 8px', borderRadius: 2, cursor: 'pointer', letterSpacing: '0.08em' }}>
+                  {vc.paused ? 'RESUME' : 'PAUSE'}
+                </button>
+              </div>
+              {/* Schedule + budget controls */}
+              <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap', marginBottom: 8 }}>
+                <input value={ventureSchedInput} onChange={(e) => setVentureSchedInput(e.target.value)} placeholder="cycle min (60+)"
+                  style={{ width: 90, background: 'rgba(15,23,42,0.8)', border: '1px solid rgba(56,189,248,0.35)', color: INK, fontFamily: MONO, fontSize: 9, padding: '2px 6px', borderRadius: 2, outline: 'none' }} />
+                <button onClick={() => { const m = parseInt(ventureSchedInput, 10); if (m >= 60) { updateVentureField(vc.id, { scheduleMinutes: m }); setVentureSchedInput(''); } }}
+                  style={{ background: 'rgba(56,189,248,0.12)', border: '1px solid #38bdf8', color: '#7dd3fc', fontFamily: MONO, fontSize: 8.5, fontWeight: 800, padding: '2px 8px', borderRadius: 2, cursor: 'pointer', letterSpacing: '0.08em' }}>SET SCHEDULE</button>
+                {vc.scheduleMinutes ? <button onClick={() => updateVentureField(vc.id, { scheduleMinutes: 0 })}
+                  style={{ background: 'none', border: '1px solid rgba(148,163,184,0.3)', color: DIM, fontFamily: MONO, fontSize: 8.5, padding: '2px 8px', borderRadius: 2, cursor: 'pointer' }}>CLEAR</button> : null}
+                <span style={{ width: 8 }} />
+                <input value={ventureBudgetInput} onChange={(e) => setVentureBudgetInput(e.target.value)} placeholder="cycles/day cap"
+                  style={{ width: 90, background: 'rgba(15,23,42,0.8)', border: '1px solid rgba(167,139,250,0.35)', color: INK, fontFamily: MONO, fontSize: 9, padding: '2px 6px', borderRadius: 2, outline: 'none' }} />
+                <button onClick={() => { const b = parseInt(ventureBudgetInput, 10); if (b > 0) { updateVentureField(vc.id, { budgetPerDay: b }); setVentureBudgetInput(''); } }}
+                  style={{ background: 'rgba(167,139,250,0.12)', border: '1px solid #a78bfa', color: '#c4b5fd', fontFamily: MONO, fontSize: 8.5, fontWeight: 800, padding: '2px 8px', borderRadius: 2, cursor: 'pointer', letterSpacing: '0.08em' }}>SET BUDGET</button>
+              </div>
+              {/* Scoped shortcuts — open existing views pre-filtered to this venture */}
+              <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginBottom: 4 }}>
+                {([['tasks', 'TASKS'], ['goals', 'GOALS'], ['calendar', 'SCHEDULE'], ['campaigns', 'CAMPAIGNS'], ['agents', 'AGENTS'], ['inbox', 'INBOX']] as [FoundryView, string][]).map(([v, label]) => (
+                  <button key={v} onClick={() => openVentureView(vc.id, v)}
+                    style={{ background: 'rgba(167,139,250,0.1)', border: '1px solid rgba(167,139,250,0.4)', color: '#c4b5fd', fontFamily: MONO, fontSize: 8.5, fontWeight: 800, padding: '3px 10px', borderRadius: 2, cursor: 'pointer', letterSpacing: '0.1em' }}>
+                    {label} ▸
+                  </button>
+                ))}
+                <button onClick={() => setVentureConsole(null)}
+                  style={{ background: 'none', border: '1px solid rgba(148,163,184,0.3)', color: DIM, fontFamily: MONO, fontSize: 8.5, padding: '3px 10px', borderRadius: 2, cursor: 'pointer', letterSpacing: '0.1em', marginLeft: 'auto' }}>
+                  ← ALL VENTURES
+                </button>
+              </div>
+              {vc.health?.reasons?.length > 0 && (
+                <div style={{ fontSize: 8, color: DIM, marginBottom: 4 }}>{vc.health.reasons.join(' · ')}</div>
+              )}
+            </div>
+          )}
           {ventures === null && <div style={{ padding: '16px 0', color: DIM }}>PROBING REGISTRY…</div>}
-          {ventures !== null && !(ventures.ventures || []).length && <div style={{ padding: '16px 0', color: DIM }}>NO VENTURES REGISTERED — SEE .cortex-runtime/ventures.json</div>}
-          {(ventures?.ventures || []).map((v: any) => {
+          {!vc && ventures !== null && !(ventures.ventures || []).length && <div style={{ padding: '16px 0', color: DIM }}>NO VENTURES REGISTERED — SEE .cortex-runtime/ventures.json</div>}
+          {!vc && (ventures?.ventures || []).map((v: any) => {
             const y = v.yield7d || { runs: 0, completions: 0 };
             const yieldRate = y.runs ? Math.round((y.completions / y.runs) * 100) : null;
             const d = v.distribution || { pending: 0, done: 0, failed: 0 };
             return (
-              <div key={v.id} style={{
+              <div key={v.id} onClick={() => setVentureConsole(v.id)} style={{
                 border: '1px solid rgba(167,139,250,0.22)', borderLeft: `3px solid ${v.status === 'active' ? '#a78bfa' : DIM}`,
                 borderRadius: 3, padding: '8px 10px', marginBottom: 8, background: 'rgba(167,139,250,0.04)',
-              }}>
+                cursor: 'pointer', transition: 'border-color 0.15s',
+              }}
+                onMouseEnter={(e) => (e.currentTarget.style.borderColor = 'rgba(167,139,250,0.55)')}
+                onMouseLeave={(e) => (e.currentTarget.style.borderColor = 'rgba(167,139,250,0.22)')}
+              >
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
                   <span style={{ fontSize: 11, fontWeight: 800, color: '#c4b5fd', letterSpacing: '0.12em' }}>{v.callSign || v.name}</span>
                   <span style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+                    {v.paused && <span style={{ fontSize: 8, fontWeight: 800, color: '#f87171', border: '1px solid rgba(248,113,113,0.5)', borderRadius: 2, padding: '0 4px' }}>PAUSED</span>}
+                    {!v.paused && v.scheduleMinutes ? <span style={{ fontSize: 8, fontWeight: 800, color: '#7dd3fc', border: '1px solid rgba(56,189,248,0.4)', borderRadius: 2, padding: '0 4px' }}>⏱ {v.scheduleMinutes >= 60 ? `${Math.round(v.scheduleMinutes / 60)}H` : `${v.scheduleMinutes}M`}</span> : null}
                     {v.health?.score != null && (
                       <span style={{ fontSize: 8.5, fontWeight: 800, color: HEALTH_COLOR[v.health.band] || DIM, border: `1px solid ${HEALTH_COLOR[v.health.band] || DIM}55`, borderRadius: 2, padding: '0 4px' }}>
                         {v.health.band.toUpperCase()}{v.health.score != null ? ` ${v.health.score}` : ''}
@@ -2676,16 +2759,17 @@ export function CortexFoundryNav({ snap, onSelectAgent, selectedAgent, onOpenTow
               </div>
             );
           })}
-          {(ventures?.unregisteredYield || []).length > 0 && (
+          {!vc && (ventures?.unregisteredYield || []).length > 0 && (
             <div style={{ fontSize: 9, color: '#fbbf24', border: '1px solid rgba(251,191,36,0.25)', borderRadius: 3, padding: '6px 8px', marginTop: 4 }}>
               UNREGISTERED YIELD ACTIVITY: {ventures!.unregisteredYield!.join(', ')} — work exists outside the registry; register or re-scope it.
             </div>
           )}
-          <div style={{ fontSize: 8, color: DIM, marginTop: 8, lineHeight: 1.6 }}>
-            Venture scope is a filter dimension on TASKS — tasks, goals, ops items, and mission blocks carry ventureId. Untagged work counts under CORTEX. Registry: .cortex-runtime/ventures.json
-          </div>
+          {!vc && <div style={{ fontSize: 8, color: DIM, marginTop: 8, lineHeight: 1.6 }}>
+            Venture scope is a filter dimension on TASKS — tasks, goals, ops items, and mission blocks carry ventureId. Untagged work counts under CORTEX. Click a card for the venture console. Registry: .cortex-runtime/ventures.json
+          </div>}
         </Panel>
-      )}
+        );
+      })()}
     </>
   );
 }

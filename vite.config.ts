@@ -195,12 +195,12 @@ import { deriveSomaticState, type SomaticSample } from './src/lib/cortex-somatic
 import { getAgentRuntime } from './src/lib/cortex-agents/runtime';
 import { recordAgentOutcome } from './src/lib/cortex-agents/outcomes';
 import { archiveTask, readArchive } from './src/lib/cortex-agents/archive';
-import { listStrategyProposals, decideStrategyProposal, reconcileStrategyProposals, fileBudgetProposal, autoApproveSafeStrategyProposals, setOnProposalFiledHook } from './src/lib/cortex-agents/strategy-proposals';
+import { listStrategyProposals, decideStrategyProposal, reconcileStrategyProposals, fileBudgetProposal, fileStrategyProposals, autoApproveSafeStrategyProposals, setOnProposalFiledHook } from './src/lib/cortex-agents/strategy-proposals';
 import { recordIncidentFailure, resolveIncidentsOnSuccess, listIncidents, escalateStaleIncidents, sweepIncidentTtl, dismissIncident, dismissAllIncidents, autoVerifyIncident } from './src/lib/cortex-agents/incidents';
 import { issueDirective, listDirectives, ackDirective, cancelDirective } from './src/lib/cortex-agents/directives';
 import { listMessages, sendMessage } from './src/lib/cortex-agents/messages';
 import { loadMission, saveMission, upsertGoal, verifyOps, goalProgress, routineYield, suggestCadence, planBlocks, startExperiment, reportExperiments, ventureYieldBreakdown, type OpsItem, type MissionGoal, type CadenceEntry } from './src/lib/cortex-agents/mission';
-import { listVentures, isValidVenture, ventureFromQueueType } from './src/lib/cortex-ventures';
+import { listVentures, isValidVenture, ventureFromQueueType, updateVenture, dueVentures, markVentureRan, recordVentureCycle, ventureCyclesToday } from './src/lib/cortex-ventures';
 import { maybeFileAdoptionFollowup } from './src/lib/cortex-agents/adoption';
 import { registerAgentWorkers, makeEphemeralWorker, expandTaskSpec } from './src/lib/cortex-agents/workers';
 import { enqueueDistributionItem, DISTRIBUTION_ITEM_TYPES } from './src/lib/cortex-agents/distribution';
@@ -1821,6 +1821,34 @@ function apiProxyPlugin(): Plugin {
         } catch { /* sweep must never kill the server */ }
       }, 60_000);
       incidentSweep.unref?.();
+
+      // ── Venture autonomous cycle scheduler ──
+      // Every 60s: ventures with scheduleMinutes whose nextRunAt is due emit a
+      // governed proposal through submitProposal — dedupe, daily cap, and
+      // learned dispositions all apply unchanged. paused/dormant ventures
+      // never fire; budgetPerDay caps admitted cycles per venture per UTC day.
+      const ventureSweep = setInterval(() => {
+        try {
+          for (const v of dueVentures()) {
+            if (v.budgetPerDay && ventureCyclesToday(v.id) >= v.budgetPerDay) {
+              markVentureRan(v.id); // budget spent — advance, don't spin
+              continue;
+            }
+            // Hourly bucket → at most one pending cycle decision per venture
+            // per hour; once decided, the next bucket files fresh.
+            const bucket = Math.floor(Date.now() / 3_600_000);
+            const res = fileStrategyProposals({
+              planNote: `venture-cycle-${v.id}-${bucket}`,
+              planTaskId: `venture-cycle-${v.id}-${bucket}`,
+              actions: [`[process] ${v.name} autonomous cycle — review venture goals, ops items, and open blocks; advance or re-scope the highest-attention work — evidence: scheduleMinutes=${v.scheduleMinutes}, registry=.cortex-runtime/ventures.json`],
+              ventureId: v.id,
+            });
+            if (res.filed > 0) recordVentureCycle(v.id);
+            markVentureRan(v.id);
+          }
+        } catch { /* sweep must never kill the server */ }
+      }, 60_000);
+      ventureSweep.unref?.();
 
       // LLM bridge for workers → matrix-routed completion endpoint (self-call).
       agentRuntime.setLLMBridge(async (opts) => {
@@ -14358,6 +14386,32 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
           const unregistered = Object.keys(yieldByVenture).filter((id) => !ventures.some((v) => v.id === id));
           res.writeHead(200, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ ok: true, ventures: cards, unregisteredYield: unregistered }));
+        } catch (e: any) {
+          res.writeHead(500, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ ok: false, error: String(e?.message || e) }));
+        }
+      });
+
+      // POST /api/cortex/ventures/update — governance writes: pause/resume
+      // (kill switch), schedule cadence, daily cycle budget.
+      server.middlewares.use('/api/cortex/ventures/update', async (req: any, res: any, next: any) => {
+        if (req.method === 'OPTIONS') {
+          res.writeHead(204, { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Methods': 'POST, OPTIONS', 'Access-Control-Allow-Headers': 'Content-Type' });
+          return res.end();
+        }
+        if (req.method !== 'POST') return next();
+        agentCors(req, res);
+        try {
+          let body = '';
+          for await (const chunk of req) body += chunk;
+          const { id, paused, scheduleMinutes, budgetPerDay, status } = JSON.parse(body || '{}');
+          if (!isValidVenture(id)) {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            return res.end(JSON.stringify({ ok: false, error: 'unknown venture' }));
+          }
+          const v = updateVenture(id, { paused, scheduleMinutes, budgetPerDay, status });
+          res.writeHead(v ? 200 : 400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify(v ? { ok: true, venture: v } : { ok: false, error: 'invalid patch' }));
         } catch (e: any) {
           res.writeHead(500, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ ok: false, error: String(e?.message || e) }));
