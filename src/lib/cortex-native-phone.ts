@@ -9,6 +9,13 @@
  * Isomorphic Architecture: Fully safe to import in browser React components and Node.js server.
  */
 
+// Vite resolves literal 'node:*' specifiers at build time even behind
+// @vite-ignore and emits browser-externalization warnings + stubs. A
+// variable specifier is left as a runtime import; every call site below
+// is already guarded by `typeof window === 'undefined'`, so the import
+// only ever executes under Node (Vite middleware / scripts).
+const nodeImport = (specifier: string) => import(/* @vite-ignore */ specifier);
+
 export interface PhoneCallSession {
   id: string;
   phoneNumber: string;
@@ -104,8 +111,8 @@ export class CortexNativePhoneService {
     }
 
     try {
-      const { exec } = await import('node:child_process');
-      const { promisify } = await import('node:util');
+      const { exec } = await nodeImport('node:child_process');
+      const { promisify } = await nodeImport('node:util');
       const execAsync = promisify(exec);
       const { stdout } = await execAsync('system_profiler SPAudioDataType', { timeout: 4000 });
       const virtualDevices: string[] = [];
@@ -193,10 +200,10 @@ export class CortexNativePhoneService {
 
     if (!isBrowser) {
       try {
-        const fs = await import('node:fs');
-        const path = await import('node:path');
-        const { exec } = await import('node:child_process');
-        const { promisify } = await import('node:util');
+        const fs = await nodeImport('node:fs');
+        const path = await nodeImport('node:path');
+        const { exec } = await nodeImport('node:child_process');
+        const { promisify } = await nodeImport('node:util');
         const execAsync = promisify(exec);
 
         const reportsDir = path.resolve(this.workspaceRoot, '.cortex/reports/call_transcripts');
@@ -288,8 +295,8 @@ ${dossier.suggestedQuestions.map(q => `1. ${q}`).join('\n')}
       if (response.ok) {
         const buffer = await response.arrayBuffer();
         if (typeof window === 'undefined') {
-          const fs = await import('node:fs');
-          const path = await import('node:path');
+          const fs = await nodeImport('node:fs');
+          const path = await nodeImport('node:path');
           const callAudioDir = path.resolve(this.workspaceRoot, 'public/sandbox/calls');
           if (!fs.existsSync(callAudioDir)) {
             fs.mkdirSync(callAudioDir, { recursive: true });

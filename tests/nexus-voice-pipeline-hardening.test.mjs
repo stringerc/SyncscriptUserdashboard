@@ -43,10 +43,17 @@ test('Nexus voice: SSE must not double-queue TTS (tokens + finalContent)', () =>
   assert.match(ctx, /Already queued TTS from token stream/);
 });
 
-test('nexus-guest: omit finalContent when stream tokens were emitted', () => {
-  const api = read('api/ai/nexus-guest.ts');
-  assert.match(api, /emittedStreamToken/);
-  assert.match(api, /fullContent\.trim\(\) && !emittedStreamToken/);
+test('nexus-guest: finalContent only on non-stream deterministic path (no token double-queue)', () => {
+  // Route lives in src/server/nexus-guest.ts (Vite middleware), not api/ai/.
+  // Invariant: token-streamed responses must not also emit finalContent,
+  // or the client queues TTS twice. The provider stream path emits only
+  // `token` events + [DONE]; finalContent appears exactly once, in the
+  // deterministic pricing branch that emits no tokens.
+  const api = read('src/server/nexus-guest.ts');
+  const finalContentSites = api.match(/finalContent/g) || [];
+  assert.equal(finalContentSites.length, 1, 'expected exactly one finalContent emission site');
+  assert.match(api, /\{ token: /, 'stream path must emit token events');
+  assert.match(api, /data: \[DONE\]/, 'stream path must terminate with [DONE]');
 });
 
 test('useVoiceStream: stop recognition restart on mic not-allowed', () => {

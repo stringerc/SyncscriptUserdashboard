@@ -1383,6 +1383,62 @@ function apiProxyPlugin(): Plugin {
       }
     },
     configureServer(server) {
+      // ── Event-loop stall watchdog ──
+      // This dev server has hung twice in production use (TCP LISTEN alive,
+      // zero HTTP responses — classic blocked event loop). Detect sustained
+      // stalls, dump diagnostics, and optionally self-terminate so a
+      // supervisor/launchd can restart a fresh process instead of serving
+      // a zombie. CORTEX_WATCHDOG_EXIT=1 enables the exit path.
+      const watchdog = setInterval(() => {
+        const lag = Date.now() - (watchdog as any)._expected;
+        (watchdog as any)._expected = Date.now() + 5000;
+        const stall = lag - 5000;
+        (watchdog as any)._streak = stall > 10_000 ? ((watchdog as any)._streak || 0) + 1 : 0;
+        if ((watchdog as any)._streak === 3) {
+          try {
+            const handles = (process as any)._getActiveHandles?.() || [];
+            const reqs = (process as any)._getActiveRequests?.() || [];
+            const diag = {
+              ts: new Date().toISOString(),
+              stallMs: stall,
+              rssMB: Math.round(process.memoryUsage().rss / 1048576),
+              heapMB: Math.round(process.memoryUsage().heapUsed / 1048576),
+              activeHandles: handles.length,
+              activeRequests: reqs.length,
+              handleTypes: handles.reduce((m: any, h: any) => {
+                const t = h?.constructor?.name || typeof h;
+                m[t] = (m[t] || 0) + 1;
+                return m;
+              }, {}),
+            };
+            const dir = path.join(process.cwd(), '.cortex-runtime', 'eventlog');
+            fsSync.mkdirSync(dir, { recursive: true });
+            fsSync.writeFileSync(
+              path.join(dir, `server-stall-${Date.now()}.json`),
+              JSON.stringify(diag, null, 2),
+            );
+            console.error('[cortex-watchdog] EVENT LOOP STALLED >10s x3 — diagnostics written to .cortex-runtime/eventlog/server-stall-*.json', diag);
+            if (process.env.CORTEX_WATCHDOG_EXIT === '1') {
+              console.error('[cortex-watchdog] CORTEX_WATCHDOG_EXIT=1 — exiting for supervisor restart');
+              process.exit(1);
+            }
+          } catch (e) {
+            console.error('[cortex-watchdog] diagnostic write failed:', e);
+          }
+        }
+      }, 5000);
+      (watchdog as any)._expected = Date.now() + 5000;
+      watchdog.unref?.();
+      server.middlewares.use('/api/cortex/healthz', (_req: any, res: any) => {
+        const lag = Date.now() - ((watchdog as any)._expected - 5000);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          ok: true,
+          eventLoopLagMs: Math.max(0, lag),
+          uptimeSec: Math.round(process.uptime()),
+          rssMB: Math.round(process.memoryUsage().rss / 1048576),
+        }));
+      });
       // ── /vad/* static assets with query-string tolerance ──
       // onnxruntime-web's Emscripten glue arrives as `/vad/wasm/*.mjs?import`
       // (vite appends ?import to dynamic imports). Vite's transform middleware

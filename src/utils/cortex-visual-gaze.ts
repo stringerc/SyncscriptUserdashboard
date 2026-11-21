@@ -8,9 +8,14 @@
  */
 
 
+// Variable specifier: Vite can't resolve it at build time, so no
+// browser-externalization warnings/stubs. Call sites are Node-only
+// (guarded by typeof window checks in callers).
+const nodeImport = (specifier: string) => import(/* @vite-ignore */ specifier);
+
 async function loadNodeDeps() {
   const [fs, path, cp, util] = await Promise.all([
-    import('node:fs'), import('node:path'), import('node:child_process'), import('node:util'),
+    nodeImport('node:fs'), nodeImport('node:path'), nodeImport('node:child_process'), nodeImport('node:util'),
   ]);
   return { fs, path, execFileAsync: util.promisify(cp.execFile) };
 }

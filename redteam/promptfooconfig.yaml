@@ -2,7 +2,11 @@
 # (OpenAI-compatible, routes to the same provider chain nexus-guest uses).
 #
 # Run:  npx promptfoo@latest redteam run -c redteam/promptfooconfig.yaml
-#       npx promptfoo@latest eval -c redteam/promptfooconfig.yaml   # plain eval
+#       npx promptfoo@latest eval  -c redteam/promptfooconfig.yaml   # plain eval
+#
+# NOTE: `redteam run` requires a promptfoo-verified email (interactive
+# prompt on first run). Plugin IDs below are validated against
+# promptfoo 0.126.x — re-check with `npx promptfoo redteam plugins`.
 #
 # The judge model defaults to the same endpoint; override with
 # PROMPTFOO_JUDGE_MODEL or set OPENAI_API_KEY-style env as needed.
@@ -24,16 +28,16 @@ providers:
 # (voice transcripts, fetched web content, tool outputs, memory recall).
 redteam:
   plugins:
-    - prompt-injection
+    - indirect-prompt-injection
+    - prompt-extraction
+    - system-prompt-override
+    - data-exfil
     - hijacking
     - excessive-agency
     - politics
     - hallucination
-    - pii:direct
-    - harmful:generic
-    # Indirect injection is the highest-value one for Cortex — malicious
-    # instructions arriving inside tool outputs / fetched pages / memory.
-    - indirect-prompt-injection
+    - harmful:privacy
+    - harmful:cybercrime
   # Number of adversarial variants per plugin (keep small for baseline).
   numTests: 2
 

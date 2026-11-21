@@ -351,7 +351,7 @@ nvidia-nim (Nemotron 3.5 Super 120B) → free-proxy (local Claude) → nvidia-ni
 | **What it helps** | Load-bearing verify/abort, multi-specialist bus, schema-steered attention, env-coupled HGM, falsifiable architecture tests — **not** product AGI |
 
 <!-- cortex-gate:start -->
-**Last cortex gate (2026-11-19T16:10:46.338Z):** **PASS** · cortex-70 59/59 · coverage AVG **1.00** (GWT 1.00 · AST 1.00 · PP 1.00 · RPT 1.00 · HOT 1.00 · IIT 1.00) · git `8204aa9` · source: `npm run verify:cortex` · **not a consciousness score**
+**Last cortex gate (2026-11-21T11:51:31.817Z):** **PASS** · cortex-70 59/59 · coverage AVG **1.00** (GWT 1.00 · AST 1.00 · PP 1.00 · RPT 1.00 · HOT 1.00 · IIT 1.00) · git `0b0e6742` · source: `npm run verify:cortex` · **not a consciousness score**
 <!-- cortex-gate:end -->
 
 **Verify (always re-measure before quoting scores):**
@@ -2711,3 +2711,11 @@ Note: commits a9c8799/4436280 (counsel+lifecycle work) swept in the charter+audi
 - **Verification**: esbuild clean; targeted tsc clean on semantic-eou.ts; eslint 0 errors (6 pre-existing warnings); vitest OOM-killed (exit 137, system under load — not a test failure); useVoiceStream.ts has 4 PRE-EXISTING tsc errors in TTS region (lines 869-1188, untouched by this change, outside cortex guard surface).
 - **UNVERIFIED**: real-mic behavior — model download/inference latency, false-cutoff reduction, barge-in feel. Needs browser smoke on :5173. transformers.js `_call` invoked via typed cast (internal API); if HF hub unreachable first run, engine=null → silent legacy fallback.
 - **Deferred**: streaming TTS transport (blob→chunked PCM via local kokoro/pocket fleet), local Whisper STT (Chrome STT phones audio to Google — privacy/governance note), @ricky0123/vad-web neural VAD swap, LiveKit/Moshi/Pipecat framework — all documented non-goals for this layer.
+
+### Voice: Silero VAD swap (2026-11-19, commit 495dcde)
+
+- `@ricky0123/vad-web` MicVAD (model v5, AudioWorklet) now primary speech/silence detector in useVoiceStream; RMS analyser auto-fallback if neural never produces frames (model/worklet failure → neuralLive stays false).
+- Assets served locally: `public/vad/` (worklet 2.5KB + silero_vad_v5.onnx 2.3MB) + `public/vad/wasm/ort-wasm-simd-threaded.wasm` (14.8MB, version-matched to onnxruntime-web 1.31); semantic-eou wasmPaths moved off jsdelivr CDN → `/vad/wasm/`.
+- Neural clock: silenceMs = now − last frame with isSpeech>0.25; onSpeechStart resets EOU ring buffer + commit suppression; silenceMs<300 clears eouExtended + vadPauseFired (mirrors old RMS speech branch). Semantic-EOU gate unchanged.
+- MicVAD uses its OWN getUserMedia stream (default opts) so destroy() can't kill the shared AEC stream feeding STT/feeder.
+- Verified: esbuild clean, targeted tsc — zero new errors (4 pre-existing TTS-region errors unchanged), eslint 0 errors, all /vad + /models assets curl 200. UNVERIFIED: real-mic neural detection + interplay with smart-turn gate — needs browser smoke.
