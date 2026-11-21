@@ -434,17 +434,19 @@ export function artifactTitle(a: CortexArtifact): string {
  *  standalone /cortex/chat page) so callers can fall back to a card. */
 export function dispatchSceneSpawn(
   spawn: { url: string; title?: string; scale?: number },
-  timeoutMs = 600,
+  timeoutMs = 1200,
 ): Promise<boolean> {
   if (typeof window === 'undefined') return Promise.resolve(false);
   const url = String(spawn?.url || '');
   if (!url) return Promise.resolve(false);
   return new Promise((resolve) => {
     let done = false;
+    const fire = () => window.dispatchEvent(new CustomEvent('cortex-spawn-splat', { detail: spawn }));
     const finish = (ok: boolean) => {
       if (done) return;
       done = true;
       clearTimeout(t);
+      clearInterval(retry);
       window.removeEventListener('cortex-splat-ack', onAck);
       resolve(ok);
     };
@@ -452,30 +454,42 @@ export function dispatchSceneSpawn(
       if ((e as CustomEvent).detail?.url === url) finish(true);
     };
     const t = setTimeout(() => finish(false), timeoutMs);
+    // Re-dispatch until acked — the scene's listeners mount asynchronously
+    // after page load, and a single early event would be lost forever.
+    const retry = setInterval(fire, 150);
     window.addEventListener('cortex-splat-ack', onAck);
-    window.dispatchEvent(new CustomEvent('cortex-spawn-splat', { detail: spawn }));
+    fire();
   });
 }
 
 /** Dispatch a holo-dashboard spawn; resolves true when a mounted
  *  CortexHoloDeck acknowledges (cortex-holo-ack) within `timeoutMs`.
  *  False on surfaces with no 3D scene → caller falls back to a card. */
-export function dispatchHoloSpawn(dashboard: unknown, timeoutMs = 800): Promise<boolean> {
+export function dispatchHoloSpawn(dashboard: unknown, timeoutMs = 2000): Promise<boolean> {
   if (typeof window === 'undefined') return Promise.resolve(false);
   if (!isObj(dashboard)) return Promise.resolve(false);
   return new Promise((resolve) => {
     let done = false;
+    const fire = () => window.dispatchEvent(new CustomEvent('cortex-spawn-holo', { detail: dashboard }));
     const finish = (ok: boolean) => {
       if (done) return;
       done = true;
       clearTimeout(t);
+      clearInterval(retry);
       window.removeEventListener('cortex-holo-ack', onAck);
       resolve(ok);
     };
-    const onAck = () => finish(true);
+    const wantId = isObj(dashboard) ? String((dashboard as any).id || '') : '';
+    const onAck = (e: Event) => {
+      const id = String((e as CustomEvent).detail?.id || '');
+      if (!wantId || !id || id === wantId) finish(true);
+    };
     const t = setTimeout(() => finish(false), timeoutMs);
+    // Re-dispatch until acked — covers scenes still mounting their
+    // listeners after page load or during heavy shader compilation.
+    const retry = setInterval(fire, 150);
     window.addEventListener('cortex-holo-ack', onAck);
-    window.dispatchEvent(new CustomEvent('cortex-spawn-holo', { detail: dashboard }));
+    fire();
   });
 }
 
