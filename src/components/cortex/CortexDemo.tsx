@@ -90,6 +90,7 @@ import { runCortexToolLoop, getOrInitConsciousAgent, parseCortexToolCall } from 
 import { getIntegratedInformation, type PhiResult } from '../../lib/integrated-information';
 import { cortexProactiveVoice } from '../../lib/cortex-proactive-voice';
 import { getCortexProactiveInitiative } from '../../lib/cortex-proactive-initiative';
+import { startMemorySurfacing } from '../../lib/cortex-memory-surfacing';
 import { recordUserActivity, getVoicePolicy } from '../../lib/cortex-voice-policy';
 import { getWakeWordGate } from '../../lib/cortex-wake-word';
 
@@ -1359,6 +1360,9 @@ export default function CortexDemo() {
     window.addEventListener('focus', fetchProactiveAudit);
     const proactiveInterval = setInterval(fetchProactiveAudit, 60000);
 
+    // Memory surfacing fusion — temporal memory × somatic strain × restraint
+    const stopMemorySurfacing = startMemorySurfacing();
+
     // Boot-up episodic continuity load
     fetch('/api/cortex/tools/execute', {
       method: 'POST',
@@ -1414,6 +1418,7 @@ export default function CortexDemo() {
       clearInterval(interval);
       clearInterval(phiInterval);
       clearInterval(proactiveInterval);
+      stopMemorySurfacing();
       cortexProactiveVoice.stop();
       // Cortex Persistence: final save on unmount (consciousness sleeps)
       stopCortexPersistence();
