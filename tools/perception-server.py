@@ -24,10 +24,10 @@ _models = {}
 
 VISION_MODEL = os.environ.get("CORTEX_VLM_MODEL", "mlx-community/Qwen3-VL-4B-Instruct-4bit")
 EMOTION_MODEL = os.environ.get("CORTEX_EMOTION_MODEL", "iic/emotion2vec_plus_large")
-DIAR_MODEL_DIR = os.environ.get(
+DIAR_MODEL_DIR = __import__("pathlib").Path(os.environ.get(
     "CORTEX_DIAR_MODEL_DIR",
     os.path.expanduser("~/.cache/cortex/sherpa-onnx-pyannote"),
-)
+))
 
 
 def _load(key, fn):
@@ -98,9 +98,22 @@ def speaker(req: SpeakerReq):
                     num_threads=4),
                 clustering=sherpa_onnx.FastClusteringConfig(num_clusters=req.numSpeakers or -1),
                 min_duration_on=0.3, min_duration_off=0.5)))
-        sd_result = sd.process(req.audio)
+        import wave
+        import numpy as np
+        with wave.open(req.audio, 'rb') as w:
+            frames = w.readframes(w.getnframes())
+            pcm = np.frombuffer(frames, dtype=np.int16).astype(np.float32) / 32768.0
+            if w.getnchannels() > 1:
+                pcm = pcm.reshape(-1, w.getnchannels()).mean(axis=1)
+            sr = w.getframerate()
+        # sherpa-onnx diarization expects 16kHz mono float32
+        if sr != 16000:
+            n16 = int(len(pcm) * 16000 / sr)
+            pcm = np.interp(np.linspace(0, len(pcm) - 1, n16), np.arange(len(pcm)), pcm).astype(np.float32)
+        sd_result = sd.process(pcm)
+        sorted_segments = sd_result.sort_by_start_time()
         segments = [{"start": s.start, "end": s.end, "speaker": s.speaker}
-                    for s in sd_result.sort_by_start_time]
+                    for s in sorted_segments]
         return {"ok": True, "segments": segments, "count": len(segments),
                 "speakers": sorted({s["speaker"] for s in segments}),
                 "latencyMs": int((time.time() - t0) * 1000)}

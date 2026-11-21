@@ -33,6 +33,19 @@ def health():
     return {"ok": True, "model": MODEL, "loaded": _model is not None}
 
 
+def _jsonable(v):
+    import numpy as np
+    if isinstance(v, dict):
+        return {str(k): _jsonable(x) for k, x in v.items()}
+    if isinstance(v, (list, tuple)):
+        return [_jsonable(x) for x in v]
+    if isinstance(v, np.generic):
+        return v.item()
+    if isinstance(v, np.ndarray):
+        return v.tolist()
+    return v
+
+
 class AudioReq(BaseModel):
     audio: str
 
@@ -45,9 +58,9 @@ def emotion(req: AudioReq):
         res = model.generate(input=req.audio, granularity="utterance")
         r = res[0] if res else {}
         return {"ok": True, "model": MODEL,
-                "labels": r.get("labels", r.get("emotion", {})),
-                "scores": r.get("scores", {}),
-                "raw": r, "latencyMs": int((time.time() - t0) * 1000)}
+                "labels": _jsonable(r.get("labels", r.get("emotion", {}))),
+                "scores": _jsonable(r.get("scores", {})),
+                "latencyMs": int((time.time() - t0) * 1000)}
     except Exception as e:
         return {"ok": False, "error": f"{type(e).__name__}: {e}",
                 "trace": traceback.format_exc()[-800:]}
