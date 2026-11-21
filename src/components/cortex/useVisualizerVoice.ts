@@ -1345,7 +1345,7 @@ export function useVisualizerVoice(enabled: boolean, onState: (speaking: boolean
           let restraint = '';
           try {
             const t = getCortexProactiveInitiative().getRestraintMetrics().today;
-            restraint = `Restraint today: proposed=${t.proposed} admitted=${t.admitted} suppressed=${t.suppressedDedupe + t.suppressedBudget} dismissed=${t.dismissed} snoozed=${t.snoozed} accepted=${t.accepted}`;
+            restraint = `Restraint today: proposed=${t.proposed} admitted=${t.admitted} suppressed=${t.suppressedDedupe + t.suppressedBudget} dismissed=${t.dismissed} snoozed=${t.snoozed} accepted=${t.accepted} autoExecuted=${t.autoExecuted ?? 0}`;
           } catch {}
           const telemetry = `STATE OF BEING TELEMETRY (verified live tool results — ground truth):
 - Episodic memory recall: ${clip(mem?.matches ?? mem?.result ?? mem)}

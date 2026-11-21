@@ -1932,7 +1932,7 @@ CRITICAL INVARIANTS:
     try {
       const rm = getCortexProactiveInitiative().getRestraintMetrics();
       const t = rm.today;
-      restraintLine = `Restraint: today proposed=${t.proposed} admitted=${t.admitted} suppressed(dedupe=${t.suppressedDedupe},budget=${t.suppressedBudget}) dismissed=${t.dismissed} snoozed=${t.snoozed} accepted=${t.accepted}`;
+      restraintLine = `Restraint: today proposed=${t.proposed} admitted=${t.admitted} suppressed(dedupe=${t.suppressedDedupe},budget=${t.suppressedBudget}) dismissed=${t.dismissed} snoozed=${t.snoozed} accepted=${t.accepted} (autoExecuted=${t.autoExecuted ?? 0})`;
     } catch {}
 
     // State-of-being deterministic orchestration: run the three loops through

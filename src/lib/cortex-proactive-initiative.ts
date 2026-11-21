@@ -88,6 +88,9 @@ export interface RestraintCounters {
   dismissed: number;
   snoozed: number;
   accepted: number;
+  /** Subset of accepted that fired via trust-ladder/safe-auto execution,
+   *  not a deliberate admit decision. */
+  autoExecuted: number;
 }
 export interface RestraintMetrics {
   day: string;
@@ -96,7 +99,7 @@ export interface RestraintMetrics {
 }
 
 function emptyCounters(): RestraintCounters {
-  return { proposed: 0, admitted: 0, suppressedDedupe: 0, suppressedBudget: 0, dismissed: 0, snoozed: 0, accepted: 0 };
+  return { proposed: 0, admitted: 0, suppressedDedupe: 0, suppressedBudget: 0, dismissed: 0, snoozed: 0, accepted: 0, autoExecuted: 0 };
 }
 function todayKey(): string {
   return new Date().toISOString().slice(0, 10);
@@ -602,7 +605,7 @@ export class CortexProactiveInitiativeEngine {
         const tier = p.autonomyTier ?? (p.requiresApproval ? 2 : 1);
         if (ledger.isAutoAllowed(p.suggestedTool, tier) || isSafeAutoClient(p.suggestedTool, tier, p.requiresApproval)) {
           ledger.logEvent(p.suggestedTool, tier, 'auto_executed', p.title);
-          this.acceptProposal(p.id);
+          this.acceptProposal(p.id, { auto: true });
         }
       }
     } catch {}
@@ -720,18 +723,20 @@ export class CortexProactiveInitiativeEngine {
       const tier = proposal.autonomyTier ?? tierFor(proposal);
       if (ledger.isAutoAllowed(proposal.suggestedTool, tier) || isSafeAutoClient(proposal.suggestedTool, tier, proposal.requiresApproval)) {
         ledger.logEvent(proposal.suggestedTool, tier, 'auto_executed', proposal.title);
-        this.acceptProposal(proposal.id);
+        this.acceptProposal(proposal.id, { auto: true });
       }
     } catch {}
     return proposal;
   }
 
-  public acceptProposal(id: string): boolean {
+  public acceptProposal(id: string, opts?: { auto?: boolean }): boolean {
     const p = this.activeProposals.get(id);
     if (!p || p.status === 'executed' || p.status === 'dismissed') return false;
+    const wasAccepted = p.status === 'accepted';
     p.status = 'accepted';
     p.acceptedAt = Date.now();
-    this.bump('accepted');
+    if (!wasAccepted) this.bump('accepted');
+    if (opts?.auto) this.bump('autoExecuted');
     this.saveState();
     this.notify();
     try {
