@@ -333,6 +333,29 @@ DEFERRED ITEMS RESOLVED (all three shipped):
   rejected: async eval vs 8 sync call sites, single-operator
   deployment, zero behavioural gain.
 
+GAP ANALYSIS + REPO RESEARCH (2026-11-21, committed pending):
+- integrations/research/GAP_ANALYSIS.md — full build-vs-adopt analysis.
+  6 research agents surveyed ~200 repos across voice/memory/runtime/
+  evals/media/channels. Verified gap inventory (A1-A7 felt, B1-B8
+  depth, C1-C6 reach, D1-D5 proof) + per-gap repo verdicts.
+- KEY ADOPTS: mlx-vlm+Qwen3-VL-4B (vision), emotion2vec+ (SER),
+  sherpa-onnx (ASR+diarization), ACE-Step 1.5 MLX (music), DBOS
+  Transact (durable exec), XGrammar/llguidance+BAML (structured
+  output), Phoenix or Langfuse (tracing), AgentDojo+garak+snyk
+  agent-scan (evals), ntfy+Apprise (push), Uptime Kuma+Beszel (ops),
+  Obsidian REST API/memos (PKM), BlueBubbles (iMessage upgrade),
+  Docling+dots.ocr+Typst (docs), stable-diffusion.cpp/mflux (image),
+  Wan2.1-1.3B mlx-video (video), Tauri 2 (desktop), Tailscale Funnel.
+- BUILD-OWN repo candidates (nothing exists for Cortex's shape):
+  cortex-router, cortex-proactivity, cortex-affect, cortex-voice-memory,
+  cortex-trajectory, cortex-durable, cortex-screen, cortex-memory-tiers
+  (flagship), cortex-integrations, cortex-webhooks, cortex-context,
+  cortex-registry. See GAP_ANALYSIS.md Part 3 for details + waves.
+- REDTEAM RERUN SCHEDULED: launchd com.cortex.redteam-rerun nightly
+  04:30 runs redteam-strategies.yaml (32 deferred tests); self-skips
+  after clean pass (marker .cortex-runtime/redteam-STRATEGIES-PASS.json);
+  notifies on completion. Log: eventlog/redteam-strategies-*.log.
+
 STILL OPEN (honest gaps):
 - Dev server root-cause hang UNKNOWN — watchdog now detects + dumps
   diagnostics; watch for server-stall-*.json after next hang.
