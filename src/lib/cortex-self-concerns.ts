@@ -30,17 +30,24 @@ interface ConcernState {
   fleetBadStreak: number;
   fleetFirstAt: number;
   lastConsolidationAt: number;
+  firstSeenAt: number;
   samples: { ts: number; load: number; valence: string }[];
 }
 
 function load(): ConcernState {
   try {
     const raw = persistentStore.getItem(STATE_KEY);
-    return raw ? { ...JSON.parse(raw), samples: (JSON.parse(raw).samples || []).slice(-50) } : fresh();
+    if (!raw) return fresh();
+    const s = JSON.parse(raw);
+    s.samples = (s.samples || []).slice(-50);
+    // Migration: states persisted before firstSeenAt existed fall back to
+    // their oldest retained sample, then to now.
+    if (!s.firstSeenAt) s.firstSeenAt = s.samples[0]?.ts || Date.now();
+    return s;
   } catch { return fresh(); }
 }
 function fresh(): ConcernState {
-  return { strainStreak: 0, strainFirstAt: 0, fleetBadStreak: 0, fleetFirstAt: 0, lastConsolidationAt: 0, samples: [] };
+  return { strainStreak: 0, strainFirstAt: 0, fleetBadStreak: 0, fleetFirstAt: 0, lastConsolidationAt: 0, firstSeenAt: Date.now(), samples: [] };
 }
 function save(s: ConcernState) {
   try { persistentStore.setItem(STATE_KEY, JSON.stringify(s)); } catch {}
@@ -149,18 +156,23 @@ export function startSelfConcerns(): () => void {
         });
       }
 
-      // Unconsolidated — >20h since dream consolidation (self-maintenance debt)
-      if (st.lastConsolidationAt && now - st.lastConsolidationAt > 20 * 3600_000) {
+      // Unconsolidated — >20h since dream consolidation (self-maintenance debt).
+      // lastConsolidationAt=0 means "never consolidated" — not exempt. Baseline
+      // falls back to firstSeenAt (persisted once) so a fresh engine gets a
+      // 20h observation window before crying wolf.
+      const consBaseline = st.lastConsolidationAt || st.firstSeenAt;
+      if (consBaseline && now - consBaseline > 20 * 3600_000) {
+        const overdue = fmtDur(now - consBaseline);
         propose('concern-unconsolidated', {
           category: 'memory_allostasis',
           title: 'Memory consolidation overdue',
-          summary: `Last dream consolidation was ${fmtDur(now - st.lastConsolidationAt)} ago. Episodic traces are accumulating unconsolidated — a deep cycle would compress them into durable dispositions.`,
+          summary: `Last dream consolidation was ${overdue} ago${st.lastConsolidationAt ? '' : ' (never completed since tracking began)'}. Episodic traces are accumulating unconsolidated — a deep cycle would compress them into durable dispositions.`,
           urgency: 'low',
           suggestedTool: 'cortex_dream_consolidate',
           suggestedArgs: { depth: 'deep' },
           autonomyTier: 1,
           epistemicConfidence: 0.8,
-          why: `self-concern: ${fmtDur(now - st.lastConsolidationAt)} since consolidation`,
+          why: `self-concern: ${overdue} since consolidation`,
         });
       }
 

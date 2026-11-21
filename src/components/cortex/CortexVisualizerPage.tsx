@@ -22,6 +22,7 @@ import { CortexChatDrawer } from './CortexChatDrawer';
 import { CortexSurfaceLayer } from './CortexSurfaceLayer';
 import { useSurfaceFocusMode, setSurfaceFocusMode, useSurfacePanels, openSurfacePanel } from '../../lib/cortex-surfaces';
 import { getCortexProactiveInitiative } from '../../lib/cortex-proactive-initiative';
+import { startBecomingLoop } from '../../lib/cortex-becoming-loop';
 import { agentsClient } from '../../lib/cortex-agents-client';
 import { cortexSpeak } from '../../lib/cortex-speech';
 import { getGlobeEmbedUrl, configureGlobeBase, GLOBE_MODE_EVENT, setGlobeAvailable } from '../../lib/cortex-globe';
@@ -381,6 +382,12 @@ export default function CortexVisualizerPage() {
     update();
     return engine.subscribe(update);
   }, []);
+
+  // Becoming loop — self-concerns, memory surfacing, dream consolidation.
+  // Leader-elected via a localStorage lease so only one Cortex tab senses at
+  // a time; previously these sensors lived only on /cortex chat, so the
+  // visualizer accumulated no dispositions, streaks, or consolidations.
+  useEffect(() => startBecomingLoop(), []);
 
   // Distribution Deck: pin the live revenue-engine dashboard once per session
   // so the Gumroad pipeline is always visible on the space. Dedup is handled
