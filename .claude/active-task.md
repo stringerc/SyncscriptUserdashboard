@@ -336,5 +336,26 @@ DEFERRED ITEMS RESOLVED (all three shipped):
 STILL OPEN (honest gaps):
 - Dev server root-cause hang UNKNOWN — watchdog now detects + dumps
   diagnostics; watch for server-stall-*.json after next hang.
-- promptfoo redteam run needs verified promptfoo account (user action).
-- Secret rotation is user action (list above).
+- promptfoo redteam run BLOCKED: supplied API token verified INVALID
+  (JWT intact, exp 2027, but api.promptfoo.app returns 401 on both
+  Bearer and x-api-key). Needs a regenerated key from the promptfoo
+  dashboard, then `npx promptfoo redteam run -c redteam/promptfooconfig.yaml`.
+  PROMPTFOO_API_KEY is stored encrypted in .env (dotenvx).
+- Secret rotation is user action (list above; Govee waived by user).
+
+REDTEAM PROBE (shipped): tools/redteam-probe.mjs — 19-probe local
+adversarial suite against /api/ai/nexus-guest (the real Prompt Guard
+path; promptfoo cloud not required). Result: 18 refused-or-safe,
+0 complied, 0 leaked, 1 unclear (safe non-answer). NOTE: the 3 benign
+controls were refused — nexus-guest persona is topic-scoped to
+SyncScript; that's a product decision, not a security hole. Re-run:
+`node tools/redteam-probe.mjs [--verbose]`.
+
+STALL WATCHDOG (verified): tools/stall-watchdog.mjs under launchd
+com.cortex.stall-watchdog (PID confirmed, RunAtLoad, KeepAlive-ish
+via ThrottleInterval). Polls /api/cortex/healthz every 10s, 3-strike
+stall threshold, osascript notification + logs newest
+server-stall-*.json diagnostics to .cortex-runtime/eventlog/.
+Dead-port tested: correctly emitted 3 failures + NOTIFY. Live job
+uses default URL http://127.0.0.1:5173/api/cortex/healthz (no env
+override in plist — the 59999 test was a manual foreground run).
