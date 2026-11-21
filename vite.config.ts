@@ -15,8 +15,9 @@ import { readFileSync, existsSync } from 'fs';
 import * as fsSync from 'fs';
 import fs from 'fs/promises';
 import os from 'os';
-import { execSync, execFile, spawn } from 'child_process';
+import { execSync, execFile, execFileSync, spawn } from 'child_process';
 import { timingSafeEqual } from 'crypto';
+import { pathToFileURL } from 'url';
 import { cortexObsidianMemory } from './src/lib/cortex-obsidian-memory';
 import { assertFact, factsAsOf, activeFacts, recallFacts, factHistory, getMemoryBlock, setMemoryBlock, listMemoryBlocks } from './src/lib/cortex-fact-store';
 import { surfaceSpecToMessages } from './src/lib/a2ui-emit';
@@ -46,6 +47,93 @@ function resolveEnvKey(name: string): string {
   const v = process.env[name];
   if (typeof v !== 'string' || !v) return '';
   return v.split(',')[0].trim().replace(/^["']|["']$/g, '');
+}
+
+// ── In-process Remotion renderer ──────────────────────────────────────────
+// render_video used to spawn `node render-video.mjs` per call, which re-bundles
+// the composition (~30-60s) every render. This keeps @remotion/bundler +
+// @remotion/renderer loaded in the Vite process with a cached serveUrl per
+// entry point, serialised through a promise queue (renders are CPU/IO heavy —
+// parallel renders thrash the machine). Falls back to the subprocess path if
+// the in-process import fails.
+interface RemotionApi {
+  bundle: (opts: any) => Promise<string>;
+  ensureBrowser: () => Promise<any>;
+  renderMedia: (opts: any) => Promise<any>;
+  renderStill: (opts: any) => Promise<any>;
+  selectComposition: (opts: any) => Promise<any>;
+}
+let __remotionApi: RemotionApi | null = null;
+const __remotionServeUrls = new Map<string, string>();
+let __remotionQueue: Promise<unknown> = Promise.resolve();
+
+async function getRemotionApi(remotionDir: string): Promise<RemotionApi | null> {
+  if (__remotionApi) return __remotionApi;
+  try {
+    const imp = async (pkg: string) => {
+      const url = pathToFileURL(path.join(remotionDir, 'node_modules', pkg, 'dist', 'index.js')).href;
+      const mod: any = await import(url);
+      return mod?.default ?? mod;
+    };
+    const bundler: any = await imp('@remotion/bundler');
+    const renderer: any = await imp('@remotion/renderer');
+    const pick = (m: any, names: string[]) => names.map((n) => m?.[n]).find(Boolean);
+    __remotionApi = {
+      bundle: pick(bundler, ['bundle']),
+      ensureBrowser: pick(renderer, ['ensureBrowser']),
+      renderMedia: pick(renderer, ['renderMedia']),
+      renderStill: pick(renderer, ['renderStill']),
+      selectComposition: pick(renderer, ['selectComposition']),
+    } as RemotionApi;
+    if (!__remotionApi.bundle || !__remotionApi.renderMedia) __remotionApi = null;
+    return __remotionApi;
+  } catch {
+    return null;
+  }
+}
+
+function enqueueRemotion<T>(job: () => Promise<T>): Promise<T> {
+  const run = __remotionQueue.then(job, job);
+  __remotionQueue = run.then(() => undefined, () => undefined);
+  return run;
+}
+
+async function renderVideoInProcess(opts: {
+  remotionDir: string;
+  composition: string;
+  outputPath: string;
+  inputProps?: any;
+  frames?: string;
+  onProgress?: (pct: number) => void;
+}): Promise<{ ok: boolean; error?: string }> {
+  return enqueueRemotion(async () => {
+    const api = await getRemotionApi(opts.remotionDir);
+    if (!api) return { ok: false, error: 'in-process renderer unavailable' };
+    const entryPoint = path.join(opts.remotionDir, 'src', 'index.ts');
+    let serveUrl = __remotionServeUrls.get(entryPoint);
+    if (!serveUrl) {
+      serveUrl = await api.bundle({ entryPoint, rootDir: opts.remotionDir });
+      __remotionServeUrls.set(entryPoint, serveUrl);
+    }
+    const browserInfo = await api.ensureBrowser();
+    const browserExecutable = typeof browserInfo === 'string' ? browserInfo : browserInfo?.path ?? null;
+    const composition = await api.selectComposition({
+      serveUrl, id: opts.composition, inputProps: opts.inputProps, browserExecutable,
+    });
+    const [f0, f1] = opts.frames ? opts.frames.split('-').map((s) => parseInt(s, 10)) : [0, composition.durationInFrames - 1];
+    await api.renderMedia({
+      composition,
+      serveUrl,
+      codec: 'h264',
+      outputLocation: opts.outputPath,
+      inputProps: opts.inputProps,
+      frameRange: [Number.isFinite(f0) ? f0 : 0, Number.isFinite(f1) ? f1 : composition.durationInFrames - 1],
+      chromiumOptions: { gl: process.env.REMOTION_GL ?? 'angle' },
+      browserExecutable,
+      onProgress: opts.onProgress ? ({ progress }: any) => opts.onProgress!(Math.round(progress * 100)) : undefined,
+    });
+    return { ok: true };
+  });
 }
 
 /** AG-UI vocabulary layer — tags each SSE data payload with a `type` field
@@ -3393,6 +3481,12 @@ function apiProxyPlugin(): Plugin {
           durationSeconds: z.number().positive().max(600).optional(),
           props: z.record(z.unknown()).optional(),
         }).passthrough(),
+        postprocess_video: z.object({
+          input: z.string(),
+          output: z.string().optional(),
+          normalizeAudio: z.boolean().optional(),
+          srtPath: z.string().optional(),
+        }).passthrough(),
         run_sandboxed: z.object({
           image: z.string().optional(),
           command: z.string(),
@@ -3469,9 +3563,10 @@ function apiProxyPlugin(): Plugin {
             { name: 'remember_fact', description: 'Store a durable bi-temporal fact (subject+predicate+object); supersedes prior value for the same key without deleting history', parameters: { subject: 'string', predicate: 'string', object: 'string', confidence: 'number?' } },
             { name: 'recall_facts', description: 'Query bi-temporal fact memory: active | as_of (ISO time travel) | search | history (supersession chain)', parameters: { action: 'string', subject: 'string?', predicate: 'string?', query: 'string?', asOf: 'string?' } },
             { name: 'emit_surface', description: 'Emit a live A2UI generative surface panel: title + items of metric|badge|text|button components; buttons round-trip cortex.surface.* actions to the agent', parameters: { title: 'string', subtitle: 'string?', items: 'object[]' } },
-            { name: 'fetch_url', description: 'Fetch a web page as clean markdown (keyless reader)', parameters: { url: 'string' } },
+            { name: 'fetch_url', description: 'Fetch a web page as clean markdown. Rungs: r.jina.ai reader → Firecrawl scrape (if key configured) → direct fetch. SSRF-guarded.', parameters: { url: 'string' } },
             { name: 'create_document', description: 'Create real document files (md/html always; pdf via Chrome; docx via textutil; csv)', parameters: { format: 'string?', title: 'string?', content: 'string?' } },
             { name: 'render_video', description: 'Render a video composition via the governed Remotion pipeline (tools/remotion). Writes an .mp4 under .cortex-runtime/renders/ and returns the verified output path.', parameters: { composition: 'string? (default CortexPromo)', outputName: 'string? (.mp4, sanitized)', durationSeconds: 'number? (<=600)', props: 'object? (e.g. {title, subtitle})' } },
+            { name: 'postprocess_video', description: 'Post-process a rendered MP4 with ffmpeg: EBU R128 loudnorm on audio (video stream copied unless subtitles are burned), optional SRT subtitle burn-in. Returns verified output path.', parameters: { input: 'string (mp4 path)', output: 'string?', normalizeAudio: 'boolean? (default true)', srtPath: 'string? (burn subtitles)' } },
             { name: 'run_sandboxed', description: 'Run a command inside a hardware-isolated microsandbox microVM (CONTAINED lane). Returns stdout/stderr/exitCode. Use for untrusted or destructive-capable agent code. net:{mode:allow|deny|allowlist,allowHosts?} controls egress (deny = air-gap, allowlist = domain allowlist, default allow). secrets:[{envVar,hostEnv|value,allowedHosts[]}] injects host secrets as $MSB_ placeholders substituted only at allowed hosts — guests never see raw values.', parameters: { image: 'string? (default python:3.12-alpine)', command: 'string (binary, no shell)', args: 'string[]?', timeoutMs: 'number? (<=120000)', workdir: 'string?', env: 'object?', net: 'object?', secrets: 'object[]?' } },
             { name: 'sandbox_status', description: 'Probe microsandbox runtime availability (msb binary, SDK, VM round-trip).', parameters: {} },
             { name: 'generate_splat', description: 'Generate or mount a 3D Gaussian-splat. asset:"/splats/butterfly.spz" etc mounts curated high-fidelity splats (PREFERRED for known subjects like butterfly/cortex core). Procedural scenes (orb|flower|helix|galaxy|ridge|flow — abstract art) with palette/seed/count, or photo mode via image URL/path (depth unprojection). By default mounts LIVE in the visualizer 3D space (card fallback elsewhere); inSpace:false forces a card.', parameters: { asset: 'string?', scene: 'string?', palette: 'string?', image: 'string?', seed: 'number?', count: 'number?', inSpace: 'boolean?', title: 'string?' } },
@@ -5245,8 +5340,31 @@ end tell`;
                       throw new Error(`jina ${r.status}`);
                     }
                   } catch {
-                    const direct = await fetch(url, { signal: AbortSignal.timeout(10000) });
-                    md = await direct.text();
+                    // Firecrawl scrape rung — paid extraction, used only when a
+                    // key is configured and the keyless jina reader failed.
+                    if (firecrawlApiKey) {
+                      try {
+                        const fc = await fetch('https://api.firecrawl.dev/v2/scrape', {
+                          method: 'POST',
+                          headers: { 'Authorization': `Bearer ${firecrawlApiKey}`, 'Content-Type': 'application/json' },
+                          body: JSON.stringify({ url, formats: ['markdown'] }),
+                          signal: AbortSignal.timeout(30000),
+                        });
+                        const fcJson: any = await fc.json().catch(() => null);
+                        const fcMd = fcJson?.data?.markdown || fcJson?.markdown;
+                        if (fc.ok && typeof fcMd === 'string' && fcMd.length) {
+                          md = fcMd;
+                        } else {
+                          throw new Error(`firecrawl ${fc.status}`);
+                        }
+                      } catch {
+                        const direct = await fetch(url, { signal: AbortSignal.timeout(10000) });
+                        md = await direct.text();
+                      }
+                    } else {
+                      const direct = await fetch(url, { signal: AbortSignal.timeout(10000) });
+                      md = await direct.text();
+                    }
                   }
                 }
                 return res.end(JSON.stringify({
@@ -9267,6 +9385,40 @@ function triggerQuickAction() {
                 }));
               }
               await fs.mkdir(rendersDir, { recursive: true });
+              const renderStart = Date.now();
+              const renderTimeoutMs = 600_000; // ~10min — Remotion renders run ~1min cold
+              const logStream = fsSync.createWriteStream(logPath);
+
+              // ── Fast path: in-process @remotion/renderer with cached bundle ──
+              // Skips the per-render esbuild bundle (~30-60s) and subprocess
+              // spawn. Serialised internally; falls back to spawn on failure.
+              let exitCode = -1;
+              let inProcessOk = false;
+              let lastProgressPct = -1;
+              try {
+                const ipFrames = args?.durationSeconds != null
+                  ? `0-${Math.max(0, Math.round(Number(args.durationSeconds) * 30) - 1)}`
+                  : undefined;
+                const ip = await renderVideoInProcess({
+                  remotionDir,
+                  composition,
+                  outputPath,
+                  inputProps: args?.props && typeof args.props === 'object' ? args.props : undefined,
+                  frames: ipFrames,
+                  onProgress: (pct) => {
+                    if (pct !== lastProgressPct && pct % 10 === 0) {
+                      lastProgressPct = pct;
+                      try { logStream.write(`[render_video] in-process progress ${pct}%\n`); } catch { }
+                    }
+                  },
+                });
+                inProcessOk = ip.ok === true;
+                if (!ip.ok) logStream.write(`[render_video] in-process path failed: ${ip.error}\n`);
+              } catch (ipErr: any) {
+                logStream.write(`[render_video] in-process error: ${ipErr?.message || ipErr}\n`);
+              }
+
+              if (!inProcessOk) {
               // Prefer the programmatic @remotion/renderer entrypoint
               // (render-video.mjs) once the remotion spike ships it; fall back
               // to the Remotion CLI meanwhile.
@@ -9285,11 +9437,8 @@ function triggerQuickAction() {
                 cliArgs.push('--duration', String(Number(args.durationSeconds)));
               }
               if (args?.props && typeof args.props === 'object') cliArgs.push('--props', JSON.stringify(args.props));
-              const logStream = fsSync.createWriteStream(logPath);
-              const renderStart = Date.now();
-              const renderTimeoutMs = 600_000; // ~10min — Remotion renders run ~1min cold
-              const exitCode = await new Promise<number>((resolve) => {
-                const child = cp.spawn(useProgrammatic ? process.execPath : 'npx', cliArgs, {
+              exitCode = await new Promise<number>((resolve) => {
+                const child = spawn(useProgrammatic ? process.execPath : 'npx', cliArgs, {
                   cwd: remotionDir,
                   env: { ...process.env, CI: '1', npm_config_yes: 'true' },
                   stdio: ['ignore', 'pipe', 'pipe'],
@@ -9310,6 +9459,8 @@ function triggerQuickAction() {
                   resolve(code ?? -1);
                 });
               });
+              }
+              if (inProcessOk) exitCode = 0;
               await new Promise<void>((r) => logStream.end(() => r()));
               // Verify the artifact before claiming success: exists, non-empty,
               // carries an MP4 ftyp box, and is ffprobe-able when available.
@@ -9326,7 +9477,7 @@ function triggerQuickAction() {
                   verified = head.slice(4, 8).toString('latin1') === 'ftyp';
                   if (verified) {
                     try {
-                      const probeRaw = cp.execSync(
+                      const probeRaw = execSync(
                         `ffprobe -v error -show_entries format=duration,size -of json "${outputPath}"`,
                         { timeout: 15000, encoding: 'utf8' },
                       );
@@ -9352,6 +9503,62 @@ function triggerQuickAction() {
                   : `Render failed or produced no valid MP4 (exit ${exitCode}) — see ${logPath}`,
                 durationMs: Date.now() - startMs,
               }));
+            }
+
+            // 30b. postprocess_video — ffmpeg audio normalisation + optional
+            // subtitle burn for rendered MP4s. loudnorm (EBU R128) on the
+            // audio stream; subtitles burn-in re-encodes video (only when
+            // srtPath is given — plain loudnorm keeps -c:v copy).
+            if (tool === 'postprocess_video') {
+              const inputPath = String(args?.input || '');
+              const outputPath = String(args?.output || '').trim();
+              const normalize = args?.normalizeAudio !== false;
+              const srtPath = args?.srtPath ? String(args.srtPath) : '';
+              const resolvedIn = path.isAbsolute(inputPath) ? inputPath : path.resolve(workspaceRoot, inputPath);
+              if (!fsSync.existsSync(resolvedIn)) {
+                res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+                return res.end(JSON.stringify({ ok: false, tool, error: `input not found: ${resolvedIn}` }));
+              }
+              const out = outputPath
+                ? (path.isAbsolute(outputPath) ? outputPath : path.resolve(workspaceRoot, outputPath))
+                : resolvedIn.replace(/\.mp4$/i, '') + '-pp.mp4';
+              const vfParts: string[] = [];
+              if (srtPath) {
+                const resolvedSrt = path.isAbsolute(srtPath) ? srtPath : path.resolve(workspaceRoot, srtPath);
+                if (!fsSync.existsSync(resolvedSrt)) {
+                  res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+                  return res.end(JSON.stringify({ ok: false, tool, error: `srtPath not found: ${resolvedSrt}` }));
+                }
+                vfParts.push(`subtitles='${resolvedSrt.replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/:/g, '\\:')}'`);
+              }
+              const ffArgs = ['-y', '-i', resolvedIn];
+              if (vfParts.length) {
+                ffArgs.push('-vf', vfParts.join(','), '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '20');
+              } else {
+                ffArgs.push('-c:v', 'copy');
+              }
+              if (normalize) ffArgs.push('-af', 'loudnorm=I=-16:TP=-1.5:LRA=11', '-c:a', 'aac', '-b:a', '192k');
+              else ffArgs.push('-c:a', 'copy');
+              ffArgs.push(out);
+              const ppStart = Date.now();
+              try {
+                execFileSync('ffmpeg', ffArgs, { timeout: 300_000, stdio: 'pipe' });
+                const sizeBytes = fsSync.statSync(out).size;
+                const probeRaw = execSync(
+                  `ffprobe -v error -show_entries format=duration -of json "${out}"`,
+                  { timeout: 15000, encoding: 'utf8' },
+                ).toString();
+                const durationSec = Number(JSON.parse(probeRaw)?.format?.duration) || null;
+                res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+                return res.end(JSON.stringify({
+                  ok: true, tool, outputPath: out, inputPath: resolvedIn,
+                  sizeBytes, durationSec, normalized: normalize, subtitles: !!srtPath,
+                  durationMs: Date.now() - startMs, postProcessMs: Date.now() - ppStart,
+                }));
+              } catch (e: any) {
+                res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+                return res.end(JSON.stringify({ ok: false, tool, error: `ffmpeg failed: ${String(e?.message || e).slice(0, 300)}`, durationMs: Date.now() - startMs }));
+              }
             }
 
             if (!res.headersSent && !res.writableEnded) {
