@@ -219,6 +219,35 @@ export async function emotion(args: Record<string, any>) {
   return { ok: data.ok !== false, ...data };
 }
 
+/** Document: extract text from local pdf/docx/pptx/html/csv via poppler+textutil. */
+export async function readDocument(args: Record<string, any>) {
+  const file = String(args?.path || args?.file || '').trim();
+  if (!file) return { ok: false, reason: 'path required' };
+  const local = safeLocalPath(file);
+  if (!local || !fs.existsSync(local)) return { ok: false, reason: `file not found or outside workspace: ${file}` };
+  const ext = path.extname(local).toLowerCase();
+  const maxChars = Math.min(200_000, Number(args?.maxChars) || 50_000);
+
+  try {
+    let text = '';
+    if (ext === '.pdf') {
+      const { stdout } = await execFileP('pdftotext', ['-layout', local, '-'], { timeout: 30_000, maxBuffer: 8 * 1024 * 1024 });
+      text = stdout;
+    } else if (['.docx', '.doc', '.pptx', '.ppt', '.rtf', '.odt', '.html', '.htm'].includes(ext)) {
+      const { stdout } = await execFileP('textutil', ['-convert', 'txt', '-stdout', local], { timeout: 30_000, maxBuffer: 8 * 1024 * 1024 });
+      text = stdout;
+    } else if (['.txt', '.md', '.csv', '.json', '.log'].includes(ext)) {
+      text = fs.readFileSync(local, 'utf8');
+    } else {
+      return { ok: false, reason: `unsupported extension ${ext} (pdf/docx/pptx/rtf/html/txt/md/csv)` };
+    }
+    const truncated = text.length > maxChars;
+    return { ok: true, file: local, chars: text.length, truncated, text: text.slice(0, maxChars) };
+  } catch (e: any) {
+    return { ok: false, reason: `extract failed: ${String(e?.message || e).slice(0, 200)}` };
+  }
+}
+
 /** Speaker: diarization/identification via sherpa-onnx sidecar. */
 export async function speaker(args: Record<string, any>) {
   const audio = String(args?.audio || args?.path || '').trim();

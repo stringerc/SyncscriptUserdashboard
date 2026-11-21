@@ -3674,6 +3674,7 @@ function apiProxyPlugin(): Plugin {
             { name: 'see_image', description: 'Analyze a local image with the local vision model (mlx-vlm / Qwen3-VL via perception sidecar :8940). Answers questions about image content.', parameters: { image: 'string (path in workspace)', question: 'string? (what to ask about the image)' } },
             { name: 'analyze_audio_emotion', description: 'Detect emotion/affect in a local audio file via emotion2vec+ (perception sidecar :8940). Returns emotion labels + scores.', parameters: { audio: 'string (path in workspace)' } },
             { name: 'speaker_diarize', description: 'Speaker diarization on a local audio file via sherpa-onnx (perception sidecar :8940). Returns speaker segments with labels.', parameters: { audio: 'string (path in workspace)', numSpeakers: 'number?' } },
+            { name: 'read_document', description: 'Extract text from a local document: pdf (pdftotext), docx/pptx/rtf/html (textutil), txt/md/csv/json. Returns clean text, truncated at maxChars.', parameters: { path: 'string (file in workspace)', maxChars: 'number?' } },
           ];
           res.writeHead(200, {
             'Content-Type': 'application/json',
@@ -9445,13 +9446,14 @@ function triggerQuickAction() {
             }
 
             // 29a2. Live external integrations — notify/calendar/vision/emotion/speaker.
-            if (tool === 'notify' || tool === 'calendar' || tool === 'see_image' || tool === 'analyze_audio_emotion' || tool === 'speaker_diarize') {
+            if (tool === 'notify' || tool === 'calendar' || tool === 'see_image' || tool === 'analyze_audio_emotion' || tool === 'speaker_diarize' || tool === 'read_document') {
               const live = await import('./src/lib/cortex-live-tools');
               const result =
                 tool === 'notify' ? await live.notify(args || {}) :
                 tool === 'calendar' ? await live.calendar(args || {}) :
                 tool === 'see_image' ? await live.vision(args || {}) :
                 tool === 'analyze_audio_emotion' ? await live.emotion(args || {}) :
+                tool === 'read_document' ? await live.readDocument(args || {}) :
                 await live.speaker(args || {});
               res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
               return res.end(JSON.stringify({ ok: (result as any)?.ok !== false, tool, ...result, durationMs: Date.now() - startMs }));
