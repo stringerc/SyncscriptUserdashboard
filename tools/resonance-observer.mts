@@ -162,9 +162,12 @@ function computeMetrics() {
     const threshold = sorted[Math.floor(sorted.length * 0.95)] ?? sorted[sorted.length - 1];
     const exceedances = sorted.filter(x => x > threshold).map(x => x - threshold);
     try {
-      gpd = fitGPD_PWM(exceedances, threshold);
+      gpd = fitGPD_PWM(exceedances, threshold, exceedances.length / allLat.length);
       const q99 = tailQuantileFromGPD(0.99, gpd);
       const q999 = tailQuantileFromGPD(0.999, gpd);
+      if (!Number.isFinite(q99) || !Number.isFinite(q999)) {
+        throw new Error('non-finite tail quantile — treating as insufficient exceedances');
+      }
       tailQuantiles = { q99: Math.round(q99 * 10) / 10, q999: Math.round(q999 * 10) / 10 };
       tailHealthScore = clamp01(threshold / Math.max(q99, 1e-9));
       gpd = { xi: +gpd.xi.toFixed(4), sigma: +gpd.sigma.toFixed(2), threshold: Math.round(threshold * 10) / 10, tailFrac: +gpd.tailFrac.toFixed(4) };
