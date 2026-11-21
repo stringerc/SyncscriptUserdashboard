@@ -8876,6 +8876,13 @@ Disposition consolidation (learned urgency/tier adjustments from proposal outcom
                 depth,
                 report_path: `.cache/dream-consolidation/${reportFileName}`,
                 summary: `Completed ${depth} infrastructure consolidation. Report: ${reportFileName}. Behavioral disposition consolidation runs client-side.`,
+                // Real stats inline — the model can only cite what the tool
+                // returns; without these it invents consolidation flavor text.
+                stats: {
+                  resonance: resonanceStats,
+                  shadowTransitions: recTransitions,
+                  vaultNotes,
+                },
                 durationMs: Date.now() - startMs
               }));
             }
