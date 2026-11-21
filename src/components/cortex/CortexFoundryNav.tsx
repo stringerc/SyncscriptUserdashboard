@@ -23,7 +23,7 @@ const MONO = "'IBM Plex Mono', monospace";
 const INK = '#e0f2fe';
 const DIM = 'rgba(148,163,184,0.55)';
 
-type FoundryView = 'dashboard' | 'tasks' | 'goals' | 'calendar' | 'agents' | 'missions' | 'counsel' | 'simulation' | 'recon' | 'reel' | 'campaigns' | 'inbox' | 'incidents' | 'pipeline' | 'standup' | 'messages' | 'ventures' | 'evolution' | 'voice';
+type FoundryView = 'dashboard' | 'tasks' | 'goals' | 'calendar' | 'agents' | 'missions' | 'counsel' | 'simulation' | 'recon' | 'reel' | 'campaigns' | 'inbox' | 'incidents' | 'pipeline' | 'standup' | 'messages' | 'ventures' | 'evolution' | 'voice' | 'resonance';
 
 const NAV_ITEMS: { id: FoundryView; glyph: string; label: string; hint: string }[] = [
   { id: 'dashboard', glyph: '◈', label: 'DASHBOARD', hint: 'Mission Control tower board' },
@@ -43,6 +43,7 @@ const NAV_ITEMS: { id: FoundryView; glyph: string; label: string; hint: string }
   { id: 'pipeline', glyph: '⇶', label: 'PIPELINE', hint: 'Distribution / product flow' },
   { id: 'messages', glyph: '⇄', label: 'COMMS', hint: 'Agent message bus traffic' },
   { id: 'voice', glyph: '♪', label: 'VOICE', hint: 'Cortex voice engines — live test' },
+  { id: 'resonance', glyph: '∿', label: 'RESONANCE', hint: 'Fleet coherence — R(t), tail health, shadow actuation' },
   { id: 'ventures', glyph: '◈', label: 'VENTURES', hint: 'Enterprise scope — OMNI / GOVTECH / CORTEX' },
   { id: 'evolution', glyph: '◉', label: 'EVOLUTION', hint: 'Evals, instincts & governed self-improvement' },
 ];
@@ -125,6 +126,7 @@ export function CortexFoundryNav({ snap, onSelectAgent, selectedAgent, onOpenTow
   const [inbox, setInbox] = useState<any[] | null>(null);
   const [agentMsgs, setAgentMsgs] = useState<any[] | null>(null);
   const [voiceStatus, setVoiceStatus] = useState<any | null>(null);
+  const [resonance, setResonance] = useState<any | null>(null);
   const [voiceConfig, setVoiceConfig] = useState<{ defaultVoice?: string } | null>(null);
   const [voiceTest, setVoiceTest] = useState<Record<string, 'idle' | 'testing' | 'ok' | 'fail'>>({});
   const [inboxNote, setInboxNote] = useState('');
@@ -404,6 +406,18 @@ export function CortexFoundryNav({ snap, onSelectAgent, selectedAgent, onOpenTow
       .then((d) => { if (Array.isArray(d?.campaigns)) setCampaignsData(d.campaigns); })
       .catch(() => {});
     const iv = setInterval(loadC, 30_000);
+    return () => clearInterval(iv);
+  }, [view]);
+
+  // Resonance poll — 10s refresh while RESONANCE is open (observer cadence).
+  useEffect(() => {
+    if (view !== 'resonance') return;
+    const loadR = () => fetch('/api/cortex/resonance', { cache: 'no-store' })
+      .then((r) => r.json())
+      .then(setResonance)
+      .catch(() => {});
+    loadR();
+    const iv = setInterval(loadR, 10_000);
     return () => clearInterval(iv);
   }, [view]);
 
@@ -1926,6 +1940,66 @@ export function CortexFoundryNav({ snap, onSelectAgent, selectedAgent, onOpenTow
           {!voiceStatus?.voices?.length && voiceStatus !== null && <div style={{ padding: '8px 0', color: DIM, fontSize: 9.5 }}>NO VOICE DATA</div>}
         </Panel>
       )}
+
+      {view === 'resonance' && (() => {
+        const snap = resonance;
+        const r = snap?.resonance;
+        const tailColor = r?.tailHealthScore == null ? DIM : r.tailHealthScore >= 0.7 ? '#34d399' : r.tailHealthScore >= 0.4 ? '#fbbf24' : '#f87171';
+        const rColor = !r ? DIM : r.R >= 0.9 ? '#34d399' : r.R >= 0.7 ? '#fbbf24' : '#f87171';
+        const entColor = r?.entropyState === 'healthy' ? '#34d399' : '#fbbf24';
+        const stat = (label: string, value: string, color: string) => (
+          <div key={label} style={{ flex: '1 1 30%', minWidth: 90, padding: '6px 8px', background: 'rgba(148,163,184,0.05)', border: '1px solid rgba(148,163,184,0.12)', borderRadius: 2 }}>
+            <div style={{ fontSize: 8, color: DIM, letterSpacing: '0.18em', fontWeight: 700 }}>{label}</div>
+            <div style={{ fontSize: 13, color, fontFamily: MONO, fontWeight: 700, marginTop: 2 }}>{value}</div>
+          </div>
+        );
+        return (
+          <Panel title="FLEET RESONANCE — COHERENCE & TAIL HEALTH" onClose={() => setView(null)} right={
+            snap ? <span style={{ fontSize: 9.5, color: DIM }}>cycle {snap.cycle} · {snap.nodesUp}/{snap.fleetSize} up · {r?.mode?.toUpperCase()}</span> : <span style={{ fontSize: 9.5, color: DIM }}>LOADING…</span>
+          }>
+            {!snap && <div style={{ padding: '12px 0', color: DIM }}>OBSERVER OFFLINE — is com.cortex.resonance-observer running?</div>}
+            {snap && r && (<>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 10 }}>
+                {stat('KURAMOTO R', String(r.R), rColor)}
+                {stat('AGGREGATE', String(r.aggregateScore), rColor)}
+                {stat('σθ DISPERSION', String(r.sigmaTheta), DIM)}
+                {stat('ENTROPY', `${r.spectralEntropy} · ${String(r.entropyState).toUpperCase()}`, entColor)}
+                {stat('TAIL HEALTH', r.tailHealthScore == null ? 'WARMING' : String(r.tailHealthScore), tailColor)}
+                {stat('COUPLING K', String(r.couplingK), DIM)}
+              </div>
+              {r.gpd && (
+                <div style={{ fontSize: 9, color: DIM, marginBottom: 8, fontFamily: MONO }}>
+                  GPD tail model — ξ={r.gpd.xi} σ={r.gpd.sigma} threshold={r.gpd.threshold}ms | Q99={r.tailQuantiles?.q99 ?? '—'}ms Q999={r.tailQuantiles?.q999 ?? '—'}ms
+                </div>
+              )}
+              <div style={{ fontSize: 8.5, fontWeight: 800, letterSpacing: '0.22em', color: DIM, margin: '8px 0 4px' }}>NODES</div>
+              {Object.entries(snap.nodes || {}).map(([name, n]: [string, any]) => (
+                <Row key={name}>
+                  <Lamp status={n.up ? 'healthy' : 'down'} />
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: 10, color: INK }}>{name}</div>
+                  </div>
+                  <span style={{ fontSize: 8.5, color: n.up ? '#34d399' : '#f87171', fontFamily: MONO }}>
+                    {n.up ? `${n.latencyMs}ms` : 'DOWN'} · {n.samples} samples
+                  </span>
+                </Row>
+              ))}
+              <div style={{ fontSize: 8.5, fontWeight: 800, letterSpacing: '0.22em', color: '#fbbf24', margin: '10px 0 4px' }}>SHADOW ACTUATION — WOULD DO, NEVER DOES</div>
+              {(snap.shadow?.active || []).length === 0 && <div style={{ fontSize: 9.5, color: DIM, padding: '4px 0' }}>No active recommendations — fleet inside healthy band. {snap.shadow?.note}</div>}
+              {(snap.shadow?.active || []).map((rec: any) => (
+                <Row key={rec.id}>
+                  <Lamp status={rec.severity === 'critical' ? 'failed' : rec.severity === 'warn' ? 'idle' : 'healthy'} />
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: 10, color: rec.severity === 'critical' ? '#f87171' : '#fbbf24' }}>{rec.id.toUpperCase()} → {rec.target ?? 'FLEET'}</div>
+                    <div style={{ fontSize: 8.5, color: DIM, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{rec.rationale}</div>
+                    <div style={{ fontSize: 8.5, color: '#34d399', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>WOULD: {rec.wouldDo}</div>
+                  </div>
+                </Row>
+              ))}
+            </>)}
+          </Panel>
+        );
+      })()}
 
       {view === 'incidents' && (
         <Panel title="INCIDENT LEDGER" onClose={() => setView(null)} right={incidents === null ? <span style={{ fontSize: 9.5, color: DIM }}>LOADING…</span> : <span style={{ fontSize: 9.5, color: DIM }}>{incidents.filter((i) => i.status === 'open').length} OPEN</span>}>

@@ -51,19 +51,22 @@ const LAT_BUFFER = 240;  // latency samples per service (40 min @ 10s)
 const ENTROPY_WINDOW = 60; // cycles fed to STFT (~10 min)
 const WARMUP_CYCLES = 12;  // ~2 min before scoring
 
-interface FleetNode { name: string; url: string }
+interface FleetNode { name: string; url: string; lazy?: boolean }
 
+// lazy = on-demand sidecar, expected to be dark until called (RAM conservation
+// after the 16GB freeze). Their cold-start latency is signal, but their
+// downtime is BY DESIGN — capacity rules must not fire on them.
 const FLEET: FleetNode[] = [
   { name: 'cortex-vite',     url: 'http://127.0.0.1:5173/api/cortex/healthz' },
   { name: 'magpie',          url: 'http://127.0.0.1:3425/v1/models' },
-  { name: 'perception-vlm',  url: 'http://127.0.0.1:8940/' },
-  { name: 'emotion-ser',     url: 'http://127.0.0.1:8941/' },
-  { name: 'speaches',        url: 'http://127.0.0.1:8932/health' },
-  { name: 'mlx-lm',          url: 'http://127.0.0.1:8931/v1/models' },
-  { name: 'parakeet-stt',    url: 'http://127.0.0.1:8179/' },
-  { name: 'chatterbox-tts',  url: 'http://127.0.0.1:8920/' },
-  { name: 'imsg-rpc',        url: 'http://127.0.0.1:8930/' },
   { name: 'phoenix',         url: 'http://127.0.0.1:6006/' },
+  { name: 'perception-vlm',  url: 'http://127.0.0.1:8940/', lazy: true },
+  { name: 'emotion-ser',     url: 'http://127.0.0.1:8941/', lazy: true },
+  { name: 'speaches',        url: 'http://127.0.0.1:8932/health', lazy: true },
+  { name: 'mlx-lm',          url: 'http://127.0.0.1:8931/v1/models', lazy: true },
+  { name: 'parakeet-stt',    url: 'http://127.0.0.1:8179/', lazy: true },
+  { name: 'chatterbox-tts',  url: 'http://127.0.0.1:8920/', lazy: true },
+  { name: 'imsg-rpc',        url: 'http://127.0.0.1:8930/', lazy: true },
 ];
 
 interface NodeState {
@@ -102,7 +105,13 @@ function clamp01(x: number): number { return Math.min(1, Math.max(0, x)); }
 
 function computeMetrics() {
   const upNodes = FLEET.filter(n => state.get(n.name)!.lastUp);
+  // Capacity denominator = always-on infra only. Lazy sidecars are
+  // expected-dark by design; counting them makes every idle moment a
+  // permanent warning (alarm fatigue — the worst kind of monitoring).
+  const infraNodes = FLEET.filter(n => !n.lazy);
+  const infraUp = infraNodes.filter(n => state.get(n.name)!.lastUp).length;
   const uptimeRatio = upNodes.length / FLEET.length;
+  const infraUptimeRatio = infraUp / infraNodes.length;
 
   // ── Phase coherence across responsive nodes ──
   // Polled request/response can't observe internal oscillators — completion
@@ -126,7 +135,7 @@ function computeMetrics() {
     R = kur.R;
     meanPhase = kur.psi;
     sigmaTheta = circularStdDev(ph);
-    coherenceScore = clamp01(R * uptimeRatio); // dead fleet drags coherence
+    coherenceScore = clamp01(R * infraUptimeRatio); // expected-dark lazy nodes don't decohere
     const p99Risk = estimateP99Risk(
       FLEET.flatMap(n => state.get(n.name)!.latencies.slice(-30)), 250);
     K = adaptK(0.8, sigmaTheta, p99Risk, { min: 0.1, max: 2.5 });
@@ -175,6 +184,9 @@ function computeMetrics() {
     fleetSize: FLEET.length,
     nodesUp: upNodes.length,
     uptimeRatio: +uptimeRatio.toFixed(3),
+    infraUp,
+    infraTotal: infraNodes.length,
+    infraUptimeRatio: +infraUptimeRatio.toFixed(3),
     nodes: Object.fromEntries(FLEET.map(n => {
       const s = state.get(n.name)!;
       return [n.name, { up: s.lastUp, latencyMs: s.lastLatencyMs, samples: s.latencies.length }];
@@ -270,13 +282,17 @@ function deriveRecommendations(snap: any): Recommendation[] {
     }
   }
 
-  // Capacity — majority of fleet dark
-  if (snap.uptimeRatio < 0.6 && snap.nodesUp >= 1) {
+  // Capacity — majority of always-on infra dark (lazy sidecars excluded:
+  // they're expected-dark by design, not a degradation signal)
+  const capRatio = snap.infraUptimeRatio ?? snap.uptimeRatio;
+  const capUp = snap.infraUp ?? snap.nodesUp;
+  const capTotal = snap.infraTotal ?? snap.fleetSize;
+  if (capRatio < 0.6 && capUp >= 1) {
     recs.push({
-      id: 'capacity-degraded', severity: snap.uptimeRatio < 0.4 ? 'critical' : 'warn',
+      id: 'capacity-degraded', severity: capRatio < 0.4 ? 'critical' : 'warn',
       actuator: 'reroute', target: null,
-      rationale: `only ${snap.nodesUp}/${snap.fleetSize} nodes up (ratio ${snap.uptimeRatio})`,
-      wouldDo: 'consolidate traffic onto live nodes; suppress work targeting down services',
+      rationale: `only ${capUp}/${capTotal} always-on nodes up (infra ratio ${capRatio})`,
+      wouldDo: 'consolidate traffic onto live infra nodes; suppress work targeting down services',
     });
   }
 
