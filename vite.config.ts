@@ -1466,6 +1466,18 @@ function apiProxyPlugin(): Plugin {
           rssMB: Math.round(process.memoryUsage().rss / 1048576),
         }));
       });
+      // ── /api/cortex/resonance — fleet coherence snapshot from the
+      // resonance-observer daemon (.cortex-runtime/resonance/latest.json).
+      server.middlewares.use('/api/cortex/resonance', (_req: any, res: any) => {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        try {
+          const snap = fsSync.readFileSync(
+            path.join(process.cwd(), '.cortex-runtime', 'resonance', 'latest.json'), 'utf8');
+          res.end(snap);
+        } catch {
+          res.end(JSON.stringify({ ok: false, error: 'resonance observer has not published a snapshot yet' }));
+        }
+      });
       // ── /vad/* static assets with query-string tolerance ──
       // onnxruntime-web's Emscripten glue arrives as `/vad/wasm/*.mjs?import`
       // (vite appends ?import to dynamic imports). Vite's transform middleware
