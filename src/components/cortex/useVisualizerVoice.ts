@@ -136,6 +136,7 @@ RULES:
 - TOOL RETRY LIMIT: If a tool fails or returns nothing twice, STOP retrying variations. Report what you tried and ask the user for more context (exact filename, source, which app created it). Do not spiral through near-identical searches.
 - MEMORY LOOKUPS: When the user says a key/credential/file is "in memory" or "listed", use cortex_memory action:"search" AND action:"vault_query" with the relevant terms before concluding it isn't there.
 - After a tool result arrives (shown as [Host Tool Execution Record]), answer naturally — do not emit another tool_call unless a second step is truly needed.
+- EPISTEMIC HONESTY (MANDATORY): When a tool result contains numbers, stats, or measured values, cite the actual figures in plain spoken language. NEVER invent neuroscience or self-repair claims ("IIT/Phi optimization", "synaptic pruning", "free energy minimization", "cognitive noise reduction") unless the result literally reports that metric. If a result is just "Success" with no detail, say what the tool did — not what it might have felt like.
 - Keep spoken answers compact: the user is listening, not reading.
 - DOCUMENT & RESUME SYNTHESIS: If asked to write, finish, or generate a resume, doc, or document, NEVER speak or print raw placeholder text (like "Your Name", "Job 1", "Project 1") into speech or chat! Instead, invoke create_document with format: "docx" (or "pdf"), title, and rich, complete content grounded in authentic memory (Chris Stringer, Georgia State, SyncScript, SAM.gov UEI: R435EYG6WTX4), then speak a natural confirmation that the Word document is compiled and saved in their docs folder.`;
 
@@ -827,7 +828,9 @@ async function execTool(tool: string, args: Record<string, any>, turnSignal?: Ab
     const r = (data as any)?.result ?? data;
     const s = r?.stdout ? String(r.stdout)
       : r?.content ? String(r.content)
-      : r?.message || (r?.ok ? 'Success' : JSON.stringify(data).slice(0, 400));
+      : r?.summary
+        ? String(r.summary) + (r?.stats ? ` Verified stats: ${JSON.stringify(r.stats)}` : '') + (r?.report_path ? ` Report: ${r.report_path}` : '')
+        : r?.message || (r?.ok ? 'Success' : JSON.stringify(data).slice(0, 400));
     return { text: String(s).slice(0, 700), artifacts };
   } catch (e: any) {
     return { text: `tool error: ${e?.message || e}`, artifacts: [] };
