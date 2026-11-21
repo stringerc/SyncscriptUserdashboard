@@ -1,0 +1,41 @@
+{
+  "comment": "Blast-radius lane policy — declarative audit artifact. blastLane() in workers.ts is a thin evaluator over this file; change policy here, not in code. Lane order: hard > contained > reversible > default. 'hard' never executes — routes to proposal. Regexes are applied to `tool + ' ' + argsJson` (case-insensitive).",
+  "version": 1,
+  "destructivePatterns": [
+    "rm\\s+-rf",
+    "rm\\s+-f\\s",
+    "git\\s+reset\\s+--hard",
+    "git\\s+clean\\s+-f",
+    "drop\\s+table",
+    "mkfs",
+    "dd\\s+if="
+  ],
+  "tier2Patterns": [
+    "deploy",
+    "publish",
+    "push\\s+--force",
+    "rm\\s+-rf",
+    "shutdown",
+    "reboot"
+  ],
+  "containedTools": [
+    "read_file",
+    "list_dir",
+    "search_code",
+    "web_search",
+    "web_fetch",
+    "cortex_memory",
+    "cortex_map",
+    "cortex_surface"
+  ],
+  "reversibleTools": [
+    "write_file",
+    "edit_file",
+    "patch_file",
+    "run_command",
+    "exec",
+    "execute_command",
+    "render_video"
+  ],
+  "defaultLane": "reversible"
+}

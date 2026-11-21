@@ -89,6 +89,13 @@ function db(): SqliteDb {
       updated_at TEXT NOT NULL
     );
   `);
+  // Semantic-recall column (sqlite-vec-lite): Float32LE embedding blob,
+  // populated lazily by semanticRecallFacts' bounded backfill. Added via
+  // ALTER so existing facts.db files migrate in place.
+  const cols = _db.prepare(`PRAGMA table_info(facts)`).all() as Array<{ name: string }>;
+  if (!cols.some((c) => c.name === 'embedding')) {
+    _db.exec(`ALTER TABLE facts ADD COLUMN embedding BLOB`);
+  }
   return _db;
 }
 
@@ -155,7 +162,70 @@ export function assertFact(input: {
         input.source || 'unknown', input.confidence ?? 1.0);
 
   const row = d.prepare(`SELECT * FROM facts WHERE id = ?`).get(newId) as any;
-  return rowToFact(row);
+  const fact = rowToFact(row);
+  // Fire-and-forget embedding so semantic recall covers new facts without
+  // blocking the sync write path. embedFactRow fails soft to null.
+  void embedFactRow(newId, `${subject} ${predicate} ${object}`);
+  return fact;
+}
+
+/** Embed one fact's text and store the blob. Dynamic import keeps
+ *  transformers.js out of the module graph until first use. */
+async function embedFactRow(id: string, text: string): Promise<void> {
+  try {
+    const { embedText, vecToBlob } = await import('./cortex-embeddings');
+    const v = await embedText(text);
+    if (!v) return;
+    db().prepare(`UPDATE facts SET embedding = ? WHERE id = ?`)
+      .run(vecToBlob(v) as any, id);
+  } catch { /* fail-soft: substring recall still works */ }
+}
+
+/** Bounded backfill — embed up to `limit` active facts missing embeddings.
+ *  Called lazily from semanticRecallFacts so cost amortises over queries. */
+async function backfillFactEmbeddings(limit = 20): Promise<void> {
+  const rows = db().prepare(
+    `SELECT id, subject, predicate, object FROM facts
+     WHERE valid_to IS NULL AND embedding IS NULL LIMIT ?`
+  ).all(limit) as Array<{ id: string; subject: string; predicate: string; object: string }>;
+  if (!rows.length) return;
+  const { embedText, vecToBlob } = await import('./cortex-embeddings');
+  // Batches of 8 — MiniLM is fast but keeps the event loop responsive.
+  for (let i = 0; i < rows.length; i += 8) {
+    await Promise.all(rows.slice(i, i + 8).map(async (r) => {
+      const v = await embedText(`${r.subject} ${r.predicate} ${r.object}`);
+      if (v) {
+        db().prepare(`UPDATE facts SET embedding = ? WHERE id = ?`)
+          .run(vecToBlob(v) as any, r.id);
+      }
+    }));
+  }
+}
+
+/** Semantic recall over active facts via local embeddings (cosine over
+ *  Float32 blobs — brute force is fine at personal-memory scale).
+ *  Returns null when embeddings are unavailable so callers can fall back
+ *  to substring recallFacts. */
+export async function semanticRecallFacts(query: string, limit = 10): Promise<Fact[] | null> {
+  const q = String(query || '').trim();
+  if (!q) return [];
+  try {
+    await backfillFactEmbeddings(20);
+    const { embedText, blobToVec, cosineSim } = await import('./cortex-embeddings');
+    const qv = await embedText(q);
+    if (!qv) return null;
+    const rows = db().prepare(
+      `SELECT * FROM facts WHERE valid_to IS NULL AND embedding IS NOT NULL`
+    ).all() as any[];
+    const scored = rows
+      .map((r) => ({ r, s: cosineSim(qv, blobToVec(r.embedding)!) }))
+      .filter((x) => x.s > 0)
+      .sort((a, b) => b.s - a.s)
+      .slice(0, limit);
+    return scored.map((x) => rowToFact(x.r));
+  } catch {
+    return null;
+  }
 }
 
 /** Facts valid at a specific instant (bi-temporal "as of" query). */

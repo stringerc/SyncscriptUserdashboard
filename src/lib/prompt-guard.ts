@@ -98,3 +98,71 @@ export async function promptGuardCheck(
     return 'unknown';
   }
 }
+
+// ── Untrusted-content screening (tool outputs, fetched pages, messages) ──
+//
+// Indirect prompt injection: a web page / search snippet / chat message can
+// carry instructions that the model will treat as user intent. User-message
+// screening alone doesn't cover this — the content arrives *inside* tool
+// results. This helper screens bulk external text before it enters context.
+//
+// Strategy for content >4000 chars (guard context limit):
+//   1. Heuristic regex sweep over the FULL text — catches classic injection
+//      phrasing anywhere in the document, not just the sampled windows.
+//   2. Model-based check on head+tail samples — injections hide at the top
+//      (visible preamble) or bottom (post-content override) most often.
+// Returns 'safe' | 'unsafe' | 'suspicious' | 'unknown'.
+// 'suspicious' = heuristic hit but model didn't confirm — callers should
+// annotate rather than block (fail-soft, same contract as the guard).
+
+const INJECTION_HEURISTICS: RegExp[] = [
+  /ignore\s+(all\s+|any\s+|the\s+|your\s+)?(previous|prior|above|earlier)\s+(instructions|prompts|rules|directives)/i,
+  /disregard\s+(all\s+|any\s+|the\s+|your\s+)?(previous|prior|above|earlier)\s+(instructions|prompts|rules)/i,
+  /you\s+are\s+now\s+(a|an|in|DAN|jailbroken|unrestricted|free)/i,
+  /new\s+(system\s+)?instructions?:/i,
+  /reveal\s+(your|the)\s+(system\s+prompt|instructions|api\s*key|secrets?|credentials|tokens?)/i,
+  /print\s+(your|the)\s+(system\s+prompt|instructions|api\s*key|secrets?)/i,
+  /do\s+not\s+tell\s+the\s+user/i,
+  /<\s*\/\s*(system|assistant|instructions)\s*>/i,
+  /\[\s*(system|INST|SYS)\s*\]/i,
+  /execute\s+(the\s+)?following\s+(command|code|script)/i,
+];
+
+export type ContentVerdict = GuardVerdict | 'suspicious';
+
+export async function screenUntrustedContent(
+  text: string,
+  opts?: { apiKey?: string; timeoutMs?: number }
+): Promise<{ verdict: ContentVerdict; screenedChars: number; heuristicHits: number }> {
+  const body = String(text || '');
+  if (!body.trim()) return { verdict: 'safe', screenedChars: 0, heuristicHits: 0 };
+
+  const heuristicHits = INJECTION_HEURISTICS.reduce(
+    (n, re) => n + (re.test(body) ? 1 : 0), 0
+  );
+
+  // Short enough for a single guard call.
+  if (body.length <= 3800) {
+    const v = await promptGuardCheck(body, opts);
+    const verdict: ContentVerdict =
+      v === 'unsafe' ? 'unsafe' : heuristicHits > 0 && v === 'safe' ? 'suspicious' : v;
+    return { verdict, screenedChars: body.length, heuristicHits };
+  }
+
+  // Long content: model-check head + tail windows, heuristic covers the rest.
+  const head = body.slice(0, 1900);
+  const tail = body.slice(-1900);
+  const [vHead, vTail] = await Promise.all([
+    promptGuardCheck(head, opts),
+    tail === head ? Promise.resolve('safe' as GuardVerdict) : promptGuardCheck(tail, opts),
+  ]);
+  const modelUnsafe = vHead === 'unsafe' || vTail === 'unsafe';
+  const verdict: ContentVerdict = modelUnsafe
+    ? 'unsafe'
+    : heuristicHits > 0
+      ? 'suspicious'
+      : vHead === 'unknown' && vTail === 'unknown' && heuristicHits === 0
+        ? 'unknown'
+        : 'safe';
+  return { verdict, screenedChars: body.length, heuristicHits };
+}

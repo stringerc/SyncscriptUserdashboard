@@ -19,9 +19,9 @@ import { execSync, execFile, execFileSync, spawn } from 'child_process';
 import { timingSafeEqual } from 'crypto';
 import { pathToFileURL } from 'url';
 import { cortexObsidianMemory } from './src/lib/cortex-obsidian-memory';
-import { assertFact, factsAsOf, activeFacts, recallFacts, factHistory, getMemoryBlock, setMemoryBlock, listMemoryBlocks } from './src/lib/cortex-fact-store';
+import { assertFact, factsAsOf, activeFacts, recallFacts, semanticRecallFacts, factHistory, getMemoryBlock, setMemoryBlock, listMemoryBlocks } from './src/lib/cortex-fact-store';
 import { surfaceSpecToMessages } from './src/lib/a2ui-emit';
-import { promptGuardCheck } from './src/lib/prompt-guard';
+import { promptGuardCheck, screenUntrustedContent } from './src/lib/prompt-guard';
 import { imsgRpcChats, imsgRpcHistory, imsgRpcSend, imsgRpcHealth } from './src/lib/imsg-rpc';
 
 /**
@@ -142,6 +142,31 @@ async function renderVideoInProcess(opts: {
  *  TOOL_CALL_END, RUN_FINISHED) so external AG-UI-aware clients can consume
  *  the stream without a protocol migration. Purely additive: existing
  *  fields (token/finishReason/toolCall/reasoning) are untouched. */
+// Screen a list of tool results (search hits, fetched snippets) for
+// indirect prompt injection. Each item's title+snippet is untrusted
+// third-party text. Unsafe items are dropped; the caller surfaces
+// `withheld` count + worst verdict so the model knows coverage shrank.
+async function screenToolResults<T extends { title?: string; snippet?: string; url?: string }>(
+  items: T[],
+): Promise<{ results: T[]; withheld: number; worst: string }> {
+  const screened = await Promise.all(items.map(async (item) => {
+    const text = `${item.title || ''}\n${item.snippet || ''}`.trim();
+    if (!text) return { item, verdict: 'safe' as const };
+    const s = await screenUntrustedContent(text);
+    return { item, verdict: s.verdict };
+  }));
+  const order: Record<string, number> = { safe: 0, unknown: 1, suspicious: 2, unsafe: 3 };
+  let worst = 'safe';
+  for (const s of screened) {
+    if ((order[s.verdict] ?? 0) > (order[worst] ?? 0)) worst = s.verdict;
+  }
+  return {
+    results: screened.filter((s) => s.verdict !== 'unsafe').map((s) => s.item),
+    withheld: screened.filter((s) => s.verdict === 'unsafe').length,
+    worst,
+  };
+}
+
 function aguiTagSSE(res: any) {
   const origWrite = res.write.bind(res);
   res.write = (chunk: any, ...rest: any[]) => {
@@ -4916,7 +4941,12 @@ end tell`;
                 const action = String(args?.action || 'active');
                 let facts: any = null;
                 if (action === 'as_of') facts = factsAsOf(String(args?.asOf || new Date().toISOString()));
-                else if (action === 'search') facts = recallFacts(String(args?.query || ''), 20);
+                else if (action === 'search') {
+                  // Semantic recall first (local embeddings); substring
+                  // fallback when the model isn't available.
+                  const sem = await semanticRecallFacts(String(args?.query || ''), 20);
+                  facts = sem ?? recallFacts(String(args?.query || ''), 20);
+                }
                 else if (action === 'history') facts = factHistory(String(args?.subject || ''), String(args?.predicate || ''));
                 else facts = activeFacts({ subject: args?.subject ? String(args.subject) : undefined, predicate: args?.predicate ? String(args.predicate) : undefined });
                 res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
@@ -5440,10 +5470,22 @@ end tell`;
                     }
                   }
                 }
+                // Indirect-injection screen: page content is untrusted — a
+                // hostile page can carry instructions aimed at the model.
+                const screen = await screenUntrustedContent(md);
+                if (screen.verdict === 'unsafe') {
+                  return res.end(JSON.stringify({
+                    ok: false, tool: 'fetch_url', url,
+                    error: 'content withheld: prompt-injection risk detected in page',
+                    injectionScreen: 'blocked',
+                    durationMs: Date.now() - startMs,
+                  }));
+                }
                 return res.end(JSON.stringify({
                   ok: true, tool: 'fetch_url', url,
                   content: md.slice(0, 12000),
                   markdown: md.slice(0, 12000), chars: md.length,
+                  injectionScreen: screen.verdict,
                   durationMs: Date.now() - startMs,
                 }));
               } catch (e: any) {
@@ -5563,9 +5605,11 @@ end tell`;
                         }))
                         .filter((r: any) => r.url && r.title);
                       if (fcResults.length > 0) {
+                        const screened = await screenToolResults(fcResults);
                         return res.end(JSON.stringify({
-                          ok: true, tool: 'web_search', query, results: fcResults,
-                          totalMatches: fcResults.length, engine: 'firecrawl',
+                          ok: true, tool: 'web_search', query, results: screened.results,
+                          totalMatches: screened.results.length, engine: 'firecrawl',
+                          withheld: screened.withheld, injectionScreen: screened.worst,
                           durationMs: Date.now() - startMs,
                         }));
                       }
@@ -5609,12 +5653,15 @@ end tell`;
                   }
 
                   if (results.length > 0) {
+                    const screened = await screenToolResults(results);
                     return res.end(JSON.stringify({
                       ok: true,
                       tool: 'web_search',
                       query,
-                      results,
-                      totalMatches: results.length,
+                      results: screened.results,
+                      totalMatches: screened.results.length,
+                      withheld: screened.withheld,
+                      injectionScreen: screened.worst,
                       durationMs: Date.now() - startMs,
                     }));
                   }
@@ -9658,6 +9705,30 @@ function triggerQuickAction() {
                   return res.end(JSON.stringify({ ok: false, tool, error: 'chat_id (number) required — see imessage_chats' }));
                 }
                 const r = await imsgRpcHistory(chatId, Number(args?.limit) || 20);
+                if (r.ok && Array.isArray(r.data)) {
+                  // Indirect-injection screen: inbound message text is
+                  // third-party content entering model context. Only
+                  // screen inbound (is_from_me === false) — own messages
+                  // are first-party. Cap at 30 to bound guard calls.
+                  const inbound = r.data.filter((m: any) => m && m.is_from_me === false).slice(0, 30);
+                  const verdicts = await Promise.all(inbound.map(async (m: any) => {
+                    const s = await screenUntrustedContent(String(m.text || ''));
+                    return { id: m.id, verdict: s.verdict };
+                  }));
+                  const bad = new Map(verdicts.filter((v) => v.verdict === 'unsafe').map((v) => [v.id, true]));
+                  const suspicious = verdicts.some((v) => v.verdict === 'suspicious' || v.verdict === 'unknown');
+                  const messages = r.data.map((m: any) => bad.has(m.id)
+                    ? { ...m, text: '[withheld — potential prompt injection]' }
+                    : m);
+                  res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+                  return res.end(JSON.stringify({
+                    ok: true, tool, chat_id: chatId, messages,
+                    count: messages.length,
+                    withheld: bad.size,
+                    injectionScreen: bad.size > 0 ? 'blocked' : suspicious ? 'partial' : 'clean',
+                    durationMs: Date.now() - startMs,
+                  }));
+                }
                 res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
                 return res.end(JSON.stringify(r.ok
                   ? { ok: true, tool, chat_id: chatId, messages: r.data, count: (r.data || []).length, durationMs: Date.now() - startMs }
@@ -12891,7 +12962,7 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
       // GET ?q= | ?asOf=ISO | ?subject= | ?history=subject|predicate | ?blocks=1
       // POST {subject, predicate, object, source?, confidence?, validFrom?}
       //      | {block: name, content} for Letta-style memory blocks
-      server.middlewares.use('/api/cortex/memory/facts', (req: any, res: any, next: any) => {
+      server.middlewares.use('/api/cortex/memory/facts', async (req: any, res: any, next: any) => {
         if (req.method === 'OPTIONS') {
           res.writeHead(204, { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Methods': 'GET, POST, OPTIONS', 'Access-Control-Allow-Headers': 'Content-Type' });
           return res.end();
@@ -12920,7 +12991,10 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
             const subject = u.searchParams.get('subject');
             if (subject) return json(200, { subject, facts: activeFacts({ subject }) });
             const q = u.searchParams.get('q');
-            if (q) return json(200, { query: q, facts: recallFacts(q) });
+            if (q) {
+              const sem = await semanticRecallFacts(q);
+              return json(200, { query: q, facts: sem ?? recallFacts(q), semantic: sem != null });
+            }
             return json(200, { facts: activeFacts() });
           }
           if (req.method === 'POST') {

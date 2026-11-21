@@ -313,10 +313,28 @@ FRAGILITY PASS (post-stress-test hardening):
   MEMORY.md:2593 (move to env). Supabase anon JWTs are public-by-
   design, no action.
 
+DEFERRED ITEMS RESOLVED (all three shipped):
+- Indirect-injection screening: screenUntrustedContent() in
+  prompt-guard.ts (heuristic sweep + head/tail model sampling for
+  >3800 chars). Wired into fetch_url (blocks unsafe pages),
+  web_search (per-result screening via screenToolResults), and
+  imessage_history (inbound-only, per-message withhold). VERIFIED
+  live: injection test page blocked, benign page safe, search +
+  iMessage clean.
+- sqlite-vec-lite: local MiniLM-L6-v2 embeddings (transformers.js,
+  384-dim) stored as Float32 BLOBs in facts.db. semanticRecallFacts()
+  with bounded lazy backfill; wired into recall_facts tool +
+  /api/cortex/memory/facts?q=. VERIFIED: "morning beverage choice"
+  surfaced "black coffee" with zero lexical overlap; persists across
+  restarts.
+- OPA-wasm SUBSTITUTE (deliberate): blastLane policy extracted to
+  lane-policy.json — same auditability, no wasm runtime in the sync
+  hot path. blastLane verified identical outputs. Full OPA-wasm
+  rejected: async eval vs 8 sync call sites, single-operator
+  deployment, zero behavioural gain.
+
 STILL OPEN (honest gaps):
 - Dev server root-cause hang UNKNOWN — watchdog now detects + dumps
   diagnostics; watch for server-stall-*.json after next hang.
 - promptfoo redteam run needs verified promptfoo account (user action).
 - Secret rotation is user action (list above).
-- OPA-wasm lane policies, sqlite-vec embeddings, indirect-injection
-  screening of tool outputs — deferred roadmap items, not fragility.

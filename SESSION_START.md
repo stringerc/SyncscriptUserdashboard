@@ -44,7 +44,7 @@ SyncScript dashboard and **Nexus** (App AI): voice + tools-backed UI (canvas, ta
 - **Regression fix (same day):** “Heavy” wrongly = `tools≥20` → **every** Claude agent turn flagged (always ~27 tools). Chain → deepseek 32k first; reserve math set **`attempt_timeout=0`** for every model while remaining budget ~90s → **blank SSE / empty HTTP 200**. Fix: heavy = **`msgs≥80` only**; fair-share probe budgets never starve current attempt; skip/no empty stream path emits error SSE. Verified: opus+27 tools → `message_start`+`OK`+`message_stop` via **glm-5.2**.
 
 <!-- cortex-gate:start -->
-**Last cortex gate (2026-11-21T11:51:31.817Z):** **PASS** · cortex-70 59/59 · coverage AVG **1.00** (GWT 1.00 · AST 1.00 · PP 1.00 · RPT 1.00 · HOT 1.00 · IIT 1.00) · git `0b0e6742` · source: `npm run verify:cortex` · **not a consciousness score**
+**Last cortex gate (2026-11-21T12:42:49.790Z):** **PASS** · cortex-70 59/59 · coverage AVG **1.00** (GWT 1.00 · AST 1.00 · PP 1.00 · RPT 1.00 · HOT 1.00 · IIT 1.00) · git `18d209c6` · source: `npm run verify:cortex` · **not a consciousness score**
 <!-- cortex-gate:end -->
 
 <!-- epistemic-gate:start -->

@@ -1438,9 +1438,6 @@ const librarianWorker: WorkerHandler = async (ctx) => {
 
 // ── Builder: governed code tasks ──────────────────────────────────
 
-const DESTRUCTIVE_RE = /rm\s+-rf|rm\s+-f\s|git\s+reset\s+--hard|git\s+clean\s+-f|drop\s+table|mkfs|dd\s+if=/i;
-const TIER2_RE = /deploy|publish|push\s+--force|rm\s+-rf|shutdown|reboot/i;
-
 // ── Blast-radius lanes ────────────────────────────────────────────
 // Gate on how expensive a wrong outcome is to undo, not on model
 // confidence (which the model itself controls). Three lanes:
@@ -1449,18 +1446,45 @@ const TIER2_RE = /deploy|publish|push\s+--force|rm\s+-rf|shutdown|reboot/i;
 //                flagged for audit; a bad merge costs a git revert.
 //   hard       — destructive or tier-2: never executes, becomes a proposal.
 //                This lane does not open regardless of any score.
+//
+// Policy lives in lane-policy.json (declarative audit artifact) — this
+// function is a thin evaluator. This is the OPA-wasm substitute: policy-
+// as-data gives the same auditability without a wasm runtime in the
+// synchronous hot path (blastLane has ~8 sync call sites; opa-wasm eval
+// is async and would force a risky refactor for zero behavioural gain
+// in a single-operator deployment).
 export type BlastLane = 'contained' | 'reversible' | 'hard';
 
-const CONTAINED_TOOLS = new Set([
-  'read_file', 'list_dir', 'search_code', 'web_search', 'web_fetch',
-  'cortex_memory', 'cortex_map', 'cortex_surface',
-]);
-const REVERSIBLE_TOOLS = new Set([
-  'write_file', 'edit_file', 'patch_file', 'run_command', 'exec', 'execute_command',
-  // render_video writes a single .mp4 under .cortex-runtime/renders/ —
-  // repo-local, auditable, trivially deletable: reversible lane, not hard.
-  'render_video',
-]);
+interface LanePolicy {
+  destructivePatterns: string[];
+  tier2Patterns: string[];
+  containedTools: string[];
+  reversibleTools: string[];
+  defaultLane: BlastLane;
+}
+
+const LANE_POLICY: LanePolicy = (() => {
+  try {
+    return JSON.parse(
+      fs.readFileSync(path.join(process.cwd(), 'src/lib/cortex-agents/lane-policy.json'), 'utf-8')
+    ) as LanePolicy;
+  } catch {
+    // Fallback mirrors the policy file — keeps lanes closed if the JSON
+    // is ever missing/corrupt rather than failing open.
+    return {
+      destructivePatterns: ['rm\\s+-rf', 'rm\\s+-f\\s', 'git\\s+reset\\s+--hard', 'git\\s+clean\\s+-f', 'drop\\s+table', 'mkfs', 'dd\\s+if='],
+      tier2Patterns: ['deploy', 'publish', 'push\\s+--force', 'rm\\s+-rf', 'shutdown', 'reboot'],
+      containedTools: ['read_file', 'list_dir', 'search_code', 'web_search', 'web_fetch', 'cortex_memory', 'cortex_map', 'cortex_surface'],
+      reversibleTools: ['write_file', 'edit_file', 'patch_file', 'run_command', 'exec', 'execute_command', 'render_video'],
+      defaultLane: 'reversible',
+    };
+  }
+})();
+
+const DESTRUCTIVE_RE = new RegExp(LANE_POLICY.destructivePatterns.join('|'), 'i');
+const TIER2_RE = new RegExp(LANE_POLICY.tier2Patterns.join('|'), 'i');
+const CONTAINED_TOOLS = new Set(LANE_POLICY.containedTools);
+const REVERSIBLE_TOOLS = new Set(LANE_POLICY.reversibleTools);
 
 export function blastLane(tool: string, argsJson: string): BlastLane {
   if (DESTRUCTIVE_RE.test(tool + ' ' + argsJson) || TIER2_RE.test(tool + ' ' + argsJson)) return 'hard';
@@ -1469,7 +1493,7 @@ export function blastLane(tool: string, argsJson: string): BlastLane {
   // Unknown tools default to the strictest executable lane — never 'hard'
   // (that path is proposal-only); 'reversible' still runs the governor's
   // destructive regex above first, so truly dangerous args never reach here.
-  return 'reversible';
+  return LANE_POLICY.defaultLane;
 }
 
 
