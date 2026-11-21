@@ -40,7 +40,9 @@ const ROOT = path.resolve(__dirname, '..');
 const OUT_DIR = path.join(ROOT, '.cortex-runtime', 'resonance');
 const LATEST = path.join(OUT_DIR, 'latest.json');
 const HISTORY = path.join(OUT_DIR, 'history.jsonl');
+const RECS = path.join(OUT_DIR, 'recommendations.jsonl');
 const HISTORY_CAP = 5000;
+const RECS_CAP = 2000;
 
 const POLL_MS = 10_000;
 const PROBE_TIMEOUT_MS = 2_500;
@@ -195,6 +197,116 @@ function computeMetrics() {
   };
 }
 
+// ── Shadow-mode actuation ──────────────────────────────────────────
+// The controller's would-be actions are computed and logged every cycle
+// but NEVER executed — observe mode stays observe. Each recommendation
+// carries the actuator hint the patent framework defines (micro-delay,
+// batch sizing, coupling, pre-warm) so the Dec-3 gate can validate
+// predictions against real events in recommendations.jsonl.
+
+interface Recommendation {
+  id: string;
+  severity: 'info' | 'warn' | 'critical';
+  actuator: 'micro_delay' | 'batch_size' | 'coupling' | 'prewarm' | 'reroute';
+  target: string | null;
+  rationale: string;
+  wouldDo: string;
+}
+
+function deriveRecommendations(snap: any): Recommendation[] {
+  const recs: Recommendation[] = [];
+  const r = snap.resonance;
+  const nodes: Record<string, { up: boolean; latencyMs: number | null }> = snap.nodes;
+
+  const upLat = Object.values(nodes)
+    .filter(n => n.up && n.latencyMs !== null)
+    .map(n => n.latencyMs as number)
+    .sort((a, b) => a - b);
+  const medianLat = upLat.length ? upLat[Math.floor(upLat.length / 2)] : null;
+  const slowest = Object.entries(nodes)
+    .filter(([, n]) => n.up && n.latencyMs !== null)
+    .sort((a, b) => (b[1].latencyMs as number) - (a[1].latencyMs as number))[0]?.[0] ?? null;
+
+  // Tail degradation — the headline signal
+  if (r.tailHealthScore !== null && r.tailHealthScore < 0.5) {
+    const sev = r.tailHealthScore < 0.3 ? 'critical' : 'warn';
+    recs.push({
+      id: 'tail-degraded', severity: sev, actuator: 'prewarm', target: slowest,
+      rationale: `tailHealth=${r.tailHealthScore} Q99=${r.tailQuantiles?.q99 ?? '?'}ms — extreme latencies rising above GPD model`,
+      wouldDo: `pre-warm ${slowest ?? 'slowest node'} model weights; suggest +${Math.round((1 - r.tailHealthScore) * 60)}ms micro-delay budget on interactive path`,
+    });
+  }
+
+  // Fleet decoherence — phases drifting
+  if (r.scoredNodes >= 3 && r.R < 0.75) {
+    recs.push({
+      id: 'fleet-decoherence', severity: r.R < 0.5 ? 'critical' : 'warn',
+      actuator: 'coupling', target: slowest,
+      rationale: `R=${r.R} σθ=${r.sigmaTheta} across ${r.scoredNodes} nodes — timing homogeneity breaking down`,
+      wouldDo: `raise coupling K toward ${Math.min(2.5, +(r.couplingK * 1.5).toFixed(2))}; investigate ${slowest ?? 'phase outlier'}`,
+    });
+  }
+
+  // Rhythm anomaly — too rigid or too noisy
+  if (r.entropyState === 'too_noisy' || r.entropyState === 'too_rigid') {
+    recs.push({
+      id: 'rhythm-anomaly', severity: 'warn', actuator: 'batch_size', target: null,
+      rationale: `spectral entropy ${r.spectralEntropy} = ${r.entropyState} — fleet latency rhythm outside healthy band`,
+      wouldDo: r.entropyState === 'too_noisy'
+        ? 'reduce batch sizes / stagger probe-aligned work to smooth bursts'
+        : 'fleet suspiciously metronomic — check for synchronized stall pattern',
+    });
+  }
+
+  // Single-node thermal outlier — one service 3x slower than fleet median
+  if (medianLat !== null && slowest) {
+    const slowLat = nodes[slowest].latencyMs as number;
+    if (slowLat > medianLat * 3 && slowLat > 500) {
+      recs.push({
+        id: 'node-outlier', severity: 'warn', actuator: 'reroute', target: slowest,
+        rationale: `${slowest} latency ${slowLat}ms vs fleet median ${medianLat}ms`,
+        wouldDo: `reroute non-critical ${slowest} traffic to healthy peer or queue behind micro-delay`,
+      });
+    }
+  }
+
+  // Capacity — majority of fleet dark
+  if (snap.uptimeRatio < 0.6 && snap.nodesUp >= 1) {
+    recs.push({
+      id: 'capacity-degraded', severity: snap.uptimeRatio < 0.4 ? 'critical' : 'warn',
+      actuator: 'reroute', target: null,
+      rationale: `only ${snap.nodesUp}/${snap.fleetSize} nodes up (ratio ${snap.uptimeRatio})`,
+      wouldDo: 'consolidate traffic onto live nodes; suppress work targeting down services',
+    });
+  }
+
+  return recs;
+}
+
+// Recommendation-set change detection — log only on transitions so
+// recommendations.jsonl is an event timeline, not 8,640 identical lines/day.
+let lastRecSignature = '';
+function logRecommendationTransitions(snap: any, recs: Recommendation[]) {
+  const sig = recs.map(x => `${x.id}:${x.severity}`).sort().join('|');
+  if (sig === lastRecSignature) return;
+  lastRecSignature = sig;
+  try {
+    fs.appendFileSync(RECS, JSON.stringify({
+      ts: snap.ts, cycle: snap.cycle, mode: 'shadow',
+      active: recs,
+      context: {
+        R: snap.resonance.R, tail: snap.resonance.tailHealthScore,
+        entropy: snap.resonance.spectralEntropy, up: snap.nodesUp,
+      },
+    }) + '\n');
+    const lines = fs.readFileSync(RECS, 'utf8').trim().split('\n');
+    if (lines.length > RECS_CAP) fs.writeFileSync(RECS, lines.slice(-RECS_CAP).join('\n') + '\n');
+  } catch {}
+  if (recs.length) {
+    console.log(`[resonance] SHADOW ${recs.map(x => `${x.id}(${x.severity})->${x.target ?? 'fleet'}`).join(', ')}`);
+  }
+}
+
 function persist(snap: any) {
   try {
     fs.mkdirSync(OUT_DIR, { recursive: true });
@@ -220,7 +332,10 @@ async function tick() {
   if (fleetLatencySeries.length > ENTROPY_WINDOW * 2) fleetLatencySeries.shift();
 
   const snap = computeMetrics();
+  const recs = cycle >= WARMUP_CYCLES ? deriveRecommendations(snap) : [];
+  (snap as any).shadow = { mode: 'observe', active: recs, note: 'recommendations computed, never actuated — validation window until Dec-3 gate' };
   persist(snap);
+  logRecommendationTransitions(snap, recs);
   const r = snap.resonance;
   console.log(`[resonance] cycle ${cycle} — up ${snap.nodesUp}/${snap.fleetSize} | R=${r.R} agg=${r.aggregateScore} σθ=${r.sigmaTheta} H=${r.spectralEntropy}(${r.entropyState}) K=${r.couplingK} tail=${r.tailHealthScore ?? 'warming'}`);
 }
