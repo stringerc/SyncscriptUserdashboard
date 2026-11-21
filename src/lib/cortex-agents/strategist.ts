@@ -34,6 +34,7 @@ import {
 } from '../cortex-counsel';
 import { getWorldState, formatWorldStateHeader } from '../cortex-world-state';
 import { runCounselPersonas, runPersonaPosition, runPersonaPositionsBatch } from './counsel-personas';
+import { runCounselPosition } from './counsel-position';
 
 const STATE_DIR = process.env.CORTEX_AGENTS_STATE_DIR || path.join(process.cwd(), '.cortex-runtime');
 const STRATEGY_DIR = '05 - Strategy';
@@ -725,11 +726,12 @@ export function makeStrategistWorker(runtime: AgentRuntime): WorkerHandler {
       case 'counsel_personas': return runCounselPersonas(ctx, runtime);
       case 'counsel_persona_position': return runPersonaPosition(ctx);
       case 'counsel_persona_positions': return runPersonaPositionsBatch(ctx);
+      case 'counsel_position': return runCounselPosition(ctx, 'strategist', 'FLIGHT DIRECTOR — council orchestration & synthesis counsel');
       case 'goal_plan': return goalPlanWorker(ctx);
       case 'goal_review': return goalReviewWorker(ctx);
       case 'tune_cycle': return tuneCycleWorker(ctx);
       default:
-        return { error: `unknown strategist kind '${ctx.task.kind}'`, kinds: ['cluster', 'plan', 'manifest', 'regress', 'propose_skill', 'propose_agent', 'counsel_convene', 'counsel_synthesize', 'counsel_personas', 'counsel_persona_position', 'counsel_persona_positions', 'goal_plan', 'goal_review', 'tune_cycle'] };
+        return { error: `unknown strategist kind '${ctx.task.kind}'`, kinds: ['cluster', 'plan', 'manifest', 'regress', 'propose_skill', 'propose_agent', 'counsel_convene', 'counsel_synthesize', 'counsel_personas', 'counsel_persona_position', 'counsel_persona_positions', 'counsel_position', 'goal_plan', 'goal_review', 'tune_cycle'] };
     }
   };
 }

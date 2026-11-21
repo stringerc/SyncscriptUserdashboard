@@ -59,7 +59,7 @@ export interface CounselConsole {
 /** The console roster — Mission Control positions. */
 export const COUNSEL_CONSOLES: CounselConsole[] = [
   { id: 'user', callSign: 'THE CREW (CHRIS)', role: 'Holds veto · Final GO/NO-GO · Approves Hard-lane only', adapter: 'manual' },
-  { id: 'strategist', callSign: 'FLIGHT DIRECTOR (CORTEX)', role: 'Owns the console · Decides, never flies mission herself', adapter: 'internal' },
+  { id: 'strategist', callSign: 'FLIGHT DIRECTOR (CORTEX)', role: 'Owns the console · Decides, never flies mission herself', adapter: 'internal', autoFiles: true },
   { id: 'antigravity', callSign: 'GUIDANCE (ANTIGRAV)', role: 'Strategy & Vision', adapter: 'file-drop' },
   { id: 'builder', callSign: 'FLIGHT CONTROLS (BUILDER)', role: 'Execute · Workspace & code compiler', adapter: 'internal' },
   { id: 'runner', callSign: 'FLIGHT CONTROLS (RUNNER)', role: 'Execute · Rapid process runtime', adapter: 'internal' },
