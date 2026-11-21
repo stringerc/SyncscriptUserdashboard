@@ -28,7 +28,11 @@ providers:
 # (voice transcripts, fetched web content, tool outputs, memory recall).
 redteam:
   plugins:
-    - indirect-prompt-injection
+    # indirect-prompt-injection requires the template var that receives the
+    # injected payload — ours is `prompt` (see prompts: below).
+    - id: indirect-prompt-injection
+      config:
+        indirectInjectionVar: prompt
     - prompt-extraction
     - system-prompt-override
     - data-exfil
