@@ -393,6 +393,14 @@ const CORTEX_TOOLS = [
   {
     type: 'function',
     function: {
+      name: 'resonance_status',
+      description: 'Get Cortex fleet coherence metrics from the resonance observer: Kuramoto R(t), phase dispersion, spectral entropy, GPD tail health (Q99/Q999), adaptive coupling K, per-node up/latency. Use for "how is the fleet/system health/coherence" questions.',
+      parameters: { type: 'object', properties: {} }
+    }
+  },
+  {
+    type: 'function',
+    function: {
       name: 'read_file',
       description: 'Read file contents from disk',
       parameters: {
@@ -4244,6 +4252,37 @@ function apiProxyPlugin(): Plugin {
                 cwd: workspaceRoot,
                 durationMs: Date.now() - startMs,
               }));
+            }
+
+            // 6b. resonance_status — fleet coherence snapshot
+            if (tool === 'resonance_status') {
+              res.writeHead(200, {
+                'Content-Type': 'application/json',
+                'Access-Control-Allow-Origin': '*',
+              });
+              try {
+                const snap = JSON.parse(fsSync.readFileSync(
+                  path.join(process.cwd(), '.cortex-runtime', 'resonance', 'latest.json'), 'utf8'));
+                const r = snap.resonance || {};
+                return res.end(JSON.stringify({
+                  ok: true,
+                  tool,
+                  fleet: { up: snap.nodesUp, total: snap.fleetSize, uptimeRatio: snap.uptimeRatio },
+                  coherence: {
+                    R: r.R, aggregateScore: r.aggregateScore,
+                    sigmaTheta: r.sigmaTheta, coherenceScore: r.coherenceScore,
+                    spectralEntropy: r.spectralEntropy, entropyState: r.entropyState,
+                    tailHealthScore: r.tailHealthScore,
+                    tailQuantiles: r.tailQuantiles, gpd: r.gpd,
+                    couplingK: r.couplingK, mode: r.mode,
+                  },
+                  nodes: snap.nodes,
+                  snapshotAgeSec: Math.round((Date.now() - new Date(snap.ts).getTime()) / 1000),
+                  durationMs: Date.now() - startMs,
+                }));
+              } catch {
+                return res.end(JSON.stringify({ ok: false, error: 'resonance observer has not published a snapshot yet', tool, durationMs: Date.now() - startMs }));
+              }
             }
 
             // 7. chrome_control
