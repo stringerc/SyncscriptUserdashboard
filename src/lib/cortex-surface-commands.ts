@@ -49,6 +49,9 @@ function artifactSummary(art: CortexArtifact): string {
     case 'feed': return `Status feed "${art.title}" (${art.items.length} items)`;
     case 'stat': return `Stat "${art.title}": ${art.value}`;
     case 'weather': return `Weather "${art.title}"${art.temp ? ` — ${art.temp}` : ''}${art.condition ? `, ${art.condition}` : ''}`;
+    case 'splat': return `Gaussian splat "${art.title}"`;
+    case 'dashboard': return `Dashboard "${art.title}" (${art.tiles.length} tiles)`;
+    case 'surface': return `Generative surface "${art.title}"`;
   }
 }
 

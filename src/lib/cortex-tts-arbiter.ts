@@ -99,7 +99,7 @@ export function createSpeechArbiter(ownerId?: string): SpeechArbiter {
           stopAutoBeat();
           return;
         }
-        writeLock(cur.token || heldToken || 'beat');
+        writeLock(cur?.token || heldToken || 'beat');
       } catch { /* ignore */ }
     }, 2000);
   };
@@ -143,7 +143,7 @@ export function createSpeechArbiter(ownerId?: string): SpeechArbiter {
       // We own it — refresh freshness (throttled).
       if (now - lastBeatWrite >= 900) {
         lastBeatWrite = now;
-        writeLock(cur.token || heldToken || 'beat');
+        writeLock(cur?.token || heldToken || 'beat');
       }
       return 'ok';
     } catch {

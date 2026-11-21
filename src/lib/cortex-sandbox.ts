@@ -32,6 +32,32 @@ const KILL_GRACE_MS = 5_000;
 const MAX_OUTPUT_CHARS = 64 * 1024; // 64KB cap per stream
 const STATUS_PROBE_MS = 5_000;
 
+export interface SandboxNetPolicy {
+  /**
+   * 'allow'    — unrestricted egress (legacy default; back-compat).
+   * 'deny'     — deny-all egress AND ingress (air-gapped guest).
+   * 'allowlist'— deny-by-default; only `allowHosts` reachable.
+   */
+  mode?: 'allow' | 'deny' | 'allowlist';
+  /** Domains ('api.example.com') or suffixes ('.example.com' / '*.example.com')
+   *  permitted when mode='allowlist'. */
+  allowHosts?: string[];
+}
+
+export interface SandboxSecretSpec {
+  /** Guest env var that carries the $MSB_ placeholder. */
+  envVar: string;
+  /** Host env var resolved at sandbox start — preferred; the raw value
+   *  never enters the guest, only the placeholder does. */
+  hostEnv?: string;
+  /** Direct secret value (discouraged — prefer hostEnv). */
+  value?: string;
+  /** Hosts the proxy may substitute the real value for. */
+  allowedHosts: string[];
+  /** Explicit placeholder (default `$MSB_<envVar>`). */
+  placeholder?: string;
+}
+
 export interface SandboxRunOptions {
   /** OCI image / rootfs source. Defaults to DEFAULT_SANDBOX_IMAGE. */
   image?: string;
@@ -45,6 +71,12 @@ export interface SandboxRunOptions {
   workdir?: string;
   /** Guest env vars. Host env is NEVER forwarded — only this map is set. */
   env?: Record<string, string>;
+  /** Egress policy. Default 'allow' preserves legacy behaviour; governed
+   *  callers should pass 'deny' or 'allowlist' for untrusted lanes. */
+  net?: SandboxNetPolicy;
+  /** Host-side secrets injected as $MSB_ placeholders, substituted only for
+   *  allowedHosts at the egress proxy — guest code never sees raw values. */
+  secrets?: SandboxSecretSpec[];
 }
 
 export interface SandboxRunResult {
@@ -87,6 +119,8 @@ interface SdkSandboxBuilder {
   workdir(p: string): SdkSandboxBuilder;
   envs(v: Record<string, string>): SdkSandboxBuilder;
   ephemeral(e: boolean): SdkSandboxBuilder;
+  network(configure: (b: any) => any): SdkSandboxBuilder;
+  secret(configure: (b: any) => any): SdkSandboxBuilder;
   create(): Promise<SdkSandbox>;
 }
 interface SdkModule {
@@ -165,6 +199,33 @@ export async function runSandboxed(opts: SandboxRunOptions): Promise<SandboxRunR
   const name = sandboxName();
   const image = (opts.image ?? DEFAULT_SANDBOX_IMAGE).trim() || DEFAULT_SANDBOX_IMAGE;
   const env = opts.env && typeof opts.env === 'object' ? opts.env : {};
+  const netMode = opts.net?.mode ?? 'allow';
+  const allowHosts = (opts.net?.allowHosts ?? []).filter((h) => typeof h === 'string' && h.length > 0 && h.length <= 253);
+
+  // Resolve secrets host-side; raw values are handed to the SDK builder and
+  // never placed in guest env — the guest only sees $MSB_ placeholders that
+  // the egress proxy substitutes for allowedHosts.
+  const resolvedSecrets: Array<{ envVar: string; value: string; placeholder: string; hosts: string[] }> = [];
+  const secretWarnings: string[] = [];
+  for (const s of opts.secrets ?? []) {
+    const envVar = String(s?.envVar || '').trim();
+    const hosts = (s?.allowedHosts ?? []).filter((h) => typeof h === 'string' && h.includes('.'));
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(envVar) || !hosts.length) {
+      secretWarnings.push(`secret spec rejected: bad envVar or no allowedHosts`);
+      continue;
+    }
+    const value = s.value ?? (s.hostEnv ? process.env[s.hostEnv] : undefined);
+    if (!value) {
+      secretWarnings.push(`secret ${envVar}: host source empty — skipped`);
+      continue;
+    }
+    resolvedSecrets.push({
+      envVar,
+      value: String(value),
+      placeholder: s.placeholder || `$MSB_${envVar}`,
+      hosts,
+    });
+  }
 
   let sdk: SdkModule;
   try {
@@ -181,6 +242,40 @@ export async function runSandboxed(opts: SandboxRunOptions): Promise<SandboxRunR
     if (opts.workdir) builder = builder.workdir(opts.workdir);
     const envKeys = Object.keys(env);
     if (envKeys.length) builder = builder.envs(env);
+
+    // Network policy: deny-by-default with explicit host allowlist, or
+    // full deny for air-gapped guests. Plain NetworkPolicy object — the
+    // SDK accepts it directly (first-match-wins per direction).
+    if (netMode !== 'allow') {
+      const rules = allowHosts.map((h) => {
+        const isSuffix = h.startsWith('.') || h.startsWith('*.');
+        const clean = h.replace(/^\*\./, '');
+        return {
+          direction: 'egress' as const,
+          destination: isSuffix ? { kind: 'domainSuffix' as const, suffix: clean } : { kind: 'domain' as const, domain: clean },
+          protocols: ['tcp' as const],
+          ports: [],
+          action: 'allow' as const,
+        };
+      });
+      builder = builder.network((b: any) => b
+        .enabled(true)
+        .policy({
+          defaultEgress: 'deny',
+          defaultIngress: 'deny',
+          rules,
+        }));
+    }
+
+    // Secret injection: placeholder env vars + per-host substitution rules.
+    for (const sec of resolvedSecrets) {
+      builder = builder.secret((b: any) => {
+        let sb = b.env(sec.envVar).value(sec.value).placeholder(sec.placeholder);
+        for (const host of sec.hosts) sb = sb.allow(host);
+        return sb;
+      });
+    }
+
     sandbox = await builder.create();
   } catch (e: any) {
     return fail(`sandbox_unavailable: ${e?.message || e}`, { sandboxId: name });
@@ -223,7 +318,9 @@ export async function runSandboxed(opts: SandboxRunOptions): Promise<SandboxRunR
 
     const out = outcome.out as SdkExecOutput;
     const stdout = capOutput(out.stdout());
-    const stderr = capOutput(out.stderr());
+    const stderr = capOutput(
+      (secretWarnings.length ? `[sandbox] ${secretWarnings.join('; ')}\n` : '') + out.stderr()
+    );
     const exitCode = typeof out.code === 'number' ? out.code : null;
     const timedOut = /timeout/i.test(stderr) && exitCode !== 0 && stderr.length < 4096;
     return {

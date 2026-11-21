@@ -20,6 +20,7 @@ import { timingSafeEqual } from 'crypto';
 import { cortexObsidianMemory } from './src/lib/cortex-obsidian-memory';
 import { assertFact, factsAsOf, activeFacts, recallFacts, factHistory, getMemoryBlock, setMemoryBlock, listMemoryBlocks } from './src/lib/cortex-fact-store';
 import { surfaceSpecToMessages } from './src/lib/a2ui-emit';
+import { promptGuardCheck } from './src/lib/prompt-guard';
 
 /**
  * loadEnv() reads .env files raw — with dotenvx-encrypted files it would
@@ -37,6 +38,14 @@ function loadCortexEnv(mode: string): Record<string, string> {
     }
   }
   return env;
+}
+
+/** First value of an env var (comma-list aware, quote-stripped). dotenvx has
+ *  already decrypted process.env by the time middlewares run. */
+function resolveEnvKey(name: string): string {
+  const v = process.env[name];
+  if (typeof v !== 'string' || !v) return '';
+  return v.split(',')[0].trim().replace(/^["']|["']$/g, '');
 }
 
 /** AG-UI vocabulary layer — tags each SSE data payload with a `type` field
@@ -3463,7 +3472,7 @@ function apiProxyPlugin(): Plugin {
             { name: 'fetch_url', description: 'Fetch a web page as clean markdown (keyless reader)', parameters: { url: 'string' } },
             { name: 'create_document', description: 'Create real document files (md/html always; pdf via Chrome; docx via textutil; csv)', parameters: { format: 'string?', title: 'string?', content: 'string?' } },
             { name: 'render_video', description: 'Render a video composition via the governed Remotion pipeline (tools/remotion). Writes an .mp4 under .cortex-runtime/renders/ and returns the verified output path.', parameters: { composition: 'string? (default CortexPromo)', outputName: 'string? (.mp4, sanitized)', durationSeconds: 'number? (<=600)', props: 'object? (e.g. {title, subtitle})' } },
-            { name: 'run_sandboxed', description: 'Run a command inside a hardware-isolated microsandbox microVM (CONTAINED lane). Returns stdout/stderr/exitCode. Use for untrusted or destructive-capable agent code.', parameters: { image: 'string? (default python:3.12-alpine)', command: 'string (binary, no shell)', args: 'string[]?', timeoutMs: 'number? (<=120000)', workdir: 'string?', env: 'object?' } },
+            { name: 'run_sandboxed', description: 'Run a command inside a hardware-isolated microsandbox microVM (CONTAINED lane). Returns stdout/stderr/exitCode. Use for untrusted or destructive-capable agent code. net:{mode:allow|deny|allowlist,allowHosts?} controls egress (deny = air-gap, allowlist = domain allowlist, default allow). secrets:[{envVar,hostEnv|value,allowedHosts[]}] injects host secrets as $MSB_ placeholders substituted only at allowed hosts — guests never see raw values.', parameters: { image: 'string? (default python:3.12-alpine)', command: 'string (binary, no shell)', args: 'string[]?', timeoutMs: 'number? (<=120000)', workdir: 'string?', env: 'object?', net: 'object?', secrets: 'object[]?' } },
             { name: 'sandbox_status', description: 'Probe microsandbox runtime availability (msb binary, SDK, VM round-trip).', parameters: {} },
             { name: 'generate_splat', description: 'Generate or mount a 3D Gaussian-splat. asset:"/splats/butterfly.spz" etc mounts curated high-fidelity splats (PREFERRED for known subjects like butterfly/cortex core). Procedural scenes (orb|flower|helix|galaxy|ridge|flow — abstract art) with palette/seed/count, or photo mode via image URL/path (depth unprojection). By default mounts LIVE in the visualizer 3D space (card fallback elsewhere); inSpace:false forces a card.', parameters: { asset: 'string?', scene: 'string?', palette: 'string?', image: 'string?', seed: 'number?', count: 'number?', inSpace: 'boolean?', title: 'string?' } },
             { name: 'compose_dashboard', description: 'Atomically build and render a dashboard: tiles (stat|chart|feed|image) plus optional auto-generated splat tile. By default mounts as a holographic panel inside the visualizer 3D space (card fallback elsewhere); inSpace:false forces a card. One call for any multi-part visual request.', parameters: { title: 'string', tiles: 'object[]?', splat: 'object?', inSpace: 'boolean?' } },
@@ -9203,6 +9212,9 @@ function triggerQuickAction() {
             // hardware-isolated microsandbox microVM. Even hostile code cannot
             // touch the host; the sandbox is always destroyed afterwards.
             if (tool === 'run_sandboxed') {
+              // net: {mode:'allow'|'deny'|'allowlist', allowHosts?:string[]}
+              // secrets: [{envVar, hostEnv?|value?, allowedHosts[]}] — values
+              // resolve host-side; guests only ever see $MSB_ placeholders.
               const result = await runSandboxed({
                 image: args?.image ? String(args.image) : undefined,
                 command: String(args?.command || ''),
@@ -9210,6 +9222,11 @@ function triggerQuickAction() {
                 timeoutMs: args?.timeoutMs != null ? Number(args.timeoutMs) : undefined,
                 workdir: args?.workdir ? String(args.workdir) : undefined,
                 env: args?.env && typeof args.env === 'object' ? args.env : undefined,
+                net: args?.net && typeof args.net === 'object' ? {
+                  mode: ['deny', 'allowlist'].includes(String(args.net.mode)) ? String(args.net.mode) as 'deny' | 'allowlist' : 'allow',
+                  allowHosts: Array.isArray(args.net.allowHosts) ? args.net.allowHosts.map(String) : undefined,
+                } : undefined,
+                secrets: Array.isArray(args?.secrets) ? args.secrets : undefined,
               });
               res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
               return res.end(JSON.stringify({ ...result, tool: 'run_sandboxed', durationMs: Date.now() - startMs }));
@@ -9924,6 +9941,29 @@ function triggerQuickAction() {
               .slice(-10);
             const latestUserMessage =
               [...trimmedMsgs].reverse().find((m: any) => m.role === 'user')?.content || '';
+
+            // ── Prompt Guard 2 injection screen (fail-soft: 'unknown' passes) ──
+            if (typeof latestUserMessage === 'string' && latestUserMessage.length > 3) {
+              const guardKey = resolveEnvKey('GROQ_API_KEY');
+              const verdict = await promptGuardCheck(latestUserMessage, { apiKey: guardKey || undefined });
+              if (verdict === 'unsafe') {
+                const refusal = 'I can\'t act on that request — it looks like an attempt to override my instructions. Ask me something else and I\'m happy to help.';
+                if (parsed.stream) {
+                  res.writeHead(200, {
+                    'Content-Type': 'text/event-stream',
+                    'Cache-Control': 'no-cache',
+                    'Connection': 'keep-alive',
+                    'Access-Control-Allow-Origin': '*',
+                  });
+                  aguiTagSSE(res);
+                  res.write(`data: ${JSON.stringify({ token: refusal, finishReason: 'stop', type: 'RUN_ERROR' })}\n\n`);
+                  res.write('data: [DONE]\n\n');
+                  return res.end();
+                }
+                res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+                return res.end(JSON.stringify({ content: refusal, guarded: true }));
+              }
+            }
 
             // ── Deterministic pricing (matches production nexus-guest + nexus-brain; bypass for cortex) ──
             if (parsed.context !== 'cortex' && typeof latestUserMessage === 'string' && PRICING_INTENT_RE_DEV.test(latestUserMessage)) {

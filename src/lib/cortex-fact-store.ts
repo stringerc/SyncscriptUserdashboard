@@ -20,10 +20,25 @@
  *   memoryBlock('persona')         → Letta-style labelled block get/set
  */
 
-import { DatabaseSync } from 'node:sqlite';
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { createHash } from 'node:crypto';
+import { createRequire } from 'node:module';
+
+// node:sqlite ships in Node 22.5+ but @types/node here predates its typings —
+// load it through createRequire with a minimal structural type instead.
+interface SqliteStatement {
+  all(...args: unknown[]): unknown[];
+  get(...args: unknown[]): unknown;
+  run(...args: unknown[]): unknown;
+}
+interface SqliteDb {
+  exec(sql: string): void;
+  prepare(sql: string): SqliteStatement;
+}
+const { DatabaseSync } = createRequire(import.meta.url)('node:sqlite') as {
+  DatabaseSync: new (path: string) => SqliteDb;
+};
 
 const DB_PATH = process.env.CORTEX_FACTS_DB || join(process.cwd(), '.cortex-runtime', 'facts.db');
 
@@ -45,9 +60,9 @@ export interface MemoryBlock {
   updated_at: string;
 }
 
-let _db: DatabaseSync | null = null;
+let _db: SqliteDb | null = null;
 
-function db(): DatabaseSync {
+function db(): SqliteDb {
   if (_db) return _db;
   mkdirSync(join(process.cwd(), '.cortex-runtime'), { recursive: true });
   _db = new DatabaseSync(DB_PATH);
