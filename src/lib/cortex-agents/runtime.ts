@@ -894,7 +894,13 @@ export class AgentRuntime {
           if (dirBlock) markDelivered(agentId, task.id);
           const msgBlock = messagesBlock(agentId);
           if (msgBlock) markMessagesDelivered(agentId, task.id);
-          const injected = [dirBlock, msgBlock].filter(Boolean).join('\n\n');
+          // Venture asset contract: any venture-scoped task that produces
+          // files should drop them where the console's ASSETS tab reads.
+          const vid = (task.input as any)?.ventureId;
+          const assetBlock = vid
+            ? `VENTURE ASSETS: this task is scoped to venture "${vid}". If you produce files or deliverables (images, exports, docs, renders), save them under .cortex-runtime/venture-assets/${vid}/ — the venture console ASSETS tab lists that directory.`
+            : '';
+          const injected = [dirBlock, msgBlock, assetBlock].filter(Boolean).join('\n\n');
           const llmT0 = Date.now();
           const r = await this.llmBridge({
             ...opts,
