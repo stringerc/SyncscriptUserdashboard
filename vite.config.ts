@@ -23,8 +23,9 @@ import { assertFact, factsAsOf, activeFacts, recallFacts, semanticRecallFacts, f
 import { surfaceSpecToMessages } from './src/lib/a2ui-emit';
 import { promptGuardCheck, screenUntrustedContent } from './src/lib/prompt-guard';
 import { parseToolCallArgs } from './src/lib/cortex-tool-args';
-import { runAgenticTurn, type AgentMessage } from './src/lib/cortex-agent/loop';
-import { isAffirmation, takeAffirmed, recordOffer, detectOffer, declineIntention } from './src/lib/cortex-agent/intentions';
+import { runAgenticTurn, turnLikelyNeedsTools, type AgentMessage } from './src/lib/cortex-agent/loop';
+import { isAffirmation, takeAffirmed, peekPending, recordOffer, detectOffer, declineIntention } from './src/lib/cortex-agent/intentions';
+import { runAgenticTurn, turnLikelyNeedsTools, type AgentMessage } from './src/lib/cortex-agent/loop';
 import { getAutonomyMode, setAutonomyMode, AUTONOMY_DIRECTIVE, type AutonomyMode } from './src/lib/cortex-agent/autonomy';
 import { obsidianRestEnabled, obsidianRestStatus, obsidianRestList, obsidianRestRead, obsidianRestWrite, obsidianRestSearch } from './src/lib/cortex-obsidian-rest';
 import { imsgRpcChats, imsgRpcHistory, imsgRpcSend, imsgRpcHealth } from './src/lib/imsg-rpc';
@@ -10736,7 +10737,18 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
               // real message history — no client round-trips, no "go ahead"
               // tax. Pending intentions resumed deterministically on
               // affirmation. See PLAN.md / src/lib/cortex-agent/.
-              if (parsed.context === 'cortex' && parsed.agentic === true) {
+              //
+              // Responsiveness gate: the loop's first LLM call is
+              // non-streaming, so chit-chat turns bypass it entirely and
+              // take the legacy streaming path (fast tier, progressive
+              // tokens). Only tool-likely turns — or affirmations with a
+              // pending intention — enter the loop.
+              const agenticSessionId = String(parsed.sessionId || 'cortex-default').slice(0, 80);
+              const agenticTurn = parsed.context === 'cortex' && parsed.agentic === true && (
+                turnLikelyNeedsTools(latestUserMessage)
+                || (isAffirmation(latestUserMessage) && peekPending(agenticSessionId) !== null)
+              );
+              if (agenticTurn) {
                 res.writeHead(200, {
                   'Content-Type': 'text/event-stream',
                   'Cache-Control': 'no-cache',
@@ -10746,7 +10758,7 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
                 });
                 aguiTagSSE(res);
                 try {
-                  const sessionId = String(parsed.sessionId || 'cortex-default').slice(0, 80);
+                  const sessionId = agenticSessionId;
                   // Sovereign autonomy: bypass-permissions directive when on.
                   const autonomyMode = getAutonomyMode();
                   const agentSysContent = autonomyMode === 'autonomous'

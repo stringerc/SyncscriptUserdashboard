@@ -107,6 +107,50 @@ export function friendlyToolLabel(name: string, args: Record<string, unknown>): 
 }
 
 const MAX_STEPS_DEFAULT = 6;
+
+/**
+ * turnLikelyNeedsTools — responsiveness router.
+ *
+ * The agentic loop's first LLM call is NON-STREAMING: nothing reaches the
+ * client until the whole response generates, then tokens are replayed.
+ * That's correct for tool turns (narration + steps cover the wait) but
+ * deadly for chit-chat — a greeting would wait for a full reason-tier
+ * completion before the first word.
+ *
+ * This classifier decides whether a turn should enter the agentic loop at
+ * all. Chit-chat falls through to the legacy streaming path (fast tier,
+ * progressive tokens, ~sub-second TTFT). Tool-looking turns stay agentic.
+ * A miss degrades gracefully: the legacy path still parses fenced
+ * tool_calls client-side and the intention ledger catches offers.
+ */
+const TOOL_TURN_RE = new RegExp(
+  [
+    'https?://',                          // explicit URL
+    '\\b(fetch|pull up|open|browse|scrape|read|show me|find|search|look up|'
+    + 'google|check|inspect|scan|analy[sz]e|summari[sz]e|explain\s+this\s+(?:file|code|error)|'
+    + 'run|execute|launch|install|deploy|build|compile|test|debug|fix|'
+    + 'list|ls\\b|dir\\b|what(?:\'s| is)\s+in|show\s+(?:me\s+)?(?:the\s+)?(?:files?|directory|folder|contents)|'
+    + 'read\s+(?:the\s+)?(?:file|code|log|config)|'
+    + 'create|write|edit|update|delete|move|copy|rename|generate|compose|draft|'
+    + 'system[_ ]info|cpu|memory usage|disk space|processes?|ports?|logs?\\b|'
+    + 'weather|forecast|time\\b|date\\b|calendar|schedule|email|message|send|'
+    + 'translate|convert|calculate|math|screenshot|record|capture|'
+    + 'cortex[_ ]?(?:agents?|fleet|memory|dream|skill|tool)|agent[_ ]?status|'
+    + 'browser|chrome|tab\\b|navigate|click|type\\s+into|form\\b|'
+    + 'git\\s+(?:status|log|diff|commit|push|pull|branch)|npm\\s+(?:run|install|test)|'
+    + 'deploy|server|endpoint|api\\b|database|sql\\b|query\\b)',
+  ].join('|'),
+  'i',
+);
+
+export function turnLikelyNeedsTools(text: string): boolean {
+  const t = String(text || '').trim();
+  if (!t) return false;
+  if (/https?:\/\//i.test(t)) return true;
+  // Very short turns are almost always chit-chat unless they contain a URL.
+  if (t.length < 12) return false;
+  return TOOL_TURN_RE.test(t);
+}
 const MAX_TOOL_CALLS_PER_STEP = 2;
 const REQUEST_TIMEOUT_MS = 60_000;
 const HEARTBEAT_MS = 8_000;
@@ -394,17 +438,26 @@ export async function runAgenticTurn(
 
   for (; steps < maxSteps; steps++) {
     // ── LLM call across provider chain (first OK wins) ──
+    // Heartbeat: non-streaming provider calls can take 10-60s; silence
+    // would trip client watchdogs (voice: 12s token-silence abort).
+    const llmBeat = deps.emit ? setInterval(() => {
+      try { deps.emit!({ type: 'ping', tool: 'llm' }); } catch {}
+    }, HEARTBEAT_MS) : null;
     let turn: LLMTurnResult | null = null;
     let chainError: any = null;
-    for (const prov of deps.providers) {
-      try {
-        turn = await callProviderOnce(prov, messages, systemPrompt, tools, maxTokens, temperature);
-        lastProvider = `${prov.name}:${prov.model}`;
-        break;
-      } catch (e: any) {
-        chainError = e;
-        continue;
+    try {
+      for (const prov of deps.providers) {
+        try {
+          turn = await callProviderOnce(prov, messages, systemPrompt, tools, maxTokens, temperature);
+          lastProvider = `${prov.name}:${prov.model}`;
+          break;
+        } catch (e: any) {
+          chainError = e;
+          continue;
+        }
       }
+    } finally {
+      if (llmBeat) clearInterval(llmBeat);
     }
     if (!turn) {
       return {
