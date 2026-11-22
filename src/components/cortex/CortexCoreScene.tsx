@@ -3087,6 +3087,11 @@ function CameraRig({
     const sx = (Math.sin(t * 41.3) + Math.sin(t * 23.7) * 0.5) * shake * 0.5;
     const sy = (Math.cos(t * 37.1) + Math.sin(t * 29.3) * 0.5) * shake * 0.5;
 
+    // Tighten damping while locked — at close zoom the agent's angular
+    // velocity across the frame is high enough that the default 0.24s
+    // smoothTime lets it outrun the camera.
+    controls.smoothTime = chaseActiveRef.current ? 0.07 : 0.24;
+
     // Resolve the smoothed goal through camera-controls. setLookAt(..., true)
     // keeps the goal in _end state so update() applies real SmoothDamp inertia
     // (velocity-aware, cinematic ease). Each call registers a 'rest' listener,
@@ -3203,7 +3208,7 @@ function CameraRig({
         chaseVel.current.lerp(_chaseDir, Math.min(1, delta * 10));
       }
       chasePrev.current.copy(targetWorldPos);
-      _chaseAim.copy(targetWorldPos).addScaledVector(chaseVel.current, 0.22);
+      _chaseAim.copy(targetWorldPos).addScaledVector(chaseVel.current, 0.3);
       targetLookAt.current.lerp(_chaseAim, Math.min(1, delta * 6));
       // Orbit around the smoothed lookAt anchor (not the raw agent position) so
       // the camera position and gaze always share one point — the agent stays
