@@ -69,6 +69,43 @@ export interface AgentLoopResult {
   error?: string;
 }
 
+/** Human narration for tool steps — "I need to fetch this URL" energy,
+ *  not raw tool names. Used for the visible status tokens. */
+export function friendlyToolLabel(name: string, args: Record<string, unknown>): string {
+  const a = args || {};
+  switch (name) {
+    case 'fetch_url': return `Pulling up ${String(a.url || 'the page').slice(0, 60)}…`;
+    case 'web_search': return `Searching the web for "${String(a.query || '').slice(0, 50)}"…`;
+    case 'search_code': return `Searching the codebase for "${String(a.query || '').slice(0, 50)}"…`;
+    case 'run_command': return `Running: ${String(a.command || '').slice(0, 60)}…`;
+    case 'read_file': return `Reading ${String(a.path || 'the file').slice(0, 60)}…`;
+    case 'write_file': return `Writing ${String(a.path || 'the file').slice(0, 60)}…`;
+    case 'edit_file': return `Editing ${String(a.path || 'the file').slice(0, 60)}…`;
+    case 'list_dir': return `Listing ${String(a.path || 'the directory').slice(0, 50)}…`;
+    case 'chrome_control': {
+      const act = String(a.action || '');
+      if (act === 'open_url') return `Opening ${String(a.url || 'the page').slice(0, 55)} in the browser…`;
+      if (act === 'list_tabs') return 'Checking open browser tabs…';
+      if (act === 'close_tabs') return 'Tidying up browser tabs…';
+      return `Browser: ${act || 'working'}…`;
+    }
+    case 'cortex_memory': return `Checking memory…`;
+    case 'resonance_status': return 'Checking fleet coherence…';
+    case 'system_info': return 'Checking host system info…';
+    case 'create_document': return `Drafting "${String(a.title || 'document').slice(0, 40)}"…`;
+    case 'create_spreadsheet': return `Building "${String(a.title || 'spreadsheet').slice(0, 40)}"…`;
+    case 'scaffold_web_project': return `Scaffolding "${String(a.title || a.project_slug || 'project').slice(0, 40)}"…`;
+    case 'generate_splat': return 'Generating 3D splat…';
+    case 'compose_dashboard': return 'Composing the dashboard…';
+    case 'emit_artifact': return 'Emitting the visual artifact…';
+    case 'cortex_agents': return 'Coordinating with the agent fleet…';
+    case 'cortex_skill_discovery': return 'Discovering skills…';
+    case 'get_somatic_homeostasis': return 'Reading somatic state…';
+    case 'cortex_dream_consolidate': return 'Running memory consolidation…';
+    default: return `Working: ${name.replace(/_/g, ' ')}…`;
+  }
+}
+
 const MAX_STEPS_DEFAULT = 6;
 const MAX_TOOL_CALLS_PER_STEP = 2;
 const REQUEST_TIMEOUT_MS = 60_000;
@@ -335,7 +372,7 @@ export async function runAgenticTurn(
   if (deps.initialToolCall) {
     const seed = deps.initialToolCall;
     deps.emit?.({ type: 'tool_step', step: 0, tool: seed.name, status: 'resumed_intention', args: seed.args });
-    deps.emitToken?.(`\n\n*⚡ Resuming: ${seed.name}…*\n\n`);
+    deps.emitToken?.(`\n\n*${friendlyToolLabel(seed.name, seed.args)}*\n\n`);
     try {
       const result = await executeTool(seed.name, seed.args);
       executed.push({ tool: seed.name, args: seed.args, ok: true });
@@ -391,7 +428,7 @@ export async function runAgenticTurn(
     const results: Array<{ call: AgentToolCall; result: unknown }> = [];
     for (const call of toRun) {
       deps.emit?.({ type: 'tool_step', step: steps + 1, tool: call.name, status: 'executing', args: call.args });
-      deps.emitToken?.(`\n\n*⚡ ${call.name}…*\n\n`);
+      deps.emitToken?.(`\n\n*${friendlyToolLabel(call.name, call.args)}*\n\n`);
       try {
         const result = await executeTool(call.name, call.args);
         results.push({ call, result });

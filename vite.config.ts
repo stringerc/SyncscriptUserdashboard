@@ -25,6 +25,7 @@ import { promptGuardCheck, screenUntrustedContent } from './src/lib/prompt-guard
 import { parseToolCallArgs } from './src/lib/cortex-tool-args';
 import { runAgenticTurn, type AgentMessage } from './src/lib/cortex-agent/loop';
 import { isAffirmation, takeAffirmed, recordOffer, detectOffer, declineIntention } from './src/lib/cortex-agent/intentions';
+import { getAutonomyMode, setAutonomyMode, AUTONOMY_DIRECTIVE, type AutonomyMode } from './src/lib/cortex-agent/autonomy';
 import { obsidianRestEnabled, obsidianRestStatus, obsidianRestList, obsidianRestRead, obsidianRestWrite, obsidianRestSearch } from './src/lib/cortex-obsidian-rest';
 import { imsgRpcChats, imsgRpcHistory, imsgRpcSend, imsgRpcHealth } from './src/lib/imsg-rpc';
 
@@ -1475,6 +1476,35 @@ function apiProxyPlugin(): Plugin {
           uptimeSec: Math.round(process.uptime()),
           rssMB: Math.round(process.memoryUsage().rss / 1048576),
         }));
+      });
+      // ── /api/cortex/autonomy — sovereign autonomy mode (bypass-permissions).
+      // GET returns the mode; POST {mode:'autonomous'|'confirm'} toggles it.
+      // Hard safety invariants are unaffected by this flag.
+      server.middlewares.use('/api/cortex/autonomy', (req: any, res: any) => {
+        res.setHeader('Access-Control-Allow-Origin', req.headers.origin || 'http://localhost:5173');
+        res.setHeader('Vary', 'Origin');
+        res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+        res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+        if (req.method === 'OPTIONS') { res.writeHead(204); return res.end(); }
+        if (req.method === 'POST') {
+          let body = '';
+          req.on('data', (c: Buffer) => { body += c.toString(); if (body.length > 4096) req.destroy(); });
+          req.on('end', () => {
+            try {
+              const parsed = JSON.parse(body || '{}');
+              const mode = parsed?.mode === 'confirm' ? 'confirm' : 'autonomous';
+              const state = setAutonomyMode(mode as AutonomyMode, String(parsed?.by || 'api'));
+              res.writeHead(200, { 'Content-Type': 'application/json' });
+              res.end(JSON.stringify({ ok: true, ...state }));
+            } catch {
+              res.writeHead(400, { 'Content-Type': 'application/json' });
+              res.end(JSON.stringify({ ok: false, error: 'bad request' }));
+            }
+          });
+          return;
+        }
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: true, mode: getAutonomyMode() }));
       });
       // ── /api/cortex/resonance — fleet coherence snapshot from the
       // resonance-observer daemon (.cortex-runtime/resonance/latest.json).
@@ -10717,6 +10747,11 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
                 aguiTagSSE(res);
                 try {
                   const sessionId = String(parsed.sessionId || 'cortex-default').slice(0, 80);
+                  // Sovereign autonomy: bypass-permissions directive when on.
+                  const autonomyMode = getAutonomyMode();
+                  const agentSysContent = autonomyMode === 'autonomous'
+                    ? `${sysContent}${AUTONOMY_DIRECTIVE}`
+                    : sysContent;
                   const agentMessages: AgentMessage[] = trimmedMsgs.map((m: any) => ({
                     role: m.role === 'assistant' ? 'assistant' : 'user',
                     content: String(m.content || ''),
@@ -10779,7 +10814,7 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
                     }
                   } catch {}
 
-                  const loopResult = await runAgenticTurn(sysContent, agentMessages, {
+                  const loopResult = await runAgenticTurn(agentSysContent, agentMessages, {
                     providers: agenticProviders,
                     executeTool,
                     tools: CORTEX_TOOLS,
