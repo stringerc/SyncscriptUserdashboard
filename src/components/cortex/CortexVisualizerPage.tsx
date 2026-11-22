@@ -16,6 +16,7 @@ import {
 } from './CortexCoreScene';
 
 import { CortexOrb } from './CortexOrb';
+import { CortexTimelineScene } from './CortexTimelineScene';
 import { useVisualizerVoice } from './useVisualizerVoice';
 import { startInitiativeSensor } from '../../lib/cortex-initiative-sensor';
 import { CortexChatDrawer } from './CortexChatDrawer';
@@ -36,7 +37,7 @@ import { A2uiDemoPanel } from './a2ui/A2uiDemoPanel';
 // Gaussian-splat viewer — lazy so @sparkjsdev/spark stays out of the main chunk.
 const CortexSplatScene = lazy(() => import('./CortexSplatScene'));
 
-export type ActiveScene = 'core' | 'agents' | VisualizerFace;
+export type ActiveScene = 'core' | 'agents' | 'timeline' | VisualizerFace;
 
 const STATE_STYLE: Record<CortexVoiceState, { color: string; label: string }> = {
   idle:      { color: CORTEX_STATE_THEME.idle.color, label: CORTEX_STATE_THEME.idle.label },
@@ -257,11 +258,11 @@ export default function CortexVisualizerPage() {
   const [faceMode, setFaceMode] = useState<ActiveScene>(() => {
     if (typeof window === 'undefined') return 'core';
     const param = new URLSearchParams(window.location.search).get('face')?.toLowerCase();
-    if (param && ['board', 'radial', 'neural', 'matrix', 'core', 'agents'].includes(param)) {
+    if (param && ['board', 'radial', 'neural', 'matrix', 'core', 'agents', 'timeline'].includes(param)) {
       return param as ActiveScene;
     }
     const saved = localStorage.getItem('cortex_visualizer_face');
-    if (saved && ['board', 'radial', 'neural', 'matrix', 'core', 'agents'].includes(saved)) {
+    if (saved && ['board', 'radial', 'neural', 'matrix', 'core', 'agents', 'timeline'].includes(saved)) {
       return saved as ActiveScene;
     }
     return 'core';
@@ -823,7 +824,7 @@ export default function CortexVisualizerPage() {
     // Voice & UI driven face switching ("switch to matrix face" / "neural visualizer")
     const onFaceMode = (e: Event) => {
       const mode = (e as CustomEvent).detail;
-      if (mode && ['core', 'board', 'radial', 'neural', 'matrix', 'agents'].includes(mode)) {
+      if (mode && ['core', 'board', 'radial', 'neural', 'matrix', 'agents', 'timeline'].includes(mode)) {
         setFaceMode(mode as ActiveScene);
         try { localStorage.setItem('cortex_visualizer_face', mode); } catch {}
       }
@@ -1171,6 +1172,10 @@ export default function CortexVisualizerPage() {
             </div>
           )}
         </div>
+      ) : faceMode === 'timeline' ? (
+        <div key="face-timeline" className="cx-face-transition" style={{ position: 'absolute', inset: 0, zIndex: 24 }}>
+          <CortexTimelineScene />
+        </div>
       ) : faceMode === 'agents' ? (
         <div key="face-agents" className="cx-face-transition" style={{ position: 'absolute', inset: 0, zIndex: 25 }}>
           <CortexAgentsScene />
@@ -1217,7 +1222,7 @@ export default function CortexVisualizerPage() {
           color: 'rgba(148,233,255,0.55)', textTransform: 'uppercase',
           animation: 'cx-fade-up 0.9s 0.7s cubic-bezier(0.16,1,0.3,1) both',
         }}>
-          {faceMode === 'agents' ? 'Nexus Foundry // Fleet Command Deck' : coreVisualMode === 'memory' ? 'Sovereign Core // Live Memory Bank Constellation' : 'Sovereign Core // Neural Sanctum'}
+          {faceMode === 'agents' ? 'Nexus Foundry // Fleet Command Deck' : faceMode === 'timeline' ? 'Temporal Authority // Sacred Timeline' : coreVisualMode === 'memory' ? 'Sovereign Core // Live Memory Bank Constellation' : 'Sovereign Core // Neural Sanctum'}
         </div>
       </div>
 
@@ -1361,6 +1366,42 @@ export default function CortexVisualizerPage() {
           )}
           <span>FOUNDRY</span>
         </button>
+
+          {/* TIMELINE — horizontal sacred timeline: strands run past→NOW */}
+          <button
+            onClick={() => {
+              if (mapMode) setMapMode(false);
+              if (faceMode === 'timeline') return;
+              setFaceMode('timeline');
+              try { localStorage.setItem('cortex_visualizer_face', 'timeline'); } catch {}
+              cortexSpeak('Opening the sacred timeline.');
+            }}
+            title="Sacred Timeline — horizontal TVA strands of live events"
+            style={{
+              padding: '5px 12px',
+              borderRadius: 14,
+              border: faceMode === 'timeline' && !mapMode ? '1px solid #67e8f9' : '1px solid rgba(148,233,255,0.18)',
+              background: faceMode === 'timeline' && !mapMode ? 'rgba(103,232,249,0.18)' : 'rgba(4,8,14,0.5)',
+              color: faceMode === 'timeline' && !mapMode ? '#f0f9ff' : 'rgba(165,243,252,0.7)',
+              fontFamily: "'IBM Plex Mono', monospace",
+              fontSize: 9.5,
+              fontWeight: 800,
+              letterSpacing: '0.14em',
+              boxShadow: faceMode === 'timeline' && !mapMode ? '0 0 12px rgba(103,232,249,0.4)' : 'none',
+              cursor: faceMode === 'timeline' && !mapMode ? 'default' : 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              gap: 5,
+              transition: 'all 0.2s',
+            }}
+          >
+            {faceMode === 'timeline' && !mapMode ? (
+              <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#67e8f9', boxShadow: '0 0 6px #67e8f9' }} />
+            ) : (
+              <span style={{ color: '#67e8f9' }}>⌛</span>
+            )}
+            <span>TIMELINE</span>
+          </button>
 
           {/* MAP */}
           <button
