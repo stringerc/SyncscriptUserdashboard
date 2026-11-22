@@ -14363,9 +14363,17 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
             const band = score >= 70 ? 'nominal' : score >= 40 ? 'degraded' : 'critical';
             return { score, band, reasons };
           };
+          // OMNI outbound cadence — real posting windows from the storefront
+          // catalog so the mission calendar can render scheduled drops.
+          let omniPostingWindows: any = null;
+          try {
+            const cat = JSON.parse(fsSync.readFileSync(path.join(process.cwd(), 'storefront', 'products', 'catalog-v2.json'), 'utf-8'));
+            omniPostingWindows = cat?.postingWindows || null;
+          } catch { /* catalog unreadable — venture reports no windows, honest */ }
           const cards = ventures.map((v) => {
             const card = {
               ...v,
+              postingWindows: v.id === 'omni' ? omniPostingWindows : undefined,
               goals: state.goals.filter((g) => (g.ventureId || 'cortex') === v.id).length,
               opsItems: state.opsItems.filter((o) => (o.ventureId || 'cortex') === v.id).length,
               openBlocks: state.blocks.filter((b) => (b.ventureId || 'cortex') === v.id && b.status === 'planned').length,

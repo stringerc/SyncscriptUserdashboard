@@ -52,6 +52,60 @@ const NAV_ITEMS: { id: FoundryView; glyph: string; label: string; hint: string }
 ];
 
 const HEALTH_COLOR: Record<string, string> = { nominal: '#34d399', degraded: '#fbbf24', critical: '#f87171', 'no-data': '#64748b' };
+
+// ── Venture schedule → calendar events ──────────────────────────────────────
+// Posting windows are defined in America/New_York (buyer-peak ET). Convert an
+// ET wall time on a given local Date to the real UTC instant.
+const ET_DAY_INDEX: Record<string, number> = { sun: 0, mon: 1, tue: 2, wed: 3, thu: 4, fri: 5, sat: 6 };
+const ET_DTF = new Intl.DateTimeFormat('en-US', {
+  timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit',
+  hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23',
+});
+function etOffsetMs(utcMs: number): number {
+  const p: Record<string, string> = {};
+  for (const part of ET_DTF.formatToParts(new Date(utcMs))) p[part.type] = part.value;
+  return Date.UTC(+p.year, +p.month - 1, +p.day, +p.hour % 24, +p.minute, +p.second) - utcMs;
+}
+function etWallToUtc(day: Date, hour: number, minute: number): number {
+  const guess = Date.UTC(day.getFullYear(), day.getMonth(), day.getDate(), hour, minute);
+  return guess - etOffsetMs(guess);
+}
+/** Expand a venture card's real schedule (posting windows, next cycle) into
+ *  dated calendar events for the next 14 days. ventureId set → chip filters. */
+function ventureScheduleEvents(v: any): any[] {
+  const out: any[] = [];
+  const label = String(v?.callSign || v?.name || v?.id || 'VENTURE').toUpperCase();
+  const windows = v?.postingWindows?.windows;
+  if (Array.isArray(windows) && windows.length) {
+    const now = Date.now();
+    const horizon = now + 14 * 86400_000;
+    for (let d = 0; d < 15; d++) {
+      // Day-of-week must be the ET calendar day, not local — windows are ET.
+      const probe = new Date(now + d * 86400_000);
+      const ep: Record<string, string> = {};
+      for (const part of ET_DTF.formatToParts(probe)) ep[part.type] = part.value;
+      const etDowName = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', weekday: 'short' }).format(probe).toLowerCase();
+      const dow = ET_DAY_INDEX[etDowName];
+      // Anchor on the ET calendar date (local noon avoids DST edge cases).
+      const day = new Date(+ep.year, +ep.month - 1, +ep.day, 12);
+      const win = windows.find((w: any) => Array.isArray(w?.days) && w.days.includes(dow));
+      if (!win) continue;
+      for (const t of win.times || []) {
+        const [h, m] = String(t).split(':').map(Number);
+        if (!Number.isFinite(h) || !Number.isFinite(m)) continue;
+        const start = etWallToUtc(day, h, m);
+        if (start > now && start <= horizon) {
+          out.push({ id: `vp-${v.id}-${start}`, title: `${label} · POST`, start, end: start + 30 * 60_000, kind: 'venture', ventureId: v.id });
+        }
+      }
+    }
+  }
+  const nextRun = Number(v?.nextRunAt || 0);
+  if (v?.status === 'active' && nextRun > Date.now()) {
+    out.push({ id: `vr-${v.id}-next`, title: `${label} · CYCLE`, start: nextRun, end: nextRun + 15 * 60_000, kind: 'venture', ventureId: v.id });
+  }
+  return out;
+}
 const STATUS_COLOR: Record<string, string> = {
   running: '#34d399', working: '#34d399', queued: '#fbbf24',
   completed: '#67e8f9', failed: '#f87171', error: '#f87171',
@@ -1284,6 +1338,9 @@ export function CortexFoundryNav({ snap, onSelectAgent, selectedAgent, onOpenTow
           <CortexFoundryCalendar
             events={[
               ...(calendar || []).filter((e: any) => ventureFilter === 'all' || String(e?.ventureId || 'cortex') === ventureFilter),
+              // Venture schedules — OMNI posting windows + next cycle marker.
+              ...(ventures?.ventures || []).flatMap((v: any) => ventureScheduleEvents(v))
+                .filter((e: any) => ventureFilter === 'all' || e.ventureId === ventureFilter),
               // Scheduled user tasks — dueDate renders as a calendar item.
               ...(userTasks || [])
                 .filter((t: any) => !t.completed && t.dueDate && !Number.isNaN(Date.parse(t.dueDate)))
