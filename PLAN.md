@@ -1,93 +1,104 @@
-# PLAN — External Capability Integration Wave (iFixAi · magpie · fframes · orca-pattern · brigade-patterns)
+# Cortex Intention Kernel — Plan
 
-Date: 2026-11-19 · Branch: security-hardening · Status: awaiting approval
+> Goal: Cortex stops asking permission. Declared intent becomes a first-class,
+> governed, resumable object. Multi-turn tool use happens server-side in one
+> request — no "go ahead" tax, on every surface.
 
-## Ground truth verified before planning
+## Diagnosis (verified in code)
 
-- `DIRECT_AI_PROVIDERS` chain: `vite.config.ts:112-130` — OpenAI/Anthropic protocol entries, key pooling (`keyEnv`/`backupKeyEnv`), circuit breaker (`providerCooldown`, `tripProvider`). Agents reach it via `ctx.llm` → `/api/cortex/agents/llm`.
-- Ephemeral agents: `makeEphemeralWorker(spec)` at `workers.ts:2050`, spawned via `runtime.setSpawnWorkerFactory` (`vite.config.ts:1120`). SpawnSpec has TTL + dailyBudget; **no filesystem isolation today — all agents share `process.cwd()`**.
-- Evals exist (`evals.ts`: `fileEvalDefinition`/`runEval`) but grade *task outputs*, not *agent behaviour against governance*.
-- Hindsight memory live (commit e57d25e): eventlog→retain, recall→BUILDER prompts, `/api/cortex/memory/recall`.
-- Toolchain: cargo/rustc 1.93.1 ✓, uv 0.13.8 ✓, Python 3.15.2 ✓, ffmpeg ✓, Chrome+playwright-core ✓.
-- `skills/` is gitignored (local skills convention) — vendored skills stay on disk, documented in MEMORY.md.
+1. Chat routes through `/api/ai/nexus-guest` → fast-tier models that prefer
+   prose offers over `tool_call` emission.
+2. `parseCortexToolCall` Format-5 interceptor catches "I will/let me…" but NOT
+   offers: "I suggest you use X", "want me to…", "just let me know".
+3. No pending-intent state across turns — every "go ahead" re-derives intent.
+4. The ReAct loop (`runCortexToolLoop`, max 4 steps) is client-side, exists only
+   in `CortexDemo`; voice/face/drawer each re-implemented fragments. The
+   between-step "what next?" call has no tool schemas and no history.
+5. First-call `maxTokens: 1200` can truncate fenced tool_call JSON.
 
-## Phase 1 — iFixAi independent audit layer (highest value/effort)
+## Architecture
 
-**Why first:** Cortex claims governance (trust-ledger, spawn approvals, distilled rules) but has no *independent evidence* agents behave within it. iFixAi is black-box (audits any chat endpoint), Apache-2.0, `pip install ifixai`, 61 inspections / 5 pillars, cross-provider judge (agent never grades itself — mandatory for credible audits).
+### Module A — `src/lib/cortex-agent/intentions.ts` (pure, testable)
 
-| Step | File/Action | Detail |
-|---|---|---|
-| 1.1 | `uv tool install ifixai` | Dedicated tool venv; verify `ifixai --version` |
-| 1.2 | Demo run | `ifixai author reference -o /tmp/ifixai-ref.yaml` → `ifixai validate` → `ifixai run --provider mock --eval-mode self --fixture` — proves install before touching Cortex |
-| 1.3 | Cortex fixture | Author `config/ifixai/cortex-agent.yaml`: profile describes Cortex agent surface (chat endpoint `/api/cortex/agents/llm` or a dedicated audit shim), business policy = Cortex governance rules (spawn approval gates, destructive-action vetoes, budget limits, distilled rules). Map B01–B24 relevant subset |
-| 1.4 | Audit shim endpoint | `vite.config.ts`: `POST /api/cortex/audit/ifixai/run` — wraps `ifixai run` CLI via child_process, streams scorecard JSON to `.cortex-runtime/audit/`, returns grade. Fail-soft 503 when ifixai absent |
-| 1.5 | Judge separation | Config: judge provider ≠ agent-under-test provider. With 7-provider chain this is satisfiable — document mapping in fixture |
-| 1.6 | Memory + incident wiring | On audit completion: retain grade summary via `retainCortexMemory` (context `ifixai-audit`); grade < B or any mandatory-minimum failure → `reportIncident` (existing incidents system) + eventlog `audit.completed` event |
-| 1.7 | Scheduled audits | Register Cortex routine (existing `AgentRoutine` system): weekly full audit, post-spawn-change audit. Cadence respects Groq TPM reality — off-peak |
-| 1.8 | Tests | `src/lib/__tests__/cortex-ifixai.test.ts`: fixture validation, endpoint fail-soft, scorecard parsing, incident trigger on low grade (mocked) |
+- `AFFIRMATION_RE` — yes/yeah/go ahead/do it/proceed/confirm/sounds good…
+- `detectOffer(text)` → `{tool, args, confidence} | null`
+  - Tool-name mentions: fetch_url, web_search, run_command, search_code,
+    read_file, write_file, cortex_memory, chrome_control, cortex_agents,
+    cortex_skill_discovery, generate_splat, compose_dashboard, etc.
+  - Offer/deferral frames: "I suggest you use…", "I can pull…",
+    "want me to…", "should I…", "just let me know", "if you need me to…".
+  - Args extraction when obvious: URLs, quoted commands, file paths.
+    Otherwise args = {} and the agentic loop's first LLM step completes them
+    (deterministic seed + model fill — never a dangling promise).
+- Ledger persisted at `.cortex-runtime/intentions.json`, keyed by sessionId,
+  TTL 15 min, statuses: pending → consumed | expired | declined.
+- `recordOffer`, `takeAffirmed(sessionId)`, `decline(sessionId)`, `sweep()`.
 
-**Verification:** mock run passes → live audit of a benign Cortex agent endpoint returns a real grade → scorecard artifact on disk → incident fires on injected misbehaving fixture.
+### Module B — `src/lib/cortex-agent/loop.ts` (server ReAct loop)
 
-## Phase 2 — magpie LLM gateway
+`runAgenticTurn(deps)`:
 
-**Why:** replaces hand-rolled provider fragility with a real gateway: OpenAI Chat + Responses + Anthropic Messages + Gemini translation, routing groups, quota failover across *subscription accounts* (Claude/ChatGPT/Copilot/Gemini plans), PII masking. 80+ agent integrations incl. Devin/OpenClaw. MIT, Go binary, heavy test coverage.
+- deps injected from vite.config.ts: `providers` (activeChain),
+  `executeTool(name,args)` → self-fetch `/api/cortex/tools/execute`,
+  `emit(event)` → SSE writer, `toolsDef` = CORTEX_TOOLS.
+- Up to `MAX_STEPS = 6` iterations:
+  1. `callLLMOnce` — non-streaming provider call across the chain (first OK
+     wins; per-provider timeout). Handles OpenAI-protocol (`tool_calls` on
+     message) and Anthropic (`tool_use` content blocks); falls back to fenced
+     ` ```tool_call ` parsing via `repairJsonArgs`.
+  2. No tool calls → return final content.
+  3. Tool calls → emit `tool_step` SSE event + visible status token; execute
+     each (cap 2/step); append proper role messages:
+     - OpenAI: `{role:'assistant', tool_calls:[…]}` + `{role:'tool', tool_call_id, content}`
+     - Anthropic: assistant `tool_use` blocks + user `tool_result` blocks.
+- `initialToolCall` seed: executes a pending-intention tool deterministically
+  BEFORE the first LLM call (affirmation path — zero model compliance needed).
+- Returns `{content, steps, provider}`.
 
-| Step | File/Action | Detail |
-|---|---|---|
-| 2.1 | Install | `go install github.com/yetone/magpie@latest` or release binary → `~/.local/bin/magpie`; fallback: Docker image. Pin version in MEMORY.md |
-| 2.2 | launchd service | `~/Library/LaunchAgents/com.syncscript.magpie.plist` — gateway on `127.0.0.1:3425`, logs `~/.cortex/logs/magpie.log`. Model on `com.syncscript.hindsight.plist` |
-| 2.3 | Provider entry | `vite.config.ts` DIRECT_AI_PROVIDERS: add `{ name: 'magpie', url: 'http://127.0.0.1:3425/v1/chat/completions', model: 'cortex-auto', keyEnv: 'MAGPIE_KEY', protocol: 'openai' }` — positioned after nvidia-nim, before free-proxy. **Additive only: existing chain stays as fallback** |
-| 2.4 | Routing groups | magpie config: group `cortex-reason` pooling subscription plans + API keys with smart routing; group `cortex-fast` for cheap/fast tier. Map Cortex tiers (fast/reason/deep) → groups |
-| 2.5 | Verification | `curl :3425/v1/models` → chat completion through gateway → force-quota-exhaustion test (routing group fails over) → confirm `/api/cortex/agents/llm` succeeds via magpie entry |
-| 2.6 | Secrets | magpie account sign-ins stay in `~/.config/magpie` (its own store); only `MAGPIE_KEY` (gateway token, can be `magpie`) in `.env` if needed |
+### Wiring — `vite.config.ts` `/api/ai/nexus-guest`
 
-**Risk:** magpie is fast-moving/young — treat as *one provider entry*, never the sole path. Rollback = remove array entry.
+- New branch BEFORE the existing single-shot path:
+  `if (parsed.context === 'cortex' && parsed.agentic === true)` → agentic path
+  (opt-in per request; CortexDemo sends `agentic:true` + stable sessionId).
+  Legacy path untouched for every other consumer.
+- Legacy path ALSO gets the ledger: affirmation injects a
+  "[Pending Intention Affirmed]" instruction into chatMessages (model emits
+  the call, existing client loops execute it); offers in final streamed text
+  are recorded via accumulated `forwardedText` → `detectOffer` → `recordOffer`.
+  So voice/face/drawer get the "go ahead" fix even without the server loop.
+- Agentic path flow:
+  1. `isAffirmation(latestUserMessage)` → `takeAffirmed(sessionId)` →
+     `initialToolCall` seed (deterministic execution, then LLM synthesis).
+  2. `runAgenticTurn` streams: preamble tokens live? v1 emits per-step
+     `tool_step` events + a visible `*⚡ <tool>*` status token, then the final
+     answer as chunked SSE tokens (fast-type). DONE.
+  3. Post-answer: `detectOffer(finalContent)` → `recordOffer(sessionId)` so the
+     NEXT affirmation auto-resumes. Also record offers detected in the legacy
+     path's final text (cheap hook before `res.end()`).
+- Response header `X-Cortex-Agentic: loop` + `agentic` SSE meta event.
+- Self-execution uses `x-cortex-key: sovereign-local` header (same as client).
 
-## Phase 3 — fframes video engine (DISTRIBUTOR)
+### Client — `CortexDemo.tsx`
 
-| Step | File/Action | Detail |
-|---|---|---|
-| 3.1 | Install skill | `npx skills add https://fframes.studio` (agent skill) + note in MEMORY.md |
-| 3.2 | Smoke render | Clone repo shallow → `cargo build --release -p fframes` example (`examples/hello-world`) → render a test MP4. First Rust compile is slow; acceptable one-time cost |
-| 3.3 | Pipeline doc | `docs/` or MEMORY.md: engine selection matrix — fframes (typed/fast/data-viz), lemo-opuscar (cinematic styles, MIT engine only per license audit), javascript-animation (hand-drawn canvas) |
-| 3.4 | Optional later | DISTRIBUTOR worker gains `render_video` tool spec choosing engine by brief type — **deferred until a real DISTRIBUTOR video task demands it** |
+- sendMessage body += `agentic: true`, `sessionId` (sessionStorage-stable id).
+- Server suppresses tool_call SSE in agentic mode → client's
+  `runCortexToolLoop` finds nothing → no double execution. No other client
+  change required v1 (tool_step events ignored gracefully by strict parser).
+- `cortex-stream.ts`: add optional `toolStep` field + `onToolStep` callback
+  (forward-compatible; UI badge can come later).
 
-## Phase 4 — orca-pattern: git worktree isolation for ephemeral agents
+## Verification
 
-**The real bug this fixes:** spawned agents share `process.cwd()` — concurrent BUILDERs can collide on files. Orcca proves worktree-per-agent at fleet scale.
+- `guard-cortex-typecheck` clean.
+- Live: "search the web for X" → tool executes server-side, answer streams,
+  no tool_call fence leaks into chat content.
+- Live: Cortex offers → user says "go ahead" → pending intention executes
+  deterministically.
+- Regression: non-cortex nexus-guest consumers unchanged (agentic is opt-in
+  per-request flag + context gate).
 
-| Step | File/Action | Detail |
-|---|---|---|
-| 4.1 | SpawnSpec flag | `types.ts`: `SpawnSpec.worktree?: boolean` (default false — opt-in, zero blast radius on existing agents) |
-| 4.2 | Worktree provision | `runtime.ts` spawn path: if `spec.worktree`, `git worktree add .cortex-runtime/worktrees/<agentId> -b agent/<agentId>`; store path on agent state; eventlog `agent.worktree.created` |
-| 4.3 | Path resolution | `workers.ts` ephemeral worker + file tools (`read_file`/`write_file`/`edit_file`/`run_command` cwd): resolve relative paths against agent's worktree when set |
-| 4.4 | Retirement policy | TTL retire: default **discard** worktree (`git worktree remove --force`); merge only via existing proposal→user-approval path (agents never silently merge to main) |
-| 4.5 | Tests | `cortex-worktree.test.ts`: spawn with flag → files land in worktree not main → retire discards → merge proposal path. Integration test uses temp git repo |
+## Explicit non-goals (v1)
 
-**Risk:** largest blast radius of the wave — path resolution touches every file tool. Mitigated by opt-in flag + dedicated test suite.
-
-## Phase 5 — brigade patterns (reference adoption, no code import)
-
-- **Bloody benchmark → iFixAi windtunnel**: Phase 1's adversarial inspections *are* the expose-to-strangers test, productized. No separate build needed — document the mapping.
-- **Tideline memory lifecycle**: already superseded by Hindsight (retain/consolidate/recall). Note mapping in MEMORY.md; no action.
-- **Channel connectors** (WhatsApp/iMessage/Telegram): Cortex has Discord already; revisit only if user requests a specific channel.
-
-## Phase 6 — PageIndex: DEFERRED
-
-Trigger condition: a real workload needing reasoning-retrieval over long complex documents (legal filings, manuals, corpus-scale Q&A). Hindsight covers memory; nothing active needs tree-index document RAG. Documented, not built.
-
-## Cross-cutting rules
-
-- Every new service → launchd plist + `~/.cortex/` env/logs (hindsight/magpie pattern)
-- No secrets in repo; `.env`/`~/.config/` only
-- Each phase independently committable; verification gates before next phase
-- LLM-heavy phases (1, 2) respect observed Groq 8000 TPM cap — audits scheduled, gateway spreads load
-- MEMORY.md + `.claude/active-task.md` updated per phase
-
-## Suggested execution order
-
-1. **Phase 1 iFixAi** — pip install is fast, mock run proves it, audit endpoint is contained
-2. **Phase 4 worktree isolation** — fixes a real correctness hole while context is fresh
-3. **Phase 2 magpie** — needs interactive account sign-ins for full value; API-key-only mode still useful
-4. **Phase 3 fframes** — independent, can slot anywhere
-5. Phase 5 documentation, Phase 6 stays deferred
+- Voice/face/drawer agentic parity (they keep legacy path until validated).
+- Native Anthropic streaming tool_use (non-stream parse only).
+- Mid-stream failover inside agentic iterations (first-OK provider wins).

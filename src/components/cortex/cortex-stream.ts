@@ -16,6 +16,10 @@ export interface CortexStreamResult {
   reasoning?: string;
   toolCall: CortexToolCallPayload | null;
   finishReason: string | null;
+  /** Server-side agentic loop progress events (tool_step) — informational. */
+  toolSteps: Array<Record<string, unknown>>;
+  /** Agentic loop summary emitted with finishReason (steps/tools/provider). */
+  agentic?: Record<string, unknown> | null;
 }
 
 interface NexusSSEEvent {
@@ -26,6 +30,10 @@ interface NexusSSEEvent {
   reasoning_content?: string;
   toolCall?: CortexToolCallPayload;
   finishReason?: string | null;
+  type?: string;
+  tool_step?: Record<string, unknown>;
+  toolStep?: Record<string, unknown>;
+  agentic?: Record<string, unknown>;
 }
 
 export async function readCortexSSE(
@@ -36,7 +44,7 @@ export async function readCortexSSE(
     onToolCall?: (toolCall: CortexToolCallPayload) => void;
   } = {},
 ): Promise<CortexStreamResult> {
-  const result: CortexStreamResult = { content: '', reasoning: '', toolCall: null, finishReason: null };
+  const result: CortexStreamResult = { content: '', reasoning: '', toolCall: null, finishReason: null, toolSteps: [], agentic: null };
   const reader = body?.getReader();
   if (!reader) return result;
 
@@ -44,6 +52,10 @@ export async function readCortexSSE(
   let buffer = '';
 
   const handleEvent = (parsed: NexusSSEEvent) => {
+    const stepEvent = parsed.tool_step || parsed.toolStep
+      || (parsed.type === 'tool_step' ? parsed as unknown as Record<string, unknown> : null);
+    if (stepEvent) result.toolSteps.push(stepEvent);
+    if (parsed.agentic) result.agentic = parsed.agentic;
     if (parsed.toolCall) {
       result.toolCall = parsed.toolCall;
       opts.onToolCall?.(parsed.toolCall);

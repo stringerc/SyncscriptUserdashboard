@@ -23,6 +23,8 @@ import { assertFact, factsAsOf, activeFacts, recallFacts, semanticRecallFacts, f
 import { surfaceSpecToMessages } from './src/lib/a2ui-emit';
 import { promptGuardCheck, screenUntrustedContent } from './src/lib/prompt-guard';
 import { parseToolCallArgs } from './src/lib/cortex-tool-args';
+import { runAgenticTurn, type AgentMessage } from './src/lib/cortex-agent/loop';
+import { isAffirmation, takeAffirmed, recordOffer, detectOffer, declineIntention } from './src/lib/cortex-agent/intentions';
 import { obsidianRestEnabled, obsidianRestStatus, obsidianRestList, obsidianRestRead, obsidianRestWrite, obsidianRestSearch } from './src/lib/cortex-obsidian-rest';
 import { imsgRpcChats, imsgRpcHistory, imsgRpcSend, imsgRpcHealth } from './src/lib/imsg-rpc';
 
@@ -10620,6 +10622,26 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
                 ...trimmedMsgs,
               ];
 
+              // ── Intention Kernel (legacy path) ──────────────────────────
+              // Affirmation resumes a pending offer: inject an explicit
+              // instruction so the model emits the tool_call this turn —
+              // every cortex surface benefits even without agentic:true.
+              // Declines retire the pending intention.
+              if (parsed.context === 'cortex') {
+                const intentionSid = String(parsed.sessionId || 'cortex-shared').slice(0, 80);
+                if (/^\s*(?:no|nope|nah|don'?t|do not|cancel|never mind|skip|negative)\b/i.test(latestUserMessage)) {
+                  declineIntention(intentionSid);
+                } else if (isAffirmation(latestUserMessage)) {
+                  const pendingIntention = takeAffirmed(intentionSid);
+                  if (pendingIntention) {
+                    chatMessages.push({
+                      role: 'user',
+                      content: `[Pending Intention Affirmed] The user approved your earlier offer. Execute it NOW — emit the tool_call for "${pendingIntention.tool}" with complete arguments inferred from the conversation. Do not re-ask, do not re-explain.`,
+                    } as any);
+                  }
+                }
+              }
+
               // ── Matrix routing: tier/agentId requests route through the
               // sentinel-fed model matrix instead of the static provider
               // order. Candidates map back onto configured providers; models
@@ -10676,6 +10698,101 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
                 } else {
                   console.warn(`[dev-proxy] matrix route tier=${tier} produced no usable candidates — falling back to static chain`);
                 }
+              }
+
+              // ── Intention Kernel: server-side agentic turn ──────────────
+              // Opt-in via parsed.agentic === true (CortexDemo sends it).
+              // One request runs the full LLM→tool→LLM loop server-side with
+              // real message history — no client round-trips, no "go ahead"
+              // tax. Pending intentions resumed deterministically on
+              // affirmation. See PLAN.md / src/lib/cortex-agent/.
+              if (parsed.context === 'cortex' && parsed.agentic === true) {
+                res.writeHead(200, {
+                  'Content-Type': 'text/event-stream',
+                  'Cache-Control': 'no-cache',
+                  'Connection': 'keep-alive',
+                  'Access-Control-Allow-Origin': '*',
+                  'X-Cortex-Agentic': 'loop',
+                });
+                aguiTagSSE(res);
+                try {
+                  const sessionId = String(parsed.sessionId || 'cortex-default').slice(0, 80);
+                  const agentMessages: AgentMessage[] = trimmedMsgs.map((m: any) => ({
+                    role: m.role === 'assistant' ? 'assistant' : 'user',
+                    content: String(m.content || ''),
+                  }));
+
+                  // Decline path: user rejected a pending offer.
+                  if (/^\s*(?:no|nope|nah|don'?t|do not|cancel|never mind|skip|negative)\b/i.test(latestUserMessage)) {
+                    declineIntention(sessionId);
+                  }
+
+                  // Affirmation path: bare "go ahead"/"yes" resumes the
+                  // pending intention. Deterministic seed when args are
+                  // known; otherwise an instruction message lets the loop's
+                  // first LLM step emit the call with completed args.
+                  let initialToolCall: { name: string; args: Record<string, unknown> } | null = null;
+                  if (isAffirmation(latestUserMessage)) {
+                    const pending = takeAffirmed(sessionId);
+                    if (pending) {
+                      if (pending.args && Object.keys(pending.args).length > 0) {
+                        initialToolCall = { name: pending.tool, args: pending.args };
+                      } else {
+                        agentMessages.push({
+                          role: 'user',
+                          content: `[Pending Intention Affirmed] The user approved your earlier offer. Execute it NOW — emit the tool_call for "${pending.tool}" with complete arguments inferred from the conversation. Do not re-ask, do not re-explain.`,
+                        });
+                      }
+                    }
+                  }
+
+                  const selfPort = process.env.PORT ? parseInt(process.env.PORT, 10) : 5173;
+                  const executeTool = async (name: string, args: Record<string, unknown>) => {
+                    const r = await fetch(`http://127.0.0.1:${selfPort}/api/cortex/tools/execute`, {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json', 'x-cortex-key': 'sovereign-local' },
+                      body: JSON.stringify({ tool: name, args }),
+                      signal: AbortSignal.timeout(90000),
+                    });
+                    return r.json().catch(() => ({ ok: false, error: `tools/execute HTTP ${r.status}` }));
+                  };
+
+                  const loopResult = await runAgenticTurn(sysContent, agentMessages, {
+                    providers: activeChain as any,
+                    executeTool,
+                    tools: CORTEX_TOOLS,
+                    maxSteps: 6,
+                    maxTokens: 4096,
+                    temperature: 0.2,
+                    initialToolCall,
+                    emit: (ev) => { try { res.write(`data: ${JSON.stringify(ev)}\n\n`); } catch {} },
+                    emitToken: (t) => { try { res.write(`data: ${JSON.stringify({ token: t })}\n\n`); } catch {} },
+                  });
+
+                  // Record a new pending offer from the final answer so the
+                  // next affirmation resumes it — closes the "go ahead" loop.
+                  try {
+                    const offer = detectOffer(loopResult.content || '');
+                    if (offer) recordOffer(sessionId, offer, loopResult.content || '');
+                  } catch {}
+
+                  const finalText = loopResult.content || 'Done.';
+                  const toks = finalText.match(/\S+|\s+/g) || [finalText];
+                  for (const tok of toks) {
+                    res.write(`data: ${JSON.stringify({ token: tok })}\n\n`);
+                  }
+                  res.write(`data: ${JSON.stringify({ finishReason: 'stop', agentic: { steps: loopResult.steps, tools: loopResult.toolCalls.map(t => t.tool), provider: loopResult.provider } })}\n\n`);
+                  res.write('data: [DONE]\n\n');
+                  res.end();
+                } catch (agentErr: any) {
+                  console.error('[dev-proxy] agentic loop error:', agentErr?.message || agentErr);
+                  if (!res.writableEnded) {
+                    res.write(`data: ${JSON.stringify({ token: 'The agentic loop hit an error — falling back is unavailable mid-stream. Say "retry" and I will run it again.' })}\n\n`);
+                    res.write('data: [DONE]\n\n');
+                    res.end();
+                  }
+                }
+                return;
               }
 
               // Trace tap: one JSONL record per provider HTTP attempt (see
@@ -10873,6 +10990,7 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
                   let sseBuffer = '';
                   let doneSent = false;
                   let forwardedTokens = 0;
+                  let forwardedText = '';
                   let sawContent = false;
                   let sawReasoning = false;
                   let sawProperFinish = false;
@@ -10994,6 +11112,7 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
                             if (finishReason) sawProperFinish = true;
                             if (clean) {
                               forwardedTokens++;
+                              forwardedText += clean;
                               res.write(`data: ${JSON.stringify({ token: clean, finishReason: finishReason || null })}\n\n`);
                             }
                           }
@@ -11026,7 +11145,17 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
                     const heldTail = flushReasoning();
                     if (heldTail) {
                       forwardedTokens++;
+                      forwardedText += heldTail;
                       res.write(`data: ${JSON.stringify({ token: heldTail, finishReason: null })}\n\n`);
+                    }
+                    // Intention Kernel: record unfulfilled offers so the next
+                    // affirmation ("go ahead") resumes them — every cortex
+                    // surface, agentic or legacy.
+                    if (parsed.context === 'cortex' && forwardedText) {
+                      try {
+                        const offer = detectOffer(forwardedText);
+                        if (offer) recordOffer(String(parsed.sessionId || 'cortex-shared').slice(0, 80), offer, forwardedText);
+                      } catch {}
                     }
                     if (forwardedTokens === 0) {
                       if (sawReasoning) {

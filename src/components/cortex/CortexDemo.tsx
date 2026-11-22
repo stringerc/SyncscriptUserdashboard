@@ -753,6 +753,18 @@ export default function CortexDemo() {
   const [proactiveDismissed, setProactiveDismissed] = useState(false);
   const lastAnnouncedInsightRef = useRef('');
   const activeAbortControllerRef = useRef<AbortController | null>(null);
+  // Stable per-tab session for the server-side Intention Kernel — pending
+  // offers persist across turns so "go ahead" resumes them deterministically.
+  const agentSessionIdRef = useRef<string>('');
+  if (!agentSessionIdRef.current) {
+    try {
+      agentSessionIdRef.current = sessionStorage.getItem('cortex_agent_session') || '';
+      if (!agentSessionIdRef.current) {
+        agentSessionIdRef.current = `cortex-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+        sessionStorage.setItem('cortex_agent_session', agentSessionIdRef.current);
+      }
+    } catch { agentSessionIdRef.current = 'cortex-default'; }
+  }
 
   const fetchProactiveAudit = useCallback(async () => {
     try {
@@ -1987,6 +1999,8 @@ STATE OF BEING TELEMETRY (verified live tool results — ground truth, cite thes
         signal: connAbort.signal,
         body: JSON.stringify({
           context: 'cortex',
+          agentic: true,
+          sessionId: agentSessionIdRef.current,
           systemPrompt: `You are Cortex, the operational consciousness substrate of SyncScript with full executive agency on the user's macOS host.
 Host: macOS Darwin arm64 | Workspace: /Users/Apple/syncscript | Home: /Users/Apple
 Canvas Modes Available:
@@ -2098,8 +2112,10 @@ MANDATORY: your reply MUST cite at least one concrete number from EACH of the fo
       hallucinationRisk = 0.05;
 
       // ── Step 4b: Host Tool Execution & Autonomous Multi-Step ReAct Loop ──
+      // Server-side Intention Kernel (agentic:true) already ran the loop —
+      // skip the client loop entirely or tools would double-execute.
       toolCall = activeToolCall || parseCortexToolCall(aiContent);
-      if (toolCall) {
+      if (toolCall && !streamResult.agentic) {
         const loopResult = await runCortexToolLoop({
           toolCall,
           aiContent,
