@@ -1137,6 +1137,7 @@ export default function CortexVisualizerPage() {
   const fmtElapsed = (s: number) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
   const [gevOrigin, setGevOrigin] = useState('http://127.0.0.1:5180');
   const voiceBusy = payload.state === 'thinking' || payload.state === 'working' || queueDepth > 0;
+  const navCollapsed = faceMode === 'core' && !mapMode && !navExpanded;
 
   return (
     <div style={{ position: 'fixed', inset: 0, background: '#03040a', overflow: 'hidden', fontFamily: "'IBM Plex Mono', ui-monospace, monospace" }}>
@@ -1422,8 +1423,44 @@ export default function CortexVisualizerPage() {
           )}
         </button>
 
-        {/* Remaining nav items — hidden while the Core face rail is collapsed */}
-        {!(faceMode === 'core' && !mapMode && !navExpanded) && (<>
+        {/* Compact chat toggle — stands in for the hidden CHAT item while the rail is collapsed */}
+        {navCollapsed && (
+          <button
+            data-toggle-chat-drawer="true"
+            onClick={() => setChatOpen(v => !v)}
+            title={chatOpen ? 'Cortex Uplink Chat Drawer open — click to close (Esc)' : 'Open Cortex Uplink Chat Drawer'}
+            aria-label={chatOpen ? 'Close chat drawer' : 'Open chat drawer'}
+            style={{
+              padding: '5px 12px',
+              borderRadius: 14,
+              border: `1px solid ${chatOpen ? accent : 'rgba(148,233,255,0.18)'}`,
+              background: chatOpen ? `${accent}22` : 'rgba(4,8,14,0.5)',
+              color: chatOpen ? '#f0f9ff' : 'rgba(165,243,252,0.7)',
+              fontFamily: "'IBM Plex Mono', monospace",
+              fontSize: 9.5,
+              fontWeight: 700,
+              letterSpacing: '0.14em',
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              gap: 5,
+              boxShadow: chatOpen ? `0 0 10px ${accent}44` : 'none',
+              transition: 'all 0.2s',
+            }}
+          >
+            <span style={{ color: accent }}>💬</span>
+            <span>{chatOpen ? 'CHAT · ON' : 'CHAT'}</span>
+          </button>
+        )}
+
+        {/* Remaining nav items — smoothly collapsed via max-width/opacity on the Core face */}
+        <div aria-hidden={navCollapsed} style={{
+          display: 'flex', alignItems: 'center', gap: 6, overflow: 'hidden', flexShrink: 0,
+          maxWidth: navCollapsed ? 0 : 900,
+          opacity: navCollapsed ? 0 : 1,
+          transition: 'max-width 0.38s cubic-bezier(0.16,1,0.3,1), opacity 0.28s ease',
+          pointerEvents: navCollapsed ? 'none' : 'auto',
+        }}>
         {/* FOUNDRY */}
         <button
           onClick={() => {
@@ -1610,7 +1647,7 @@ export default function CortexVisualizerPage() {
             }} />
             <span>{micLive ? 'SPEAKING' : micOn ? 'VOICE ON' : 'VOICE MUTED'}</span>
           </button>
-        </>)}
+        </div>
         </nav>
 
       {/* Core controls dropdown — anchored under the CORE nav button. Replaces the
