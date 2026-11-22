@@ -583,7 +583,7 @@ function CortexChatDrawerInner({ open, onClose, payload, onSubmitText }: CortexC
 
       {/* Overflow menu — floating glass chip, top-right. Replaces the old
           header bar so the drawer doesn't reserve a header row. */}
-      <div data-chat-menu style={{ position: 'absolute', top: 10, right: 12, zIndex: 5, pointerEvents: 'auto' }}>
+      <div data-chat-menu style={{ position: 'absolute', top: 78, right: 12, zIndex: 5, pointerEvents: 'auto' }}>
         <button
           onClick={() => setChatMenuOpen(v => !v)}
           title="Chat options"

@@ -1340,7 +1340,7 @@ export default function CortexVisualizerPage() {
         style={{
           position: 'absolute',
           top: 20,
-          right: chatOpen ? (narrow ? 16 : 416) : (narrow ? 16 : 32),
+          right: narrow ? 16 : 32,
           zIndex: 35,
           display: 'flex',
           alignItems: 'center',
@@ -1623,8 +1623,8 @@ export default function CortexVisualizerPage() {
           style={{
             position: 'absolute',
             top: 64,
-            right: chatOpen ? (narrow ? 16 : 416) : (narrow ? 16 : 32),
-            zIndex: 36,
+            right: narrow ? 16 : 32,
+            zIndex: 46,
             width: narrow ? 'calc(100vw - 32px)' : 230,
             padding: '8px',
             background: 'rgba(6,10,24,0.92)',
