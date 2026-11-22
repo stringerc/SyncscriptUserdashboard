@@ -234,6 +234,8 @@ export default function CortexVisualizerPage() {
   const [chatOpen, setChatOpen] = useState(true);
   const [coreMenuOpen, setCoreMenuOpen] = useState(false);
   const [navExpanded, setNavExpanded] = useState(false);
+  const coreBtnRef = useRef<HTMLButtonElement | null>(null);
+  const [coreMenuPos, setCoreMenuPos] = useState<{ top: number; left: number } | null>(null);
   const [audioEnabled, setAudioEnabled] = useState(() => neuroAudio.isEnabled());
   const [chronoActive, setChronoActive] = useState(false);
   const [chronoTime, setChronoTime] = useState(0.0);
@@ -1134,6 +1136,17 @@ export default function CortexVisualizerPage() {
     if (faceMode !== 'core' || mapMode) { setCoreMenuOpen(false); setNavExpanded(false); }
   }, [faceMode, mapMode]);
 
+  // Keep the core dropdown anchored under the CORE button if the nav rail
+  // expands/collapses while the menu is open.
+  useEffect(() => {
+    if (!coreMenuOpen || !coreBtnRef.current) return;
+    const r = coreBtnRef.current.getBoundingClientRect();
+    setCoreMenuPos({
+      top: r.bottom + 8,
+      left: Math.max(8, Math.min(r.left, window.innerWidth - 246)),
+    });
+  }, [navExpanded, coreMenuOpen]);
+
   const fmtElapsed = (s: number) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
   const [gevOrigin, setGevOrigin] = useState('http://127.0.0.1:5180');
   const voiceBusy = payload.state === 'thinking' || payload.state === 'working' || queueDepth > 0;
@@ -1341,7 +1354,7 @@ export default function CortexVisualizerPage() {
           position: 'absolute',
           top: 20,
           right: narrow ? 16 : 32,
-          zIndex: 35,
+          zIndex: 50,
           display: 'flex',
           alignItems: 'center',
           gap: 6,
@@ -1380,13 +1393,23 @@ export default function CortexVisualizerPage() {
 
         {/* CORE — switches to Sovereign Core; on Core face, toggles the controls dropdown */}
         <button
+          ref={coreBtnRef}
           data-core-menu
           aria-haspopup="true"
           aria-expanded={coreMenuOpen}
           onClick={() => {
             if (mapMode) setMapMode(false);
             if (faceMode === 'core') {
-              if (!mapMode) setCoreMenuOpen(v => !v);
+              if (!mapMode) {
+                if (!coreMenuOpen && coreBtnRef.current) {
+                  const r = coreBtnRef.current.getBoundingClientRect();
+                  setCoreMenuPos({
+                    top: r.bottom + 8,
+                    left: Math.max(8, Math.min(r.left, window.innerWidth - 246)),
+                  });
+                }
+                setCoreMenuOpen(v => !v);
+              }
               return;
             }
             setFaceMode('core');
@@ -1622,9 +1645,10 @@ export default function CortexVisualizerPage() {
           data-core-menu
           style={{
             position: 'absolute',
-            top: 64,
-            right: narrow ? 16 : 32,
-            zIndex: 46,
+            top: coreMenuPos?.top ?? 64,
+            left: coreMenuPos?.left,
+            right: coreMenuPos ? 'auto' : (narrow ? 16 : 32),
+            zIndex: 55,
             width: narrow ? 'calc(100vw - 32px)' : 230,
             padding: '8px',
             background: 'rgba(6,10,24,0.92)',
@@ -1635,7 +1659,7 @@ export default function CortexVisualizerPage() {
             fontFamily: "'IBM Plex Mono', monospace",
             display: 'flex', flexDirection: 'column', gap: 4,
           }}
-          className="cx-hud-center-in"
+          className="cx-hud-in"
         >
           <div style={{ fontSize: 8, letterSpacing: '0.3em', color: 'rgba(148,233,255,0.4)', padding: '2px 6px 6px' }}>CORE CONTROLS</div>
 
