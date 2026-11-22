@@ -3065,7 +3065,7 @@ export function CortexFoundryNav({ snap, onSelectAgent, selectedAgent, onOpenTow
                 const missionBlocks = (snap.mission?.upcomingBlocks || [])
                   .filter((b: any) => String(b.ventureId || 'cortex') === vc.id)
                   .sort((a: any, b: any) => a.start - b.start).slice(0, 12);
-                const inboxProps = (inbox || []).filter((p: any) => String(p.ventureId || '') === vc.id);
+                const inboxProps = (inbox || []).filter((p: any) => String(p.ventureId || 'cortex') === vc.id);
                 const vcCampaigns = vc.id === 'omni' ? (campaignsData || []) : [];
                 const planGoals = (venturePlan?.goals || []).filter((g: any) => String(g.ventureId || 'cortex') === vc.id);
                 const planOps = (venturePlan?.opsItems || []).filter((o: any) => String(o.ventureId || 'cortex') === vc.id);
@@ -3077,7 +3077,7 @@ export function CortexFoundryNav({ snap, onSelectAgent, selectedAgent, onOpenTow
                 const TABS: [string, string][] = [
                   ['tasks', 'TASKS'], ['goals', 'GOALS'], ['plan', 'PLAN'], ['calendar', 'CALENDAR'],
                   ['workflows', 'WORKFLOWS'], ['agents', 'AGENTS'], ['missions', 'MISSIONS'],
-                  ['campaigns', 'CAMPAIGNS'], ['inbox', 'INBOX'], ['memory', 'MEMORY'],
+                  ['campaigns', 'CAMPAIGNS'], ['inbox', 'INBOX'], ['n8n', 'N8N'], ['memory', 'MEMORY'],
                 ];
                 const empty = (msg: string) => <div style={{ fontSize: 9, color: DIM, padding: '6px 0' }}>{msg}</div>;
                 return (
@@ -3535,6 +3535,37 @@ export function CortexFoundryNav({ snap, onSelectAgent, selectedAgent, onOpenTow
                       </div>
                     )}
 
+                    {ventureTab === 'n8n' && (
+                      <div>
+                        <div style={{ fontSize: 8, fontWeight: 800, letterSpacing: '0.2em', color: '#fb923c', borderBottom: '1px solid rgba(251,146,60,0.25)', paddingBottom: 2, marginBottom: 4 }}>
+                          N8N BRIDGE — WORKFLOW AUTOMATION
+                        </div>
+                        <div style={{ fontSize: 8.5, color: DIM, lineHeight: 1.6, marginBottom: 6 }}>
+                          SyncScript emits signed webhook events (<span style={{ color: '#7dd3fc' }}>X-SyncScript-Signature</span>, HMAC-SHA256) that n8n / Make / Zapier consume. Subscription management lives in <span style={{ color: INK }}>SETTINGS → WEBHOOKS</span> (auth-gated). Below: prebuilt workflow recipes — download the JSON and import via n8n Workflows → Import from File.
+                        </div>
+                        {([
+                          { id: 'launch-ops', label: 'LAUNCH OPS', desc: 'Slack + GitHub — campaign launches, deploy notices', ventures: ['omni', 'cortex'] },
+                          { id: 'sales-followup', label: 'SALES FOLLOW-UP', desc: 'HubSpot + Gmail — lead nurture sequences', ventures: ['omni', 'govtech'] },
+                          { id: 'finance-control', label: 'FINANCE CONTROL', desc: 'Slack + QuickBooks — spend alerts, reconciliations', ventures: ['cortex'] },
+                          { id: 'support-escalation', label: 'SUPPORT ESCALATION', desc: 'Zendesk + Slack — ticket triage to humans', ventures: ['omni', 'govtech'] },
+                          { id: 'agent-automation', label: 'AGENT AUTOMATION', desc: 'Google Sheets — agent run audit logging', ventures: ['cortex', 'omni', 'govtech'] },
+                        ] as { id: string; label: string; desc: string; ventures: string[] }[]).map((r) => {
+                          const relevant = r.ventures.includes(vc.id);
+                          return (
+                            <a key={r.id} href={`/integrations/recipes/syncscript-${r.id}.n8n.json`} download
+                              style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '5px 8px', marginBottom: 3, border: `1px solid ${relevant ? 'rgba(251,146,60,0.4)' : 'rgba(148,163,184,0.12)'}`, borderRadius: 3, background: relevant ? 'rgba(251,146,60,0.05)' : 'rgba(15,23,42,0.4)', textDecoration: 'none' }}>
+                              <span style={{ color: relevant ? '#fdba74' : DIM, fontSize: 8 }}>⬇</span>
+                              <span style={{ flex: 1 }}>
+                                <span style={{ display: 'block', fontSize: 9.5, fontWeight: 700, color: relevant ? '#fdba74' : INK }}>{r.label}{relevant ? ' · RELEVANT' : ''}</span>
+                                <span style={{ display: 'block', fontSize: 8, color: DIM }}>{r.desc}</span>
+                              </span>
+                            </a>
+                          );
+                        })}
+                        <div style={{ fontSize: 8, color: DIM, marginTop: 6 }}>EVENT SOURCES: task_created (source: n8n counts separately in analytics) · webhook deliveries visible under each subscription in SETTINGS → WEBHOOKS</div>
+                      </div>
+                    )}
+
                     {ventureTab === 'memory' && (
                       <div>
                         {ventureMemory === null && empty('LOADING…')}
@@ -3593,7 +3624,7 @@ export function CortexFoundryNav({ snap, onSelectAgent, selectedAgent, onOpenTow
                   </span>
                 </div>
                 <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', fontSize: 9, color: DIM, marginBottom: 4 }}>
-                  <span>OPEN TASKS <b style={{ color: INK }}>{v.openTasks ?? 0}</b></span>
+                  <span title={`${v.openAgentTasks ?? 0} agent · ${v.openUserTasks ?? 0} user`}>OPEN TASKS <b style={{ color: INK }}>{v.openTasks ?? 0}</b></span>
                   <span>GOALS <b style={{ color: INK }}>{v.goals ?? 0}</b></span>
                   <span>OPS <b style={{ color: INK }}>{v.opsItems ?? 0}</b></span>
                   <span>BLOCKS <b style={{ color: INK }}>{v.openBlocks ?? 0}</b></span>

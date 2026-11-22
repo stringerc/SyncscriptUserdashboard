@@ -14374,14 +14374,28 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
           const state = loadMission();
           const src = missionSourcesSafe();
           const yieldByVenture = ventureYieldBreakdown(src.archive);
-          // Live task counts from the agent runtime snapshot (open tasks only).
+          // Live task counts — agent runtime snapshot (open tasks only) PLUS
+          // the user-task mirror (.cortex-runtime/tasks-snapshot.json), so
+          // card numbers match what the console TASKS tab renders.
           const tasks: any[] = agentRuntime.snapshot().tasks as any[];
           const openByVenture: Record<string, number> = {};
+          const agentOpenByVenture: Record<string, number> = {};
+          const userOpenByVenture: Record<string, number> = {};
           for (const t of tasks) {
             if (t.status === 'completed' || t.status === 'failed' || t.status === 'cancelled') continue;
             const vid = String((t.input as any)?.ventureId || 'cortex');
             openByVenture[vid] = (openByVenture[vid] || 0) + 1;
+            agentOpenByVenture[vid] = (agentOpenByVenture[vid] || 0) + 1;
           }
+          try {
+            const uts = JSON.parse(fsSync.readFileSync(path.join(process.cwd(), '.cortex-runtime', 'tasks-snapshot.json'), 'utf-8'));
+            for (const t of (Array.isArray(uts?.tasks) ? uts.tasks : [])) {
+              if (t.completed || t.status === 'completed') continue;
+              const vid = String(t.ventureId || t.input?.ventureId || 'cortex');
+              openByVenture[vid] = (openByVenture[vid] || 0) + 1;
+              userOpenByVenture[vid] = (userOpenByVenture[vid] || 0) + 1;
+            }
+          } catch { /* mirror unreadable — agent counts still honest */ }
           // Distribution queue venture derivation (type prefixes).
           const distCounts: Record<string, { pending: number; done: number; failed: number }> = {};
           try {
@@ -14464,6 +14478,8 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
               opsItems: state.opsItems.filter((o) => (o.ventureId || 'cortex') === v.id).length,
               openBlocks: state.blocks.filter((b) => (b.ventureId || 'cortex') === v.id && b.status === 'planned').length,
               openTasks: openByVenture[v.id] || 0,
+              openAgentTasks: agentOpenByVenture[v.id] || 0,
+              openUserTasks: userOpenByVenture[v.id] || 0,
               pendingProposals: propsByVenture[v.id] || 0,
               stalledGoals: stalledByVenture[v.id] || 0,
               yield7d: yieldByVenture[v.id] || { runs: 0, completions: 0, agents: {} },
