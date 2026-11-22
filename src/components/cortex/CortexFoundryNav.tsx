@@ -201,6 +201,10 @@ export function CortexFoundryNav({ snap, onSelectAgent, selectedAgent, onOpenTow
   const [ventureRoutines, setVentureRoutines] = useState<any[] | null>(null);
   const [venturePlan, setVenturePlan] = useState<any | null>(null);
   const [ventureMemory, setVentureMemory] = useState<any[] | null>(null);
+  const [planItems, setPlanItems] = useState<{ venture: string; items: any[] } | null>(null);
+  const [planItemTitle, setPlanItemTitle] = useState('');
+  const [planItemKind, setPlanItemKind] = useState<'initiative' | 'task'>('task');
+  const [planItemDue, setPlanItemDue] = useState('');
   const [expandedAgent, setExpandedAgent] = useState<string | null>(null);
   const [ventureSchedInput, setVentureSchedInput] = useState('');
   const [ventureBudgetInput, setVentureBudgetInput] = useState('');
@@ -321,6 +325,26 @@ export function CortexFoundryNav({ snap, onSelectAgent, selectedAgent, onOpenTow
     setNewGoalResInput('');
     setShowNewGoal(false);
     setGoalsTick((t) => t + 1);
+  };
+
+  const planApi = async (payload: any) => {
+    if (!ventureConsole) return;
+    try {
+      const r = await fetch('/api/cortex/ventures/plan', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...payload, ventureId: ventureConsole }),
+      });
+      const d = await r.json();
+      if (Array.isArray(d?.items)) setPlanItems({ venture: ventureConsole, items: d.items });
+    } catch { }
+  };
+  const addPlanItem = () => {
+    const title = planItemTitle.trim();
+    if (!title) return;
+    const due = planItemDue ? new Date(`${planItemDue}T09:00:00`).getTime() : undefined;
+    planApi({ action: 'upsert', title, kind: planItemKind, dueDate: due ?? null });
+    setPlanItemTitle(''); setPlanItemDue('');
   };
 
   const handleRunSimulation = async () => {
@@ -483,6 +507,14 @@ export function CortexFoundryNav({ snap, onSelectAgent, selectedAgent, onOpenTow
   // so the console never navigates away; content stays inline.
   useEffect(() => {
     if (!ventureConsole) return;
+    // User-authored plan items — the editable PLAN layer. Keyed by venture
+    // so switching consoles refetches; due-dated items also feed CALENDAR.
+    if (!planItems || planItems.venture !== ventureConsole) {
+      fetch(`/api/cortex/ventures/plan?venture=${ventureConsole}`, { cache: 'no-store' })
+        .then((r) => r.json())
+        .then((d) => setPlanItems({ venture: ventureConsole, items: Array.isArray(d?.items) ? d.items : [] }))
+        .catch(() => setPlanItems({ venture: ventureConsole, items: [] }));
+    }
     if (ventureTab === 'calendar' && calendar === null) {
       fetch('/api/cortex/calendar/upcoming', { cache: 'no-store' })
         .then((r) => r.json())
@@ -2934,9 +2966,13 @@ export function CortexFoundryNav({ snap, onSelectAgent, selectedAgent, onOpenTow
                 const vcAgentTasks = allTasks.filter((t: any) => ventureOf(t) === vc.id && !['completed', 'failed', 'cancelled'].includes(String(t.status || '')));
                 const vcDoneTasks = allTasks.filter((t: any) => ventureOf(t) === vc.id && ['completed', 'failed', 'cancelled'].includes(String(t.status || '')));
                 const vcGoals = goals.list().filter((g: any) => String((g as any).ventureId || 'cortex') === vc.id);
+                const vPlanItems = planItems && planItems.venture === vc.id ? planItems.items : [];
                 const calEvents = [
                   ...(calendar || []).filter((e: any) => String(e?.ventureId || 'cortex') === vc.id),
                   ...ventureScheduleEvents(vc),
+                  // User plan items with a due date surface as calendar events.
+                  ...vPlanItems.filter((i: any) => !i.done && typeof i.dueDate === 'number')
+                    .map((i: any) => ({ id: `plan-${i.id}`, title: `◈ PLAN · ${i.title}`, start: i.dueDate, end: i.dueDate + 30 * 60 * 1000, kind: 'plan', ventureId: vc.id })),
                 ].sort((a: any, b: any) => a.start - b.start).slice(0, 14);
                 const agentOpenById = new Map<string, number>();
                 for (const t of vcAgentTasks) {
@@ -2976,7 +3012,7 @@ export function CortexFoundryNav({ snap, onSelectAgent, selectedAgent, onOpenTow
                           id === 'agents' ? agentRows.filter((r) => r.open > 0).length :
                           id === 'missions' ? missionBlocks.length :
                           id === 'campaigns' ? vcCampaigns.length :
-                          id === 'plan' ? planGoals.length + planOps.length + planBlocks.length :
+                          id === 'plan' ? vPlanItems.length + planGoals.length + planOps.length + planBlocks.length :
                           id === 'workflows' ? wfRoutines.length :
                           id === 'memory' ? (ventureMemory || []).length :
                           id === 'inbox' ? inboxProps.length : 0;
@@ -3180,6 +3216,44 @@ export function CortexFoundryNav({ snap, onSelectAgent, selectedAgent, onOpenTow
 
                     {ventureTab === 'plan' && (
                       <div>
+                        {/* VENTURE PLAN — user-authored, editable, persisted server-side */}
+                        <div style={{ fontSize: 8, fontWeight: 800, letterSpacing: '0.2em', color: '#34d399', borderBottom: '1px solid rgba(52,211,153,0.25)', paddingBottom: 2, marginBottom: 4 }}>
+                          VENTURE PLAN · {vPlanItems.filter((i: any) => !i.done).length} OPEN / {vPlanItems.length}
+                        </div>
+                        {planItems === null && empty('LOADING…')}
+                        {vPlanItems.map((i: any) => (
+                          <div key={i.id} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '3px 0', borderBottom: '1px solid rgba(148,163,184,0.06)' }}>
+                            <input type="checkbox" checked={!!i.done} onChange={() => planApi({ action: 'upsert', id: i.id, done: !i.done })} style={{ accentColor: '#34d399' }} />
+                            <span style={{ fontSize: 8, color: i.kind === 'initiative' ? '#fbbf24' : '#67e8f9', minWidth: 56 }}>{i.kind === 'initiative' ? 'INIT' : 'TASK'}</span>
+                            <span style={{ flex: 1, fontSize: 9.5, color: INK, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', textDecoration: i.done ? 'line-through' : 'none', opacity: i.done ? 0.5 : 1 }}>{i.title}</span>
+                            {typeof i.dueDate === 'number' && (
+                              <input type="date" value={(() => { const d = new Date(i.dueDate); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; })()}
+                                onChange={(e) => planApi({ action: 'upsert', id: i.id, dueDate: e.target.value ? new Date(`${e.target.value}T09:00:00`).getTime() : null })}
+                                style={{ background: 'rgba(8,14,24,0.8)', border: '1px solid rgba(148,163,184,0.2)', color: DIM, fontFamily: MONO, fontSize: 8, padding: '1px 3px', borderRadius: 2, outline: 'none', width: 92 }} />
+                            )}
+                            <button onClick={() => planApi({ action: 'delete', id: i.id })}
+                              style={{ background: 'none', border: 'none', color: '#fb7185', fontSize: 10, cursor: 'pointer', padding: '0 2px' }}>✕</button>
+                          </div>
+                        ))}
+                        {planItems !== null && !vPlanItems.length && empty('NO PLAN ITEMS YET — ADD ONE BELOW')}
+                        {/* add form */}
+                        <div style={{ display: 'flex', gap: 4, marginTop: 5, flexWrap: 'wrap' }}>
+                          <input value={planItemTitle} onChange={(e) => setPlanItemTitle(e.target.value)}
+                            onKeyDown={(e) => { if (e.key === 'Enter') addPlanItem(); }}
+                            placeholder="plan item…" autoFocus={false}
+                            style={{ flex: '1 1 140px', background: 'rgba(8,14,24,0.8)', border: '1px solid rgba(52,211,153,0.3)', color: INK, fontFamily: MONO, fontSize: 9, padding: '3px 7px', borderRadius: 2, outline: 'none' }} />
+                          <select value={planItemKind} onChange={(e) => setPlanItemKind(e.target.value as any)}
+                            style={{ background: 'rgba(8,14,24,0.8)', border: '1px solid rgba(148,163,184,0.25)', color: DIM, fontFamily: MONO, fontSize: 8, borderRadius: 2, outline: 'none' }}>
+                            <option value="task">TASK</option>
+                            <option value="initiative">INITIATIVE</option>
+                          </select>
+                          <input type="date" value={planItemDue} onChange={(e) => setPlanItemDue(e.target.value)} title="due date (optional — lands on calendar)"
+                            style={{ background: 'rgba(8,14,24,0.8)', border: '1px solid rgba(148,163,184,0.25)', color: DIM, fontFamily: MONO, fontSize: 8, padding: '2px 4px', borderRadius: 2, outline: 'none', width: 108 }} />
+                          <button onClick={addPlanItem} disabled={!planItemTitle.trim()}
+                            style={{ background: 'rgba(52,211,153,0.15)', border: '1px solid #34d399', color: '#6ee7b7', fontFamily: MONO, fontSize: 8, fontWeight: 800, padding: '0 8px', borderRadius: 2, cursor: planItemTitle.trim() ? 'pointer' : 'not-allowed' }}>+ ADD</button>
+                        </div>
+                        <div style={{ fontSize: 8, color: DIM, marginTop: 3 }}>YOURS — PERSISTED · MISSION STREAMS BELOW ARE ENGINE-OWNED (READ-ONLY)</div>
+
                         {venturePlan === null && empty('LOADING…')}
                         {venturePlan !== null && (
                           <>

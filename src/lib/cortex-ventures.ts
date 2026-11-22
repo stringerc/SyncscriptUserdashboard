@@ -160,3 +160,87 @@ export function ventureFromQueueType(type: string | undefined | null): string {
   if (t.startsWith('govtech') || t.startsWith('sam_gov')) return 'govtech';
   return 'cortex';
 }
+
+// ── Venture plan items ─────────────────────────────────────────────
+// The user-authored operating plan per venture — distinct from mission
+// goals/ops/blocks (engine-owned, read-only in the console). Persisted to
+// .cortex-runtime/venture-plans.json so it survives restarts and is shared
+// across surfaces.
+
+export interface VenturePlanItem {
+  id: string;
+  ventureId: string;
+  title: string;
+  kind: 'initiative' | 'task';
+  done: boolean;
+  /** Epoch ms — items with a due date surface on the venture calendar. */
+  dueDate?: number;
+  createdAt: number;
+  updatedAt: number;
+}
+
+const PLANS_PATH = path.join(STATE_DIR, 'venture-plans.json');
+
+function readPlans(): VenturePlanItem[] {
+  try {
+    if (!fs.existsSync(PLANS_PATH)) return [];
+    const data = JSON.parse(fs.readFileSync(PLANS_PATH, 'utf-8'));
+    return Array.isArray(data?.items) ? data.items.filter((i: any) => i && typeof i.id === 'string') : [];
+  } catch {
+    return [];
+  }
+}
+
+function writePlans(items: VenturePlanItem[]): void {
+  fs.mkdirSync(STATE_DIR, { recursive: true });
+  fs.writeFileSync(PLANS_PATH, JSON.stringify({ items }, null, 2));
+}
+
+export function listPlanItems(ventureId: string): VenturePlanItem[] {
+  return readPlans()
+    .filter((i) => i.ventureId === ventureId)
+    .sort((a, b) => Number(a.done) - Number(b.done) || a.createdAt - b.createdAt)
+    .map((i) => ({ ...i }));
+}
+
+export function upsertPlanItem(input: { ventureId: string; title?: string; kind?: string; done?: boolean; dueDate?: number | null; id?: string }): VenturePlanItem | null {
+  if (!isValidVenture(input.ventureId)) return null;
+  const items = readPlans();
+  const now = Date.now();
+  let item = input.id ? items.find((i) => i.id === input.id && i.ventureId === input.ventureId) : null;
+  if (item) {
+    if (input.title !== undefined) {
+      const t = String(input.title).trim().slice(0, 300);
+      if (!t) return null;
+      item.title = t;
+    }
+    if (input.kind !== undefined && (input.kind === 'initiative' || input.kind === 'task')) item.kind = input.kind;
+    if (input.done !== undefined) item.done = !!input.done;
+    if (input.dueDate !== undefined) item.dueDate = typeof input.dueDate === 'number' && Number.isFinite(input.dueDate) ? input.dueDate : undefined;
+    item.updatedAt = now;
+  } else {
+    const title = String(input.title || '').trim().slice(0, 300);
+    if (!title) return null;
+    item = {
+      id: `vp-${now}-${Math.random().toString(36).slice(2, 7)}`,
+      ventureId: input.ventureId,
+      title,
+      kind: input.kind === 'initiative' ? 'initiative' : 'task',
+      done: !!input.done,
+      dueDate: typeof input.dueDate === 'number' && Number.isFinite(input.dueDate) ? input.dueDate : undefined,
+      createdAt: now,
+      updatedAt: now,
+    };
+    items.push(item);
+  }
+  writePlans(items);
+  return { ...item };
+}
+
+export function deletePlanItem(ventureId: string, id: string): boolean {
+  const items = readPlans();
+  const next = items.filter((i) => !(i.id === id && i.ventureId === ventureId));
+  if (next.length === items.length) return false;
+  writePlans(next);
+  return true;
+}

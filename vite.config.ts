@@ -200,7 +200,7 @@ import { recordIncidentFailure, resolveIncidentsOnSuccess, listIncidents, escala
 import { issueDirective, listDirectives, ackDirective, cancelDirective } from './src/lib/cortex-agents/directives';
 import { listMessages, sendMessage } from './src/lib/cortex-agents/messages';
 import { loadMission, saveMission, upsertGoal, verifyOps, goalProgress, routineYield, suggestCadence, planBlocks, startExperiment, reportExperiments, ventureYieldBreakdown, type OpsItem, type MissionGoal, type CadenceEntry } from './src/lib/cortex-agents/mission';
-import { listVentures, isValidVenture, ventureFromQueueType, updateVenture, dueVentures, markVentureRan, recordVentureCycle, ventureCyclesToday } from './src/lib/cortex-ventures';
+import { listVentures, isValidVenture, ventureFromQueueType, updateVenture, dueVentures, markVentureRan, recordVentureCycle, ventureCyclesToday, listPlanItems, upsertPlanItem, deletePlanItem } from './src/lib/cortex-ventures';
 import { maybeFileAdoptionFollowup } from './src/lib/cortex-agents/adoption';
 import { registerAgentWorkers, makeEphemeralWorker, expandTaskSpec } from './src/lib/cortex-agents/workers';
 import { enqueueDistributionItem, DISTRIBUTION_ITEM_TYPES } from './src/lib/cortex-agents/distribution';
@@ -14273,6 +14273,69 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
             res.end(JSON.stringify({ ok: false, error: e?.message || 'bad request' }));
           }
         });
+      });
+
+      // ── Venture plan items (/api/cortex/ventures/plan) ──
+      // User-authored operating plan per venture — the editable layer in the
+      // PLAN tab. Distinct from mission goals/ops/blocks (engine-owned).
+      // Registered BEFORE /api/cortex/ventures — connect prefix-matches.
+      // GET  ?venture=<id>           → items for that venture
+      // POST {action:'upsert', ventureId, ...item} → create/update
+      // POST {action:'delete', ventureId, id}      → remove
+      server.middlewares.use('/api/cortex/ventures/plan', async (req: any, res: any, next: any) => {
+        agentCors(req, res);
+        if (req.method === 'GET') {
+          try {
+            const url = new URL(req.url || '', 'http://localhost');
+            const ventureId = String(url.searchParams.get('venture') || '');
+            if (!isValidVenture(ventureId)) {
+              res.writeHead(400, { 'Content-Type': 'application/json' });
+              return res.end(JSON.stringify({ ok: false, error: 'unknown venture' }));
+            }
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ ok: true, items: listPlanItems(ventureId) }));
+          } catch (e: any) {
+            res.writeHead(500, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ ok: false, error: String(e?.message || e) }));
+          }
+          return;
+        }
+        if (req.method === 'OPTIONS') {
+          res.writeHead(204, { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Methods': 'GET, POST, OPTIONS', 'Access-Control-Allow-Headers': 'Content-Type' });
+          return res.end();
+        }
+        if (req.method !== 'POST') return next();
+        try {
+          let body = '';
+          for await (const chunk of req) body += chunk;
+          const p = JSON.parse(body || '{}');
+          if (!isValidVenture(p.ventureId)) {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            return res.end(JSON.stringify({ ok: false, error: 'unknown venture' }));
+          }
+          if (p.action === 'delete') {
+            const ok = deletePlanItem(String(p.ventureId), String(p.id || ''));
+            res.writeHead(ok ? 200 : 404, { 'Content-Type': 'application/json' });
+            return res.end(JSON.stringify({ ok, items: listPlanItems(String(p.ventureId)) }));
+          }
+          if (p.action === 'upsert') {
+            const item = upsertPlanItem({
+              ventureId: String(p.ventureId),
+              id: p.id ? String(p.id) : undefined,
+              title: p.title !== undefined ? String(p.title) : undefined,
+              kind: p.kind !== undefined ? String(p.kind) : undefined,
+              done: p.done !== undefined ? !!p.done : undefined,
+              dueDate: p.dueDate !== undefined ? (p.dueDate === null ? null : Number(p.dueDate)) : undefined,
+            });
+            res.writeHead(item ? 200 : 400, { 'Content-Type': 'application/json' });
+            return res.end(JSON.stringify(item ? { ok: true, item, items: listPlanItems(String(p.ventureId)) } : { ok: false, error: 'invalid item' }));
+          }
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ ok: false, error: 'unknown action' }));
+        } catch (e: any) {
+          res.writeHead(500, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ ok: false, error: String(e?.message || e) }));
+        }
       });
 
       // ── Venture registry (/api/cortex/ventures) ──
