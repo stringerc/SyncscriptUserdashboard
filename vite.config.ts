@@ -10757,8 +10757,30 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
                     return r.json().catch(() => ({ ok: false, error: `tools/execute HTTP ${r.status}` }));
                   };
 
+                  // Turn-type routing: agentic turns need strong tool-call
+                  // compliance — route through the 'reason' tier first
+                  // (deep reasoning models), fast lane as fallback. Chat
+                  // chit-chat keeps the fast lane; tool turns don't.
+                  let agenticProviders: any[] = activeChain;
+                  try {
+                    const reasonChain = agentRuntime.matrix.ordered('reason')
+                      .map((c: any) => {
+                        const base = aiProviders.find((p) => p.name === c.provider);
+                        return base ? { ...base, model: c.model, name: `${base.name}#${c.model.split('/').pop()}` } : null;
+                      })
+                      .filter(Boolean) as any[];
+                    if (reasonChain.length) {
+                      const baseName = (n: string) => n.split('#')[0];
+                      const seen = new Set(reasonChain.map((p: any) => `${baseName(p.name)}|${p.model}`));
+                      agenticProviders = [
+                        ...reasonChain,
+                        ...(activeChain as any[]).filter((p: any) => !seen.has(`${p.name}|${p.model}`)),
+                      ];
+                    }
+                  } catch {}
+
                   const loopResult = await runAgenticTurn(sysContent, agentMessages, {
-                    providers: activeChain as any,
+                    providers: agenticProviders,
                     executeTool,
                     tools: CORTEX_TOOLS,
                     maxSteps: 6,

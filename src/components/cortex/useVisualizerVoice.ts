@@ -899,6 +899,7 @@ export function cleanSpeech(text: string): string {
     .replace(/`(?:tool_call|json|tool)?/gi, '')
     .replace(/<(?:tool_call|function_call|invoke)[\s\S]*?(?:<\/(?:tool_call|function_call|invoke)[^>]*>|$)/gi, '')
     .replace(/\[[A-Z_]+\]/g, '')
+    .replace(/^\s*\*?⚡[^\n]*\n?/gm, '')
     .replace(/\((?:music|upbeat|sad|cheerful|laughs?|sighs?|whispers?|applause|silence|pause|excited|calm|dramatic|thinking|hesitant)[^)]*\)/gi, '')
     .replace(/\s{2,}/g, ' ')
     .trim();
@@ -984,6 +985,17 @@ async function streamLLM(history: ChatMsg[], opts: StreamOpts = {}): Promise<str
     signal,
     body: JSON.stringify({
       context: 'cortex',
+      agentic: true,
+      sessionId: (() => {
+        try {
+          let sid = sessionStorage.getItem('cortex_voice_session');
+          if (!sid) {
+            sid = `cortex-voice-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+            sessionStorage.setItem('cortex_voice_session', sid);
+          }
+          return sid;
+        } catch { return 'cortex-voice'; }
+      })(),
       systemPrompt: VOICE_SYSTEM_PROMPT + (opts.systemSuffix ? `\n\n${opts.systemSuffix}` : ''),
       messages: history.slice(-12),
       stream: true,
@@ -1001,6 +1013,9 @@ async function streamLLM(history: ChatMsg[], opts: StreamOpts = {}): Promise<str
     // Suppress speech if currently inside a tool fence or tool call
     if (isInsideToolCall(content)) return;
     if (looksLikeToolOrJson(sentence)) return;
+    // Server agentic loop status markers ("*⚡ web_search…*") are visual
+    // progress, not spoken content.
+    if (/^\s*\*?⚡/.test(sentence)) return;
     const clean = cleanSpeech(sentence);
     if (clean && !looksLikeToolOrJson(clean)) {
       opts.onSentence?.(clean, isFinal);

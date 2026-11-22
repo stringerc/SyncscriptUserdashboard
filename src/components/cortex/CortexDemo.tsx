@@ -1702,6 +1702,7 @@ export default function CortexDemo() {
     let aiContent = '';
     let source: string = 'conscious_cortex';
     let hallucinationRisk = 0.05;
+    let agenticSummary: Record<string, unknown> | null = null;
     let lastFinishReason: string | null = null;
     let toolCall: { tool: string; args: Record<string, any> } | null = null;
     let streamedAnySentence = false;
@@ -2086,6 +2087,7 @@ MANDATORY: your reply MUST cite at least one concrete number from EACH of the fo
       });
       aiContent = streamResult.content;
       const activeToolCall = streamResult.toolCall;
+      agenticSummary = streamResult.agentic || null;
       if (streamResult.finishReason) lastFinishReason = streamResult.finishReason;
 
       // Flush remaining voice tokens on stream completion — split into sentences so
@@ -2206,7 +2208,7 @@ MANDATORY: your reply MUST cite at least one concrete number from EACH of the fo
           ...m,
           content: guaranteedContent,
           streaming: false,
-          meta: { realityScore, hallucinationRisk, awareness: 'tuned', source: badgeSource, mastery: 0 },
+          meta: { realityScore, hallucinationRisk, awareness: 'tuned', source: badgeSource, mastery: 0, ...(agenticSummary ? { agentic: agenticSummary } : {}) },
         } : m
       ));
     }

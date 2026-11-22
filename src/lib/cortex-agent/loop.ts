@@ -72,6 +72,27 @@ export interface AgentLoopResult {
 const MAX_STEPS_DEFAULT = 6;
 const MAX_TOOL_CALLS_PER_STEP = 2;
 const REQUEST_TIMEOUT_MS = 60_000;
+const HEARTBEAT_MS = 8_000;
+
+/** Wrap executeTool with periodic ping events so SSE clients with
+ *  token-silence watchdogs (voice path: 12s) don't abort during long
+ *  tool runs. Pings are data lines, not tokens — invisible in content. */
+function withHeartbeat(
+  executeTool: AgentLoopDeps['executeTool'],
+  emit: AgentLoopDeps['emit'],
+): AgentLoopDeps['executeTool'] {
+  if (!emit) return executeTool;
+  return async (name, args) => {
+    const beat = setInterval(() => {
+      try { emit({ type: 'ping', tool: name }); } catch {}
+    }, HEARTBEAT_MS);
+    try {
+      return await executeTool(name, args);
+    } finally {
+      clearInterval(beat);
+    }
+  };
+}
 
 // ── Provider call (non-streaming) ─────────────────────────────────
 
@@ -304,6 +325,7 @@ export async function runAgenticTurn(
   const temperature = deps.temperature ?? 0.2;
   const tools = deps.tools;
   const messages: AgentMessage[] = [...history];
+  const executeTool = withHeartbeat(deps.executeTool, deps.emit);
   const executed: AgentLoopResult['toolCalls'] = [];
   let finalContent = '';
   let lastProvider = '';
@@ -315,7 +337,7 @@ export async function runAgenticTurn(
     deps.emit?.({ type: 'tool_step', step: 0, tool: seed.name, status: 'resumed_intention', args: seed.args });
     deps.emitToken?.(`\n\n*⚡ Resuming: ${seed.name}…*\n\n`);
     try {
-      const result = await deps.executeTool(seed.name, seed.args);
+      const result = await executeTool(seed.name, seed.args);
       executed.push({ tool: seed.name, args: seed.args, ok: true });
       const seedResult = JSON.stringify(result);
       messages.push({
@@ -371,7 +393,7 @@ export async function runAgenticTurn(
       deps.emit?.({ type: 'tool_step', step: steps + 1, tool: call.name, status: 'executing', args: call.args });
       deps.emitToken?.(`\n\n*⚡ ${call.name}…*\n\n`);
       try {
-        const result = await deps.executeTool(call.name, call.args);
+        const result = await executeTool(call.name, call.args);
         results.push({ call, result });
         executed.push({ tool: call.name, args: call.args, ok: true });
         deps.emit?.({ type: 'tool_step', step: steps + 1, tool: call.name, status: 'done' });
