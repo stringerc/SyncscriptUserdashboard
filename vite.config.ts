@@ -14661,6 +14661,32 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
                 verifyOps(state, src);
                 break;
               }
+              case 'upsert_block': {
+                // Crew-scheduled mission block — explicit start/end, unlike
+                // plan_blocks which auto-finds free slots. Powers the
+                // venture console's NEW MISSION form.
+                const title = String(p.title || '').trim().slice(0, 200);
+                const start = Number(p.start);
+                if (!title || !Number.isFinite(start)) return send(400, { ok: false, error: 'title and start required' });
+                if (p.ventureId && !isValidVenture(String(p.ventureId))) return send(400, { ok: false, error: `unknown venture: ${String(p.ventureId).slice(0, 40)}` });
+                const durMin = Number(p.durMin) > 0 ? Number(p.durMin) : (Number(p.end) > start ? (Number(p.end) - start) / 60_000 : 60);
+                const block = {
+                  id: `blk-manual-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 5)}`,
+                  title,
+                  agentId: p.agentId ? String(p.agentId).slice(0, 60) : undefined,
+                  kind: p.kind ? String(p.kind).slice(0, 40) : 'mission',
+                  goalId: p.goalId ? String(p.goalId).slice(0, 60) : undefined,
+                  taskId: p.taskId ? String(p.taskId).slice(0, 60) : undefined,
+                  ventureId: p.ventureId ? String(p.ventureId) : undefined,
+                  start,
+                  end: Number(p.end) > start ? Number(p.end) : start + durMin * 60_000,
+                  status: 'planned',
+                  reason: 'manual — crew scheduled via venture console',
+                  createdAt: Date.now(),
+                };
+                state.blocks.push(block);
+                break;
+              }
               case 'plan_blocks': {
                 const items = Array.isArray(p.items) ? p.items : [];
                 const badVenture = items.find((i: any) => i?.ventureId && !isValidVenture(String(i.ventureId)));
@@ -14725,6 +14751,9 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
                   const res = agentRuntime.submitTask(agentId, kind, b.title, {
                     blockId: b.id, goalId: b.goalId, missionBlock: true,
                     ventureId: b.ventureId,
+                    // Manual mission blocks carry their intent in the title —
+                    // workers like builder require input.instruction.
+                    instruction: b.title,
                   });
                   if (res.ok) { b.status = 'dispatched'; dispatched.push({ blockId: b.id, taskId: res.task?.id }); }
                   else { failed.push({ blockId: b.id, error: res.error }); }

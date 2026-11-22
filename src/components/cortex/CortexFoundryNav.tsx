@@ -205,6 +205,13 @@ export function CortexFoundryNav({ snap, onSelectAgent, selectedAgent, onOpenTow
   const [planItemTitle, setPlanItemTitle] = useState('');
   const [planItemKind, setPlanItemKind] = useState<'initiative' | 'task'>('task');
   const [planItemDue, setPlanItemDue] = useState('');
+  const [missionTitle, setMissionTitle] = useState('');
+  const [missionDate, setMissionDate] = useState('');
+  const [missionTime, setMissionTime] = useState('');
+  const [missionDur, setMissionDur] = useState('60');
+  const [missionKind, setMissionKind] = useState('mission');
+  const [missionAgent, setMissionAgent] = useState('');
+  const [missionBusy, setMissionBusy] = useState(false);
   const [expandedAgent, setExpandedAgent] = useState<string | null>(null);
   const [ventureSchedInput, setVentureSchedInput] = useState('');
   const [ventureBudgetInput, setVentureBudgetInput] = useState('');
@@ -345,6 +352,35 @@ export function CortexFoundryNav({ snap, onSelectAgent, selectedAgent, onOpenTow
     const due = planItemDue ? new Date(`${planItemDue}T09:00:00`).getTime() : undefined;
     planApi({ action: 'upsert', title, kind: planItemKind, dueDate: due ?? null });
     setPlanItemTitle(''); setPlanItemDue('');
+  };
+  const addMissionBlock = async () => {
+    const title = missionTitle.trim();
+    if (!title || missionBusy) return;
+    const start = missionDate && missionTime
+      ? new Date(`${missionDate}T${missionTime}:00`).getTime()
+      : Date.now() + 60 * 60_000;
+    if (!Number.isFinite(start)) return;
+    setMissionBusy(true);
+    try {
+      const r = await fetch('/api/cortex/mission', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'upsert_block',
+          ventureId: ventureConsole || undefined,
+          title,
+          kind: missionKind,
+          agentId: missionAgent || undefined,
+          start,
+          durMin: Math.max(15, parseInt(missionDur, 10) || 60),
+        }),
+      });
+      const d = await r.json();
+      if (d?.ok) {
+        setMissionTitle(''); setMissionDate(''); setMissionTime('');
+      }
+    } catch { }
+    finally { setMissionBusy(false); }
   };
 
   const handleRunSimulation = async () => {
@@ -3172,9 +3208,43 @@ export function CortexFoundryNav({ snap, onSelectAgent, selectedAgent, onOpenTow
 
                     {ventureTab === 'missions' && (
                       <div>
+                        {/* NEW MISSION — crew-scheduled block, dispatches to agent when due */}
+                        <div style={{ border: '1px solid rgba(251,191,36,0.3)', borderRadius: 3, padding: '6px 8px', marginBottom: 6, background: 'rgba(251,191,36,0.03)' }}>
+                          <div style={{ fontSize: 8, fontWeight: 800, letterSpacing: '0.18em', color: '#fbbf24', marginBottom: 4 }}>+ NEW MISSION</div>
+                          <input value={missionTitle} onChange={(e) => setMissionTitle(e.target.value)}
+                            onKeyDown={(e) => { if (e.key === 'Enter') addMissionBlock(); }}
+                            placeholder="mission objective…"
+                            style={{ width: '100%', background: 'rgba(8,14,24,0.8)', border: '1px solid rgba(251,191,36,0.3)', color: INK, fontFamily: MONO, fontSize: 9, padding: '3px 7px', borderRadius: 2, outline: 'none', marginBottom: 4, boxSizing: 'border-box' }} />
+                          <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', alignItems: 'center' }}>
+                            <input type="date" value={missionDate} onChange={(e) => setMissionDate(e.target.value)} title="date (blank = next free hour)"
+                              style={{ background: 'rgba(8,14,24,0.8)', border: '1px solid rgba(148,163,184,0.25)', color: DIM, fontFamily: MONO, fontSize: 8, padding: '2px 4px', borderRadius: 2, outline: 'none' }} />
+                            <input type="time" value={missionTime} onChange={(e) => setMissionTime(e.target.value)} title="start time"
+                              style={{ background: 'rgba(8,14,24,0.8)', border: '1px solid rgba(148,163,184,0.25)', color: DIM, fontFamily: MONO, fontSize: 8, padding: '2px 4px', borderRadius: 2, outline: 'none' }} />
+                            <input type="number" value={missionDur} onChange={(e) => setMissionDur(e.target.value)} min={15} step={15} title="duration (min)"
+                              style={{ width: 52, background: 'rgba(8,14,24,0.8)', border: '1px solid rgba(148,163,184,0.25)', color: DIM, fontFamily: MONO, fontSize: 8, padding: '2px 4px', borderRadius: 2, outline: 'none' }} />
+                            <span style={{ fontSize: 8, color: DIM }}>MIN</span>
+                            <select value={missionKind} onChange={(e) => setMissionKind(e.target.value)} title="mission kind"
+                              style={{ background: 'rgba(8,14,24,0.8)', border: '1px solid rgba(148,163,184,0.25)', color: DIM, fontFamily: MONO, fontSize: 8, borderRadius: 2, outline: 'none' }}>
+                              <option value="mission">MISSION</option>
+                              <option value="deep_work">DEEP WORK</option>
+                              <option value="review">REVIEW</option>
+                              <option value="build">BUILD</option>
+                            </select>
+                            <select value={missionAgent} onChange={(e) => setMissionAgent(e.target.value)} title="agent (blank = builder)"
+                              style={{ background: 'rgba(8,14,24,0.8)', border: '1px solid rgba(148,163,184,0.25)', color: DIM, fontFamily: MONO, fontSize: 8, borderRadius: 2, outline: 'none', maxWidth: 90 }}>
+                              <option value="">BUILDER</option>
+                              {agents.map((a: any) => <option key={a.id} value={a.id}>{String(a.name || a.id).toUpperCase()}</option>)}
+                            </select>
+                            <button onClick={addMissionBlock} disabled={!missionTitle.trim() || missionBusy}
+                              style={{ background: 'rgba(251,191,36,0.15)', border: '1px solid #fbbf24', color: '#fde68a', fontFamily: MONO, fontSize: 8, fontWeight: 800, padding: '2px 8px', borderRadius: 2, cursor: missionTitle.trim() && !missionBusy ? 'pointer' : 'not-allowed', marginLeft: 'auto' }}>
+                              {missionBusy ? '…' : '+ SCHEDULE'}
+                            </button>
+                          </div>
+                          <div style={{ fontSize: 8, color: DIM, marginTop: 3 }}>DISPATCHES TO THE AGENT WHEN THE SLOT ARRIVES · VENTURE-TAGGED</div>
+                        </div>
                         {missionBlocks.map((b: any) => (
                           <Row key={b.id}>
-                            <span style={{ color: '#fbbf24', minWidth: 56, fontSize: 8.5 }}>{new Date(b.start).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}</span>
+                            <span style={{ color: '#fbbf24', minWidth: 86, fontSize: 8.5 }}>{new Date(b.start).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}</span>
                             <span style={{ color: 'rgba(125,211,252,0.8)', fontSize: 8, minWidth: 60 }}>{String(b.agentId || b.kind || 'agent').toUpperCase()}</span>
                             <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: INK, fontSize: 9 }}>{b.title}</span>
                           </Row>
