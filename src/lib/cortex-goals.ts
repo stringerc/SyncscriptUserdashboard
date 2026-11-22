@@ -24,6 +24,18 @@ export interface GoalSignalPoint {
   values: Record<string, number>;
 }
 
+export interface GoalStep {
+  id: string;
+  title: string;
+  completed?: boolean;
+}
+
+export interface GoalResource {
+  id: string;
+  name: string;
+  type?: string;
+}
+
 export interface LifeGoal {
   id: string;
   title: string;
@@ -39,6 +51,10 @@ export interface LifeGoal {
   lastReviewAt?: number;
   /** Venture scope (enterprise spec) — absent = fleet/personal. */
   ventureId?: string;
+  /** Declarative plan steps toward the goal. */
+  steps?: GoalStep[];
+  /** Attached references (docs, links, assets). */
+  resources?: GoalResource[];
 }
 
 export interface PatternRecord {
@@ -105,22 +121,25 @@ export class CortexGoals {
 
   // ── Goal CRUD ────────────────────────────────────────────────────
 
-  public declare(input: { title: string; horizon?: GoalHorizon; signals?: string[]; targetDate?: number; ventureId?: string }): LifeGoal {
+  public declare(input: { title: string; horizon?: GoalHorizon; signals?: string[]; targetDate?: number; ventureId?: string; steps?: string[]; resources?: { name: string; type?: string }[] }): LifeGoal {
     const title = input.title.trim();
     // Dedupe: accepting the same proposal twice must not spam duplicate goals.
     const existing = this.state.goals.find(g => g.status === 'active' && g.title === title);
     if (existing) return { ...existing };
+    const now = Date.now();
     const goal: LifeGoal = {
-      id: `goal-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+      id: `goal-${now}-${Math.random().toString(36).slice(2, 7)}`,
       title,
       horizon: input.horizon ?? 'quarter',
       status: 'active',
-      declaredAt: Date.now(),
+      declaredAt: now,
       targetDate: input.targetDate,
       signals: input.signals ?? [],
       ventureId: input.ventureId || undefined,
       history: [],
       driftWeeks: 0,
+      steps: (input.steps || []).filter(s => s.trim()).map((s, i) => ({ id: `gst-${now}-${i}`, title: s.trim(), completed: false })),
+      resources: (input.resources || []).filter(r => r.name.trim()).map((r, i) => ({ id: `gres-${now}-${i}`, name: r.name.trim(), type: r.type })),
     };
     this.state.goals.push(goal);
     this.save();
@@ -133,6 +152,17 @@ export class CortexGoals {
     if (!g) return false;
     g.status = status;
     if (status !== 'active') { g.driftScore = undefined; g.driftWeeks = 0; }
+    this.save();
+    this.notify();
+    return true;
+  }
+
+  /** Patch plan details (steps/resources) on an existing goal. */
+  public updateDetails(id: string, patch: { steps?: GoalStep[]; resources?: GoalResource[] }): boolean {
+    const g = this.state.goals.find(x => x.id === id);
+    if (!g) return false;
+    if (patch.steps) g.steps = patch.steps;
+    if (patch.resources) g.resources = patch.resources;
     this.save();
     this.notify();
     return true;

@@ -257,6 +257,10 @@ export function CortexFoundryNav({ snap, onSelectAgent, selectedAgent, onOpenTow
   const [newGoalTitle, setNewGoalTitle] = useState('');
   const [newGoalHorizon, setNewGoalHorizon] = useState<'week' | 'month' | 'quarter' | 'year' | 'life'>('quarter');
   const [newGoalVenture, setNewGoalVenture] = useState<string>('');
+  const [newGoalSteps, setNewGoalSteps] = useState<string[]>([]);
+  const [newGoalStepInput, setNewGoalStepInput] = useState('');
+  const [newGoalResources, setNewGoalResources] = useState<string[]>([]);
+  const [newGoalResInput, setNewGoalResInput] = useState('');
 
   const handleCreateTask = () => {
     const title = newTaskTitle.trim();
@@ -306,9 +310,15 @@ export function CortexFoundryNav({ snap, onSelectAgent, selectedAgent, onOpenTow
       title,
       horizon: newGoalHorizon,
       ventureId: newGoalVenture || undefined,
+      steps: newGoalSteps,
+      resources: newGoalResources.map(name => ({ name })),
     });
     setNewGoalTitle('');
     setNewGoalVenture('');
+    setNewGoalSteps([]);
+    setNewGoalStepInput('');
+    setNewGoalResources([]);
+    setNewGoalResInput('');
     setShowNewGoal(false);
     setGoalsTick((t) => t + 1);
   };
@@ -1199,6 +1209,56 @@ export function CortexFoundryNav({ snap, onSelectAgent, selectedAgent, onOpenTow
         {(ventures?.ventures || []).map((v: any) => (
           <button key={v.id} type="button" onClick={() => setNewGoalVenture(v.id)} style={{ background: newGoalVenture === v.id ? 'rgba(167,139,250,0.25)' : 'rgba(8,14,24,0.6)', border: `1px solid ${newGoalVenture === v.id ? '#a78bfa' : 'rgba(103,232,249,0.18)'}`, color: newGoalVenture === v.id ? '#c4b5fd' : DIM, fontFamily: MONO, fontSize: 8, padding: '2px 6px', borderRadius: 2, cursor: 'pointer' }}>{v.callSign || v.id.toUpperCase()}</button>
         ))}
+      </div>
+
+      <div>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 3 }}>
+          <span style={{ fontSize: 8, fontWeight: 800, letterSpacing: '0.18em', color: '#7dd3fc' }}>STEPS</span>
+          <span style={{ fontSize: 8, color: DIM }}>{newGoalSteps.length ? `${newGoalSteps.length} PLANNED` : 'OPTIONAL'}</span>
+        </div>
+        {newGoalSteps.map((s, i) => (
+          <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 5, marginBottom: 3 }}>
+            <span style={{ color: DIM, fontSize: 8.5, minWidth: 16 }}>{i + 1}.</span>
+            <span style={{ flex: 1, fontSize: 9.5, color: INK, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s}</span>
+            <button type="button" onClick={() => setNewGoalSteps(prev => prev.filter((_, j) => j !== i))}
+              style={{ background: 'none', border: 'none', color: '#fb7185', fontSize: 10, cursor: 'pointer', padding: '0 2px' }}>✕</button>
+          </div>
+        ))}
+        <div style={{ display: 'flex', gap: 4 }}>
+          <input type="text" placeholder="add a step…" value={newGoalStepInput}
+            onChange={(e) => setNewGoalStepInput(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter') { const v = newGoalStepInput.trim(); if (v) { setNewGoalSteps(prev => [...prev, v]); setNewGoalStepInput(''); } } }}
+            style={{ flex: 1, background: 'rgba(8,14,24,0.8)', border: '1px solid rgba(125,211,252,0.25)', color: INK, fontFamily: MONO, fontSize: 9, padding: '3px 7px', borderRadius: 2, outline: 'none' }} />
+          <button type="button"
+            onClick={() => { const v = newGoalStepInput.trim(); if (v) { setNewGoalSteps(prev => [...prev, v]); setNewGoalStepInput(''); } }}
+            disabled={!newGoalStepInput.trim()}
+            style={{ background: 'rgba(56,189,248,0.15)', border: '1px solid rgba(125,211,252,0.5)', color: '#7dd3fc', fontFamily: MONO, fontSize: 8, padding: '0 8px', borderRadius: 2, cursor: newGoalStepInput.trim() ? 'pointer' : 'not-allowed' }}>+ ADD</button>
+        </div>
+      </div>
+
+      <div>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 3 }}>
+          <span style={{ fontSize: 8, fontWeight: 800, letterSpacing: '0.18em', color: '#a78bfa' }}>RESOURCES</span>
+          <span style={{ fontSize: 8, color: DIM }}>{newGoalResources.length ? `${newGoalResources.length} ATTACHED` : 'OPTIONAL'}</span>
+        </div>
+        {newGoalResources.map((r, i) => (
+          <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 5, marginBottom: 3 }}>
+            <span style={{ color: DIM, fontSize: 8.5 }}>·</span>
+            <span style={{ flex: 1, fontSize: 9.5, color: INK, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r}</span>
+            <button type="button" onClick={() => setNewGoalResources(prev => prev.filter((_, j) => j !== i))}
+              style={{ background: 'none', border: 'none', color: '#fb7185', fontSize: 10, cursor: 'pointer', padding: '0 2px' }}>✕</button>
+          </div>
+        ))}
+        <div style={{ display: 'flex', gap: 4 }}>
+          <input type="text" placeholder="resource name / link…" value={newGoalResInput}
+            onChange={(e) => setNewGoalResInput(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter') { const v = newGoalResInput.trim(); if (v) { setNewGoalResources(prev => [...prev, v]); setNewGoalResInput(''); } } }}
+            style={{ flex: 1, background: 'rgba(8,14,24,0.8)', border: '1px solid rgba(167,139,250,0.25)', color: INK, fontFamily: MONO, fontSize: 9, padding: '3px 7px', borderRadius: 2, outline: 'none' }} />
+          <button type="button"
+            onClick={() => { const v = newGoalResInput.trim(); if (v) { setNewGoalResources(prev => [...prev, v]); setNewGoalResInput(''); } }}
+            disabled={!newGoalResInput.trim()}
+            style={{ background: 'rgba(167,139,250,0.15)', border: '1px solid rgba(167,139,250,0.5)', color: '#c4b5fd', fontFamily: MONO, fontSize: 8, padding: '0 8px', borderRadius: 2, cursor: newGoalResInput.trim() ? 'pointer' : 'not-allowed' }}>+ ADD</button>
+        </div>
       </div>
 
       <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 6, marginTop: 2 }}>
