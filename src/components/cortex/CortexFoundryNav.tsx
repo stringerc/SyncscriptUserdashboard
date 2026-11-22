@@ -216,6 +216,8 @@ export function CortexFoundryNav({ snap, onSelectAgent, selectedAgent, onOpenTow
   const [campMetricEdits, setCampMetricEdits] = useState<Record<string, { clicks: string; sales: string; upsells: string }>>({});
   const [campEnq, setCampEnq] = useState<Record<string, { type: string; f1: string; f2: string; f3: string; f4: string }>>({});
   const [campBusy, setCampBusy] = useState(false);
+  const [ventureDecisions, setVentureDecisions] = useState<{ venture: string; items: any[] } | null>(null);
+  const ventureDecisionsRef = useRef<(() => void) | null>(null);
   const [expandedAgent, setExpandedAgent] = useState<string | null>(null);
   const [ventureSchedInput, setVentureSchedInput] = useState('');
   const [ventureBudgetInput, setVentureBudgetInput] = useState('');
@@ -595,6 +597,22 @@ export function CortexFoundryNav({ snap, onSelectAgent, selectedAgent, onOpenTow
         .then((d) => setPlanItems({ venture: ventureConsole, items: Array.isArray(d?.items) ? d.items : [] }))
         .catch(() => setPlanItems({ venture: ventureConsole, items: [] }));
     }
+    // Decisions log — recently decided proposals for this venture, so an
+    // approval's outcome is visible in-console instead of vanishing.
+    const loadVentureDecisions = () => {
+      fetch('/api/cortex/agents/proposals', { cache: 'no-store' })
+        .then((r) => r.json())
+        .then((d) => {
+          const decided = (Array.isArray(d?.proposals) ? d.proposals : [])
+            .filter((p: any) => ['approved', 'dismissed', 'executed', 'failed'].includes(String(p.status)) && String(p.ventureId || 'cortex') === ventureConsole)
+            .sort((a: any, b: any) => (b.decidedAt || b.createdAt || 0) - (a.decidedAt || a.createdAt || 0))
+            .slice(0, 12);
+          setVentureDecisions({ venture: ventureConsole, items: decided });
+        })
+        .catch(() => setVentureDecisions({ venture: ventureConsole, items: [] }));
+    };
+    if (!ventureDecisions || ventureDecisions.venture !== ventureConsole) loadVentureDecisions();
+    ventureDecisionsRef.current = loadVentureDecisions;
     if (ventureTab === 'calendar' && calendar === null) {
       fetch('/api/cortex/calendar/upcoming', { cache: 'no-store' })
         .then((r) => r.json())
@@ -625,7 +643,7 @@ export function CortexFoundryNav({ snap, onSelectAgent, selectedAgent, onOpenTow
         .then((d) => setVentureRoutines(Array.isArray(d?.routines) ? d.routines : []))
         .catch(() => setVentureRoutines([]));
     }
-    if (ventureTab === 'plan' && venturePlan === null) {
+    if ((ventureTab === 'plan' || ventureTab === 'goals') && venturePlan === null) {
       fetch('/api/cortex/mission?action=state', { cache: 'no-store' })
         .then((r) => r.json())
         .then((d) => setVenturePlan(d && d.ok !== false ? d : { goals: [], opsItems: [], blocks: [] }))
@@ -3166,7 +3184,26 @@ export function CortexFoundryNav({ snap, onSelectAgent, selectedAgent, onOpenTow
                         </div>
                         {showNewGoal && renderNewGoalDrawer()}
                         {vcGoals.slice(0, 8).map((g: any) => <CortexFoundryGoalCard key={g.id} goal={g} />)}
-                        {!vcGoals.length && empty('NO GOALS — DECLARE ONE: "set a goal to …" scoped to this venture')}
+                        {!vcGoals.length && empty('NO LIFE GOALS — DECLARE ONE: "set a goal to …" scoped to this venture')}
+                        {/* Mission-engine goals — the store the card's GOALS stat counts */}
+                        {(() => {
+                          const mg = (venturePlan?.goals || []).filter((g: any) => String(g.ventureId || 'cortex') === vc.id);
+                          if (!mg.length) return null;
+                          return (
+                            <div style={{ marginTop: 8 }}>
+                              <div style={{ fontSize: 8, fontWeight: 800, letterSpacing: '0.2em', color: '#fbbf24', borderBottom: '1px solid rgba(251,191,36,0.2)', paddingBottom: 2, marginBottom: 3 }}>
+                                MISSION GOALS · ENGINE-OWNED · {mg.length}
+                              </div>
+                              {mg.map((g: any) => (
+                                <Row key={g.id}>
+                                  <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: INK, fontSize: 9 }}>{g.title}</span>
+                                  <span style={{ fontSize: 8, color: g.status === 'active' ? '#34d399' : DIM }}>{String(g.status || '').toUpperCase()}</span>
+                                </Row>
+                              ))}
+                              <div style={{ fontSize: 8, color: DIM, marginTop: 2 }}>LIFE GOALS ABOVE ARE YOURS · MISSION GOALS ARE THE ENGINE'S — BOTH COUNT ON THE CARD</div>
+                            </div>
+                          );
+                        })()}
                       </div>
                     )}
 
@@ -3429,12 +3466,40 @@ export function CortexFoundryNav({ snap, onSelectAgent, selectedAgent, onOpenTow
                       <div>
                         {inbox === null && empty('LOADING…')}
                         {inboxProps.map((p: any) => (
-                          <Row key={p.id || p.planNote}>
+                          <div key={p.id || p.planNote} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '3px 0', borderBottom: '1px solid rgba(148,163,184,0.06)' }}>
                             <span style={{ color: '#fbbf24', fontSize: 8, minWidth: 60 }}>{String(p.status || 'pending').toUpperCase()}</span>
                             <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: INK, fontSize: 9 }}>{p.title || p.planNote || p.planTaskId || p.id}</span>
-                          </Row>
+                            {p.id && (
+                              <span style={{ display: 'flex', gap: 3 }}>
+                                <button onClick={async () => { await decideProposal(p.id, 'approved'); ventureDecisionsRef.current?.(); }}
+                                  style={{ background: 'rgba(52,211,153,0.15)', border: '1px solid #34d399', color: '#6ee7b7', fontFamily: MONO, fontSize: 8, fontWeight: 800, padding: '1px 6px', borderRadius: 2, cursor: 'pointer' }}>✓</button>
+                                <button onClick={async () => { await decideProposal(p.id, 'dismissed'); ventureDecisionsRef.current?.(); }}
+                                  style={{ background: 'rgba(248,113,113,0.1)', border: '1px solid rgba(248,113,113,0.5)', color: '#fca5a5', fontFamily: MONO, fontSize: 8, fontWeight: 800, padding: '1px 6px', borderRadius: 2, cursor: 'pointer' }}>✕</button>
+                              </span>
+                            )}
+                          </div>
                         ))}
                         {inbox !== null && !inboxProps.length && empty('NO PENDING DECISIONS FOR THIS VENTURE')}
+                        {/* decisions log — approval outcomes stay visible */}
+                        {(() => {
+                          const decided = ventureDecisions && ventureDecisions.venture === vc.id ? ventureDecisions.items : [];
+                          if (!decided.length) return null;
+                          const color: Record<string, string> = { approved: '#34d399', executed: '#34d399', dismissed: DIM, failed: '#f87171' };
+                          return (
+                            <div style={{ marginTop: 8 }}>
+                              <div style={{ fontSize: 8, fontWeight: 800, letterSpacing: '0.2em', color: DIM, borderBottom: '1px solid rgba(148,163,184,0.15)', paddingBottom: 2, marginBottom: 3 }}>
+                                DECISIONS LOG
+                              </div>
+                              {decided.map((p: any) => (
+                                <Row key={p.id}>
+                                  <span style={{ color: color[String(p.status)] || DIM, fontSize: 8, minWidth: 60 }}>{String(p.status || '').toUpperCase()}</span>
+                                  <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: DIM, fontSize: 9 }}>{p.title || p.id}</span>
+                                  <span style={{ fontSize: 8, color: DIM }}>{p.decidedAt ? new Date(p.decidedAt).toLocaleDateString([], { month: 'short', day: 'numeric' }) : ''}</span>
+                                </Row>
+                              ))}
+                            </div>
+                          );
+                        })()}
                       </div>
                     )}
 
