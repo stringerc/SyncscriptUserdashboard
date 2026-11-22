@@ -3189,16 +3189,20 @@ function CameraRig({
         chasePhi.current = Math.acos(THREE.MathUtils.clamp(_chaseDir.y / dlen, -1, 1));
         chaseTheta.current = Math.atan2(_chaseDir.x, _chaseDir.z);
       }
-      targetLookAt.current.lerp(targetWorldPos, Math.min(1, delta * 3.8));
+      targetLookAt.current.lerp(targetWorldPos, Math.min(1, delta * 5));
+      // Orbit around the smoothed lookAt anchor (not the raw agent position) so
+      // the camera position and gaze always share one point — the agent stays
+      // dead-center even at extreme close zoom while it keeps orbiting.
+      const anchor = targetLookAt.current;
       const r = chaseZoom.current;
       const sp = Math.sin(chasePhi.current);
       const cp = Math.cos(chasePhi.current);
       const st = Math.sin(chaseTheta.current);
       const ct = Math.cos(chaseTheta.current);
       _chasePos.set(
-        targetWorldPos.x + r * sp * st,
-        targetWorldPos.y + r * cp,
-        targetWorldPos.z + r * sp * ct
+        anchor.x + r * sp * st,
+        anchor.y + r * cp,
+        anchor.z + r * sp * ct
       );
       _chasePos.y += Math.sin(t * 1.5) * 0.04 * Math.min(1, r / 2.6);
       targetCamPos.current.lerp(_chasePos, Math.min(1, delta * 3.2));
