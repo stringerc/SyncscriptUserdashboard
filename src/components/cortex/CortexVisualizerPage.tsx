@@ -1497,42 +1497,6 @@ export default function CortexVisualizerPage() {
           <span>FOUNDRY</span>
         </button>
 
-          {/* TIMELINE — horizontal sacred timeline: strands run past→NOW */}
-          <button
-            onClick={() => {
-              if (mapMode) setMapMode(false);
-              if (faceMode === 'timeline') return;
-              setFaceMode('timeline');
-              try { localStorage.setItem('cortex_visualizer_face', 'timeline'); } catch {}
-              cortexSpeak('Opening the sacred timeline.');
-            }}
-            title="Sacred Timeline — horizontal TVA strands of live events"
-            style={{
-              padding: '5px 12px',
-              borderRadius: 14,
-              border: faceMode === 'timeline' && !mapMode ? '1px solid #67e8f9' : '1px solid rgba(148,233,255,0.18)',
-              background: faceMode === 'timeline' && !mapMode ? 'rgba(103,232,249,0.18)' : 'rgba(4,8,14,0.5)',
-              color: faceMode === 'timeline' && !mapMode ? '#f0f9ff' : 'rgba(165,243,252,0.7)',
-              fontFamily: "'IBM Plex Mono', monospace",
-              fontSize: 9.5,
-              fontWeight: 800,
-              letterSpacing: '0.14em',
-              boxShadow: faceMode === 'timeline' && !mapMode ? '0 0 12px rgba(103,232,249,0.4)' : 'none',
-              cursor: faceMode === 'timeline' && !mapMode ? 'default' : 'pointer',
-              display: 'flex',
-              alignItems: 'center',
-              gap: 5,
-              transition: 'all 0.2s',
-            }}
-          >
-            {faceMode === 'timeline' && !mapMode ? (
-              <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#67e8f9', boxShadow: '0 0 6px #67e8f9' }} />
-            ) : (
-              <span style={{ color: '#67e8f9' }}>⌛</span>
-            )}
-            <span>TIMELINE</span>
-          </button>
-
           {/* MAP */}
           <button
             onClick={() => {
