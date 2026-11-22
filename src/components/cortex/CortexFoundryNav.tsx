@@ -250,6 +250,8 @@ export function CortexFoundryNav({ snap, onSelectAgent, selectedAgent, onOpenTow
   const [newTaskTitle, setNewTaskTitle] = useState('');
   const [newTaskPriority, setNewTaskPriority] = useState<'low' | 'medium' | 'high' | 'critical'>('medium');
   const [newTaskTarget, setNewTaskTarget] = useState<'user' | 'agent'>('user');
+  const [newTaskSteps, setNewTaskSteps] = useState<string[]>([]);
+  const [newTaskStepInput, setNewTaskStepInput] = useState('');
 
   const [showNewGoal, setShowNewGoal] = useState(false);
   const [newGoalTitle, setNewGoalTitle] = useState('');
@@ -269,6 +271,7 @@ export function CortexFoundryNav({ snap, onSelectAgent, selectedAgent, onOpenTow
       dueDate: now.toISOString(),
       createdAt: now.toISOString(),
       ventureId: newTaskVenture || undefined,
+      subtasks: newTaskSteps.map((s, i) => ({ id: `st-${now.getTime()}-${i}`, title: s, completed: false, order: i })),
     };
 
     setUserTasks((prev) => [created, ...(prev || [])]);
@@ -291,6 +294,8 @@ export function CortexFoundryNav({ snap, onSelectAgent, selectedAgent, onOpenTow
 
     setNewTaskTitle('');
     setNewTaskVenture('');
+    setNewTaskSteps([]);
+    setNewTaskStepInput('');
     setShowNewTask(false);
   };
 
@@ -1044,6 +1049,42 @@ export function CortexFoundryNav({ snap, onSelectAgent, selectedAgent, onOpenTow
             }}
           >{v.callSign || v.id.toUpperCase()}</button>
         ))}
+      </div>
+
+      <div>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 3 }}>
+          <span style={{ fontSize: 8, fontWeight: 800, letterSpacing: '0.18em', color: '#7dd3fc' }}>STEPS</span>
+          <span style={{ fontSize: 8, color: DIM }}>{newTaskSteps.length ? `${newTaskSteps.length} PLANNED` : 'OPTIONAL'}</span>
+        </div>
+        {newTaskSteps.map((s, i) => (
+          <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 5, marginBottom: 3 }}>
+            <span style={{ color: DIM, fontSize: 8.5, minWidth: 16 }}>{i + 1}.</span>
+            <span style={{ flex: 1, fontSize: 9.5, color: INK, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s}</span>
+            <button type="button" onClick={() => setNewTaskSteps(prev => prev.filter((_, j) => j !== i))}
+              style={{ background: 'none', border: 'none', color: '#fb7185', fontSize: 10, cursor: 'pointer', padding: '0 2px' }}>✕</button>
+          </div>
+        ))}
+        <div style={{ display: 'flex', gap: 4 }}>
+          <input
+            type="text"
+            placeholder="add a step…"
+            value={newTaskStepInput}
+            onChange={(e) => setNewTaskStepInput(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                const v = newTaskStepInput.trim();
+                if (v) { setNewTaskSteps(prev => [...prev, v]); setNewTaskStepInput(''); }
+              }
+            }}
+            style={{ flex: 1, background: 'rgba(8,14,24,0.8)', border: '1px solid rgba(125,211,252,0.25)', color: INK, fontFamily: MONO, fontSize: 9, padding: '3px 7px', borderRadius: 2, outline: 'none' }}
+          />
+          <button type="button"
+            onClick={() => { const v = newTaskStepInput.trim(); if (v) { setNewTaskSteps(prev => [...prev, v]); setNewTaskStepInput(''); } }}
+            disabled={!newTaskStepInput.trim()}
+            style={{ background: 'rgba(56,189,248,0.15)', border: '1px solid rgba(125,211,252,0.5)', color: '#7dd3fc', fontFamily: MONO, fontSize: 8, padding: '0 8px', borderRadius: 2, cursor: newTaskStepInput.trim() ? 'pointer' : 'not-allowed' }}>
+            + ADD
+          </button>
+        </div>
       </div>
 
       <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 6, marginTop: 2 }}>

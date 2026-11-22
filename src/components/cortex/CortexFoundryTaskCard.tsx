@@ -26,6 +26,7 @@ type Overrides = Record<string, {
   milestoneDone?: Record<string, boolean>;
   subtaskDone?: Record<string, boolean>;
   resources?: { id: string; name: string; type?: string }[];
+  addedSubtasks?: { id: string; title: string }[];
 }>;
 
 function loadOverrides(): Overrides {
@@ -71,12 +72,15 @@ export function CortexFoundryTaskCard({ task }: { task: any }) {
   const [ov, setOv] = useState<Overrides>(() => loadOverrides());
   const [addingRes, setAddingRes] = useState(false);
   const [resName, setResName] = useState('');
+  const [addingStep, setAddingStep] = useState(false);
+  const [stepName, setStepName] = useState('');
 
   const o = ov[task.id] || {};
+  const allSubtasks = [...(task.subtasks || []), ...(o.addedSubtasks || [])];
   const msDone = { ...(Object.fromEntries((task.milestones || []).map((m: any) => [m.id, !!m.completed]))), ...(o.milestoneDone || {}) };
-  const ssDone = { ...(Object.fromEntries((task.subtasks || []).map((s: any) => [s.id, !!s.completed]))), ...(o.subtaskDone || {}) };
+  const ssDone = { ...(Object.fromEntries(allSubtasks.map((s: any) => [s.id, !!s.completed])), ...(o.subtaskDone || {}) };
   const resources = [...(task.resources || []), ...(o.resources || [])];
-  const pct = progressOf({ ...task, milestones: (task.milestones || []).map((m: any) => ({ ...m, completed: msDone[m.id] })), subtasks: (task.subtasks || []).map((s: any) => ({ ...s, completed: ssDone[s.id] })) });
+  const pct = progressOf({ ...task, milestones: (task.milestones || []).map((m: any) => ({ ...m, completed: msDone[m.id] })), subtasks: allSubtasks.map((s: any) => ({ ...s, completed: ssDone[s.id] })) });
 
   const mutate = (fn: (cur: Overrides) => Overrides) => {
     setOv(prev => { const next = fn(prev); saveOverrides(next); return next; });
@@ -90,8 +94,16 @@ export function CortexFoundryTaskCard({ task }: { task: any }) {
     mutate(p => ({ ...p, [task.id]: { ...p[task.id], resources: [...(p[task.id]?.resources || []), { id: `res-${Date.now()}`, name }] } }));
     setResName(''); setAddingRes(false);
   };
+  const addStep = () => {
+    const title = stepName.trim(); if (!title) return;
+    mutate(p => ({ ...p, [task.id]: { ...p[task.id], addedSubtasks: [...(p[task.id]?.addedSubtasks || []), { id: `st-${Date.now()}`, title }] } }));
+    setStepName(''); setAddingStep(false);
+  };
+  const removeAddedStep = (id: string) =>
+    mutate(p => ({ ...p, [task.id]: { ...p[task.id], addedSubtasks: (p[task.id]?.addedSubtasks || []).filter(s => s.id !== id) } }));
 
-  const hasDetail = (task.milestones || []).length + (task.subtasks || []).length + resources.length > 0 || !!task.description;
+  // Every card is expandable — STEPS/RESOURCES can be added to any task.
+  const hasDetail = true;
 
   return (
     <div style={{ border: '1px solid rgba(251,191,36,0.14)', borderRadius: 3, margin: '3px 0', background: 'rgba(251,191,36,0.03)' }}>
@@ -110,7 +122,7 @@ export function CortexFoundryTaskCard({ task }: { task: any }) {
         </div>
       )}
       {open && (
-        <div style={{ padding: '2px 10px 8px', fontSize: 9.5, color: DIM, lineHeight: 1.6 }}>
+        <div onClick={e => e.stopPropagation()} style={{ padding: '2px 10px 8px', fontSize: 9.5, color: DIM, lineHeight: 1.6 }}>
           {task.description && <div style={{ marginBottom: 4, color: 'rgba(224,242,254,0.7)' }}>{task.description}</div>}
           {(task.milestones || []).length > 0 && (
             <div style={{ margin: '4px 0' }}>
@@ -123,17 +135,35 @@ export function CortexFoundryTaskCard({ task }: { task: any }) {
               ))}
             </div>
           )}
-          {(task.subtasks || []).length > 0 && (
-            <div style={{ margin: '4px 0' }}>
-              <div style={{ fontSize: 8, fontWeight: 800, letterSpacing: '0.18em', color: '#7dd3fc', marginBottom: 2 }}>STEPS</div>
-              {task.subtasks.map((s: any) => (
-                <label key={s.id} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '1px 0', cursor: 'pointer' }}>
-                  <input type="checkbox" checked={!!ssDone[s.id]} onChange={() => toggleSs(s.id, !!ssDone[s.id])} style={{ accentColor: '#38bdf8' }} />
-                  <span style={{ textDecoration: ssDone[s.id] ? 'line-through' : 'none', opacity: ssDone[s.id] ? 0.5 : 1 }}>{s.title}</span>
-                </label>
-              ))}
+          <div style={{ margin: '4px 0' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 2 }}>
+              <span style={{ fontSize: 8, fontWeight: 800, letterSpacing: '0.18em', color: '#7dd3fc' }}>STEPS</span>
+              <button onClick={() => setAddingStep(a => !a)} style={{ background: 'none', border: '1px solid rgba(125,211,252,0.4)', color: '#7dd3fc', fontFamily: MONO, fontSize: 8, padding: '0 6px', borderRadius: 2, cursor: 'pointer' }}>+ ADD STEP</button>
             </div>
-          )}
+            {allSubtasks.map((s: any, i: any) => {
+              const isAdded = i >= (task.subtasks || []).length;
+              return (
+                <div key={s.id} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '1px 0' }}>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer', flex: 1 }}>
+                    <input type="checkbox" checked={!!ssDone[s.id]} onChange={() => toggleSs(s.id, !!ssDone[s.id])} style={{ accentColor: '#38bdf8' }} />
+                    <span style={{ textDecoration: ssDone[s.id] ? 'line-through' : 'none', opacity: ssDone[s.id] ? 0.5 : 1 }}>{s.title}</span>
+                  </label>
+                  {isAdded && (
+                    <button onClick={() => removeAddedStep(s.id)} style={{ background: 'none', border: 'none', color: '#fb7185', fontSize: 9, cursor: 'pointer', padding: '0 2px' }}>✕</button>
+                  )}
+                </div>
+              );
+            })}
+            {!allSubtasks.length && !addingStep && <div style={{ opacity: 0.6 }}>no steps yet</div>}
+            {addingStep && (
+              <div style={{ display: 'flex', gap: 4, marginTop: 3 }}>
+                <input value={stepName} onChange={e => setStepName(e.target.value)} onKeyDown={e => e.key === 'Enter' && addStep()}
+                  placeholder="step description…" autoFocus
+                  style={{ flex: 1, background: 'rgba(15,23,42,0.8)', border: '1px solid rgba(125,211,252,0.4)', color: INK, fontFamily: MONO, fontSize: 9, padding: '2px 6px', borderRadius: 2, outline: 'none' }} />
+                <button onClick={addStep} style={{ background: 'rgba(56,189,248,0.2)', border: '1px solid #7dd3fc', color: '#bae6fd', fontFamily: MONO, fontSize: 8, padding: '0 8px', borderRadius: 2, cursor: 'pointer' }}>ADD</button>
+              </div>
+            )}
+          </div>
           <div style={{ margin: '4px 0' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 2 }}>
               <span style={{ fontSize: 8, fontWeight: 800, letterSpacing: '0.18em', color: '#a78bfa' }}>RESOURCES</span>
