@@ -1357,14 +1357,14 @@ export default function CortexVisualizerPage() {
           zIndex: 50,
           display: 'flex',
           alignItems: 'center',
-          gap: 6,
+          gap: navCollapsed ? 4 : 6,
           background: 'rgba(6,10,24,0.85)',
-          padding: '5px 8px',
+          padding: navCollapsed ? '4px 6px' : '5px 8px',
           borderRadius: 20,
           border: '1px solid rgba(103,232,249,0.25)',
           backdropFilter: 'blur(16px)',
           boxShadow: '0 4px 24px rgba(0,0,0,0.55), 0 0 16px rgba(103,232,249,0.08)',
-          transition: 'right 0.25s ease',
+          transition: 'right 0.25s ease, gap 0.3s ease, padding 0.3s ease',
         }}
       >
         {/* Nav expander — on the Core face the rail collapses to CORE + ◂;
@@ -1375,7 +1375,7 @@ export default function CortexVisualizerPage() {
             title={navExpanded ? 'Collapse navigation' : 'Expand navigation'}
             aria-label={navExpanded ? 'Collapse navigation' : 'Expand navigation'}
             style={{
-              padding: '5px 9px',
+              padding: navCollapsed ? '5px 7px' : '5px 9px',
               borderRadius: 14,
               border: '1px solid rgba(148,233,255,0.18)',
               background: 'rgba(4,8,14,0.5)',
@@ -1418,7 +1418,7 @@ export default function CortexVisualizerPage() {
           }}
           title={faceMode === 'core' && !mapMode ? 'Sovereign Core — click again for core controls' : 'Switch to Sovereign Core'}
           style={{
-            padding: '5px 12px',
+            padding: navCollapsed ? '5px 9px' : '5px 12px',
             borderRadius: 14,
             border: faceMode === 'core' && !mapMode ? '1px solid #38bdf8' : '1px solid rgba(148,233,255,0.18)',
             background: faceMode === 'core' && !mapMode ? 'rgba(56,189,248,0.18)' : 'rgba(4,8,14,0.5)',
@@ -1454,7 +1454,7 @@ export default function CortexVisualizerPage() {
             title={chatOpen ? 'Cortex Uplink Chat Drawer open — click to close (Esc)' : 'Open Cortex Uplink Chat Drawer'}
             aria-label={chatOpen ? 'Close chat drawer' : 'Open chat drawer'}
             style={{
-              padding: '5px 12px',
+              padding: navCollapsed ? '5px 9px' : '5px 12px',
               borderRadius: 14,
               border: `1px solid ${chatOpen ? accent : 'rgba(148,233,255,0.18)'}`,
               background: chatOpen ? `${accent}22` : 'rgba(4,8,14,0.5)',
@@ -1472,7 +1472,11 @@ export default function CortexVisualizerPage() {
             }}
           >
             <span style={{ color: accent }}>💬</span>
-            <span>{chatOpen ? 'CHAT · ON' : 'CHAT'}</span>
+            <span style={{
+              width: 6, height: 6, borderRadius: '50%',
+              background: chatOpen ? accent : 'rgba(148,163,184,0.4)',
+              boxShadow: chatOpen ? `0 0 6px ${accent}` : 'none',
+            }} />
           </button>
         )}
 
