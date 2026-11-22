@@ -78,7 +78,7 @@ export function CortexFoundryTaskCard({ task }: { task: any }) {
   const o = ov[task.id] || {};
   const allSubtasks = [...(task.subtasks || []), ...(o.addedSubtasks || [])];
   const msDone = { ...(Object.fromEntries((task.milestones || []).map((m: any) => [m.id, !!m.completed]))), ...(o.milestoneDone || {}) };
-  const ssDone = { ...(Object.fromEntries(allSubtasks.map((s: any) => [s.id, !!s.completed])), ...(o.subtaskDone || {}) };
+  const ssDone = { ...Object.fromEntries(allSubtasks.map((s: any) => [s.id, !!s.completed])), ...(o.subtaskDone || {}) };
   const resources = [...(task.resources || []), ...(o.resources || [])];
   const pct = progressOf({ ...task, milestones: (task.milestones || []).map((m: any) => ({ ...m, completed: msDone[m.id] })), subtasks: allSubtasks.map((s: any) => ({ ...s, completed: ssDone[s.id] })) });
 
