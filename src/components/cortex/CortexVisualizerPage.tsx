@@ -374,12 +374,6 @@ export default function CortexVisualizerPage() {
   const [nightMode, setNightMode] = useState(() => {
     try { return localStorage.getItem('cortex_night_mode') === '1'; } catch { return false; }
   });
-  const toggleNightMode = () => {
-    setNightMode((n) => {
-      try { localStorage.setItem('cortex_night_mode', n ? '0' : '1'); } catch {}
-      return !n;
-    });
-  };
   // Core scene: V1 is the only core scene (V2 was removed — rejected murmuration flock).
   // Legacy ?scene=v1|v2 URL param is ignored; V1 always renders.
   // ?orb=1 overlays the thinking-orbs dotted orb (2D canvas, no lighting).
@@ -1548,32 +1542,6 @@ export default function CortexVisualizerPage() {
           >
             <span style={{ color: '#e879f9' }}>🌍</span>
             <span>{mapMode ? 'MAP ACTIVE' : 'MAP'}</span>
-          </button>
-
-          {/* DAY / NIGHT — night dims the scene and ignites neon bloom + orb glow */}
-          <button
-            onClick={toggleNightMode}
-            title={nightMode ? 'Night mode — darkened scene, neon core & glowing orbs. Click for day.' : 'Day mode. Click for neon night.'}
-            style={{
-              padding: '5px 12px',
-              borderRadius: 14,
-              border: nightMode ? '1px solid rgba(192,132,252,0.6)' : '1px solid rgba(125,211,252,0.4)',
-              background: nightMode ? 'rgba(46,18,72,0.55)' : 'rgba(8,24,38,0.5)',
-              color: nightMode ? '#e9d5ff' : 'rgba(186,230,253,0.85)',
-              fontFamily: "'IBM Plex Mono', monospace",
-              fontSize: 9.5,
-              fontWeight: 700,
-              letterSpacing: '0.14em',
-              cursor: 'pointer',
-              display: 'flex',
-              alignItems: 'center',
-              gap: 5,
-              boxShadow: nightMode ? '0 0 12px rgba(192,132,252,0.3)' : 'none',
-              transition: 'all 0.25s',
-            }}
-          >
-            <span style={{ color: nightMode ? '#d8b4fe' : '#7dd3fc' }}>{nightMode ? '☾' : '☀'}</span>
-            <span>{nightMode ? 'NIGHT' : 'DAY'}</span>
           </button>
 
           {/* CHAT */}
