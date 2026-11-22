@@ -233,6 +233,7 @@ export default function CortexVisualizerPage() {
   const [micLive, setMicLive] = useState(false);
   const [chatOpen, setChatOpen] = useState(true);
   const [coreMenuOpen, setCoreMenuOpen] = useState(false);
+  const [navExpanded, setNavExpanded] = useState(false);
   const [audioEnabled, setAudioEnabled] = useState(() => neuroAudio.isEnabled());
   const [chronoActive, setChronoActive] = useState(false);
   const [chronoTime, setChronoTime] = useState(0.0);
@@ -907,7 +908,7 @@ export default function CortexVisualizerPage() {
       const tag = (e.target as HTMLElement | null)?.tagName;
       const typing = tag === 'INPUT' || tag === 'TEXTAREA' || (e.target as HTMLElement | null)?.isContentEditable;
       if (e.key === 'Escape') {
-        setMapMode(false); setChatOpen(false); setCoreMenuOpen(false);
+        setMapMode(false); setChatOpen(false); setCoreMenuOpen(false); setNavExpanded(false);
         if (focusModeRef.current) setSurfaceFocusMode(false);
       }
       if (typing) return;
@@ -1130,7 +1131,7 @@ export default function CortexVisualizerPage() {
     return () => window.removeEventListener('pointerdown', onDown, true);
   }, [coreMenuOpen]);
   useEffect(() => {
-    if (faceMode !== 'core' || mapMode) setCoreMenuOpen(false);
+    if (faceMode !== 'core' || mapMode) { setCoreMenuOpen(false); setNavExpanded(false); }
   }, [faceMode, mapMode]);
 
   const fmtElapsed = (s: number) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
@@ -1352,6 +1353,30 @@ export default function CortexVisualizerPage() {
           transition: 'right 0.25s ease',
         }}
       >
+        {/* Nav expander — on the Core face the rail collapses to CORE + ◂;
+            clicking reveals the full menu. ▸ collapses it again. */}
+        {faceMode === 'core' && !mapMode && (
+          <button
+            onClick={() => setNavExpanded(v => !v)}
+            title={navExpanded ? 'Collapse navigation' : 'Expand navigation'}
+            aria-label={navExpanded ? 'Collapse navigation' : 'Expand navigation'}
+            style={{
+              padding: '5px 9px',
+              borderRadius: 14,
+              border: '1px solid rgba(148,233,255,0.18)',
+              background: 'rgba(4,8,14,0.5)',
+              color: navExpanded ? '#38bdf8' : 'rgba(165,243,252,0.7)',
+              fontFamily: "'IBM Plex Mono', monospace",
+              fontSize: 10,
+              fontWeight: 800,
+              cursor: 'pointer',
+              transition: 'all 0.2s',
+            }}
+          >
+            {navExpanded ? '▸' : '◂'}
+          </button>
+        )}
+
         {/* CORE — switches to Sovereign Core; on Core face, toggles the controls dropdown */}
         <button
           data-core-menu
@@ -1397,6 +1422,8 @@ export default function CortexVisualizerPage() {
           )}
         </button>
 
+        {/* Remaining nav items — hidden while the Core face rail is collapsed */}
+        {!(faceMode === 'core' && !mapMode && !navExpanded) && (<>
         {/* FOUNDRY */}
         <button
           onClick={() => {
@@ -1583,6 +1610,7 @@ export default function CortexVisualizerPage() {
             }} />
             <span>{micLive ? 'SPEAKING' : micOn ? 'VOICE ON' : 'VOICE MUTED'}</span>
           </button>
+        </>)}
         </nav>
 
       {/* Core controls dropdown — anchored under the CORE nav button. Replaces the
