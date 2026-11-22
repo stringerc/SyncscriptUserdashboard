@@ -26,7 +26,7 @@ const MONO = "'IBM Plex Mono', monospace";
 const INK = '#e0f2fe';
 const DIM = 'rgba(148,163,184,0.55)';
 
-type FoundryView = 'dashboard' | 'tasks' | 'goals' | 'calendar' | 'agents' | 'missions' | 'counsel' | 'simulation' | 'recon' | 'reel' | 'campaigns' | 'inbox' | 'incidents' | 'pipeline' | 'standup' | 'messages' | 'ventures' | 'evolution' | 'voice' | 'resonance';
+type FoundryView = 'dashboard' | 'tasks' | 'goals' | 'calendar' | 'agents' | 'missions' | 'counsel' | 'simulation' | 'recon' | 'reel' | 'campaigns' | 'inbox' | 'incidents' | 'standup' | 'messages' | 'ventures' | 'evolution' | 'resonance';
 
 const NAV_ITEMS: { id: FoundryView; glyph: string; label: string; hint: string }[] = [
   { id: 'dashboard', glyph: '◈', label: 'DASHBOARD', hint: 'Mission Control tower board' },
@@ -43,9 +43,7 @@ const NAV_ITEMS: { id: FoundryView; glyph: string; label: string; hint: string }
   { id: 'standup', glyph: '⚡', label: 'STANDUP', hint: 'Fleet roll call & daily bids' },
   { id: 'inbox', glyph: '✉', label: 'INBOX', hint: 'Proposals awaiting your decision' },
   { id: 'incidents', glyph: '⚠', label: 'INCIDENTS', hint: 'Failure ticket ledger' },
-  { id: 'pipeline', glyph: '⇶', label: 'PIPELINE', hint: 'Distribution / product flow' },
-  { id: 'messages', glyph: '⇄', label: 'COMMS', hint: 'Agent message bus traffic' },
-  { id: 'voice', glyph: '♪', label: 'VOICE', hint: 'Cortex voice engines — live test' },
+  { id: 'messages', glyph: '⇄', label: 'COMMS', hint: 'Agent message bus + voice engines' },
   { id: 'resonance', glyph: '∿', label: 'RESONANCE', hint: 'Fleet coherence — R(t), tail health, shadow actuation' },
   { id: 'ventures', glyph: '◈', label: 'VENTURES', hint: 'Enterprise scope — OMNI / GOVTECH / CORTEX' },
   { id: 'evolution', glyph: '◉', label: 'EVOLUTION', hint: 'Evals, instincts & governed self-improvement' },
@@ -220,6 +218,8 @@ export function CortexFoundryNav({ snap, onSelectAgent, selectedAgent, onOpenTow
   const ventureDecisionsRef = useRef<(() => void) | null>(null);
   const [ventureAssets, setVentureAssets] = useState<{ venture: string; items: any[] } | null>(null);
   const [ventureTools, setVentureTools] = useState<any[] | null>(null);
+  const [ventureSection, setVentureSection] = useState<'cards' | 'pipeline'>('cards');
+  const [commsTab, setCommsTab] = useState<'bus' | 'voice'>('bus');
   const [assetUploading, setAssetUploading] = useState(false);
   const [expandedAgent, setExpandedAgent] = useState<string | null>(null);
   const [ventureSchedInput, setVentureSchedInput] = useState('');
@@ -559,7 +559,7 @@ export function CortexFoundryNav({ snap, onSelectAgent, selectedAgent, onOpenTow
         .then((d) => setMissions(Array.isArray(d?.missions) ? d.missions : []))
         .catch(() => setMissions([]));
     }
-    if (view === 'pipeline' && pipeline === null) {
+    if (view === 'ventures' && pipeline === null) {
       fetch('/api/cortex/distribution/status', { cache: 'no-store' })
         .then((r) => r.json())
         .then(setPipeline)
@@ -789,9 +789,25 @@ export function CortexFoundryNav({ snap, onSelectAgent, selectedAgent, onOpenTow
     return () => clearInterval(iv);
   }, [view]);
 
-  // Voice engine status poll while the VOICE view is open.
+  // Refresh the distribution pipeline while the PIPELINE section inside
+  // VENTURES is open.
   useEffect(() => {
-    if (view !== 'voice') return;
+    if (view !== 'ventures' || ventureSection !== 'pipeline') return;
+    const load = () => {
+      fetch('/api/cortex/distribution/status', { cache: 'no-store' })
+        .then((r) => r.json())
+        .then(setPipeline)
+        .catch(() => setPipeline({ error: true }));
+    };
+    load();
+    const iv = setInterval(load, 15000);
+    return () => clearInterval(iv);
+  }, [view, ventureSection]);
+
+  // Voice engine status poll while the VOICE sub-tab inside COMMS is open
+  // (voice was merged into comms).
+  useEffect(() => {
+    if (view !== 'messages' || commsTab !== 'voice') return;
     const load = () => {
       fetch('/api/cortex/tts/status', { cache: 'no-store' })
         .then((r) => r.json())
@@ -805,7 +821,7 @@ export function CortexFoundryNav({ snap, onSelectAgent, selectedAgent, onOpenTow
     load();
     const iv = setInterval(load, 15000);
     return () => clearInterval(iv);
-  }, [view]);
+  }, [view, commsTab]);
 
   const setDefaultVoice = async (voiceId: string) => {
     try {
@@ -1477,6 +1493,155 @@ export function CortexFoundryNav({ snap, onSelectAgent, selectedAgent, onOpenTow
         </button>
       </div>
     </div>
+  );
+
+  // Distribution pipeline body — shared between the standalone PIPELINE
+  // panel (legacy deep-link) and the PIPELINE section inside VENTURES.
+  const renderPipelineBody = () => {
+    const q = pipeline?.queue;
+    const counts = q?.counts || {};
+    const typeCounts: Record<string, number> = q?.typeCounts || {};
+    const attention: any[] = q?.attention || [];
+    const recent: any[] = q?.recent || [];
+    const ventureOf = (t: string) =>
+      t?.startsWith('omni') ? 'OMNI'
+        : (t?.startsWith('govtech') || t?.startsWith('sam_gov')) ? 'GOVTECH'
+          : 'GENERAL';
+    const ventureCounts: Record<string, number> = {};
+    for (const [t, n] of Object.entries(typeCounts)) {
+      const v = ventureOf(t);
+      ventureCounts[v] = (ventureCounts[v] || 0) + (n as number);
+    }
+    const age = (ts: number | null | undefined) => {
+      if (!ts) return '';
+      const m = Math.max(0, Math.floor((Date.now() - ts) / 60000));
+      if (m < 60) return `${m}m`;
+      const h = Math.floor(m / 60);
+      if (h < 48) return `${h}h`;
+      return `${Math.floor(h / 24)}d`;
+    };
+    const VCOLOR: Record<string, string> = { OMNI: '#34d399', GOVTECH: '#fbbf24', GENERAL: '#67e8f9' };
+    return (
+      <>
+        {pipeline === null && <div style={{ padding: '12px 0', color: DIM }}>LOADING…</div>}
+        {pipeline && !pipeline.error && (
+          <div>
+            <div style={{ display: 'flex', gap: 10, alignItems: 'center', marginBottom: 8, flexWrap: 'wrap' }}>
+              <span style={{ color: '#34d399' }}>✓{counts.done || 0}</span>
+              <span style={{ color: '#fbbf24' }}>◌{counts.pending || 0}</span>
+              <span style={{ color: '#f87171' }}>✗{counts.failed || 0}</span>
+              <span style={{ color: 'rgba(148,163,184,0.3)' }}>|</span>
+              {pipeline.distributor ? (
+                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
+                  <Lamp status={pipeline.distributor.status} />
+                  <span style={{ color: DIM }}>DISTRIBUTOR {pipeline.distributor.status}</span>
+                  <span style={{ color: DIM }}>· {pipeline.distributor.tasksCompleted || 0}✓ {pipeline.distributor.tasksFailed || 0}✗</span>
+                </span>
+              ) : <span style={{ color: '#f87171' }}>DISTRIBUTOR NOT REGISTERED</span>}
+            </div>
+            <div style={{ display: 'flex', gap: 6, marginBottom: 10, flexWrap: 'wrap' }}>
+              {['OMNI', 'GOVTECH', 'GENERAL'].map((v) => (
+                <span key={v} style={{
+                  fontSize: 9, letterSpacing: '0.08em', padding: '2px 7px', borderRadius: 2,
+                  border: `1px solid ${VCOLOR[v]}55`, color: VCOLOR[v],
+                  background: `${VCOLOR[v]}0d`,
+                }}>{v} {ventureCounts[v] || 0}</span>
+              ))}
+              <span style={{ fontSize: 9, color: 'rgba(148,163,184,0.4)', alignSelf: 'center' }}>scope = queue type prefix</span>
+            </div>
+            {attention.length > 0 && (
+              <div style={{ marginBottom: 10 }}>
+                <div style={{ fontSize: 9.5, letterSpacing: '0.2em', color: '#fbbf24', marginBottom: 4 }}>ATTENTION ({attention.length})</div>
+                {attention.map((i: any) => (
+                  <Row key={i.id}>
+                    <span style={{ color: i.status === 'failed' ? '#f87171' : '#fbbf24', width: 10, flexShrink: 0 }}>{i.status === 'failed' ? '✗' : '◌'}</span>
+                    <span style={{ color: '#67e8f9', flexShrink: 0 }}>{i.type}</span>
+                    <span style={{ color: 'rgba(148,163,184,0.45)', flexShrink: 0 }}>{age(i.createdAt)} ago{(i.attempts || 0) > 1 ? ` ×${i.attempts}` : ''}</span>
+                    <span style={{ color: 'rgba(248,113,113,0.75)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{i.error || ''}</span>
+                  </Row>
+                ))}
+              </div>
+            )}
+            {recent.length > 0 && (
+              <div>
+                <div style={{ fontSize: 9.5, letterSpacing: '0.2em', color: DIM, marginBottom: 4 }}>RECENT</div>
+                {recent.slice().reverse().map((i: any) => (
+                  <Row key={i.id}>
+                    <span style={{ color: i.status === 'done' ? '#34d399' : i.status === 'failed' ? '#f87171' : '#fbbf24', width: 10, flexShrink: 0 }}>{i.status === 'done' ? '✓' : i.status === 'failed' ? '✗' : '◌'}</span>
+                    <span style={{ color: '#67e8f9', flexShrink: 0 }}>{i.type}</span>
+                    <span style={{ color: VCOLOR[ventureOf(i.type)], fontSize: 9 }}>{ventureOf(i.type)}</span>
+                  </Row>
+                ))}
+              </div>
+            )}
+            {!attention.length && !recent.length && (
+              <div style={{ padding: '12px 0', color: DIM }}>QUEUE EMPTY — NO DISTRIBUTION ITEMS</div>
+            )}
+            {pipeline.launchLogTail && (
+              <div style={{ marginTop: 10, paddingTop: 8, borderTop: '1px solid rgba(148,163,184,0.1)' }}>
+                <div style={{ fontSize: 9.5, letterSpacing: '0.2em', color: DIM, marginBottom: 4 }}>LAUNCH LOG</div>
+                <pre style={{ fontSize: 9, color: 'rgba(148,163,184,0.6)', whiteSpace: 'pre-wrap', wordBreak: 'break-word', margin: 0, maxHeight: 90, overflow: 'hidden' }}>
+                  {pipeline.launchLogTail.slice(-900)}
+                </pre>
+              </div>
+            )}
+          </div>
+        )}
+        {pipeline?.error && <div style={{ padding: '12px 0', color: '#f87171' }}>PIPELINE STATUS UNREACHABLE</div>}
+      </>
+    );
+  };
+
+  // Voice engine body — shared between the standalone VOICE panel (legacy)
+  // and the VOICE sub-tab inside COMMS.
+  const renderVoiceBody = () => (
+    <>
+      <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 6 }}>
+        <button onClick={() => { setVoiceStatus(null); fetch('/api/cortex/tts/status', { cache: 'no-store' }).then((r) => r.json()).then(setVoiceStatus).catch(() => { }); }} style={{ background: 'none', border: '1px solid rgba(52,211,153,0.4)', color: '#34d399', fontFamily: MONO, fontSize: 9.5, padding: '2px 8px', borderRadius: 2, cursor: 'pointer', letterSpacing: '0.15em' }}>RE-PROBE</button>
+      </div>
+      {voiceStatus === null && <div style={{ padding: '12px 0', color: DIM }}>PROBING ENGINES…</div>}
+      {voiceStatus?.ok === false && <div style={{ padding: '12px 0', color: '#f87171' }}>STATUS ENDPOINT UNREACHABLE — VITE RESTART NEEDED?</div>}
+      {voiceStatus?.engines && (
+        <div style={{ marginBottom: 8 }}>
+          {voiceStatus.engines.map((e: any) => (
+            <Row key={e.id}>
+              <Lamp status={e.healthy ? 'healthy' : 'down'} />
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 10, color: INK, fontWeight: 700 }}>{e.id.toUpperCase()}</div>
+                <div style={{ fontSize: 8.5, color: DIM, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{e.url} · {e.role}</div>
+              </div>
+              <span style={{ fontSize: 8.5, color: e.healthy ? '#34d399' : '#f87171' }}>{e.healthy ? `${e.ms}ms` : 'DOWN'}</span>
+            </Row>
+          ))}
+        </div>
+      )}
+      <div style={{ fontSize: 8.5, fontWeight: 800, letterSpacing: '0.22em', color: '#34d399', margin: '6px 0 4px' }}>VOICES — CLICK TEST TO HEAR{voiceConfig?.defaultVoice ? ` · DEFAULT: ${voiceConfig.defaultVoice.toUpperCase()}` : ''}</div>
+      {(voiceStatus?.voices || []).map((v: any) => {
+        const eng = voiceStatus?.engines?.find((e: any) => e.id === v.engine);
+        const t = voiceTest[v.id] || 'idle';
+        const isDefault = voiceConfig?.defaultVoice === v.id;
+        return (
+          <Row key={v.id}>
+            <Lamp status={eng ? (eng.healthy ? 'healthy' : 'down') : 'idle'} />
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontSize: 10, color: INK }}>{v.label}{isDefault ? <span style={{ color: '#34d399', fontSize: 8.5 }}> ◈ DEFAULT</span> : null}</div>
+              <div style={{ fontSize: 8.5, color: DIM }}>{v.id} → {v.engine}{eng && !eng.healthy ? ' (ENGINE DOWN)' : ''}</div>
+            </div>
+            <button
+              onClick={() => setDefaultVoice(v.id)}
+              title="Pin as Cortex default voice (survives restarts)"
+              style={{ background: isDefault ? 'rgba(52,211,153,0.18)' : 'none', border: `1px solid ${isDefault ? '#34d399' : 'rgba(251,191,36,0.3)'}`, color: isDefault ? '#34d399' : '#fbbf24', fontFamily: MONO, fontSize: 8.5, fontWeight: 700, padding: '3px 6px', borderRadius: 2, cursor: 'pointer', letterSpacing: '0.1em' }}
+            >{isDefault ? 'PINNED' : 'SET'}</button>
+            <button
+              onClick={() => testVoice(v.id)}
+              disabled={t === 'testing'}
+              style={{ background: t === 'ok' ? 'rgba(52,211,153,0.15)' : t === 'fail' ? 'rgba(248,113,113,0.12)' : 'rgba(52,211,153,0.06)', border: `1px solid ${t === 'fail' ? 'rgba(248,113,113,0.5)' : 'rgba(52,211,153,0.35)'}`, color: t === 'fail' ? '#f87171' : '#34d399', fontFamily: MONO, fontSize: 9, fontWeight: 700, padding: '3px 8px', borderRadius: 2, cursor: t === 'testing' ? 'wait' : 'pointer', letterSpacing: '0.12em' }}
+            >{t === 'testing' ? '…' : t === 'ok' ? '✓' : t === 'fail' ? 'RETRY' : 'TEST'}</button>
+          </Row>
+        );
+      })}
+      {!voiceStatus?.voices?.length && voiceStatus !== null && <div style={{ padding: '8px 0', color: DIM, fontSize: 9.5 }}>NO VOICE DATA</div>}
+    </>
   );
 
   return (
@@ -2302,9 +2467,14 @@ export function CortexFoundryNav({ snap, onSelectAgent, selectedAgent, onOpenTow
       )}
 
       {view === 'messages' && (
-        <Panel title="AGENT MESSAGE BUS" onClose={() => setView(null)} right={
-          <span style={{ fontSize: 9.5, color: agentMsgs?.length ? '#67e8f9' : DIM }}>{agentMsgs?.length ?? '…'} MSGS</span>
+        <Panel title="COMMS — MESSAGE BUS + VOICE" onClose={() => setView(null)} right={
+          <span style={{ display: 'inline-flex', gap: 4, alignItems: 'center' }}>
+            <button onClick={() => setCommsTab('bus')} style={{ background: commsTab === 'bus' ? 'rgba(103,232,249,0.2)' : 'none', border: `1px solid ${commsTab === 'bus' ? '#67e8f9' : 'rgba(148,163,184,0.25)'}`, color: commsTab === 'bus' ? '#67e8f9' : DIM, fontFamily: MONO, fontSize: 8.5, fontWeight: 800, padding: '1px 7px', borderRadius: 2, cursor: 'pointer', letterSpacing: '0.1em' }}>BUS</button>
+            <button onClick={() => setCommsTab('voice')} style={{ background: commsTab === 'voice' ? 'rgba(52,211,153,0.2)' : 'none', border: `1px solid ${commsTab === 'voice' ? '#34d399' : 'rgba(148,163,184,0.25)'}`, color: commsTab === 'voice' ? '#34d399' : DIM, fontFamily: MONO, fontSize: 8.5, fontWeight: 800, padding: '1px 7px', borderRadius: 2, cursor: 'pointer', letterSpacing: '0.1em' }}>VOICE</button>
+            <span style={{ fontSize: 9.5, color: agentMsgs?.length ? '#67e8f9' : DIM, marginLeft: 4 }}>{agentMsgs?.length ?? '…'} MSGS</span>
+          </span>
         }>
+          {commsTab === 'voice' ? renderVoiceBody() : (<>
           {agentMsgs === null && <div style={{ padding: '12px 0', color: DIM }}>LOADING…</div>}
           {agentMsgs !== null && !agentMsgs.length && <div style={{ padding: '12px 0', color: DIM }}>NO PEER TRAFFIC YET</div>}
           {(agentMsgs || []).slice().reverse().slice(0, 40).map((m: any) => {
@@ -2324,55 +2494,7 @@ export function CortexFoundryNav({ snap, onSelectAgent, selectedAgent, onOpenTow
               </div>
             );
           })}
-        </Panel>
-      )}
-
-      {view === 'voice' && (
-        <Panel title="CORTEX VOICE — ENGINE STATUS" onClose={() => setView(null)} right={
-          <button onClick={() => { setVoiceStatus(null); fetch('/api/cortex/tts/status', { cache: 'no-store' }).then((r) => r.json()).then(setVoiceStatus).catch(() => { }); }} style={{ background: 'none', border: '1px solid rgba(52,211,153,0.4)', color: '#34d399', fontFamily: MONO, fontSize: 9.5, padding: '2px 8px', borderRadius: 2, cursor: 'pointer', letterSpacing: '0.15em' }}>RE-PROBE</button>
-        }>
-          {voiceStatus === null && <div style={{ padding: '12px 0', color: DIM }}>PROBING ENGINES…</div>}
-          {voiceStatus?.ok === false && <div style={{ padding: '12px 0', color: '#f87171' }}>STATUS ENDPOINT UNREACHABLE — VITE RESTART NEEDED?</div>}
-          {voiceStatus?.engines && (
-            <div style={{ marginBottom: 8 }}>
-              {voiceStatus.engines.map((e: any) => (
-                <Row key={e.id}>
-                  <Lamp status={e.healthy ? 'healthy' : 'down'} />
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontSize: 10, color: INK, fontWeight: 700 }}>{e.id.toUpperCase()}</div>
-                    <div style={{ fontSize: 8.5, color: DIM, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{e.url} · {e.role}</div>
-                  </div>
-                  <span style={{ fontSize: 8.5, color: e.healthy ? '#34d399' : '#f87171' }}>{e.healthy ? `${e.ms}ms` : 'DOWN'}</span>
-                </Row>
-              ))}
-            </div>
-          )}
-          <div style={{ fontSize: 8.5, fontWeight: 800, letterSpacing: '0.22em', color: '#34d399', margin: '6px 0 4px' }}>VOICES — CLICK TEST TO HEAR{voiceConfig?.defaultVoice ? ` · DEFAULT: ${voiceConfig.defaultVoice.toUpperCase()}` : ''}</div>
-          {(voiceStatus?.voices || []).map((v: any) => {
-            const eng = voiceStatus?.engines?.find((e: any) => e.id === v.engine);
-            const t = voiceTest[v.id] || 'idle';
-            const isDefault = voiceConfig?.defaultVoice === v.id;
-            return (
-              <Row key={v.id}>
-                <Lamp status={eng ? (eng.healthy ? 'healthy' : 'down') : 'idle'} />
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: 10, color: INK }}>{v.label}{isDefault ? <span style={{ color: '#34d399', fontSize: 8.5 }}> ◈ DEFAULT</span> : null}</div>
-                  <div style={{ fontSize: 8.5, color: DIM }}>{v.id} → {v.engine}{eng && !eng.healthy ? ' (ENGINE DOWN)' : ''}</div>
-                </div>
-                <button
-                  onClick={() => setDefaultVoice(v.id)}
-                  title="Pin as Cortex default voice (survives restarts)"
-                  style={{ background: isDefault ? 'rgba(52,211,153,0.18)' : 'none', border: `1px solid ${isDefault ? '#34d399' : 'rgba(251,191,36,0.3)'}`, color: isDefault ? '#34d399' : '#fbbf24', fontFamily: MONO, fontSize: 8.5, fontWeight: 700, padding: '3px 6px', borderRadius: 2, cursor: 'pointer', letterSpacing: '0.1em' }}
-                >{isDefault ? 'PINNED' : 'SET'}</button>
-                <button
-                  onClick={() => testVoice(v.id)}
-                  disabled={t === 'testing'}
-                  style={{ background: t === 'ok' ? 'rgba(52,211,153,0.15)' : t === 'fail' ? 'rgba(248,113,113,0.12)' : 'rgba(52,211,153,0.06)', border: `1px solid ${t === 'fail' ? 'rgba(248,113,113,0.5)' : 'rgba(52,211,153,0.35)'}`, color: t === 'fail' ? '#f87171' : '#34d399', fontFamily: MONO, fontSize: 9, fontWeight: 700, padding: '3px 8px', borderRadius: 2, cursor: t === 'testing' ? 'wait' : 'pointer', letterSpacing: '0.12em' }}
-                >{t === 'testing' ? '…' : t === 'ok' ? '✓' : t === 'fail' ? 'RETRY' : 'TEST'}</button>
-              </Row>
-            );
-          })}
-          {!voiceStatus?.voices?.length && voiceStatus !== null && <div style={{ padding: '8px 0', color: DIM, fontSize: 9.5 }}>NO VOICE DATA</div>}
+          </>)}
         </Panel>
       )}
 
@@ -2620,113 +2742,6 @@ export function CortexFoundryNav({ snap, onSelectAgent, selectedAgent, onOpenTow
             <div style={{ fontSize: 8, color: 'rgba(148,163,184,0.45)', marginTop: 6 }}>
               Metrics are agent/Crew-updated — SCRAPE METRICS pulls live Pinterest + Gumroad via the automation Chrome. Verified URLs come from queue item results only.
             </div>
-          </Panel>
-        );
-      })()}
-
-      {view === 'pipeline' && (() => {
-        const q = pipeline?.queue;
-        const counts = q?.counts || {};
-        const typeCounts: Record<string, number> = q?.typeCounts || {};
-        const attention: any[] = q?.attention || [];
-        const recent: any[] = q?.recent || [];
-        // Venture scope derived from queue type prefixes — omni_*,
-        // govtech_*/sam_gov_* → venture, everything else → GENERAL.
-        const ventureOf = (t: string) =>
-          t?.startsWith('omni') ? 'OMNI'
-            : (t?.startsWith('govtech') || t?.startsWith('sam_gov')) ? 'GOVTECH'
-              : 'GENERAL';
-        const ventureCounts: Record<string, number> = {};
-        for (const [t, n] of Object.entries(typeCounts)) {
-          const v = ventureOf(t);
-          ventureCounts[v] = (ventureCounts[v] || 0) + (n as number);
-        }
-        const age = (ts: number | null | undefined) => {
-          if (!ts) return '';
-          const m = Math.max(0, Math.floor((Date.now() - ts) / 60000));
-          if (m < 60) return `${m}m`;
-          const h = Math.floor(m / 60);
-          if (h < 48) return `${h}h`;
-          return `${Math.floor(h / 24)}d`;
-        };
-        const VCOLOR: Record<string, string> = { OMNI: '#34d399', GOVTECH: '#fbbf24', GENERAL: '#67e8f9' };
-        return (
-          <Panel title="DISTRIBUTION PIPELINE" onClose={() => setView(null)}>
-            {pipeline === null && <div style={{ padding: '12px 0', color: DIM }}>LOADING…</div>}
-            {pipeline && !pipeline.error && (
-              <div>
-                {/* Queue depth + distributor health */}
-                <div style={{ display: 'flex', gap: 10, alignItems: 'center', marginBottom: 8, flexWrap: 'wrap' }}>
-                  <span style={{ color: '#34d399' }}>✓{counts.done || 0}</span>
-                  <span style={{ color: '#fbbf24' }}>◌{counts.pending || 0}</span>
-                  <span style={{ color: '#f87171' }}>✗{counts.failed || 0}</span>
-                  <span style={{ color: 'rgba(148,163,184,0.3)' }}>|</span>
-                  {pipeline.distributor ? (
-                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
-                      <Lamp status={pipeline.distributor.status} />
-                      <span style={{ color: DIM }}>DISTRIBUTOR {pipeline.distributor.status}</span>
-                      <span style={{ color: DIM }}>· {pipeline.distributor.tasksCompleted || 0}✓ {pipeline.distributor.tasksFailed || 0}✗</span>
-                    </span>
-                  ) : <span style={{ color: '#f87171' }}>DISTRIBUTOR NOT REGISTERED</span>}
-                </div>
-
-                {/* Venture scope chips — derived from queue type prefixes */}
-                <div style={{ display: 'flex', gap: 6, marginBottom: 10, flexWrap: 'wrap' }}>
-                  {['OMNI', 'GOVTECH', 'GENERAL'].map((v) => (
-                    <span key={v} style={{
-                      fontSize: 9, letterSpacing: '0.08em', padding: '2px 7px', borderRadius: 2,
-                      border: `1px solid ${VCOLOR[v]}55`, color: VCOLOR[v],
-                      background: `${VCOLOR[v]}0d`,
-                    }}>{v} {ventureCounts[v] || 0}</span>
-                  ))}
-                  <span style={{ fontSize: 9, color: 'rgba(148,163,184,0.4)', alignSelf: 'center' }}>scope = queue type prefix</span>
-                </div>
-
-                {/* Attention: failed + pending items needing Crew eyes */}
-                {attention.length > 0 && (
-                  <div style={{ marginBottom: 10 }}>
-                    <div style={{ fontSize: 9.5, letterSpacing: '0.2em', color: '#fbbf24', marginBottom: 4 }}>ATTENTION ({attention.length})</div>
-                    {attention.map((i: any) => (
-                      <Row key={i.id}>
-                        <span style={{ color: i.status === 'failed' ? '#f87171' : '#fbbf24', width: 10, flexShrink: 0 }}>{i.status === 'failed' ? '✗' : '◌'}</span>
-                        <span style={{ color: '#67e8f9', flexShrink: 0 }}>{i.type}</span>
-                        <span style={{ color: 'rgba(148,163,184,0.45)', flexShrink: 0 }}>{age(i.createdAt)} ago{(i.attempts || 0) > 1 ? ` ×${i.attempts}` : ''}</span>
-                        <span style={{ color: 'rgba(248,113,113,0.75)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{i.error || ''}</span>
-                      </Row>
-                    ))}
-                  </div>
-                )}
-
-                {/* Recent completed flow */}
-                {recent.length > 0 && (
-                  <div>
-                    <div style={{ fontSize: 9.5, letterSpacing: '0.2em', color: DIM, marginBottom: 4 }}>RECENT</div>
-                    {recent.slice().reverse().map((i: any) => (
-                      <Row key={i.id}>
-                        <span style={{ color: i.status === 'done' ? '#34d399' : i.status === 'failed' ? '#f87171' : '#fbbf24', width: 10, flexShrink: 0 }}>{i.status === 'done' ? '✓' : i.status === 'failed' ? '✗' : '◌'}</span>
-                        <span style={{ color: '#67e8f9', flexShrink: 0 }}>{i.type}</span>
-                        <span style={{ color: VCOLOR[ventureOf(i.type)], fontSize: 9 }}>{ventureOf(i.type)}</span>
-                      </Row>
-                    ))}
-                  </div>
-                )}
-
-                {!attention.length && !recent.length && (
-                  <div style={{ padding: '12px 0', color: DIM }}>QUEUE EMPTY — NO DISTRIBUTION ITEMS</div>
-                )}
-
-                {/* Launch log tail — readable last lines, not JSON */}
-                {pipeline.launchLogTail && (
-                  <div style={{ marginTop: 10, paddingTop: 8, borderTop: '1px solid rgba(148,163,184,0.1)' }}>
-                    <div style={{ fontSize: 9.5, letterSpacing: '0.2em', color: DIM, marginBottom: 4 }}>LAUNCH LOG</div>
-                    <pre style={{ fontSize: 9, color: 'rgba(148,163,184,0.6)', whiteSpace: 'pre-wrap', wordBreak: 'break-word', margin: 0, maxHeight: 90, overflow: 'hidden' }}>
-                      {pipeline.launchLogTail.slice(-900)}
-                    </pre>
-                  </div>
-                )}
-              </div>
-            )}
-            {pipeline?.error && <div style={{ padding: '12px 0', color: '#f87171' }}>PIPELINE STATUS UNREACHABLE</div>}
           </Panel>
         );
       })()}
@@ -3063,6 +3078,12 @@ export function CortexFoundryNav({ snap, onSelectAgent, selectedAgent, onOpenTow
         <Panel title={vc ? `VENTURE — ${vc.callSign || vc.name}` : "VENTURES — ENTERPRISE SCOPE"} onClose={() => { setView(null); setVentureConsole(null); }} right={
           ventures === null ? <span style={{ fontSize: 9.5, color: DIM }}>LOADING…</span> : <span style={{ fontSize: 9.5, color: DIM }}>{(ventures.ventures || []).length} REGISTERED</span>
         }>
+          {/* Section switch — venture registry cards vs distribution pipeline */}
+          <div style={{ display: 'flex', gap: 4, marginBottom: 8 }}>
+            <button onClick={() => setVentureSection('cards')} style={{ background: ventureSection === 'cards' ? 'rgba(167,139,250,0.22)' : 'rgba(167,139,250,0.06)', border: `1px solid ${ventureSection === 'cards' ? '#a78bfa' : 'rgba(167,139,250,0.25)'}`, color: ventureSection === 'cards' ? '#e9d5ff' : '#c4b5fd', fontFamily: MONO, fontSize: 8.5, fontWeight: 800, padding: '3px 10px', borderRadius: 2, cursor: 'pointer', letterSpacing: '0.12em' }}>VENTURES</button>
+            <button onClick={() => setVentureSection('pipeline')} style={{ background: ventureSection === 'pipeline' ? 'rgba(103,232,249,0.18)' : 'rgba(103,232,249,0.05)', border: `1px solid ${ventureSection === 'pipeline' ? '#67e8f9' : 'rgba(103,232,249,0.25)'}`, color: ventureSection === 'pipeline' ? '#a5f3fc' : '#67e8f9', fontFamily: MONO, fontSize: 8.5, fontWeight: 800, padding: '3px 10px', borderRadius: 2, cursor: 'pointer', letterSpacing: '0.12em' }}>PIPELINE</button>
+          </div>
+          {ventureSection === 'pipeline' ? renderPipelineBody() : (<>
           {vc && (
             <div style={{ marginBottom: 10 }}>
               {/* Console header — live autonomy state */}
@@ -3862,6 +3883,7 @@ export function CortexFoundryNav({ snap, onSelectAgent, selectedAgent, onOpenTow
           {!vc && <div style={{ fontSize: 8, color: DIM, marginTop: 8, lineHeight: 1.6 }}>
             Venture scope is a filter dimension on TASKS — tasks, goals, ops items, and mission blocks carry ventureId. Untagged work counts under CORTEX. Click a card for the venture console. Registry: .cortex-runtime/ventures.json
           </div>}
+          </>)}
         </Panel>
         );
       })()}
