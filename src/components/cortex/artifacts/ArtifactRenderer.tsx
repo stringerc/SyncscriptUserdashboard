@@ -1392,7 +1392,7 @@ function WxParticles({ kind }: { kind: WxParticleKind }) {
 
 // ── Animated SVG weather glyph (Meteocons-style, hand-drawn) ─────────────
 
-function WxIcon({ k, size = 46 }: { k: string; size?: number }) {
+export function WxIcon({ k, size = 46 }: { k: string; size?: number }) {
   const cloud = 'M7 18.6a4.6 4.6 0 0 1-.42-9.18A6.1 6.1 0 0 1 18.4 8.7a4.3 4.3 0 0 1-.7 9.9H7z';
   const rays = Array.from({ length: 8 }, (_, i) => {
     const a = (i * Math.PI) / 4;
@@ -1468,7 +1468,7 @@ function WxIcon({ k, size = 46 }: { k: string; size?: number }) {
   );
 }
 
-function wxCondKey(cond?: string): 'storm' | 'snow' | 'rain' | 'fog' | 'cloud' | 'partly' | 'sun' {
+export function wxCondKey(cond?: string): 'storm' | 'snow' | 'rain' | 'fog' | 'cloud' | 'partly' | 'sun' {
   const c = (cond || '').toLowerCase();
   if (/thunder|storm|lightning/.test(c)) return 'storm';
   if (/snow|flurr|sleet|wintry|blizzard/.test(c)) return 'snow';

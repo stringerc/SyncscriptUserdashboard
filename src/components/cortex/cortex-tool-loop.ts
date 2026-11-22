@@ -13,7 +13,9 @@ import {
   dispatchHoloSpawn,
   validateArtifacts,
   type CortexArtifact,
+  type WeatherArtifact,
 } from '../../lib/cortex-artifacts';
+import { openWeatherModal } from '../../lib/cortex-weather-modal';
 import {
   closeAllSurfacePanels, closeSurfacePanel, getSurfaceSnapshot, setSurfaceFocusMode, openSurfacePanel,
 } from '../../lib/cortex-surfaces';
@@ -593,6 +595,10 @@ export async function runCortexToolLoop(ctx: CortexToolLoopContext): Promise<{ a
               if (currentToolCall.tool === 'emit_artifact' || toolResult.artifacts?.length || toolResult.artifact) {
                 const primaryArt = toolResult.artifacts?.[0] || toolResult.artifact;
                 if (primaryArt && !sceneConsumed(primaryArt)) {
+                  // Weather hero: focused space modal alongside the docked panel.
+                  if (primaryArt.kind === 'weather') {
+                    try { openWeatherModal(primaryArt as WeatherArtifact); } catch { }
+                  }
                   if (ctx.setActiveArtifact) ctx.setActiveArtifact(primaryArt);
                   ctx.setCanvasTab('artifact');
                   ctx.setPreviewVisible(true);

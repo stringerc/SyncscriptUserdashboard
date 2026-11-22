@@ -21,6 +21,7 @@ import { useVisualizerVoice } from './useVisualizerVoice';
 import { startInitiativeSensor } from '../../lib/cortex-initiative-sensor';
 import { CortexChatDrawer } from './CortexChatDrawer';
 import { CortexSurfaceLayer } from './CortexSurfaceLayer';
+import { WeatherSpaceModal } from './WeatherSpaceModal';
 import { useSurfaceFocusMode, setSurfaceFocusMode, useSurfacePanels, openSurfacePanel } from '../../lib/cortex-surfaces';
 import { getCortexProactiveInitiative } from '../../lib/cortex-proactive-initiative';
 import { startBecomingLoop } from '../../lib/cortex-becoming-loop';
@@ -3058,6 +3059,10 @@ export default function CortexVisualizerPage() {
       {faceMode !== 'agents' && (
         <CortexSurfaceLayer drawerOpen={chatOpen} />
       )}
+
+      {/* Weather hero modal — pops on the space when get_weather resolves.
+          z-120 sits above surface panels; backdrop keeps the 3D scene live. */}
+      <WeatherSpaceModal />
 
       {/* Focus mode chip — visible state + click-to-exit (ESC also exits) */}
       {focusMode && (

@@ -44,7 +44,9 @@ import {
   dispatchHoloSpawn,
   validateArtifacts,
   type CortexArtifact,
+  type WeatherArtifact,
 } from '../../lib/cortex-artifacts';
+import { openWeatherModal } from '../../lib/cortex-weather-modal';
 import {
   openSurfacePanel, closeAllSurfacePanels, closeSurfacePanel,
   getSurfaceSnapshot, setSurfaceFocusMode, updateSurfacePanel,
@@ -1447,6 +1449,11 @@ MANDATORY: weave a 3-4 sentence spoken "state of being" answer citing at least o
               artifact: a,
               pinned: true,
             });
+            // Weather hero: pop the focused space modal in addition to the
+            // docked panel + inline card (modal is the glance surface).
+            if (a.kind === 'weather') {
+              try { openWeatherModal(a as WeatherArtifact); } catch { }
+            }
           }
           records.push(`[Host Tool Execution Record: ${c.tool}(${JSON.stringify(c.args).slice(0, 200)})]\nResult: ${sanitizeToolResult(result)}`);
         }
