@@ -297,15 +297,23 @@ function PanelChrome({
 
   const clusterBorder = panel.clusterColor ? `${panel.clusterColor}88` : undefined;
   const clusterGlowShadow = panel.clusterGlow ? `0 0 16px ${panel.clusterGlow}, 0 8px 32px rgba(0,0,0,0.45)` : undefined;
+  // Weather panels wear the card-native chrome: the WeatherCard's own
+  // frosted light-blue glass IS the panel — no dark mission-control
+  // frame around it. Slim light header keeps drag + controls.
+  const isWeatherCard = panel.artifact?.kind === 'weather';
+  const chromeInk = isWeatherCard ? '#12335c' : undefined;
+  const chromeDim = isWeatherCard ? '#3b6ea5' : undefined;
 
   return (
     <div style={{
       position: 'relative', width: '100%', height: '100%',
-      background: 'linear-gradient(165deg, rgba(10,18,30,0.5) 0%, rgba(6,12,22,0.42) 55%, rgba(14,10,30,0.46) 100%)',
-      border: `1px solid ${isFocused ? 'rgba(160,245,255,0.6)' : clusterBorder || (panel.pinned ? 'rgba(232,121,249,0.5)' : dragging ? 'rgba(160,245,255,0.55)' : 'rgba(255,255,255,0.14)')}`,
-      borderRadius: 10,
-      backdropFilter: 'blur(22px) saturate(1.6)', WebkitBackdropFilter: 'blur(22px) saturate(1.6)',
-      boxShadow: isFocused
+      background: isWeatherCard ? 'transparent' : 'linear-gradient(165deg, rgba(10,18,30,0.5) 0%, rgba(6,12,22,0.42) 55%, rgba(14,10,30,0.46) 100%)',
+      border: `1px solid ${isFocused ? 'rgba(160,245,255,0.6)' : isWeatherCard ? 'rgba(224,242,254,0.55)' : clusterBorder || (panel.pinned ? 'rgba(232,121,249,0.5)' : dragging ? 'rgba(160,245,255,0.55)' : 'rgba(255,255,255,0.14)')}`,
+      borderRadius: isWeatherCard ? 22 : 10,
+      backdropFilter: isWeatherCard ? 'none' : 'blur(22px) saturate(1.6)', WebkitBackdropFilter: isWeatherCard ? 'none' : 'blur(22px) saturate(1.6)',
+      boxShadow: isWeatherCard
+        ? '0 24px 60px rgba(2,20,60,0.35), 0 0 0 1px rgba(255,255,255,0.2) inset'
+        : isFocused
         ? '0 0 60px rgba(0,0,0,0.7), 0 0 34px rgba(103,232,249,0.32), inset 0 1px 0 rgba(255,255,255,0.12)'
         : nudge
           ? '0 0 0 2px rgba(103,232,249,0.55), 0 8px 32px rgba(0,0,0,0.45), inset 0 1px 0 rgba(255,255,255,0.1)'
@@ -320,8 +328,8 @@ function PanelChrome({
         onPointerDown={onDragPointerDown}
         style={{
           display: 'flex', alignItems: 'center', padding: '6px 9px',
-          borderBottom: `1px solid ${C.border}`, flexShrink: 0,
-          background: 'rgba(255,255,255,0.02)',
+          borderBottom: `1px solid ${isWeatherCard ? 'rgba(30,73,118,0.10)' : C.border}`, flexShrink: 0,
+          background: isWeatherCard ? 'rgba(255,255,255,0.18)' : 'rgba(255,255,255,0.02)',
           cursor: dragging ? 'grabbing' : 'grab',
           userSelect: 'none', WebkitUserSelect: 'none',
         }}
@@ -347,7 +355,7 @@ function PanelChrome({
         >
           <span aria-hidden="true" style={{ color: panel.clusterColor || C.magenta, fontSize: 11, pointerEvents: 'none' }}>{KIND_ICON[panel.kind] || '◈'}</span>
           <span style={{
-            fontSize: 9, fontWeight: 700, letterSpacing: '0.18em', color: isFocused ? '#38bdf8' : panel.clusterColor || C.cyan,
+            fontSize: 9, fontWeight: 700, letterSpacing: '0.18em', color: isWeatherCard ? chromeInk : isFocused ? '#38bdf8' : panel.clusterColor || C.cyan,
             fontFamily: MONO, textTransform: 'uppercase', flex: 1,
             overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
           }}>
@@ -377,7 +385,7 @@ function PanelChrome({
           </span>
         )}
 
-        {panel.pinned && <span style={{ fontSize: 8, color: C.magenta, fontFamily: MONO, letterSpacing: '0.16em', marginRight: 4 }}>PIN</span>}
+        {panel.pinned && <span style={{ fontSize: 8, color: isWeatherCard ? '#c026d3' : C.magenta, fontFamily: MONO, letterSpacing: '0.16em', marginRight: 4 }}>PIN</span>}
 
         {/* Promote to Canvas */}
         <button
@@ -385,7 +393,7 @@ function PanelChrome({
           onClick={handlePromoteToCanvas}
           aria-label={`Promote ${panel.title} to Canvas`}
           title="Open in full Canvas drawer"
-          style={{ background: 'none', border: 'none', cursor: 'pointer', color: C.dim, padding: 2, marginRight: 2, display: 'flex' }}
+          style={{ background: 'none', border: 'none', cursor: 'pointer', color: isWeatherCard ? chromeDim : C.dim, padding: 2, marginRight: 2, display: 'flex' }}
         ><ExternalLink size={10} /></button>
 
         {/* Focus / Maximize Toggle */}
@@ -395,7 +403,7 @@ function PanelChrome({
             onClick={onToggleFocus}
             aria-label={isFocused ? `Restore ${panel.title}` : `Focus ${panel.title}`}
             title={isFocused ? 'Restore to grid (Esc)' : 'Focus center stage'}
-            style={{ background: 'none', border: 'none', cursor: 'pointer', color: isFocused ? C.cyan : C.dim, padding: 2, marginRight: 2, display: 'flex' }}
+            style={{ background: 'none', border: 'none', cursor: 'pointer', color: isFocused ? C.cyan : isWeatherCard ? chromeDim : C.dim, padding: 2, marginRight: 2, display: 'flex' }}
           >{isFocused ? <Minimize2 size={10} /> : <Maximize2 size={10} />}</button>
         )}
 
@@ -405,7 +413,7 @@ function PanelChrome({
           onClick={() => pinSurfacePanel(panel.id)}
           aria-label={panel.pinned ? `Unpin ${panel.title}` : `Pin ${panel.title}`}
           title={panel.pinned ? 'Unpin' : 'Pin panel'}
-          style={{ background: 'none', border: 'none', cursor: 'pointer', color: panel.pinned ? C.magenta : C.dim, padding: 2, marginRight: 2, display: 'flex' }}
+          style={{ background: 'none', border: 'none', cursor: 'pointer', color: panel.pinned ? (isWeatherCard ? '#c026d3' : C.magenta) : isWeatherCard ? chromeDim : C.dim, padding: 2, marginRight: 2, display: 'flex' }}
         ><Pin size={10} /></button>
 
         {/* Close */}
@@ -414,11 +422,11 @@ function PanelChrome({
           onClick={() => closeSurfacePanel(panel.id)}
           aria-label={`Close ${panel.title}`}
           title="Close panel"
-          style={{ background: 'none', border: 'none', cursor: 'pointer', color: C.dim, padding: 2, display: 'flex' }}
+          style={{ background: 'none', border: 'none', cursor: 'pointer', color: isWeatherCard ? chromeDim : C.dim, padding: 2, display: 'flex' }}
         ><X size={11} /></button>
       </div>
 
-      <div style={{ padding: 10, overflowY: 'auto', flex: 1, minHeight: 0, pointerEvents: (dimmed || dragging) ? 'none' : 'auto' }}>
+      <div style={{ padding: isWeatherCard ? 8 : 10, overflowY: 'auto', flex: 1, minHeight: 0, pointerEvents: (dimmed || dragging) ? 'none' : 'auto' }}>
         {children}
       </div>
 
@@ -2036,8 +2044,9 @@ export function CortexSurfaceLayer({ drawerOpen = false }: { drawerOpen?: boolea
           const isResizing = resizing?.id === p.id;
           const dimmed = (focusMode && !p.pinned) || (anyFocused && !isFocused);
           const baseZone = rects[p.zone];
-          const defaultW = p.kind === 'sheet' ? Math.max(baseZone.w, 520) : p.kind === 'web' ? Math.max(baseZone.w, 540) : baseZone.w;
-          const defaultH = p.kind === 'sheet' ? Math.max(baseZone.h, 300) : p.kind === 'web' ? Math.max(baseZone.h, 380) : baseZone.h;
+          const isWeatherCardPanel = p.artifact?.kind === 'weather';
+          const defaultW = isWeatherCardPanel ? 400 : p.kind === 'sheet' ? Math.max(baseZone.w, 520) : p.kind === 'web' ? Math.max(baseZone.w, 540) : baseZone.w;
+          const defaultH = isWeatherCardPanel ? Math.max(baseZone.h, 600) : p.kind === 'sheet' ? Math.max(baseZone.h, 300) : p.kind === 'web' ? Math.max(baseZone.h, 380) : baseZone.h;
           const w = p.customSize?.w ?? defaultW;
           const h = p.customSize?.h ?? defaultH;
 
