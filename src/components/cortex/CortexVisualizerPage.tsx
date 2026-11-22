@@ -1359,7 +1359,7 @@ export default function CortexVisualizerPage() {
           alignItems: 'center',
           gap: navCollapsed ? 4 : 6,
           background: 'rgba(6,10,24,0.85)',
-          padding: navCollapsed ? '4px 6px' : '5px 8px',
+          padding: navCollapsed ? '3px 5px' : '5px 8px',
           borderRadius: 20,
           border: '1px solid rgba(103,232,249,0.25)',
           backdropFilter: 'blur(16px)',
@@ -1375,7 +1375,7 @@ export default function CortexVisualizerPage() {
             title={navExpanded ? 'Collapse navigation' : 'Expand navigation'}
             aria-label={navExpanded ? 'Collapse navigation' : 'Expand navigation'}
             style={{
-              padding: navCollapsed ? '5px 7px' : '5px 9px',
+              padding: navCollapsed ? '3px 7px' : '5px 9px',
               borderRadius: 14,
               border: '1px solid rgba(148,233,255,0.18)',
               background: 'rgba(4,8,14,0.5)',
@@ -1418,7 +1418,7 @@ export default function CortexVisualizerPage() {
           }}
           title={faceMode === 'core' && !mapMode ? 'Sovereign Core — click again for core controls' : 'Switch to Sovereign Core'}
           style={{
-            padding: navCollapsed ? '5px 9px' : '5px 12px',
+            padding: navCollapsed ? '3px 9px' : '5px 12px',
             borderRadius: 14,
             border: faceMode === 'core' && !mapMode ? '1px solid #38bdf8' : '1px solid rgba(148,233,255,0.18)',
             background: faceMode === 'core' && !mapMode ? 'rgba(56,189,248,0.18)' : 'rgba(4,8,14,0.5)',
@@ -1454,7 +1454,7 @@ export default function CortexVisualizerPage() {
             title={chatOpen ? 'Cortex Uplink Chat Drawer open — click to close (Esc)' : 'Open Cortex Uplink Chat Drawer'}
             aria-label={chatOpen ? 'Close chat drawer' : 'Open chat drawer'}
             style={{
-              padding: navCollapsed ? '5px 9px' : '5px 12px',
+              padding: navCollapsed ? '3px 9px' : '5px 12px',
               borderRadius: 14,
               border: `1px solid ${chatOpen ? accent : 'rgba(148,233,255,0.18)'}`,
               background: chatOpen ? `${accent}22` : 'rgba(4,8,14,0.5)',
@@ -1472,11 +1472,7 @@ export default function CortexVisualizerPage() {
             }}
           >
             <span style={{ color: accent }}>💬</span>
-            <span style={{
-              width: 6, height: 6, borderRadius: '50%',
-              background: chatOpen ? accent : 'rgba(148,163,184,0.4)',
-              boxShadow: chatOpen ? `0 0 6px ${accent}` : 'none',
-            }} />
+            <span>{chatOpen ? 'CHAT · ON' : 'CHAT'}</span>
           </button>
         )}
 
@@ -1484,8 +1480,9 @@ export default function CortexVisualizerPage() {
         <div aria-hidden={navCollapsed} style={{
           display: 'flex', alignItems: 'center', gap: 6, overflow: 'hidden', flexShrink: 0,
           maxWidth: navCollapsed ? 0 : 900,
+          maxHeight: navCollapsed ? 0 : 80,
           opacity: navCollapsed ? 0 : 1,
-          transition: 'max-width 0.38s cubic-bezier(0.16,1,0.3,1), opacity 0.28s ease',
+          transition: 'max-width 0.38s cubic-bezier(0.16,1,0.3,1), max-height 0.3s cubic-bezier(0.16,1,0.3,1), opacity 0.28s ease',
           pointerEvents: navCollapsed ? 'none' : 'auto',
         }}>
         {/* FOUNDRY */}
