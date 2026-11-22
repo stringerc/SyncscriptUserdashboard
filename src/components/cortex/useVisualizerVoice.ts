@@ -764,23 +764,27 @@ async function execTool(tool: string, args: Record<string, any>, turnSignal?: Ab
       };
     }
 
+    // The synchronous self-heal pipeline (synthesis → typecheck → 2 auditors →
+    // refinements) routinely outlives the 90s voice turn deadline, so voice
+    // always dispatches it in the background and reports back via the bus.
     const isHeavyTool = tool === 'cortex_self_heal' || tool === 'cortex_escalate_bug' || tool === 'escalate_to_ide';
-    const toolTimeoutMs = isHeavyTool ? 120000 : 30000;
+    const toolArgs = isHeavyTool ? { ...args, background: true } : args;
     const res = await fetch(TOOLS_URL, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         'x-cortex-key': 'sovereign-local',
       },
-      body: JSON.stringify({ tool, args }),
+      body: JSON.stringify({ tool, args: toolArgs }),
       signal: turnSignal
-        ? AbortSignal.any([turnSignal, AbortSignal.timeout(toolTimeoutMs)])
-        : AbortSignal.timeout(toolTimeoutMs),
+        ? AbortSignal.any([turnSignal, AbortSignal.timeout(30000)])
+        : AbortSignal.timeout(30000),
     });
     const data = await res.json().catch(() => ({}));
     const artifacts = extractArtifactsFromResult(data, tool);
     const r = (data as any)?.result ?? data;
-    const s = r?.stdout ? String(r.stdout)
+    const s = isHeavyTool && r?.voiceSummary ? String(r.voiceSummary)
+      : r?.stdout ? String(r.stdout)
       : r?.content ? String(r.content)
       : r?.message || (r?.ok ? 'Success' : JSON.stringify(data).slice(0, 400));
     return { text: String(s).slice(0, 700), artifacts };
@@ -2234,6 +2238,7 @@ export function useVisualizerVoice(enabled: boolean, onState: (speaking: boolean
                 primaryTarget: 'antigravity',
                 dryRun: false,
                 autoDeploy: false,
+                background: true,
               }),
             }).catch(() => {});
           }
