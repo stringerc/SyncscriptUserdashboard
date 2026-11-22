@@ -2513,7 +2513,13 @@ MANDATORY: weave a 3-4 sentence spoken "state of being" answer citing at least o
       // (2+ novel tokens) and was aborting live turns mid-stream.
       if (!result.isFinal) {
         const now = performance.now();
-        if (now - state.lastInterimPublish > 300 && !state.turnInFlight) {
+        // While Cortex vocalizes (or in the reverb tail), interim partials
+        // are almost always its own voice bleeding into the mic — publishing
+        // 'listening' for them makes the orb strobe between states = the
+        // chaotic animation. Keep the speaking visuals untouched instead.
+        const aiSpeaking = vsRef.current.isSpeaking;
+        const inReverb = now - state.lastSpeechEndAt < REVERB_WINDOW_MS;
+        if (!aiSpeaking && !inReverb && now - state.lastInterimPublish > 300 && !state.turnInFlight) {
           state.lastInterimPublish = now;
           publish({ state: 'listening', level: 0.12, text });
         }
@@ -2791,6 +2797,16 @@ MANDATORY: weave a 3-4 sentence spoken "state of being" answer citing at least o
       speechAccumulatorRef.current = '';
       const toCommit = pending || cleanText;
       if (toCommit.length < 3) return;
+
+      // Echo pre-check BEFORE publishing 'Heard': VAD pause on Cortex's own
+      // voice must not flicker the orb into 'thinking' — commitTurn's echo
+      // gate would drop it a beat later, but the visual already lied.
+      const aiSpeaking = vsRef.current.isSpeaking;
+      const inReverb = performance.now() - state.lastSpeechEndAt < REVERB_WINDOW_MS;
+      if ((aiSpeaking || inReverb)
+        && isAcousticEcho(toCommit, activeSpeechRef.current, speechHistoryRef.current).isEcho) {
+        return;
+      }
 
       state.earlyCommitted = { text: toCommit, at: performance.now() };
       publish({ state: 'listening', level: 0.2, text: 'Heard — thinking…' });

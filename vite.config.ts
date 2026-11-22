@@ -27,6 +27,7 @@ import { runAgenticTurn, turnLikelyNeedsTools, type AgentMessage } from './src/l
 import { isAffirmation, takeAffirmed, peekPending, recordOffer, detectOffer, declineIntention } from './src/lib/cortex-agent/intentions';
 import { runAgenticTurn, turnLikelyNeedsTools, type AgentMessage } from './src/lib/cortex-agent/loop';
 import { getAutonomyMode, setAutonomyMode, AUTONOMY_DIRECTIVE, type AutonomyMode } from './src/lib/cortex-agent/autonomy';
+import { startSelfRegulation } from './src/lib/cortex-agent/self-regulation';
 import { obsidianRestEnabled, obsidianRestStatus, obsidianRestList, obsidianRestRead, obsidianRestWrite, obsidianRestSearch } from './src/lib/cortex-obsidian-rest';
 import { imsgRpcChats, imsgRpcHistory, imsgRpcSend, imsgRpcHealth } from './src/lib/imsg-rpc';
 
@@ -1478,6 +1479,15 @@ function apiProxyPlugin(): Plugin {
           rssMB: Math.round(process.memoryUsage().rss / 1048576),
         }));
       });
+      // ── Self-regulation: governed vitals loop (memory/lag/bloat → safe
+      // prune + narrated chat notice). Cortex's "reach in and fix it"
+      // wish, bounded by hard safety rules. See cortex-agent/self-regulation.ts
+      try {
+        const selfRegPort = process.env.PORT ? parseInt(process.env.PORT, 10) : 5173;
+        startSelfRegulation(selfRegPort);
+      } catch (e: any) {
+        console.warn('[self-regulation] failed to arm:', e?.message || e);
+      }
       // ── /api/cortex/autonomy — sovereign autonomy mode (bypass-permissions).
       // GET returns the mode; POST {mode:'autonomous'|'confirm'} toggles it.
       // Hard safety invariants are unaffected by this flag.
