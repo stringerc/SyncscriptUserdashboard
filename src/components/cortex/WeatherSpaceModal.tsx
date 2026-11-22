@@ -11,9 +11,10 @@
 
 import { useEffect } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
-import { MapPin, Wind, Droplets, CloudRain, X } from 'lucide-react';
+import { MapPin, Wind, Droplets, CloudRain, X, Pin } from 'lucide-react';
 import type { WeatherArtifact, WxDayPoint, WxHourPoint } from '../../lib/cortex-artifacts';
 import { closeWeatherModal, useWeatherModal } from '../../lib/cortex-weather-modal';
+import { openSurfacePanel } from '../../lib/cortex-surfaces';
 import { WxIcon, wxCondKey } from './artifacts/ArtifactRenderer';
 
 const MONO = "'JetBrains Mono', 'SF Mono', Menlo, monospace";
@@ -91,8 +92,8 @@ export function WeatherSpaceModal() {
           onClick={closeWeatherModal}
           style={{
             position: 'fixed', inset: 0, zIndex: 120,
-            background: 'rgba(3,7,18,0.55)',
-            backdropFilter: 'blur(7px)', WebkitBackdropFilter: 'blur(7px)',
+            background: 'rgba(30,80,160,0.28)',
+            backdropFilter: 'blur(10px)', WebkitBackdropFilter: 'blur(10px)',
             display: 'flex', alignItems: 'center', justifyContent: 'center',
             padding: 20, cursor: 'pointer',
           }}
@@ -106,10 +107,10 @@ export function WeatherSpaceModal() {
             style={{
               width: 'min(400px, 94vw)', maxHeight: '88vh', overflowY: 'auto',
               borderRadius: 22, cursor: 'default',
-              background: 'linear-gradient(165deg, rgba(15,26,48,0.94) 0%, rgba(7,12,26,0.97) 60%, rgba(5,9,20,0.98) 100%)',
-              border: '1px solid rgba(255,255,255,0.09)',
-              boxShadow: '0 30px 80px rgba(0,0,0,0.6), 0 0 0 1px rgba(255,255,255,0.03) inset, 0 1px 0 rgba(255,255,255,0.10) inset',
-              backdropFilter: 'blur(24px)', WebkitBackdropFilter: 'blur(24px)',
+              background: 'linear-gradient(165deg, rgba(165,220,252,0.42) 0%, rgba(96,165,250,0.30) 45%, rgba(59,130,246,0.34) 100%)',
+              border: '1px solid rgba(224,242,254,0.55)',
+              boxShadow: '0 30px 80px rgba(2,20,60,0.5), 0 0 0 1px rgba(255,255,255,0.25) inset, 0 1px 0 rgba(255,255,255,0.65) inset, 0 -1px 0 rgba(30,80,160,0.25) inset',
+              backdropFilter: 'blur(30px) saturate(1.5)', WebkitBackdropFilter: 'blur(30px) saturate(1.5)',
               padding: '18px 18px 14px',
               fontFamily: 'Inter, system-ui, sans-serif',
             }}
@@ -127,17 +128,44 @@ export function WeatherSpaceModal() {
                   {a.city || 'Current location'}{a.period ? ` · ${a.period}` : ''}
                 </span>
               </div>
-              <button
-                onClick={closeWeatherModal}
-                aria-label="Close weather"
-                style={{
-                  width: 28, height: 28, borderRadius: 8, border: '1px solid rgba(255,255,255,0.1)',
-                  background: 'rgba(255,255,255,0.05)', color: '#cbd5e1', cursor: 'pointer',
-                  display: 'flex', alignItems: 'center', justifyContent: 'center',
-                }}
-              >
-                <X size={13} />
-              </button>
+              <div style={{ display: 'flex', gap: 6 }}>
+                <button
+                  onClick={() => {
+                    // Pin = dock the artifact as a persistent surface panel
+                    // (renders the full WeatherBody: sky scene + radar +
+                    // hourly chart). Modal closes — the panel is the keep.
+                    try {
+                      openSurfacePanel({
+                        kind: 'artifact',
+                        title: a.title || 'Weather',
+                        artifact: a,
+                        pinned: true,
+                      });
+                    } catch { }
+                    closeWeatherModal();
+                  }}
+                  aria-label="Pin weather to space"
+                  title="Pin to space"
+                  style={{
+                    width: 28, height: 28, borderRadius: 8, border: '1px solid rgba(255,255,255,0.28)',
+                    background: 'rgba(255,255,255,0.16)', color: '#f0f7ff', cursor: 'pointer',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  }}
+                >
+                  <Pin size={13} />
+                </button>
+                <button
+                  onClick={closeWeatherModal}
+                  aria-label="Close weather"
+                  style={{
+                    width: 28, height: 28, borderRadius: 8, border: '1px solid rgba(255,255,255,0.28)',
+                    background: 'rgba(255,255,255,0.16)', color: '#f0f7ff', cursor: 'pointer',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  }}
+                >
+                  <X size={13} />
+                </button>
+              </div>
             </div>
 
             {/* Hero — glyph + temp + condition */}
