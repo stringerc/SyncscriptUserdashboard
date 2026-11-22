@@ -14452,6 +14452,58 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
         });
       });
 
+      // ── Venture tools (/api/cortex/ventures/tools) ──
+      // Registry of the cortex-* component repos we are implementing —
+      // scans the sibling cortex-repos directory and reports package.json
+      // metadata + git remote state so the TOOLS tab shows real progress
+      // (implemented / pushed / released) instead of a static list.
+      server.middlewares.use('/api/cortex/ventures/tools', (req: any, res: any, next: any) => {
+        if (req.method !== 'GET') return next();
+        agentCors(req, res);
+        try {
+          const reposRoot = path.join(process.cwd(), '..', 'cortex-repos');
+          const tools: any[] = [];
+          if (fsSync.existsSync(reposRoot)) {
+            for (const dir of fsSync.readdirSync(reposRoot)) {
+              const pkgPath = path.join(reposRoot, dir, 'package.json');
+              if (!fsSync.existsSync(pkgPath)) continue;
+              let pkg: any = {};
+              try { pkg = JSON.parse(fsSync.readFileSync(pkgPath, 'utf8')); } catch { }
+              const readmePath = path.join(reposRoot, dir, 'README.md');
+              let desc = '';
+              try {
+                const md = fsSync.readFileSync(readmePath, 'utf8');
+                const m = md.match(/^#\s+(.+)$/m);
+                desc = m ? m[1].trim() : '';
+              } catch { }
+              let remote = '';
+              try {
+                remote = execSync(`git -C "${path.join(reposRoot, dir)}" remote get-url origin 2>/dev/null || true`, { encoding: 'utf8' }).trim();
+              } catch { }
+              const testDir = path.join(reposRoot, dir, 'test');
+              const hasTests = fsSync.existsSync(testDir) && fsSync.readdirSync(testDir).some((f: string) => f.endsWith('.test.ts'));
+              tools.push({
+                name: dir,
+                packageName: pkg.name || dir,
+                description: pkg.description || desc,
+                version: pkg.version || '0.0.0',
+                license: pkg.license || 'UNKNOWN',
+                hasTests,
+                hasReadme: fsSync.existsSync(readmePath),
+                remote: remote || null,
+                pushed: !!remote,
+              });
+            }
+          }
+          tools.sort((a, b) => a.name.localeCompare(b.name));
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ ok: true, tools, root: reposRoot }));
+        } catch (e: any) {
+          res.writeHead(500, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ ok: false, error: String(e?.message || e) }));
+        }
+      });
+
       // ── Venture registry (/api/cortex/ventures) ──
       // Enterprise console scope dimension. GET returns the registry plus
       // live counts derived from real state — tasks (input.ventureId),

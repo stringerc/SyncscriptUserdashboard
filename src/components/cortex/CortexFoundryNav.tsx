@@ -219,6 +219,7 @@ export function CortexFoundryNav({ snap, onSelectAgent, selectedAgent, onOpenTow
   const [ventureDecisions, setVentureDecisions] = useState<{ venture: string; items: any[] } | null>(null);
   const ventureDecisionsRef = useRef<(() => void) | null>(null);
   const [ventureAssets, setVentureAssets] = useState<{ venture: string; items: any[] } | null>(null);
+  const [ventureTools, setVentureTools] = useState<any[] | null>(null);
   const [assetUploading, setAssetUploading] = useState(false);
   const [expandedAgent, setExpandedAgent] = useState<string | null>(null);
   const [ventureSchedInput, setVentureSchedInput] = useState('');
@@ -653,6 +654,14 @@ export function CortexFoundryNav({ snap, onSelectAgent, selectedAgent, onOpenTow
         .then((r) => r.json())
         .then((d) => setVentureAssets({ venture: ventureConsole, items: Array.isArray(d?.items) ? d.items : [] }))
         .catch(() => setVentureAssets({ venture: ventureConsole, items: [] }));
+    }
+    // Stack tools — the cortex-* repos being implemented (not venture-scoped;
+    // same registry for every venture console).
+    if (ventureTools === null) {
+      fetch('/api/cortex/ventures/tools', { cache: 'no-store' })
+        .then((r) => r.json())
+        .then((d) => setVentureTools(Array.isArray(d?.tools) ? d.tools : []))
+        .catch(() => setVentureTools([]));
     }
     if (ventureTab === 'calendar' && calendar === null) {
       fetch('/api/cortex/calendar/upcoming', { cache: 'no-store' })
@@ -3136,7 +3145,7 @@ export function CortexFoundryNav({ snap, onSelectAgent, selectedAgent, onOpenTow
                 const TABS: [string, string][] = [
                   ['tasks', 'TASKS'], ['goals', 'GOALS'], ['plan', 'PLAN'], ['calendar', 'CALENDAR'],
                   ['workflows', 'WORKFLOWS'], ['agents', 'AGENTS'], ['missions', 'MISSIONS'],
-                  ['campaigns', 'CAMPAIGNS'], ['inbox', 'INBOX'], ['n8n', 'N8N'], ['assets', 'ASSETS'], ['memory', 'MEMORY'],
+                  ['campaigns', 'CAMPAIGNS'], ['inbox', 'INBOX'], ['n8n', 'N8N'], ['assets', 'ASSETS'], ['tools', 'TOOLS'], ['memory', 'MEMORY'],
                 ];
                 const empty = (msg: string) => <div style={{ fontSize: 9, color: DIM, padding: '6px 0' }}>{msg}</div>;
                 return (
@@ -3155,6 +3164,7 @@ export function CortexFoundryNav({ snap, onSelectAgent, selectedAgent, onOpenTow
                           id === 'workflows' ? wfRoutines.length :
                           id === 'n8n' ? 0 :
                           id === 'assets' ? (ventureAssets && ventureAssets.venture === vc.id ? ventureAssets.items.length : 0) :
+                          id === 'tools' ? (ventureTools?.length || 0) :
                           id === 'memory' ? (ventureMemory || []).length :
                           id === 'inbox' ? inboxProps.length : 0;
                         return (
@@ -3722,6 +3732,45 @@ export function CortexFoundryNav({ snap, onSelectAgent, selectedAgent, onOpenTow
                             );
                           })}
                         </div>
+                      </div>
+                    )}
+
+                    {ventureTab === 'tools' && (
+                      <div>
+                        {ventureTools === null && empty('LOADING…')}
+                        {ventureTools !== null && !ventureTools.length && empty('NO REPOS FOUND — EXPECTED ../cortex-repos/*/package.json')}
+                        {/* Tier map mirrors LAUNCH_PLAN.md — flagships get the full launch kit. */}
+                        {(() => {
+                          const FLAGSHIPS = new Set(['cortex-runtime', 'cortex-memory-tiers', 'cortex-proactivity', 'cortex-affect', 'cortex-voice-memory']);
+                          const tier1 = (ventureTools || []).filter((t: any) => FLAGSHIPS.has(t.name));
+                          const tier2 = (ventureTools || []).filter((t: any) => !FLAGSHIPS.has(t.name));
+                          const card = (t: any) => (
+                            <div key={t.name} style={{ border: '1px solid rgba(103,232,249,0.2)', borderRadius: 3, padding: '7px 9px', marginBottom: 6, background: 'rgba(8,15,30,0.55)' }}>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                                <span style={{ fontSize: 10.5, fontWeight: 800, color: '#e0f2fe', fontFamily: MONO }}>{t.name}</span>
+                                <span style={{ fontSize: 8, color: DIM, fontFamily: MONO }}>{t.packageName}@{t.version} · {String(t.license).toUpperCase()}</span>
+                                <span style={{ marginLeft: 'auto', display: 'flex', gap: 4 }}>
+                                  {t.hasTests && <span style={{ fontSize: 7.5, fontWeight: 800, color: '#6ee7b7', border: '1px solid rgba(110,231,183,0.4)', borderRadius: 2, padding: '1px 5px', letterSpacing: '0.06em' }}>TESTS</span>}
+                                  {t.hasReadme && <span style={{ fontSize: 7.5, fontWeight: 800, color: '#93c5fd', border: '1px solid rgba(147,197,253,0.4)', borderRadius: 2, padding: '1px 5px', letterSpacing: '0.06em' }}>README</span>}
+                                  {t.pushed
+                                    ? <span style={{ fontSize: 7.5, fontWeight: 800, color: '#fcd34d', border: '1px solid rgba(252,211,77,0.4)', borderRadius: 2, padding: '1px 5px', letterSpacing: '0.06em' }}>PUSHED</span>
+                                    : <span style={{ fontSize: 7.5, fontWeight: 800, color: '#c084fc', border: '1px solid rgba(192,132,252,0.4)', borderRadius: 2, padding: '1px 5px', letterSpacing: '0.06em' }}>LOCAL</span>}
+                                </span>
+                              </div>
+                              {t.description && <div style={{ fontSize: 9, color: INK, marginTop: 3, lineHeight: 1.4 }}>{t.description}</div>}
+                              {t.remote && <div style={{ fontSize: 7.5, color: DIM, marginTop: 3, fontFamily: MONO, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{t.remote}</div>}
+                            </div>
+                          );
+                          return (
+                            <div>
+                              <div style={{ fontSize: 8, fontWeight: 800, color: '#a78bfa', letterSpacing: '0.14em', marginBottom: 4 }}>TIER 1 · FLAGSHIPS — FULL LAUNCH KIT</div>
+                              {tier1.map(card)}
+                              <div style={{ fontSize: 8, fontWeight: 800, color: DIM, letterSpacing: '0.14em', margin: '8px 0 4px' }}>TIER 2 · INFRASTRUCTURE — BASELINE KIT</div>
+                              {tier2.map(card)}
+                              <div style={{ fontSize: 8, color: DIM, marginTop: 6 }}>SOURCED LIVE FROM ../cortex-repos — PUSHED = GITHUB REMOTE CONFIGURED, LOCAL = NOT YET RELEASED</div>
+                            </div>
+                          );
+                        })()}
                       </div>
                     )}
 
