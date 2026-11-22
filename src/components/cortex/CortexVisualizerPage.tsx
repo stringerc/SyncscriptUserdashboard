@@ -458,9 +458,10 @@ export default function CortexVisualizerPage() {
   const missionResize = useRef<{ x: number; y: number; w: number; h: number } | null>(null);
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
   const agentCardRef = useRef<HTMLDivElement | null>(null);
-  // Ride the agent's orbital position: the card tracks the mote's projected
-  // screen anchor each frame; falls back to the right-rail spot when the
-  // agent is behind the camera or anchors aren't live yet.
+  // The card is docked at a fixed spot on the right rail — it does NOT ride
+  // the mote's orbit (that made it sit on top of the orb and skip every
+  // frame while the chase camera moved). The rAF only dims the card when the
+  // agent swings behind the camera; position never changes.
   useEffect(() => {
     if (!selectedAgentId) return;
     let raf = 0;
@@ -468,19 +469,7 @@ export default function CortexVisualizerPage() {
       const el = agentCardRef.current;
       if (el) {
         const anchor = agentScreenAnchors[selectedAgentId];
-        if (anchor && !anchor.behind) {
-          el.style.left = `${Math.max(170, Math.min(window.innerWidth - 170, anchor.x))}px`;
-          el.style.top = `${Math.max(90, Math.min(window.innerHeight - 80, anchor.y - 14))}px`;
-          el.style.right = 'auto';
-          el.style.transform = 'translate(-50%, -100%)';
-          el.style.opacity = '1';
-        } else {
-          el.style.left = 'auto';
-          el.style.right = '64px';
-          el.style.top = '24%';
-          el.style.transform = 'none';
-          el.style.opacity = anchor ? '0.35' : '1';
-        }
+        el.style.opacity = anchor && anchor.behind ? '0.35' : '1';
       }
       raf = requestAnimationFrame(tick);
     };
