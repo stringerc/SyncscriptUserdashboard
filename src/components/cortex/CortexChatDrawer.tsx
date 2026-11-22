@@ -15,8 +15,8 @@ import type { CortexSignalBusPayload } from './CortexVisualizer';
 
 const DRAWER_CSS = `
   @keyframes cx-drawer-in {
-    from { transform: translateX(48px); opacity: 0; }
-    to   { transform: translateX(0); opacity: 1; }
+    from { opacity: 0; translate: 0 18px; }
+    to   { opacity: 1; translate: 0 0; }
   }
   @keyframes cx-caret-blink {
     0%, 100% { opacity: 1; }
@@ -84,10 +84,11 @@ function InlineProcessingBubble({ payload }: { payload: CortexSignalBusPayload }
       </div>
 
       <div style={{
-        padding: '10px 14px', borderRadius: 10,
-        background: `linear-gradient(135deg, ${color}14, rgba(4,8,14,0.7) 65%)`,
-        border: `1px solid ${color}35`,
-        boxShadow: `0 4px 20px ${color}14`,
+        padding: '10px 14px', borderRadius: 12,
+        background: `linear-gradient(135deg, ${color}1f, rgba(6,10,18,0.5) 65%)`,
+        backdropFilter: 'blur(14px)', WebkitBackdropFilter: 'blur(14px)',
+        border: `1px solid ${color}4d`,
+        boxShadow: `0 6px 24px rgba(0,0,0,0.3), 0 0 20px ${color}1f`,
         position: 'relative', overflow: 'hidden',
         display: 'flex', flexDirection: 'column', gap: 8,
       }}>
@@ -267,20 +268,24 @@ function TranscriptMessage({ msg, speaking, onSpeak }: TranscriptMessageProps) {
       {isUser ? (
         <div style={{
           display: 'inline-block', maxWidth: '92%',
-          background: 'rgba(148,233,255,0.08)',
-          border: '1px solid rgba(148,233,255,0.16)',
-          borderRadius: '12px 12px 3px 12px',
-          padding: '8px 12px',
+          background: 'rgba(148,233,255,0.16)',
+          backdropFilter: 'blur(14px)', WebkitBackdropFilter: 'blur(14px)',
+          border: '1px solid rgba(148,233,255,0.32)',
+          borderRadius: '14px 14px 4px 14px',
+          padding: '9px 13px',
           fontSize: 13, lineHeight: 1.55, color: C.user,
+          boxShadow: '0 6px 24px rgba(0,0,0,0.28)',
         }}>
           {msg.content}
         </div>
       ) : (
         <div style={{
           fontSize: 13.5, lineHeight: 1.65, color: C.ai,
-          padding: '10px 14px', borderRadius: 10,
-          background: 'linear-gradient(135deg, rgba(103,232,249,0.05), rgba(167,139,250,0.03) 55%, transparent)',
-          border: '1px solid rgba(148,233,255,0.10)',
+          padding: '11px 15px', borderRadius: 12,
+          background: 'linear-gradient(135deg, rgba(103,232,249,0.16), rgba(167,139,250,0.11) 55%, rgba(4,8,14,0.38))',
+          backdropFilter: 'blur(14px)', WebkitBackdropFilter: 'blur(14px)',
+          border: '1px solid rgba(148,233,255,0.24)',
+          boxShadow: '0 6px 24px rgba(0,0,0,0.28)',
         }}>
           <ReactMarkdown remarkPlugins={[remarkGfm]} components={cortexMarkdownComponents}>
             {preprocessMarkdown(msg.content)}
@@ -547,23 +552,27 @@ function CortexChatDrawerInner({ open, onClose, payload, onSubmitText }: CortexC
       aria-modal="true"
       aria-label="Cortex Uplink Chat"
       style={{
-        position: 'absolute', top: 0, right: 0, bottom: 0, width: 'min(400px, 88vw)',
-        zIndex: 30, display: 'flex', flexDirection: 'column',
-        background: 'rgba(3,4,10,0.92)',
-        borderLeft: `1px solid ${C.borderBright}55`,
-        backdropFilter: 'blur(18px)', WebkitBackdropFilter: 'blur(18px)',
-        boxShadow: '-24px 0 60px rgba(0,0,0,0.55), inset 1px 0 0 rgba(148,233,255,0.06)',
+        position: 'absolute', left: '50%', bottom: 14, transform: 'translateX(-50%)',
+        width: 'min(680px, 94vw)', height: 'min(560px, 62vh)', zIndex: 70,
+        display: 'flex', flexDirection: 'column',
+        background: 'transparent',
+        boxShadow: 'none',
         animation: 'cx-drawer-in 0.35s cubic-bezier(0.16,1,0.3,1) both',
         fontFamily: "'DM Sans', ui-sans-serif, system-ui, sans-serif",
+        pointerEvents: 'none',
       }}>
       <style>{DRAWER_CSS}</style>
 
-      {/* Header */}
+      {/* Header — floating glass chip */}
       <div style={{
         display: 'flex', alignItems: 'center', gap: 10,
-        padding: '14px 16px',
-        borderBottom: `1px solid ${C.border}`,
+        padding: '8px 12px', margin: '0 4px',
+        borderRadius: 12,
+        background: 'rgba(6,10,18,0.45)',
+        border: `1px solid ${C.border}66`,
+        backdropFilter: 'blur(14px)', WebkitBackdropFilter: 'blur(14px)',
         flexShrink: 0,
+        pointerEvents: 'auto',
       }}>
         <span style={{ width: 7, height: 7, borderRadius: '50%', background: st.color, boxShadow: `0 0 8px ${st.color}`, animation: 'pulse 1.6s infinite' }} />
         <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.3em', color: C.cyan, fontFamily: '"IBM Plex Mono", monospace' }}>
@@ -597,9 +606,9 @@ function CortexChatDrawerInner({ open, onClose, payload, onSubmitText }: CortexC
         </button>
       </div>
 
-      {/* Transcript */}
-      <div className="cx-drawer-scroll" style={{ position: 'relative', flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
-        <div ref={scrollRef} onScroll={onScroll} style={{ flex: 1, overflowY: 'auto', padding: '16px 14px' }}>
+      {/* Transcript — transparent; bubbles carry their own glass */}
+      <div className="cx-drawer-scroll" style={{ position: 'relative', flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0, pointerEvents: (messages.length > 0 || isProcessing) ? 'auto' : 'none' }}>
+        <div ref={scrollRef} onScroll={onScroll} style={{ flex: 1, overflowY: 'auto', padding: '12px 8px' }}>
         {messages.length === 0 && !isProcessing ? (
           <div style={{ padding: '40px 12px', textAlign: 'center' }}>
             <div style={{ fontSize: 10, letterSpacing: '0.34em', color: C.dim, marginBottom: 8 }}>— SILENT CHANNEL —</div>
@@ -642,10 +651,13 @@ function CortexChatDrawerInner({ open, onClose, payload, onSubmitText }: CortexC
 
       {/* Live caption — what Cortex is saying right now */}
       <div style={{
-        padding: '10px 16px',
-        borderTop: `1px solid ${C.border}`,
-        background: 'rgba(4,8,14,0.6)',
+        padding: '8px 14px', margin: '0 4px',
+        borderRadius: 12,
+        background: 'rgba(6,10,18,0.45)',
+        border: `1px solid ${C.border}55`,
+        backdropFilter: 'blur(14px)', WebkitBackdropFilter: 'blur(14px)',
         flexShrink: 0,
+        pointerEvents: 'auto',
       }}>
         <div style={{ fontSize: 8, letterSpacing: '0.32em', color: 'rgba(148,233,255,0.4)', marginBottom: 5 }}>
           ── LIVE TRANSMISSION ──
@@ -661,10 +673,16 @@ function CortexChatDrawerInner({ open, onClose, payload, onSubmitText }: CortexC
         </div>
       </div>
 
-      {/* Composer — hands off to full chat */}
+      {/* Composer — floating glass bar at the bottom */}
       <div style={{
-        display: 'flex', gap: 8, padding: '10px 14px 14px',
-        borderTop: `1px solid ${C.border}`, flexShrink: 0,
+        display: 'flex', gap: 8, padding: '10px 12px', margin: '0 4px 4px',
+        borderRadius: 14,
+        background: 'rgba(6,10,18,0.55)',
+        border: `1px solid ${C.borderBright}55`,
+        backdropFilter: 'blur(16px)', WebkitBackdropFilter: 'blur(16px)',
+        boxShadow: '0 10px 40px rgba(0,0,0,0.4)',
+        flexShrink: 0,
+        pointerEvents: 'auto',
       }}>
         <input
           value={draft}
@@ -672,8 +690,10 @@ function CortexChatDrawerInner({ open, onClose, payload, onSubmitText }: CortexC
           onKeyDown={(e) => { if (e.key === 'Enter') submitDraft(); }}
           placeholder="Ask Cortex — voice & tools run here…"
           style={{
-            flex: 1, padding: '8px 12px', borderRadius: 6, fontSize: 12,
-            background: C.glass, border: `1px solid ${C.border}`,
+            flex: 1, padding: '9px 13px', borderRadius: 8, fontSize: 12,
+            background: 'rgba(148,233,255,0.07)',
+            border: `1px solid ${C.border}`,
+            backdropFilter: 'blur(8px)', WebkitBackdropFilter: 'blur(8px)',
             color: C.text, outline: 'none', fontFamily: 'inherit',
           }}
         />
