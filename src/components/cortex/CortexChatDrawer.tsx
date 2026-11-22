@@ -15,8 +15,8 @@ import type { CortexSignalBusPayload } from './CortexVisualizer';
 
 const DRAWER_CSS = `
   @keyframes cx-drawer-in {
-    from { opacity: 0; translate: 0 18px; }
-    to   { opacity: 1; translate: 0 0; }
+    from { transform: translateX(48px); opacity: 0; }
+    to   { transform: translateX(0); opacity: 1; }
   }
   @keyframes cx-caret-blink {
     0%, 100% { opacity: 1; }
@@ -552,9 +552,8 @@ function CortexChatDrawerInner({ open, onClose, payload, onSubmitText }: CortexC
       aria-modal="true"
       aria-label="Cortex Uplink Chat"
       style={{
-        position: 'absolute', left: '50%', bottom: 14, transform: 'translateX(-50%)',
-        width: 'min(680px, 94vw)', height: 'min(560px, 62vh)', zIndex: 70,
-        display: 'flex', flexDirection: 'column',
+        position: 'absolute', top: 0, right: 0, bottom: 0, width: 'min(400px, 88vw)',
+        zIndex: 42, display: 'flex', flexDirection: 'column',
         background: 'transparent',
         boxShadow: 'none',
         animation: 'cx-drawer-in 0.35s cubic-bezier(0.16,1,0.3,1) both',

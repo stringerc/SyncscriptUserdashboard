@@ -1322,7 +1322,7 @@ export default function CortexVisualizerPage() {
         style={{
           position: 'absolute',
           top: 20,
-          right: narrow ? 16 : 32,
+          right: chatOpen ? (narrow ? 16 : 416) : (narrow ? 16 : 32),
           zIndex: 35,
           display: 'flex',
           alignItems: 'center',
@@ -3095,11 +3095,9 @@ export default function CortexVisualizerPage() {
         }}
       />
 
-      {/* Dockable generative-UI surface panels (Phase 2) — active in Core view.
-          Chat is now a bottom floating overlay — no side reserve needed;
-          panels use the full workspace and the glass chat floats above. */}
+      {/* Dockable generative-UI surface panels (Phase 2) — active in Core view */}
       {faceMode !== 'agents' && (
-        <CortexSurfaceLayer drawerOpen={false} />
+        <CortexSurfaceLayer drawerOpen={chatOpen} />
       )}
 
       {/* Weather hero modal — pops on the space when get_weather resolves.
