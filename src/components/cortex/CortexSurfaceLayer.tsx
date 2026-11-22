@@ -483,7 +483,19 @@ function PanelChrome({
         </div>
       )}
 
-      <div style={{ padding: isWeatherCard ? 0 : 10, overflowY: 'auto', flex: 1, minHeight: 0, pointerEvents: (dimmed || dragging) ? 'none' : 'auto' }}>
+      <div
+        onPointerDown={isWeatherCard ? (e) => {
+          // Chromeless card: drag from anywhere except interactive controls.
+          const t = e.target as HTMLElement;
+          if (t.closest('button, a, input, textarea, select, [role="button"], [data-resize-handle]')) return;
+          onDragPointerDown(e);
+        } : undefined}
+        style={{
+          padding: isWeatherCard ? 0 : 10, overflowY: 'auto', flex: 1, minHeight: 0,
+          pointerEvents: (dimmed || dragging) ? 'none' : 'auto',
+          cursor: isWeatherCard ? (dragging ? 'grabbing' : 'grab') : undefined,
+        }}
+      >
         {children}
       </div>
 
@@ -501,7 +513,26 @@ function PanelChrome({
             e.stopPropagation();
             onResetSize?.();
           }}
-          style={{
+          style={isWeatherCard ? {
+            position: 'absolute',
+            bottom: 6,
+            right: 6,
+            width: 26,
+            height: 26,
+            cursor: 'nwse-resize',
+            zIndex: 25,
+            touchAction: 'none',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            borderRadius: 9,
+            border: '1px solid rgba(255,255,255,0.55)',
+            background: 'rgba(255,255,255,0.42)',
+            backdropFilter: 'blur(8px)', WebkitBackdropFilter: 'blur(8px)',
+            opacity: chromeHover ? 1 : 0,
+            transition: 'opacity 0.2s ease',
+            pointerEvents: chromeHover ? 'auto' : 'none',
+          } : {
             position: 'absolute',
             bottom: 0,
             right: 0,
@@ -518,11 +549,17 @@ function PanelChrome({
             transition: 'opacity 0.15s ease',
           }}
           onMouseEnter={(e) => { e.currentTarget.style.opacity = '1.0'; }}
-          onMouseLeave={(e) => { e.currentTarget.style.opacity = '0.65'; }}
+          onMouseLeave={(e) => { e.currentTarget.style.opacity = isWeatherCard ? '0' : '0.65'; }}
         >
-          <svg width="9" height="9" viewBox="0 0 9 9" fill="none">
-            <path d="M8 2L2 8M8 5L5 8M8 8L8 8" stroke={panel.clusterColor || C.cyan} strokeWidth="1.2" strokeLinecap="round" />
-          </svg>
+          {isWeatherCard ? (
+            <svg width="10" height="10" viewBox="0 0 10 10" fill="none">
+              <path d="M9 3L3 9M9 6L6 9M9 9L9 9" stroke="#12335c" strokeWidth="1.4" strokeLinecap="round" />
+            </svg>
+          ) : (
+            <svg width="9" height="9" viewBox="0 0 9 9" fill="none">
+              <path d="M8 2L2 8M8 5L5 8M8 8L8 8" stroke={panel.clusterColor || C.cyan} strokeWidth="1.2" strokeLinecap="round" />
+            </svg>
+          )}
         </div>
       )}
     </div>
@@ -1796,8 +1833,8 @@ export function CortexSurfaceLayer({ drawerOpen = false }: { drawerOpen?: boolea
   const [drag, setDrag] = useState<{ id: string; rect: Rect; zone?: SurfaceZone } | null>(null);
   const dragRef = useRef<{ id: string; startX: number; startY: number; origin: Rect; targetZone: SurfaceZone } | null>(null);
   const dragRectRef = useRef<Rect | null>(null);
-  const [resizing, setResizing] = useState<{ id: string; startX: number; startY: number; startW: number; startH: number; rect: Rect } | null>(null);
-  const resizeRef = useRef<{ id: string; startX: number; startY: number; startW: number; startH: number; rect: Rect } | null>(null);
+  const [resizing, setResizing] = useState<{ id: string; startX: number; startY: number; startW: number; startH: number; rect: Rect; minW?: number; minH?: number } | null>(null);
+  const resizeRef = useRef<{ id: string; startX: number; startY: number; startW: number; startH: number; rect: Rect; minW?: number; minH?: number } | null>(null);
   const rectsRef = useRef<Record<SurfaceZone, Rect>>(computeZoneRects(false));
   const [focusedPanelId, setFocusedPanelId] = useState<string | null>(null);
   const [dockDust, setDockDust] = useState<{ path: NexusPixiePath; reduceMotion: boolean } | null>(null);
@@ -1932,7 +1969,9 @@ export function CortexSurfaceLayer({ drawerOpen = false }: { drawerOpen?: boolea
     e.stopPropagation();
     if (e.button !== 0) return;
     const origin = { ...currentRect };
-    const rData = { id: panel.id, startX: e.clientX, startY: e.clientY, startW: origin.w, startH: origin.h, rect: origin };
+    // Weather cards need enough room for hero + forecast strips.
+    const isWx = panel.artifact?.kind === 'weather';
+    const rData = { id: panel.id, startX: e.clientX, startY: e.clientY, startW: origin.w, startH: origin.h, rect: origin, minW: isWx ? 300 : 220, minH: isWx ? 380 : 160 };
     resizeRef.current = rData;
     setResizing(rData);
     setRaisedId(panel.id);
@@ -1946,8 +1985,8 @@ export function CortexSurfaceLayer({ drawerOpen = false }: { drawerOpen?: boolea
       if (!r) return;
       const dw = e.clientX - r.startX;
       const dh = e.clientY - r.startY;
-      const newW = Math.max(220, Math.min(window.innerWidth * 0.9, r.startW + dw));
-      const newH = Math.max(160, Math.min(window.innerHeight * 0.85, r.startH + dh));
+      const newW = Math.max(r.minW ?? 220, Math.min(window.innerWidth * 0.9, r.startW + dw));
+      const newH = Math.max(r.minH ?? 160, Math.min(window.innerHeight * 0.85, r.startH + dh));
       const newRect = { ...r.rect, w: Math.round(newW), h: Math.round(newH) };
       resizeRef.current = { ...r, rect: newRect };
       setResizing({ ...r, rect: newRect });
