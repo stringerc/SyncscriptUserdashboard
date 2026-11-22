@@ -2818,6 +2818,7 @@ const _vecOrigin = new THREE.Vector3(0, 0, 0);
 const _chaseRadial = new THREE.Vector3();
 const _chasePos = new THREE.Vector3();
 const _chaseDir = new THREE.Vector3();
+const _chaseAim = new THREE.Vector3();
 const _defaultScPos = new THREE.Vector3(2.2, 0.4, 1.2);
 const _defaultSecPos = new THREE.Vector3(-2.2, -0.3, 1.5);
 
@@ -2868,6 +2869,8 @@ function CameraRig({
   const chaseTheta = useRef(0);
   const chasePhi = useRef(1.3);
   const chaseKey = useRef('');
+  const chasePrev = useRef(new THREE.Vector3());
+  const chaseVel = useRef(new THREE.Vector3());
   const chaseActiveRef = useRef(false);
   const pendingChaseRelease = useRef(false);
   const chaseReleaseTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -3184,12 +3187,24 @@ function CameraRig({
       const ckey = selectedAgentId ?? selectedMemoryId ?? '';
       if (chaseKey.current !== ckey) {
         chaseKey.current = ckey;
+        chasePrev.current.copy(targetWorldPos);
+        chaseVel.current.set(0, 0, 0);
         _chaseDir.copy(camera.position).sub(targetWorldPos);
         const dlen = _chaseDir.length() || 1;
         chasePhi.current = Math.acos(THREE.MathUtils.clamp(_chaseDir.y / dlen, -1, 1));
         chaseTheta.current = Math.atan2(_chaseDir.x, _chaseDir.z);
       }
-      targetLookAt.current.lerp(targetWorldPos, Math.min(1, delta * 5));
+      // Velocity lead — fast orbiters (outer-ring scouts) outrun a pure
+      // position chase, so aim a beat ahead along their smoothed velocity.
+      if (delta > 0) {
+        _chaseDir.copy(targetWorldPos).sub(chasePrev.current).multiplyScalar(1 / delta);
+        const vlen = _chaseDir.length();
+        if (vlen > 8) _chaseDir.multiplyScalar(8 / vlen); // clamp spike frames
+        chaseVel.current.lerp(_chaseDir, Math.min(1, delta * 10));
+      }
+      chasePrev.current.copy(targetWorldPos);
+      _chaseAim.copy(targetWorldPos).addScaledVector(chaseVel.current, 0.22);
+      targetLookAt.current.lerp(_chaseAim, Math.min(1, delta * 6));
       // Orbit around the smoothed lookAt anchor (not the raw agent position) so
       // the camera position and gaze always share one point — the agent stays
       // dead-center even at extreme close zoom while it keeps orbiting.
