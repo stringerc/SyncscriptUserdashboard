@@ -8336,6 +8336,9 @@ function triggerQuickAction() {
                 voiceSummary: outcome.voiceSummary,
                 markdownSummary: outcome.markdownSummary,
                 backgroundTaskId: outcome.backgroundTaskId,
+                devinSessionId: outcome.devinSessionId,
+                devinSessionUrl: outcome.devinSessionUrl,
+                devinDispatchError: outcome.devinDispatchError,
                 durationMs: Date.now() - startMs,
               }));
             }

@@ -24,6 +24,7 @@
 import { execFile, execFileSync, spawnSync } from 'node:child_process';
 import { existsSync, readFileSync, writeFileSync, mkdirSync, appendFileSync, readdirSync } from 'node:fs';
 import { join, resolve } from 'node:path';
+import { createHash } from 'node:crypto';
 import { promisify } from 'node:util';
 
 const execFileAsync = promisify(execFile);
@@ -51,6 +52,7 @@ export interface CandidatePatch {
   rawResponse?: string;
   devinSessionId?: string;
   devinSessionUrl?: string;
+  devinDispatchError?: string;
 }
 
 export interface TestValidationResult {
@@ -95,6 +97,7 @@ export interface EscalationOutcome {
   commitHash?: string;
   devinSessionId?: string;
   devinSessionUrl?: string;
+  devinDispatchError?: string;
   voiceSummary: string;
   markdownSummary: string;
   backgroundTaskId?: string;
@@ -114,6 +117,190 @@ function getEnvKey(key: string): string {
     }
   } catch {}
   return '';
+}
+
+// ── Devin Session Dispatch ────────────────────────────────────────────────
+
+const DEVIN_SESSIONS_URL = 'https://api.devin.ai/v1/sessions';
+const DEVIN_PROMPT_MAX_CHARS = 30000;
+const DEVIN_DEDUPE_WINDOW_MS = 10 * 60 * 1000;
+const DEVIN_DEFAULT_REPO = 'stringerc/SyncscriptUserdashboard';
+const DEVIN_DEFAULT_BRANCH = 'security-hardening';
+
+export interface DevinDispatchResult {
+  ok: boolean;
+  sessionId?: string;
+  url?: string;
+  reused?: boolean;
+  status?: number;
+  attempts: number;
+  error?: string;
+}
+
+export interface DevinDispatchOptions {
+  fetchImpl?: typeof fetch;
+  maxAttempts?: number;
+  retryDelayMs?: number;
+  timeoutMs?: number;
+  now?: () => number;
+}
+
+function writeJsonFile(file: string, data: unknown): boolean {
+  try {
+    mkdirSync(resolve(file, '..'), { recursive: true });
+    writeFileSync(file, JSON.stringify(data, null, 2));
+    return true;
+  } catch (err: any) {
+    console.warn(`[Cortex Self-Heal] Failed to write ${file}: ${err?.message || err}`);
+    return false;
+  }
+}
+
+function readJsonArray(file: string): any[] {
+  if (!existsSync(file)) return [];
+  try {
+    const parsed = JSON.parse(readFileSync(file, 'utf8'));
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function devinTarget(): { repo: string; branch: string } {
+  return {
+    repo: getEnvKey('DEVIN_TARGET_REPO') || DEVIN_DEFAULT_REPO,
+    branch: getEnvKey('DEVIN_TARGET_BRANCH') || DEVIN_DEFAULT_BRANCH,
+  };
+}
+
+export function devinDedupeKey(request: EscalationRequest): string {
+  const { repo, branch } = devinTarget();
+  const basis = `${request.problemDescription.trim().toLowerCase()}|${(request.componentPath || '').trim()}|${repo}|${branch}`;
+  return createHash('sha256').update(basis).digest('hex').slice(0, 16);
+}
+
+export function buildDevinPrompt(request: EscalationRequest): string {
+  const { repo, branch } = devinTarget();
+  const prompt = `Cortex Escalation: Investigate and fix issue in ${request.componentPath || 'SyncScript repository'}.
+
+Repository: ${repo} (base branch: ${branch} — branch from it and open the PR against it; other branches do not contain the Cortex code)
+
+Problem Description: ${request.problemDescription}
+Component: ${request.componentPath || 'General'}
+Error Stack / Trace: ${request.errorStack || 'None provided'}
+Observed Behavior: ${request.observedBehavior || 'Not specified'}
+Expected Behavior: ${request.expectedBehavior || 'Cleanly resolve without regressions'}`;
+  return prompt.length > DEVIN_PROMPT_MAX_CHARS ? prompt.slice(0, DEVIN_PROMPT_MAX_CHARS) : prompt;
+}
+
+function isRetryableStatus(status: number): boolean {
+  return status === 408 || status === 429 || status >= 500;
+}
+
+/**
+ * Opens a Devin session for the escalation. Identical escalations inside the dedupe
+ * window reuse the cached session instead of spawning duplicates; transient failures
+ * (network, 408/429/5xx) are retried; every terminal failure is recorded in the queue.
+ */
+export async function dispatchDevinSession(
+  request: EscalationRequest,
+  workspaceRoot: string = process.cwd(),
+  options: DevinDispatchOptions = {}
+): Promise<DevinDispatchResult> {
+  const fetchImpl = options.fetchImpl || fetch;
+  const maxAttempts = Math.max(1, options.maxAttempts ?? 3);
+  const retryDelayMs = options.retryDelayMs ?? 750;
+  const timeoutMs = options.timeoutMs ?? 15000;
+  const now = options.now || Date.now;
+
+  const cacheDir = resolve(workspaceRoot, '.cache');
+  const sessionCacheFile = join(cacheDir, 'cortex_devin_sessions.json');
+  const queueDir = join(cacheDir, 'cortex_devin_queue');
+  const dedupeKey = devinDedupeKey(request);
+  const incidentId = request.incidentId || `devin-${now()}`;
+
+  const queueEntry = (status: string, extra: Record<string, unknown> = {}) =>
+    writeJsonFile(join(queueDir, `${incidentId}.json`), {
+      incidentId,
+      timestamp: new Date(now()).toISOString(),
+      problem: request.problemDescription,
+      component: request.componentPath,
+      stack: request.errorStack,
+      dedupeKey,
+      status,
+      ...extra,
+    });
+
+  const apiKey = getEnvKey('DEVIN_API_KEY');
+  if (!apiKey) {
+    queueEntry('staged_pending_api_key');
+    return { ok: false, attempts: 0, error: 'DEVIN_API_KEY not configured; escalation staged in queue' };
+  }
+
+  const sessions = readJsonArray(sessionCacheFile);
+  const recent = [...sessions].reverse().find(
+    (s) => s?.dedupeKey === dedupeKey && s?.sessionId && now() - Date.parse(s.createdAt) < DEVIN_DEDUPE_WINDOW_MS
+  );
+  if (recent) {
+    return { ok: true, sessionId: recent.sessionId, url: recent.url, reused: true, attempts: 0 };
+  }
+
+  const title = `Cortex Escalation: ${request.problemDescription.slice(0, 50)}`;
+  const body = JSON.stringify({ prompt: buildDevinPrompt(request), title, idempotent: true });
+
+  let lastError = '';
+  let lastStatus: number | undefined;
+  let attempts = 0;
+  while (attempts < maxAttempts) {
+    attempts++;
+    let retryable = true;
+    try {
+      const res = await fetchImpl(DEVIN_SESSIONS_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
+        body,
+        signal: AbortSignal.timeout(timeoutMs),
+      });
+      lastStatus = res.status;
+      if (res.ok) {
+        const data = (await res.json()) as any;
+        if (!data?.session_id) {
+          lastError = 'Devin API response missing session_id';
+          retryable = false;
+        } else {
+          const sessionId = String(data.session_id);
+          const url = data.url || `https://app.devin.ai/sessions/${sessionId.replace(/^devin-/, '')}`;
+          const latest = readJsonArray(sessionCacheFile);
+          latest.push({
+            sessionId,
+            url,
+            title,
+            dedupeKey,
+            component: request.componentPath,
+            problem: request.problemDescription,
+            createdAt: new Date(now()).toISOString(),
+          });
+          writeJsonFile(sessionCacheFile, latest.slice(-30));
+          console.log(`[Cortex Self-Heal] Devin session ready: ${sessionId} (${url})`);
+          return { ok: true, sessionId, url, status: res.status, attempts };
+        }
+      } else {
+        const errText = await res.text().catch(() => '');
+        lastError = `Devin API HTTP ${res.status}: ${errText.slice(0, 300)}`;
+        retryable = isRetryableStatus(res.status);
+      }
+    } catch (err: any) {
+      lastError = `Devin API request failed: ${err?.message || err}`;
+    }
+    console.warn(`[Cortex Self-Heal] ${lastError} (attempt ${attempts}/${maxAttempts})`);
+    if (!retryable) break;
+    if (attempts < maxAttempts && retryDelayMs > 0) {
+      await new Promise((r) => setTimeout(r, retryDelayMs * 2 ** (attempts - 1)));
+    }
+  }
+
+  queueEntry('dispatch_failed', { httpStatus: lastStatus, error: lastError, attempts });
+  return { ok: false, status: lastStatus, attempts, error: lastError };
 }
 
 // ── Stage 1: Primary Diagnostician (Antigravity IDE & Devin) ─────────────
@@ -137,77 +324,16 @@ export async function synthesizeCandidatePatch(
     }
   }
 
-  // Handle Devin dispatch
-  let devinSessionId: string | undefined;
-  let devinSessionUrl: string | undefined;
-  const devinApiKey = getEnvKey('DEVIN_API_KEY');
-
-  if (primary === 'devin' || request.problemDescription.toLowerCase().includes('devin')) {
-    diagnosticianName = 'Devin Autonomous Engine';
-    if (devinApiKey) {
-      try {
-        const title = `Cortex Escalation: ${request.problemDescription.slice(0, 50)}`;
-        const devinRes = await fetch('https://api.devin.ai/v1/sessions', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${devinApiKey}`,
-          },
-          body: JSON.stringify({
-            prompt: `Cortex Escalation: Investigate and fix issue in ${request.componentPath || 'SyncScript repository'}.\n\nProblem Description: ${request.problemDescription}\nComponent: ${request.componentPath || 'General'}\nError Stack / Trace: ${request.errorStack || 'None provided'}\nExpected Behavior: ${request.expectedBehavior || 'Cleanly resolve without regressions'}`,
-            title,
-          }),
-        });
-
-        if (devinRes.ok) {
-          const devinData = (await devinRes.json()) as any;
-          devinSessionId = devinData.session_id;
-          devinSessionUrl = devinData.url || `https://preview.devin.ai/sessions/${devinData.session_id}`;
-          console.log(`[Cortex Self-Heal] Active Devin session created: ${devinSessionId} (${devinSessionUrl})`);
-
-          // Persist to session cache
-          try {
-            const cacheDir = resolve(workspaceRoot, '.cache');
-            if (!existsSync(cacheDir)) mkdirSync(cacheDir, { recursive: true });
-            const sessionCacheFile = join(cacheDir, 'cortex_devin_sessions.json');
-            let sessions: any[] = [];
-            if (existsSync(sessionCacheFile)) {
-              try { sessions = JSON.parse(readFileSync(sessionCacheFile, 'utf8')); } catch {}
-            }
-            sessions.push({
-              sessionId: devinSessionId,
-              url: devinSessionUrl,
-              title,
-              component: request.componentPath,
-              problem: request.problemDescription,
-              createdAt: new Date().toISOString(),
-            });
-            writeFileSync(sessionCacheFile, JSON.stringify(sessions.slice(-30), null, 2));
-          } catch {}
-        } else {
-          const errText = await devinRes.text();
-          console.warn(`[Cortex Self-Heal] Devin API returned HTTP ${devinRes.status}: ${errText}`);
-        }
-      } catch (err) {
-        console.warn('[Cortex Self-Heal] Devin API request failed, falling back to Antigravity synthesis:', err);
-      }
-    } else {
-      // Stage Devin escalation for asynchronous pickup
-      const queueDir = resolve(workspaceRoot, '.cache/cortex_devin_queue');
-      try {
-        if (!existsSync(queueDir)) mkdirSync(queueDir, { recursive: true });
-        const devinPayload = {
-          incidentId: request.incidentId || `devin-${Date.now()}`,
-          timestamp: new Date().toISOString(),
-          problem: request.problemDescription,
-          component: request.componentPath,
-          stack: request.errorStack,
-          status: 'staged_pending_api_key',
-        };
-        writeFileSync(join(queueDir, `${devinPayload.incidentId}.json`), JSON.stringify(devinPayload, null, 2));
-      } catch {}
-    }
-  }
+  // Devin dispatch runs concurrently with Antigravity synthesis below.
+  const wantsDevin = primary === 'devin' || request.problemDescription.toLowerCase().includes('devin');
+  if (wantsDevin) diagnosticianName = 'Devin Autonomous Engine';
+  const devinDispatch: Promise<DevinDispatchResult | null> = wantsDevin
+    ? dispatchDevinSession(request, workspaceRoot).catch((err: any) => ({
+        ok: false,
+        attempts: 0,
+        error: String(err?.message || err),
+      }))
+    : Promise.resolve(null);
 
   // Synthesize candidate patch via high-speed cognitive engine (OpenRouter Llama 3.3 / Groq)
   const openRouterKey = getEnvKey('OPENROUTER_API_KEY');
@@ -302,14 +428,17 @@ Please synthesize a precise, robust candidate patch.`;
     };
   }
 
+  const devin = await devinDispatch;
+
   return {
     diagnostician: diagnosticianName,
     summary: resultJson.summary || 'Autonomous bug fix',
     affectedFiles: Array.isArray(resultJson.affectedFiles) ? resultJson.affectedFiles : [request.componentPath || 'src/'],
     unifiedDiff: resultJson.unifiedDiff || '',
     explanation: resultJson.explanation || '',
-    devinSessionId,
-    devinSessionUrl,
+    devinSessionId: devin?.sessionId,
+    devinSessionUrl: devin?.url,
+    devinDispatchError: devin && !devin.ok ? devin.error : undefined,
   };
 }
 
@@ -416,6 +545,9 @@ Please refine the patch now to address every critique point cleanly and surgical
     affectedFiles: Array.isArray(resultJson.affectedFiles) ? resultJson.affectedFiles : previousPatch.affectedFiles,
     unifiedDiff: resultJson.unifiedDiff || previousPatch.unifiedDiff,
     explanation: resultJson.explanation || previousPatch.explanation,
+    devinSessionId: previousPatch.devinSessionId,
+    devinSessionUrl: previousPatch.devinSessionUrl,
+    devinDispatchError: previousPatch.devinDispatchError,
   };
 }
 
@@ -842,14 +974,17 @@ function generateSpokenReport(
 ): string {
   const devinNote = patch.devinSessionId
     ? ` I also kicked off a live session with Devin on Cognition's cloud.`
+    : patch.devinDispatchError
+    ? ` Heads up: the Devin hand-off failed; I logged it in the Devin queue for follow-up.`
     : '';
+  const escalatedTo = patch.devinSessionId ? 'Antigravity and Devin' : 'Antigravity';
 
   if (consensus.status === 'APPROVED' && deployed) {
-    return `I escalated the issue in ${request.componentPath || 'the system'} to Antigravity and Devin.${devinNote} Antigravity synthesized a surgical fix that passed all local invariant and typecheck gates. Before touching anything live, I put the diff through our multi-IDE verification gate: both Claude Code and DeepSeek independently audited the patch and signed off with an average score of ${consensus.averageScore} out of ten and zero regressions. The fix is safely deployed.`;
+    return `I escalated the issue in ${request.componentPath || 'the system'} to ${escalatedTo}.${devinNote} Antigravity synthesized a surgical fix that passed all local invariant and typecheck gates. Before touching anything live, I put the diff through our multi-IDE verification gate: both Claude Code and DeepSeek independently audited the patch and signed off with an average score of ${consensus.averageScore} out of ten and zero regressions. The fix is safely deployed.`;
   }
 
   if (consensus.status === 'REJECTED') {
-    return `I escalated the problem to Antigravity and Devin, but our peer-review consensus gate rejected the proposed fix. ${consensus.blockReason} So I blocked the deployment before anything could break, and I'm holding the state until we review it.`;
+    return `I escalated the problem to ${escalatedTo}, but our peer-review consensus gate rejected the proposed fix.${devinNote} ${consensus.blockReason} So I blocked the deployment before anything could break, and I'm holding the state until we review it.`;
   }
 
   return `I ran the self-healing escalation pipeline for ${request.problemDescription.slice(0, 40)}. The diagnosis completed, but automated tests flagged an issue, so I halted deployment for manual review.`;
@@ -880,6 +1015,8 @@ export function generateMarkdownSummary(
 
   const devinSection = p?.devinSessionId
     ? `\n- **Devin Autonomous Session**: [${p.devinSessionId}](${p.devinSessionUrl || `https://app.devin.ai/sessions/${p.devinSessionId}`})`
+    : p?.devinDispatchError
+    ? `\n- **Devin Autonomous Session**: FAILED — ${p.devinDispatchError} (queued in \`.cache/cortex_devin_queue\`)`
     : '';
 
   const gitSection = details.deployed && details.commitHash
@@ -1008,6 +1145,7 @@ export async function escalateProblemToIde(
     commitHash,
     devinSessionId: patch.devinSessionId,
     devinSessionUrl: patch.devinSessionUrl,
+    devinDispatchError: patch.devinDispatchError,
     voiceSummary,
     markdownSummary,
     durationMs: totalDurationMs,
