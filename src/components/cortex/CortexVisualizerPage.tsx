@@ -31,6 +31,7 @@ import { getGlobeEmbedUrl, configureGlobeBase, GLOBE_MODE_EVENT, setGlobeAvailab
 import { neuroAudio } from '../../lib/cortex-neuro-audio';
 import { cortexWebcamParallax, type HandPinchState } from '../../lib/cortex-webcam-parallax';
 import { cortexGaze } from '../../lib/cortex-gaze';
+import { onBootPhase, startBoot } from '../../lib/cortex-boot';
 import CortexGazeLayer from './CortexGazeLayer';
 import { CORTEX_COLORS, CORTEX_STATE_THEME, CORTEX_TYPOGRAPHY, CORTEX_ANIMATION } from '../../lib/cortex-design-tokens';
 import { A2uiDemoPanel } from './a2ui/A2uiDemoPanel';
@@ -215,6 +216,10 @@ function Typewriter({ text, accent }: { text: string; accent: string }) {
 }
 
 export default function CortexVisualizerPage() {
+  // Staged boot: core UI mounts immediately; telemetry, cognition sensors,
+  // and auto-pinned panels arrive in later phases so the page is interactive
+  // (chat typable, scene live) before the background storm begins.
+  startBoot();
   const [micOn, setMicOn] = useState(() => {
     if (typeof window === 'undefined') return true;
     try {
@@ -334,9 +339,17 @@ export default function CortexVisualizerPage() {
 
   // Proactive Initiative Sensor Bus: polls /api/cortex/initiative/sense on a
   // visibility-gated cadence and feeds live host signals into the proposal engine.
+  // Deferred to the 'ambient' boot phase — its first evaluateInitiatives pass
+  // is a proposal burst that flooded the Inbox and stalled first paint.
   useEffect(() => {
-    const sensor = startInitiativeSensor();
-    return () => sensor.stop();
+    let stop: (() => void) | null = null;
+    let cancelled = false;
+    onBootPhase('ambient', () => {
+      if (cancelled) return;
+      const sensor = startInitiativeSensor();
+      stop = () => sensor.stop();
+    });
+    return () => { cancelled = true; stop?.(); };
   }, []);
 
   // Initiative HUD badge + one-time auto-open: the first proposal of a session
@@ -378,7 +391,15 @@ export default function CortexVisualizerPage() {
       setInitiativeCount(active);
       if (active > 0 && !initiativeAutoOpenedRef.current) {
         initiativeAutoOpenedRef.current = true;
-        openSurfacePanel({ kind: 'initiative', title: 'Initiative Inbox', customSize: { w: 460, h: 480 }, pinned: true });
+        // Settle delay: the first sensor pass can emit a burst of proposals —
+        // wait for the count to stabilize before stealing focus with the panel.
+        setTimeout(() => {
+          const still = engine.getPendingProposals().length
+            + engine.getActiveProposals().filter(p => p.status === 'accepted').length;
+          if (still > 0) {
+            openSurfacePanel({ kind: 'initiative', title: 'Initiative Inbox', customSize: { w: 460, h: 480 }, pinned: true });
+          }
+        }, 3500);
       }
     };
     update();
@@ -389,7 +410,15 @@ export default function CortexVisualizerPage() {
   // Leader-elected via a localStorage lease so only one Cortex tab senses at
   // a time; previously these sensors lived only on /cortex chat, so the
   // visualizer accumulated no dispositions, streaks, or consolidations.
-  useEffect(() => startBecomingLoop(), []);
+  useEffect(() => {
+    let stop: (() => void) | null = null;
+    let cancelled = false;
+    onBootPhase('ambient', () => {
+      if (cancelled) return;
+      stop = startBecomingLoop();
+    });
+    return () => { cancelled = true; stop?.(); };
+  }, []);
 
   // Distribution Deck: pin the live revenue-engine dashboard once per session
   // so the Gumroad pipeline is always visible on the space. Dedup is handled
@@ -398,19 +427,22 @@ export default function CortexVisualizerPage() {
   useEffect(() => {
     if (distDeckOpenedRef.current) return;
     distDeckOpenedRef.current = true;
-    openSurfacePanel({
-      kind: 'web',
-      title: 'Distribution Deck',
-      web: { url: '/storefront/distribution-dashboard.html', slug: 'distribution-deck' },
-      pinned: true,
-      customSize: { w: 720, h: 580 },
-    });
-    openSurfacePanel({
-      kind: 'web',
-      title: "Today's Ops",
-      web: { url: '/storefront/today-checklist.html', slug: 'today-ops' },
-      pinned: true,
-      customSize: { w: 520, h: 460 },
+    // Two pinned dashboard iframes are heavy — let the core UI settle first.
+    onBootPhase('ambient', () => {
+      openSurfacePanel({
+        kind: 'web',
+        title: 'Distribution Deck',
+        web: { url: '/storefront/distribution-dashboard.html', slug: 'distribution-deck' },
+        pinned: true,
+        customSize: { w: 720, h: 580 },
+      });
+      openSurfacePanel({
+        kind: 'web',
+        title: "Today's Ops",
+        web: { url: '/storefront/today-checklist.html', slug: 'today-ops' },
+        pinned: true,
+        customSize: { w: 520, h: 460 },
+      });
     });
   }, []);
 
@@ -420,7 +452,11 @@ export default function CortexVisualizerPage() {
   useEffect(() => {
     agentsClient.start(); // ensure SSE feed is live even if Foundry never opens
     const engine = getCortexProactiveInitiative();
-    const scan = () => {
+    let unsub: (() => void) | null = null;
+    let cancelled = false;
+    onBootPhase('ambient', () => {
+      if (cancelled) return;
+      const scan = () => {
       for (const e of agentsClient.events) {
         if (e.type !== 'agent.spawn_proposed') continue;
         const p = e.proposal as any;
@@ -443,9 +479,11 @@ export default function CortexVisualizerPage() {
           why: (p.evidence || []).map((ev: any) => `${ev.kind}: ${ev.summary}`).join(' · ') || 'recurring capability gap',
         });
       }
-    };
-    scan();
-    return agentsClient.subscribe(scan);
+      };
+      scan();
+      unsub = agentsClient.subscribe(scan);
+    });
+    return () => { cancelled = true; unsub?.(); };
   }, []);
 
   // Agent crew presence — live fleet snapshot for the right-rail indicator,
@@ -559,10 +597,14 @@ export default function CortexVisualizerPage() {
     return () => window.removeEventListener('cortex-memory-select', onMemSelect);
   }, []);
 
-  // Poll memory graph for HUD telemetry and engram data
+  // Poll memory graph for HUD telemetry and engram data — 'ready' phase so
+  // it doesn't compete with first paint / chat hydration.
   useEffect(() => {
     let active = true;
-    const fetchGraph = async () => {
+    let iv: ReturnType<typeof setInterval> | null = null;
+    onBootPhase('ready', () => {
+      if (!active) return;
+      const fetchGraph = async () => {
       try {
         const res = await fetch('/api/cortex/memory/graph');
         if (!res.ok) return;
@@ -581,10 +623,11 @@ export default function CortexVisualizerPage() {
       } catch {
         if (active) setMemoryGraphSummary((prev) => ({ ...prev, online: false }));
       }
-    };
-    fetchGraph();
-    const iv = setInterval(fetchGraph, 10000);
-    return () => { active = false; clearInterval(iv); };
+      };
+      fetchGraph();
+      iv = setInterval(fetchGraph, 10000);
+    });
+    return () => { active = false; if (iv) clearInterval(iv); };
   }, []);
   useEffect(() => {
     if (!missionExpanded) return;
@@ -698,6 +741,9 @@ export default function CortexVisualizerPage() {
   const lastForecastSig = useRef('');
   useEffect(() => {
     let cancelled = false;
+    let t: ReturnType<typeof setInterval> | null = null;
+    onBootPhase('ready', () => {
+    if (cancelled) return;
     const poll = async () => {
       try {
         const res = await fetch('/api/cortex/agents/state', { cache: 'no-store' });
@@ -723,7 +769,7 @@ export default function CortexVisualizerPage() {
       } catch { /* forecast markers are best-effort */ }
     };
     void poll();
-    const t = setInterval(poll, 60_000);
+    t = setInterval(poll, 60_000);
     // Report location once so FORECASTER's weather probe can resolve local
     // NWS watch zones (server dedupes identical coords).
     if (typeof navigator !== 'undefined' && navigator.geolocation) {
@@ -735,7 +781,8 @@ export default function CortexVisualizerPage() {
         }).catch(() => {});
       }, () => {}, { timeout: 10000, maximumAge: 300000 });
     }
-    return () => { cancelled = true; clearInterval(t); };
+    });
+    return () => { cancelled = true; if (t) clearInterval(t); };
   }, []);
 
   // Auto-degrade GPU quality when the WebGL context is lost — cinematic's
@@ -928,14 +975,18 @@ export default function CortexVisualizerPage() {
         }
       } catch {}
     };
-    pollAmbientAndVigilance();
-    const ambientInterval = setInterval(pollAmbientAndVigilance, 6000);
+    // HUD-only telemetry — 'ready' phase, after first paint settles.
+    let ambientInterval: ReturnType<typeof setInterval> | null = null;
+    onBootPhase('ready', () => {
+      pollAmbientAndVigilance();
+      ambientInterval = setInterval(pollAmbientAndVigilance, 6000);
+    });
 
     return () => {
       if (goveeSyncTimer) clearTimeout(goveeSyncTimer);
       unsub();
       clearInterval(interval);
-      clearInterval(ambientInterval);
+      if (ambientInterval) clearInterval(ambientInterval);
       window.removeEventListener(GLOBE_MODE_EVENT, onGlobeMode);
       window.removeEventListener('cortex-face-mode', onFaceMode);
       window.removeEventListener('cortex-agent-select', onAgentSelect);

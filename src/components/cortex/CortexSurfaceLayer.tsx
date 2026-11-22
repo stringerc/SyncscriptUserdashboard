@@ -21,6 +21,7 @@ import type { CortexArtifact } from '../../lib/cortex-artifacts';
 import { setGlobeMode } from '../../lib/cortex-globe';
 import { neuroAudio } from '../../lib/cortex-neuro-audio';
 import type { HandPinchState } from '../../lib/cortex-webcam-parallax';
+import { onBootPhase } from '../../lib/cortex-boot';
 import {
   buildEmailPayload, buildDocumentPayload,
   type EmailPayload, type DocumentPayload, type EmailAttachment,
@@ -587,6 +588,15 @@ function WebPanelBody({ panel }: { panel: SurfacePanel }) {
   const [iframeKey, setIframeKey] = useState(0);
   const containerRef = useRef<HTMLDivElement>(null);
   const [containerW, setContainerW] = useState(320);
+  // Boot gate: persisted web panels (Distribution Deck, dashboards) would
+  // otherwise all spawn iframes at t=0 and saturate first paint. Chrome
+  // renders immediately; the iframe mounts at the 'ready' boot phase.
+  const [webReady, setWebReady] = useState(false);
+  useEffect(() => {
+    let dead = false;
+    onBootPhase('ready', () => { if (!dead) setWebReady(true); });
+    return () => { dead = true; };
+  }, []);
 
   const webUrl = panel.web?.url || '/sandbox/sample-website/index.html';
   const slug = panel.web?.slug || 'sample-website';
@@ -666,7 +676,12 @@ function WebPanelBody({ panel }: { panel: SurfacePanel }) {
         borderRadius: 4, overflow: 'hidden', background: '#020408',
         border: '1px solid rgba(255,255,255,0.06)',
       }}>
-        {isFit ? (
+        {!webReady ? (
+          <div style={{
+            position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center',
+            color: 'rgba(103,232,249,0.4)', fontSize: 9, fontFamily: MONO, letterSpacing: '0.2em',
+          }}>BOOTING SANDBOX…</div>
+        ) : isFit ? (
           <div style={{
             width: `${virtualW}px`,
             height: `${virtualH}px`,
