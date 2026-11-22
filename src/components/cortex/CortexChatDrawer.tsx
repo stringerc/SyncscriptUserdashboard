@@ -1,7 +1,7 @@
 import React, { Suspense, lazy, useEffect, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { Copy, Check, X, Volume2, ArrowDown } from 'lucide-react';
+import { Copy, Check, Volume2, ArrowDown } from 'lucide-react';
 import {
   C, preprocessMarkdown, cortexMarkdownComponents,
   type ChatMessage,
@@ -325,6 +325,7 @@ function CortexChatDrawerInner({ open, onClose, payload, onSubmitText }: CortexC
   const messages = useCortexChatMessages();
   const scrollRef = useRef<HTMLDivElement>(null);
   const [draft, setDraft] = useState('');
+  const [chatMenuOpen, setChatMenuOpen] = useState(false);
   const [speakingId, setSpeakingId] = useState<string | null>(null);
   const [showJump, setShowJump] = useState(false);
   const audioRef = useRef<HTMLAudioElement | null>(null);
@@ -435,6 +436,24 @@ function CortexChatDrawerInner({ open, onClose, payload, onSubmitText }: CortexC
     speechArbiter.release();
     if (audioUrlRef.current) URL.revokeObjectURL(audioUrlRef.current);
   }, [speechArbiter, clearSpeechHb]);
+
+  // Chat overflow menu — close on outside click / Escape / drawer close
+  useEffect(() => {
+    if (!chatMenuOpen) return;
+    const onDown = (e: PointerEvent) => {
+      const t = e.target as HTMLElement | null;
+      if (t?.closest?.('[data-chat-menu]')) return;
+      setChatMenuOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setChatMenuOpen(false); };
+    window.addEventListener('pointerdown', onDown, true);
+    window.addEventListener('keydown', onKey);
+    return () => {
+      window.removeEventListener('pointerdown', onDown, true);
+      window.removeEventListener('keydown', onKey);
+    };
+  }, [chatMenuOpen]);
+  useEffect(() => { if (!open) setChatMenuOpen(false); }, [open]);
 
   const stopSpeech = () => {
     speechCancelRef.current?.();
@@ -562,51 +581,62 @@ function CortexChatDrawerInner({ open, onClose, payload, onSubmitText }: CortexC
       }}>
       <style>{DRAWER_CSS}</style>
 
-      {/* Header — floating glass chip */}
-      <div style={{
-        display: 'flex', alignItems: 'center', gap: 10,
-        padding: '8px 12px', margin: '0 4px',
-        borderRadius: 12,
-        background: 'rgba(6,10,18,0.45)',
-        border: `1px solid ${C.border}66`,
-        backdropFilter: 'blur(14px)', WebkitBackdropFilter: 'blur(14px)',
-        flexShrink: 0,
-        pointerEvents: 'auto',
-      }}>
-        <span style={{ width: 7, height: 7, borderRadius: '50%', background: st.color, boxShadow: `0 0 8px ${st.color}`, animation: 'pulse 1.6s infinite' }} />
-        <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.3em', color: C.cyan, fontFamily: '"IBM Plex Mono", monospace' }}>
-          CORTEX // UPLINK
-        </span>
-        <span style={{ fontSize: 9, letterSpacing: '0.22em', color: st.color, fontFamily: '"IBM Plex Mono", monospace' }}>
-          {st.label}
-        </span>
-        <div style={{ flex: 1 }} />
-        <a
-          href="/cortex/chat"
+      {/* Overflow menu — floating glass chip, top-right. Replaces the old
+          header bar so the drawer doesn't reserve a header row. */}
+      <div data-chat-menu style={{ position: 'absolute', top: 10, right: 12, zIndex: 5, pointerEvents: 'auto' }}>
+        <button
+          onClick={() => setChatMenuOpen(v => !v)}
+          title="Chat options"
+          aria-label="Chat options"
+          aria-haspopup="true"
+          aria-expanded={chatMenuOpen}
           style={{
-            textDecoration: 'none', padding: '4px 10px', borderRadius: 2,
-            border: `1px solid ${C.borderBright}`, color: C.cyan,
-            fontSize: 9, fontWeight: 600, letterSpacing: '0.2em',
-            fontFamily: '"IBM Plex Mono", monospace',
+            width: 26, height: 26, borderRadius: 8, cursor: 'pointer',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            background: chatMenuOpen ? 'rgba(56,189,248,0.2)' : 'rgba(6,10,18,0.55)',
+            border: `1px solid ${chatMenuOpen ? C.borderBright : C.border}66`,
+            color: chatMenuOpen ? C.cyan : C.dim,
+            backdropFilter: 'blur(12px)', WebkitBackdropFilter: 'blur(12px)',
+            fontSize: 13, fontWeight: 700, letterSpacing: '0.05em',
             transition: 'all 0.2s',
           }}
-        >
-          FULL CHAT →
-        </a>
-        <button
-          onClick={onClose}
-          title="Close transcript"
-          style={{
-            background: 'none', border: 'none', cursor: 'pointer',
-            color: C.dim, padding: 4, display: 'flex',
-          }}
-        >
-          <X size={14} />
-        </button>
+        >⋯</button>
+        {chatMenuOpen && (
+          <div style={{
+            position: 'absolute', top: 32, right: 0, width: 168,
+            padding: 4, borderRadius: 10,
+            background: 'rgba(6,10,18,0.92)',
+            border: `1px solid ${C.border}88`,
+            backdropFilter: 'blur(16px)', WebkitBackdropFilter: 'blur(16px)',
+            boxShadow: '0 12px 32px rgba(0,0,0,0.55)',
+            display: 'flex', flexDirection: 'column', gap: 2,
+          }}>
+            <div style={{ fontSize: 8, letterSpacing: '0.28em', color: 'rgba(148,233,255,0.4)', padding: '4px 8px 2px' }}>
+              {st.label} · UPLINK
+            </div>
+            <a
+              href="/cortex/chat"
+              style={{
+                textDecoration: 'none', padding: '7px 10px', borderRadius: 6,
+                color: C.cyan, fontSize: 10, fontWeight: 600, letterSpacing: '0.16em',
+                fontFamily: '"IBM Plex Mono", monospace',
+              }}
+            >OPEN FULL CHAT →</a>
+            <button
+              onClick={() => { setChatMenuOpen(false); onClose(); }}
+              style={{
+                textAlign: 'left', padding: '7px 10px', borderRadius: 6, cursor: 'pointer',
+                background: 'none', border: 'none',
+                color: C.dim, fontSize: 10, fontWeight: 600, letterSpacing: '0.16em',
+                fontFamily: '"IBM Plex Mono", monospace',
+              }}
+            >CLOSE DRAWER</button>
+          </div>
+        )}
       </div>
 
       {/* Transcript — transparent; bubbles carry their own glass */}
-      <div className="cx-drawer-scroll" style={{ position: 'relative', flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0, pointerEvents: (messages.length > 0 || isProcessing) ? 'auto' : 'none' }}>
+      <div className="cx-drawer-scroll" style={{ position: 'relative', flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0, pointerEvents: (messages.length > 0 || isProcessing) ? 'auto' : 'none', paddingTop: 34 }}>
         <div ref={scrollRef} onScroll={onScroll} style={{ flex: 1, overflowY: 'auto', padding: '12px 8px' }}>
         {messages.length === 0 && !isProcessing ? (
           <div style={{ padding: '40px 12px', textAlign: 'center' }}>
