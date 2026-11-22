@@ -232,6 +232,7 @@ export default function CortexVisualizerPage() {
   });
   const [micLive, setMicLive] = useState(false);
   const [chatOpen, setChatOpen] = useState(true);
+  const [coreMenuOpen, setCoreMenuOpen] = useState(false);
   const [audioEnabled, setAudioEnabled] = useState(() => neuroAudio.isEnabled());
   const [chronoActive, setChronoActive] = useState(false);
   const [chronoTime, setChronoTime] = useState(0.0);
@@ -906,7 +907,7 @@ export default function CortexVisualizerPage() {
       const tag = (e.target as HTMLElement | null)?.tagName;
       const typing = tag === 'INPUT' || tag === 'TEXTAREA' || (e.target as HTMLElement | null)?.isContentEditable;
       if (e.key === 'Escape') {
-        setMapMode(false); setChatOpen(false);
+        setMapMode(false); setChatOpen(false); setCoreMenuOpen(false);
         if (focusModeRef.current) setSurfaceFocusMode(false);
       }
       if (typing) return;
@@ -1116,6 +1117,21 @@ export default function CortexVisualizerPage() {
       } catch {}
     }
   }, [payload.state]);
+
+  // Core dropdown: close on outside click or when leaving the core face.
+  useEffect(() => {
+    if (!coreMenuOpen) return;
+    const onDown = (e: PointerEvent) => {
+      const t = e.target as HTMLElement | null;
+      if (t?.closest?.('[data-core-menu]')) return;
+      setCoreMenuOpen(false);
+    };
+    window.addEventListener('pointerdown', onDown, true);
+    return () => window.removeEventListener('pointerdown', onDown, true);
+  }, [coreMenuOpen]);
+  useEffect(() => {
+    if (faceMode !== 'core' || mapMode) setCoreMenuOpen(false);
+  }, [faceMode, mapMode]);
 
   const fmtElapsed = (s: number) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
   const [gevOrigin, setGevOrigin] = useState('http://127.0.0.1:5180');
@@ -1336,16 +1352,22 @@ export default function CortexVisualizerPage() {
           transition: 'right 0.25s ease',
         }}
       >
-        {/* CORE */}
+        {/* CORE — switches to Sovereign Core; on Core face, toggles the controls dropdown */}
         <button
+          data-core-menu
+          aria-haspopup="true"
+          aria-expanded={coreMenuOpen}
           onClick={() => {
             if (mapMode) setMapMode(false);
-            if (faceMode === 'core') return;
+            if (faceMode === 'core') {
+              if (!mapMode) setCoreMenuOpen(v => !v);
+              return;
+            }
             setFaceMode('core');
             try { localStorage.setItem('cortex_visualizer_face', 'core'); } catch {}
             cortexSpeak('Transitioning to Sovereign Quantum Core.');
           }}
-          title={faceMode === 'core' && !mapMode ? 'Sovereign Core — active neural sanctum & memory constellation' : 'Switch to Sovereign Core'}
+          title={faceMode === 'core' && !mapMode ? 'Sovereign Core — click again for core controls' : 'Switch to Sovereign Core'}
           style={{
             padding: '5px 12px',
             borderRadius: 14,
@@ -1370,6 +1392,9 @@ export default function CortexVisualizerPage() {
             <span style={{ color: '#38bdf8' }}>◈</span>
           )}
           <span>CORE</span>
+          {faceMode === 'core' && !mapMode && (
+            <span style={{ fontSize: 8, color: coreMenuOpen ? '#38bdf8' : 'rgba(148,233,255,0.45)', transition: 'transform 0.2s', transform: coreMenuOpen ? 'rotate(180deg)' : 'none' }}>▾</span>
+          )}
         </button>
 
         {/* FOUNDRY */}
@@ -1559,6 +1584,180 @@ export default function CortexVisualizerPage() {
             <span>{micLive ? 'SPEAKING' : micOn ? 'VOICE ON' : 'VOICE MUTED'}</span>
           </button>
         </nav>
+
+      {/* Core controls dropdown — anchored under the CORE nav button. Replaces the
+          old bottom command dock; face-level duplicates (MAP / FOUNDRY / CHAT)
+          stay exclusively in the top nav. */}
+      {coreMenuOpen && faceMode === 'core' && !mapMode && (
+        <div
+          data-core-menu
+          style={{
+            position: 'absolute',
+            top: 64,
+            right: chatOpen ? (narrow ? 16 : 416) : (narrow ? 16 : 32),
+            zIndex: 36,
+            width: narrow ? 'calc(100vw - 32px)' : 230,
+            padding: '8px',
+            background: 'rgba(6,10,24,0.92)',
+            backdropFilter: 'blur(16px)',
+            border: '1px solid rgba(103,232,249,0.3)',
+            borderRadius: 8,
+            boxShadow: '0 12px 40px rgba(0,0,0,0.6), 0 0 20px rgba(103,232,249,0.08)',
+            fontFamily: "'IBM Plex Mono', monospace",
+            display: 'flex', flexDirection: 'column', gap: 4,
+          }}
+          className="cx-hud-center-in"
+        >
+          <div style={{ fontSize: 8, letterSpacing: '0.3em', color: 'rgba(148,233,255,0.4)', padding: '2px 6px 6px' }}>CORE CONTROLS</div>
+
+          {/* FLEET / MEMORY visual mode */}
+          <div style={{ display: 'flex', borderRadius: 4, border: '1px solid rgba(148,233,255,0.18)', overflow: 'hidden', background: 'rgba(4,8,14,0.4)' }}>
+            <button
+              onClick={() => { setCoreVisualMode('fleet'); try { localStorage.setItem('cortex_core_visual_mode', 'fleet'); } catch {} cortexSpeak('Fleet deck active.'); }}
+              title="Fleet Deck — active agent vessels orbiting Sovereign Core"
+              style={{ flex: 1, padding: '7px 4px', cursor: 'pointer', border: 'none', background: coreVisualMode === 'fleet' ? 'rgba(56,189,248,0.22)' : 'transparent', color: coreVisualMode === 'fleet' ? '#38bdf8' : 'rgba(148,233,255,0.5)', fontSize: 9.5, fontWeight: 700, letterSpacing: '0.16em' }}
+            >◈ FLEET</button>
+            <button
+              onClick={() => { setCoreVisualMode('memory'); try { localStorage.setItem('cortex_core_visual_mode', 'memory'); } catch {} cortexSpeak('Memory bank constellation active.'); }}
+              title="Hindsight Memory Bank — live cognitive engrams & synaptic filaments"
+              style={{ flex: 1, padding: '7px 4px', cursor: 'pointer', border: 'none', background: coreVisualMode === 'memory' ? 'rgba(192,132,252,0.26)' : 'transparent', color: coreVisualMode === 'memory' ? '#c084fc' : 'rgba(148,233,255,0.5)', fontSize: 9.5, fontWeight: 700, letterSpacing: '0.16em' }}
+            >🧠 MEMORY</button>
+          </div>
+
+          {([
+            {
+              key: 'sonics',
+              active: audioEnabled,
+              activeColor: '#c084fc',
+              borderColor: 'rgba(167,139,250,0.4)',
+              label: audioEnabled ? '🔊 SONICS ON' : '🔇 SONICS OFF',
+              title: 'Procedural Neuro-Acoustic Sonification',
+              onClick: () => { const next = neuroAudio.toggle(); setAudioEnabled(next); cortexSpeak(next ? 'Neuro sonics enabled.' : 'Sonics muted.'); },
+            },
+            {
+              key: 'chrono',
+              active: chronoActive,
+              activeColor: '#38bdf8',
+              borderColor: 'rgba(56,189,248,0.4)',
+              label: chronoActive ? '◉ 4D CHRONO ACTIVE' : '◈ 4D CHRONO',
+              title: '4D Chrono-DVR Mission Replay Ribbon',
+              onClick: () => { const next = !chronoActive; setChronoActive(next); cortexSpeak(next ? 'Entering 4D chrono replay mode.' : 'Returning to live feed.'); },
+            },
+            {
+              key: 'holocam',
+              active: holoCamActive,
+              activeColor: '#34d399',
+              borderColor: 'rgba(16,185,129,0.4)',
+              label: holoCamActive ? '◉ HOLO-CAM: ON' : '📷 HOLO-CAM',
+              title: 'Holographic Window Parallax — local head-tracking',
+              onClick: async () => {
+                if (holoCamActive) { cortexWebcamParallax.stop(); setHoloCamActive(false); cortexSpeak('Head tracking disabled.'); }
+                else {
+                  const ok = await cortexWebcamParallax.start();
+                  if (ok) { setHoloCamActive(true); cortexSpeak('Holographic head tracking active.'); }
+                  else cortexSpeak('Camera access was not available.');
+                }
+              },
+            },
+            {
+              key: 'lights',
+              active: goveeSync,
+              activeColor: '#eab308',
+              borderColor: 'rgba(234,179,8,0.4)',
+              label: goveeSync ? '✦ LIGHTS: SYNCED' : '✧ LIGHTS',
+              title: goveeSync ? 'Govee smart lights syncing to Cortex mood' : 'Enable Govee room lights sync',
+              onClick: () => {
+                setGoveeSync(v => {
+                  const next = !v;
+                  try { localStorage.setItem('cortex_govee_sync', String(next)); } catch {}
+                  cortexSpeak(next ? 'Room lights synced to my mood.' : 'Light sync disabled.');
+                  if (next && payload.state) {
+                    fetch('/api/cortex/lights/sync', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ mood: payload.state }) }).catch(() => {});
+                  }
+                  return next;
+                });
+              },
+            },
+            {
+              key: 'vault',
+              active: false,
+              activeColor: '#c4b5fd',
+              borderColor: 'rgba(167,139,250,0.4)',
+              label: '◈ VAULT',
+              title: 'Auto-organize Obsidian Knowledge Graph',
+              onClick: async () => {
+                try {
+                  setVaultSyncNotice('Auto-organizing Obsidian Knowledge Graph…');
+                  const res = await fetch('/api/cortex/tools/execute', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ tool: 'cortex_memory', args: { action: 'vault_auto_organize' } }),
+                  });
+                  const data = await res.json();
+                  if (data?.ok && data?.report) {
+                    setVaultSyncNotice(`Graph Organized · ${data.report.notesAnalyzed} Notes · ${data.report.linksResolved} Wikilinks`);
+                    cortexSpeak(`Graph organized — ${data.report.notesAnalyzed} notes, ${data.report.linksResolved} wikilinks resolved.`);
+                  } else {
+                    setVaultSyncNotice('Vault sync completed');
+                    cortexSpeak('Vault sync complete.');
+                  }
+                  setTimeout(() => setVaultSyncNotice(null), 3500);
+                } catch {
+                  setVaultSyncNotice('Vault sync error');
+                  setTimeout(() => setVaultSyncNotice(null), 3000);
+                }
+              },
+            },
+          ] as const).map((item) => (
+            <button
+              key={item.key}
+              onClick={item.onClick}
+              title={item.title}
+              style={{
+                width: '100%', textAlign: 'left', padding: '8px 10px', cursor: 'pointer',
+                border: `1px solid ${item.active ? item.borderColor : 'rgba(148,233,255,0.14)'}`, borderRadius: 4,
+                color: item.active ? item.activeColor : 'rgba(148,233,255,0.65)',
+                fontSize: 10, fontWeight: 600, letterSpacing: '0.2em',
+                background: item.active ? `${item.activeColor}14` : 'rgba(4,8,14,0.4)',
+                transition: 'all 0.2s',
+              }}
+            >{item.label}</button>
+          ))}
+
+          {/* Voice / mic — same control as top-nav VOICE but with queue detail */}
+          <button
+            onClick={() => {
+              const next = !micOn;
+              setMicOn(next);
+              try { localStorage.setItem('cortex_viz_mic_on', String(next)); } catch {}
+              cortexSpeak(next ? 'Voice enabled — I can hear you now.' : 'Microphone muted.');
+            }}
+            title={!micOn ? 'Microphone muted — click to enable voice' : 'Voice active — click to mute microphone'}
+            style={{
+              width: '100%', textAlign: 'left', padding: '8px 10px', cursor: 'pointer',
+              border: `1px solid ${micLive ? 'rgba(192,132,252,0.5)' : micOn ? 'rgba(52,211,153,0.45)' : 'rgba(148,233,255,0.14)'}`,
+              borderRadius: 4,
+              color: micLive ? '#f5d0fe' : micOn ? '#bbf7d0' : 'rgba(148,233,255,0.65)',
+              fontSize: 10, fontWeight: 600, letterSpacing: '0.2em',
+              background: micLive ? 'rgba(192,132,252,0.14)' : micOn ? 'rgba(52,211,153,0.1)' : 'rgba(4,8,14,0.4)',
+              boxShadow: micOn ? '0 0 12px rgba(52,211,153,0.2)' : 'none',
+              transition: 'all 0.2s',
+            }}
+          >
+            {micLive ? '◉ SPEAKING'
+              : !micOn ? '○ VOICE MUTED'
+                : queueDepth > 0 ? `◌ +${queueDepth} QUEUED`
+                  : voiceBusy ? '◌ BUSY · TAP TO QUEUE' : '◉ VOICE ACTIVE · LISTENING'}
+          </button>
+
+          <a href="/cortex/chat" style={{
+            textDecoration: 'none', textAlign: 'center', padding: '8px 10px',
+            border: '1px solid rgba(148,233,255,0.14)', borderRadius: 4,
+            color: 'rgba(165,243,252,0.7)', fontSize: 10, fontWeight: 600, letterSpacing: '0.2em',
+            background: 'rgba(4,8,14,0.4)',
+          }}>← OPEN FULL CHAT</a>
+        </div>
+      )}
 
       {/* Proactive Ambient & Vigilance HUD Bar — centered directly under header */}
       <div style={{
@@ -2287,294 +2486,6 @@ export default function CortexVisualizerPage() {
           </div>
         );
       })()}
-
-      {/* Bottom nav command dock: centered to clear left-rail flyouts. Suppressed on Foundry face */}
-      {faceMode !== 'agents' && (
-      <div style={{
-        position: 'absolute', bottom: 24, left: '50%', transform: 'translate(-50%, 0)',
-        zIndex: 22, display: 'flex', alignItems: 'center', gap: narrow ? 6 : 8,
-        flexWrap: narrow ? 'wrap' : 'nowrap', maxWidth: 'calc(100vw - 48px)',
-        padding: '5px 8px', background: 'rgba(4,8,16,0.72)',
-        backdropFilter: 'blur(12px)', border: '1px solid rgba(103,232,249,0.18)',
-        borderRadius: 24, boxShadow: '0 8px 32px rgba(0,0,0,0.5), 0 0 16px rgba(103,232,249,0.06)',
-      }} className="cx-hud-center-in">
-        <a href="/cortex/chat" style={{
-          textDecoration: 'none', padding: narrow ? '7px 12px' : '9px 20px',
-          border: `1px solid ${accent}55`, borderRadius: 2,
-          color: accent, fontSize: 11, fontWeight: 600, letterSpacing: '0.26em',
-          fontFamily: "'IBM Plex Mono', monospace",
-          background: 'rgba(4,8,14,0.55)', backdropFilter: 'blur(10px)',
-          transition: 'all 0.25s',
-        }}
-        onMouseEnter={(e) => { e.currentTarget.style.background = `${accent}22`; e.currentTarget.style.boxShadow = `0 0 24px ${accent}33`; }}
-        onMouseLeave={(e) => { e.currentTarget.style.background = 'rgba(4,8,14,0.55)'; e.currentTarget.style.boxShadow = 'none'; }}
-        >
-          ← OPEN CHAT
-        </a>
-        {(globeUp || mapMode) && (
-        <button
-          onClick={() => setMapMode(v => !v)}
-          style={{
-            textDecoration: 'none', padding: narrow ? '7px 12px' : '9px 20px', cursor: 'pointer',
-            border: `1px solid ${mapMode ? '#e879f9' : 'rgba(148,233,255,0.18)'}`, borderRadius: 2,
-            color: mapMode ? '#e879f9' : 'rgba(148,233,255,0.6)', fontSize: narrow ? 9 : 11, fontWeight: 600, letterSpacing: narrow ? '0.18em' : '0.26em',
-            fontFamily: "'IBM Plex Mono', monospace",
-            background: mapMode ? 'rgba(232,121,249,0.10)' : 'rgba(4,8,14,0.4)', backdropFilter: 'blur(10px)',
-            transition: 'all 0.25s',
-          }}
-        >
-          {mapMode ? '◉ GLOBE · ESC' : '◈ MAP'}
-        </button>
-        )}
-        {faceMode === 'core' && (
-          <div style={{
-            display: 'inline-flex',
-            borderRadius: 2,
-            border: '1px solid rgba(148,233,255,0.18)',
-            overflow: 'hidden',
-            background: 'rgba(4,8,14,0.4)',
-            backdropFilter: 'blur(10px)',
-          }}>
-            <button
-              onClick={() => {
-                setCoreVisualMode('fleet');
-                try { localStorage.setItem('cortex_core_visual_mode', 'fleet'); } catch {}
-                cortexSpeak('Fleet deck active.');
-              }}
-              title="Fleet Deck — active agent vessels orbiting Sovereign Core"
-              style={{
-                padding: narrow ? '7px 10px' : '9px 14px', cursor: 'pointer', border: 'none',
-                background: coreVisualMode === 'fleet' ? 'rgba(56,189,248,0.22)' : 'transparent',
-                color: coreVisualMode === 'fleet' ? '#38bdf8' : 'rgba(148,233,255,0.5)',
-                fontSize: narrow ? 9 : 10, fontWeight: 700, letterSpacing: '0.18em', fontFamily: "'IBM Plex Mono', monospace",
-                transition: 'all 0.2s',
-              }}
-            >
-              ◈ FLEET
-            </button>
-            <button
-              onClick={() => {
-                setCoreVisualMode('memory');
-                try { localStorage.setItem('cortex_core_visual_mode', 'memory'); } catch {}
-                cortexSpeak('Memory bank constellation active.');
-              }}
-              title="Hindsight Memory Bank — live cognitive engrams & synaptic filaments"
-              style={{
-                padding: narrow ? '7px 10px' : '9px 14px', cursor: 'pointer', border: 'none',
-                background: coreVisualMode === 'memory' ? 'rgba(192,132,252,0.26)' : 'transparent',
-                color: coreVisualMode === 'memory' ? '#c084fc' : 'rgba(148,233,255,0.5)',
-                fontSize: narrow ? 9 : 10, fontWeight: 700, letterSpacing: '0.18em', fontFamily: "'IBM Plex Mono', monospace",
-                transition: 'all 0.2s',
-              }}
-            >
-              🧠 MEMORY
-            </button>
-          </div>
-        )}
-        <button
-          onClick={() => {
-            const next = faceMode === 'agents' ? 'core' : 'agents';
-            setFaceMode(next);
-            try { localStorage.setItem('cortex_visualizer_face', next); } catch {}
-            cortexSpeak(next === 'agents' ? 'Opening the Nexus Foundry.' : 'Returning to core visualizer.');
-          }}
-          title="Nexus Foundry — live agent fleet command deck"
-          style={{
-            textDecoration: 'none', padding: narrow ? '7px 12px' : '9px 20px', cursor: 'pointer',
-            border: `1px solid ${faceMode === 'agents' ? '#67e8f9' : 'rgba(148,233,255,0.18)'}`, borderRadius: 2,
-            color: faceMode === 'agents' ? '#67e8f9' : 'rgba(148,233,255,0.6)', fontSize: narrow ? 9 : 11, fontWeight: 600, letterSpacing: narrow ? '0.18em' : '0.26em',
-            fontFamily: "'IBM Plex Mono', monospace",
-            background: faceMode === 'agents' ? 'rgba(103,232,249,0.12)' : 'rgba(4,8,14,0.4)', backdropFilter: 'blur(10px)',
-            transition: 'all 0.25s',
-          }}
-        >
-          {faceMode === 'agents' ? '◉ FOUNDRY' : '◈ AGENTS'}
-        </button>
-        <button
-          onClick={() => {
-            const next = neuroAudio.toggle();
-            setAudioEnabled(next);
-            cortexSpeak(next ? 'Neuro sonics enabled.' : 'Sonics muted.');
-          }}
-          title="Procedural Neuro-Acoustic Sonification — harmonic chimes & sub-bass telemetry"
-          style={{
-            textDecoration: 'none', padding: narrow ? '7px 12px' : '9px 18px', cursor: 'pointer',
-            border: `1px solid ${audioEnabled ? '#a78bfa' : 'rgba(148,233,255,0.18)'}`, borderRadius: 2,
-            color: audioEnabled ? '#c084fc' : 'rgba(148,233,255,0.6)', fontSize: narrow ? 9 : 11, fontWeight: 600, letterSpacing: narrow ? '0.18em' : '0.24em',
-            fontFamily: "'IBM Plex Mono', monospace",
-            background: audioEnabled ? 'rgba(167,139,250,0.14)' : 'rgba(4,8,14,0.4)', backdropFilter: 'blur(10px)',
-            transition: 'all 0.25s',
-          }}
-        >
-          {audioEnabled ? '🔊 SONICS ON' : '🔇 SONICS OFF'}
-        </button>
-        <button
-          onClick={() => {
-            const next = !chronoActive;
-            setChronoActive(next);
-            cortexSpeak(next ? 'Entering 4D chrono replay mode.' : 'Returning to live feed.');
-          }}
-          title="4D Chrono-DVR Mission Replay Ribbon — time-travel playback and stage jumping"
-          style={{
-            textDecoration: 'none', padding: narrow ? '7px 12px' : '9px 18px', cursor: 'pointer',
-            border: `1px solid ${chronoActive ? '#38bdf8' : 'rgba(148,233,255,0.18)'}`, borderRadius: 2,
-            color: chronoActive ? '#38bdf8' : 'rgba(148,233,255,0.6)', fontSize: narrow ? 9 : 11, fontWeight: 600, letterSpacing: narrow ? '0.18em' : '0.24em',
-            fontFamily: "'IBM Plex Mono', monospace",
-            background: chronoActive ? 'rgba(56,189,248,0.14)' : 'rgba(4,8,14,0.4)', backdropFilter: 'blur(10px)',
-            transition: 'all 0.25s',
-          }}
-        >
-          {chronoActive ? '◉ CHRONO ACTIVE' : '◈ 4D CHRONO'}
-        </button>
-        <button
-          onClick={async () => {
-            if (holoCamActive) {
-              cortexWebcamParallax.stop();
-              setHoloCamActive(false);
-              cortexSpeak('Head tracking disabled.');
-            } else {
-              const ok = await cortexWebcamParallax.start();
-              if (ok) {
-                setHoloCamActive(true);
-                cortexSpeak('Holographic head tracking active.');
-              } else {
-                cortexSpeak('Camera access was not available.');
-              }
-            }
-          }}
-          title="Holographic Window Parallax — optical head-tracking cockpit depth (runs 100% locally)"
-          style={{
-            textDecoration: 'none', padding: narrow ? '7px 12px' : '9px 18px', cursor: 'pointer',
-            border: `1px solid ${holoCamActive ? '#10b981' : 'rgba(148,233,255,0.18)'}`, borderRadius: 2,
-            color: holoCamActive ? '#34d399' : 'rgba(148,233,255,0.6)', fontSize: narrow ? 9 : 11, fontWeight: 600, letterSpacing: narrow ? '0.18em' : '0.24em',
-            fontFamily: "'IBM Plex Mono', monospace",
-            background: holoCamActive ? 'rgba(16,185,129,0.14)' : 'rgba(4,8,14,0.4)', backdropFilter: 'blur(10px)',
-            transition: 'all 0.25s',
-          }}
-        >
-          {holoCamActive ? '◉ HOLO-CAM: ON' : '📷 HOLO-CAM'}
-        </button>
-        <button
-          onClick={() => {
-            setGoveeSync(v => {
-              const next = !v;
-              try { localStorage.setItem('cortex_govee_sync', String(next)); } catch {}
-              cortexSpeak(next ? 'Room lights synced to my mood.' : 'Light sync disabled.');
-              if (next && payload.state) {
-                fetch('/api/cortex/lights/sync', {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({ mood: payload.state }),
-                }).catch(() => {});
-              }
-              return next;
-            });
-          }}
-          title={goveeSync ? 'Govee smart lights dynamically syncing to Cortex mood' : 'Click to enable Govee room lights sync'}
-          style={{
-            textDecoration: 'none', padding: narrow ? '7px 12px' : '9px 20px', cursor: 'pointer',
-            border: `1px solid ${goveeSync ? '#eab308' : 'rgba(148,233,255,0.18)'}`, borderRadius: 2,
-            color: goveeSync ? '#eab308' : 'rgba(148,233,255,0.6)', fontSize: narrow ? 9 : 11, fontWeight: 600, letterSpacing: narrow ? '0.18em' : '0.26em',
-            fontFamily: "'IBM Plex Mono', monospace",
-            background: goveeSync ? 'rgba(234,179,8,0.12)' : 'rgba(4,8,14,0.4)', backdropFilter: 'blur(10px)',
-            transition: 'all 0.25s',
-          }}
-        >
-          {goveeSync ? '✦ LIGHTS: SYNCED' : '✧ LIGHTS'}
-        </button>
-        <button
-          data-toggle-chat-drawer="true"
-          onClick={() => setChatOpen(v => !v)}
-          style={{
-            textDecoration: 'none', padding: narrow ? '7px 12px' : '9px 20px', cursor: 'pointer',
-            border: `1px solid ${chatOpen ? accent : 'rgba(148,233,255,0.18)'}`, borderRadius: 2,
-            color: chatOpen ? accent : 'rgba(148,233,255,0.6)', fontSize: narrow ? 9 : 11, fontWeight: 600, letterSpacing: narrow ? '0.18em' : '0.26em',
-            fontFamily: "'IBM Plex Mono', monospace",
-            background: chatOpen ? `${accent}1a` : 'rgba(4,8,14,0.4)', backdropFilter: 'blur(10px)',
-            transition: 'all 0.25s',
-          }}
-        >
-          {chatOpen ? '◉ CHAT · ESC' : '◈ CHAT'}
-        </button>
-        <button
-          onClick={async () => {
-            try {
-              setVaultSyncNotice('Auto-organizing Obsidian Knowledge Graph…');
-              const res = await fetch('/api/cortex/tools/execute', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ tool: 'cortex_memory', args: { action: 'vault_auto_organize' } }),
-              });
-              const data = await res.json();
-              if (data?.ok && data?.report) {
-                const msg = `Graph organized — ${data.report.notesAnalyzed} notes, ${data.report.linksResolved} wikilinks resolved.`;
-                setVaultSyncNotice(`Graph Organized · ${data.report.notesAnalyzed} Notes · ${data.report.linksResolved} Wikilinks`);
-                cortexSpeak(msg);
-              } else {
-                setVaultSyncNotice('Vault sync completed');
-                cortexSpeak('Vault sync complete.');
-              }
-              setTimeout(() => setVaultSyncNotice(null), 3500);
-            } catch {
-              setVaultSyncNotice('Vault sync error');
-              setTimeout(() => setVaultSyncNotice(null), 3000);
-            }
-          }}
-          title="Auto-organize Obsidian Knowledge Graph (Letta/MemGPT hierarchical memory synthesis)"
-          style={{
-            textDecoration: 'none', padding: narrow ? '7px 12px' : '9px 20px', cursor: 'pointer',
-            border: '1px solid rgba(167,139,250,0.3)', borderRadius: 2,
-            color: '#c4b5fd', fontSize: narrow ? 9 : 11, fontWeight: 600, letterSpacing: narrow ? '0.18em' : '0.26em',
-            fontFamily: "'IBM Plex Mono', monospace",
-            background: 'rgba(139,92,246,0.12)', backdropFilter: 'blur(10px)',
-            transition: 'all 0.25s',
-          }}
-        >
-          ◈ VAULT
-        </button>
-        <button
-          onClick={() => {
-            const next = !micOn;
-            setMicOn(next);
-            try { localStorage.setItem('cortex_viz_mic_on', String(next)); } catch {}
-            cortexSpeak(next ? 'Voice enabled — I can hear you now.' : 'Microphone muted.');
-          }}
-          title={
-            !micOn
-              ? 'Microphone muted — click to enable voice'
-              : 'Voice active — click to mute microphone'
-          }
-          style={{
-            textDecoration: 'none', padding: narrow ? '7px 12px' : '9px 20px', cursor: 'pointer',
-            border: `1px solid ${
-              micLive ? '#a78bfa'
-                : micOn
-                  ? '#34d399'
-                  : 'rgba(148,233,255,0.18)'
-            }`,
-            borderRadius: 2,
-            color: micLive ? '#c4b5fd'
-              : micOn
-                ? '#34d399'
-                : 'rgba(148,233,255,0.6)',
-            fontSize: narrow ? 9 : 11, fontWeight: 600, letterSpacing: narrow ? '0.18em' : '0.26em',
-            fontFamily: "'IBM Plex Mono', monospace",
-            background: micLive ? 'rgba(167,139,250,0.12)'
-              : micOn
-                ? 'rgba(52,211,153,0.10)'
-                : 'rgba(4,8,14,0.4)',
-            backdropFilter: 'blur(10px)',
-            boxShadow: micOn ? '0 0 16px rgba(52,211,153,0.28)' : 'none',
-            transition: 'all 0.25s',
-          }}
-        >
-          {micLive ? '◉ SPEAKING'
-            : !micOn
-              ? '○ VOICE MUTED'
-              : queueDepth > 0 ? `◌ +${queueDepth} QUEUED` : voiceBusy ? '◌ BUSY · TAP TO QUEUE' : '◉ VOICE ACTIVE · LISTENING'}
-        </button>
-      </div>
-      )}
 
       {/* Mission Log — always-on feed of real agent tasks, above the nav rail.
           Click expands to a centered full feed. Suppressed on Foundry face where scene renders its own dedicated log. */}
