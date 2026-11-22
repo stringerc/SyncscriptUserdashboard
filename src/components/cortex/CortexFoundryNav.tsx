@@ -218,6 +218,8 @@ export function CortexFoundryNav({ snap, onSelectAgent, selectedAgent, onOpenTow
   const [campBusy, setCampBusy] = useState(false);
   const [ventureDecisions, setVentureDecisions] = useState<{ venture: string; items: any[] } | null>(null);
   const ventureDecisionsRef = useRef<(() => void) | null>(null);
+  const [ventureAssets, setVentureAssets] = useState<{ venture: string; items: any[] } | null>(null);
+  const [assetUploading, setAssetUploading] = useState(false);
   const [expandedAgent, setExpandedAgent] = useState<string | null>(null);
   const [ventureSchedInput, setVentureSchedInput] = useState('');
   const [ventureBudgetInput, setVentureBudgetInput] = useState('');
@@ -398,6 +400,38 @@ export function CortexFoundryNav({ snap, onSelectAgent, selectedAgent, onOpenTow
       body: JSON.stringify({ type: e.type, payload }),
     }).catch(() => { });
     setCampEnq(prev => { const n = { ...prev }; delete n[campaignId]; return n; });
+  };
+  const refreshVentureAssets = () => {
+    if (!ventureConsole) return;
+    fetch(`/api/cortex/ventures/assets?venture=${ventureConsole}`, { cache: 'no-store' })
+      .then((r) => r.json())
+      .then((d) => setVentureAssets({ venture: ventureConsole, items: Array.isArray(d?.items) ? d.items : [] }))
+      .catch(() => { });
+  };
+  const uploadVentureAsset = async (file: File) => {
+    if (!ventureConsole || assetUploading) return;
+    setAssetUploading(true);
+    try {
+      const buf = await file.arrayBuffer();
+      let binary = '';
+      const bytes = new Uint8Array(buf);
+      for (let i = 0; i < bytes.length; i += 8192) binary += String.fromCharCode(...bytes.subarray(i, i + 8192));
+      const dataBase64 = btoa(binary);
+      await fetch('/api/cortex/ventures/assets', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'upload', ventureId: ventureConsole, name: file.name, dataBase64 }),
+      });
+      refreshVentureAssets();
+    } catch { }
+    finally { setAssetUploading(false); }
+  };
+  const deleteVentureAsset = async (name: string) => {
+    if (!ventureConsole) return;
+    await fetch('/api/cortex/ventures/assets', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'delete', ventureId: ventureConsole, name }),
+    }).catch(() => { });
+    refreshVentureAssets();
   };
   const addMissionBlock = async () => {
     const title = missionTitle.trim();
@@ -613,6 +647,13 @@ export function CortexFoundryNav({ snap, onSelectAgent, selectedAgent, onOpenTow
     };
     if (!ventureDecisions || ventureDecisions.venture !== ventureConsole) loadVentureDecisions();
     ventureDecisionsRef.current = loadVentureDecisions;
+    // Venture assets — agent deliverables land in .cortex-runtime/venture-assets/<id>/
+    if (!ventureAssets || ventureAssets.venture !== ventureConsole) {
+      fetch(`/api/cortex/ventures/assets?venture=${ventureConsole}`, { cache: 'no-store' })
+        .then((r) => r.json())
+        .then((d) => setVentureAssets({ venture: ventureConsole, items: Array.isArray(d?.items) ? d.items : [] }))
+        .catch(() => setVentureAssets({ venture: ventureConsole, items: [] }));
+    }
     if (ventureTab === 'calendar' && calendar === null) {
       fetch('/api/cortex/calendar/upcoming', { cache: 'no-store' })
         .then((r) => r.json())
@@ -3095,7 +3136,7 @@ export function CortexFoundryNav({ snap, onSelectAgent, selectedAgent, onOpenTow
                 const TABS: [string, string][] = [
                   ['tasks', 'TASKS'], ['goals', 'GOALS'], ['plan', 'PLAN'], ['calendar', 'CALENDAR'],
                   ['workflows', 'WORKFLOWS'], ['agents', 'AGENTS'], ['missions', 'MISSIONS'],
-                  ['campaigns', 'CAMPAIGNS'], ['inbox', 'INBOX'], ['n8n', 'N8N'], ['memory', 'MEMORY'],
+                  ['campaigns', 'CAMPAIGNS'], ['inbox', 'INBOX'], ['n8n', 'N8N'], ['assets', 'ASSETS'], ['memory', 'MEMORY'],
                 ];
                 const empty = (msg: string) => <div style={{ fontSize: 9, color: DIM, padding: '6px 0' }}>{msg}</div>;
                 return (
@@ -3112,6 +3153,8 @@ export function CortexFoundryNav({ snap, onSelectAgent, selectedAgent, onOpenTow
                           id === 'campaigns' ? vcCampaigns.length :
                           id === 'plan' ? vPlanItems.length + planGoals.length + planOps.length + planBlocks.length :
                           id === 'workflows' ? wfRoutines.length :
+                          id === 'n8n' ? 0 :
+                          id === 'assets' ? (ventureAssets && ventureAssets.venture === vc.id ? ventureAssets.items.length : 0) :
                           id === 'memory' ? (ventureMemory || []).length :
                           id === 'inbox' ? inboxProps.length : 0;
                         return (
@@ -3628,6 +3671,48 @@ export function CortexFoundryNav({ snap, onSelectAgent, selectedAgent, onOpenTow
                           );
                         })}
                         <div style={{ fontSize: 8, color: DIM, marginTop: 6 }}>EVENT SOURCES: task_created (source: n8n counts separately in analytics) · webhook deliveries visible under each subscription in SETTINGS → WEBHOOKS</div>
+                      </div>
+                    )}
+
+                    {ventureTab === 'assets' && (
+                      <div>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 5 }}>
+                          <span style={{ fontSize: 8, color: DIM }}>AGENT DELIVERABLES — .cortex-runtime/venture-assets/{vc.id}/</span>
+                          <label style={{ fontSize: 8, fontWeight: 800, color: '#fdba74', border: '1px solid rgba(251,146,60,0.5)', borderRadius: 2, padding: '2px 8px', cursor: assetUploading ? 'wait' : 'pointer', letterSpacing: '0.08em' }}>
+                            {assetUploading ? 'UPLOADING…' : '+ UPLOAD'}
+                            <input type="file" style={{ display: 'none' }} disabled={assetUploading}
+                              onChange={(e) => { const f = e.target.files?.[0]; if (f) uploadVentureAsset(f); e.target.value = ''; }} />
+                          </label>
+                        </div>
+                        {ventureAssets === null && empty('LOADING…')}
+                        {ventureAssets !== null && !ventureAssets.items.length && empty(`NO ASSETS YET — AGENTS DROP FILES INTO venture-assets/${vc.id}/`)}
+                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(110px, 1fr))', gap: 6 }}>
+                          {(ventureAssets?.venture === vc.id ? ventureAssets.items : []).map((a: any) => {
+                            const ext = String(a.name).split('.').pop()?.toLowerCase() || '';
+                            const isImg = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg'].includes(ext);
+                            const url = `/api/cortex/ventures/assets?venture=${vc.id}&file=${encodeURIComponent(a.name)}`;
+                            const sizeStr = a.size > 1048576 ? `${(a.size / 1048576).toFixed(1)}MB` : `${Math.max(1, Math.round(a.size / 1024))}KB`;
+                            return (
+                              <div key={a.name} style={{ border: '1px solid rgba(251,146,60,0.2)', borderRadius: 3, overflow: 'hidden', background: 'rgba(15,23,42,0.5)' }}>
+                                {isImg ? (
+                                  <a href={url} target="_blank" rel="noreferrer">
+                                    <img src={url} alt={a.name} style={{ width: '100%', height: 72, objectFit: 'cover', display: 'block', background: '#0b1120' }} />
+                                  </a>
+                                ) : (
+                                  <a href={url} target="_blank" rel="noreferrer" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: 72, color: '#fdba74', fontSize: 20, textDecoration: 'none' }}>⬒</a>
+                                )}
+                                <div style={{ padding: '3px 5px' }}>
+                                  <div style={{ fontSize: 8.5, color: INK, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={a.name}>{a.name}</div>
+                                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 1 }}>
+                                    <span style={{ fontSize: 7.5, color: DIM }}>{sizeStr} · {new Date(a.mtime).toLocaleDateString([], { month: 'short', day: 'numeric' })}</span>
+                                    <button onClick={() => deleteVentureAsset(a.name)}
+                                      style={{ background: 'none', border: 'none', color: '#fb7185', fontSize: 10, cursor: 'pointer', padding: 0 }}>✕</button>
+                                  </div>
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
                       </div>
                     )}
 

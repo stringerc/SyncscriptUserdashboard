@@ -14361,6 +14361,97 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
         }
       });
 
+      // ── Venture assets (/api/cortex/ventures/assets) ──
+      // Per-venture file store — agents drop deliverables (images, docs,
+      // exports) into .cortex-runtime/venture-assets/<ventureId>/. GET lists,
+      // GET ?file= streams a file inline (image preview), POST upload
+      // (base64, ≤10MB) or delete. Registered BEFORE /api/cortex/ventures.
+      const VENTURE_ASSET_MAX = 10 * 1024 * 1024;
+      const assetDir = (vid: string) => path.join(process.cwd(), '.cortex-runtime', 'venture-assets', vid);
+      const safeAssetName = (n: string) => String(n || '').replace(/[/\\]/g, '_').replace(/\.\./g, '_').slice(0, 200);
+      server.middlewares.use('/api/cortex/ventures/assets', (req: any, res: any, next: any) => {
+        agentCors(req, res);
+        const url = new URL(req.url || '', 'http://localhost');
+        const ventureId = String(url.searchParams.get('venture') || '');
+        const fileName = safeAssetName(url.searchParams.get('file') || '');
+        // Stream a single file (inline for image preview).
+        if (req.method === 'GET' && fileName) {
+          try {
+            if (!isValidVenture(ventureId)) throw new Error('unknown venture');
+            const fp = path.join(assetDir(ventureId), fileName);
+            if (!fp.startsWith(assetDir(ventureId)) || !fsSync.existsSync(fp)) throw new Error('not found');
+            const ext = path.extname(fileName).toLowerCase();
+            const mime: Record<string, string> = { '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif', '.webp': 'image/webp', '.svg': 'image/svg+xml', '.pdf': 'application/pdf', '.json': 'application/json', '.md': 'text/markdown', '.txt': 'text/plain', '.csv': 'text/csv', '.zip': 'application/zip' };
+            res.writeHead(200, { 'Content-Type': mime[ext] || 'application/octet-stream', 'Cache-Control': 'no-store' });
+            return fsSync.createReadStream(fp).pipe(res);
+          } catch (e: any) {
+            res.writeHead(404, { 'Content-Type': 'application/json' });
+            return res.end(JSON.stringify({ ok: false, error: String(e?.message || e) }));
+          }
+        }
+        if (req.method === 'GET') {
+          try {
+            if (!isValidVenture(ventureId)) {
+              res.writeHead(400, { 'Content-Type': 'application/json' });
+              return res.end(JSON.stringify({ ok: false, error: 'unknown venture' }));
+            }
+            const dir = assetDir(ventureId);
+            const items = fsSync.existsSync(dir)
+              ? fsSync.readdirSync(dir).filter((f: string) => fsSync.statSync(path.join(dir, f)).isFile()).map((f: string) => {
+                  const st = fsSync.statSync(path.join(dir, f));
+                  return { name: f, size: st.size, mtime: st.mtimeMs };
+                }).sort((a: any, b: any) => b.mtime - a.mtime)
+              : [];
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            return res.end(JSON.stringify({ ok: true, items }));
+          } catch (e: any) {
+            res.writeHead(500, { 'Content-Type': 'application/json' });
+            return res.end(JSON.stringify({ ok: false, error: String(e?.message || e) }));
+          }
+        }
+        if (req.method === 'OPTIONS') {
+          res.writeHead(204, { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Methods': 'GET, POST, OPTIONS', 'Access-Control-Allow-Headers': 'Content-Type' });
+          return res.end();
+        }
+        if (req.method !== 'POST') return next();
+        let body = '';
+        req.on('data', (c: Buffer) => { body += c.toString(); if (body.length > VENTURE_ASSET_MAX * 1.5) req.destroy(); });
+        req.on('end', () => {
+          try {
+            const p = JSON.parse(body || '{}');
+            if (!isValidVenture(p.ventureId)) {
+              res.writeHead(400, { 'Content-Type': 'application/json' });
+              return res.end(JSON.stringify({ ok: false, error: 'unknown venture' }));
+            }
+            const dir = assetDir(String(p.ventureId));
+            fsSync.mkdirSync(dir, { recursive: true });
+            if (p.action === 'delete') {
+              const name = safeAssetName(String(p.name || ''));
+              const fp = path.join(dir, name);
+              if (!fp.startsWith(dir) || !fsSync.existsSync(fp)) throw new Error('not found');
+              fsSync.unlinkSync(fp);
+              res.writeHead(200, { 'Content-Type': 'application/json' });
+              return res.end(JSON.stringify({ ok: true }));
+            }
+            if (p.action === 'upload') {
+              const name = safeAssetName(String(p.name || ''));
+              if (!name) throw new Error('name required');
+              const b64 = String(p.dataBase64 || '');
+              const buf = Buffer.from(b64, 'base64');
+              if (!buf.length || buf.length > VENTURE_ASSET_MAX) throw new Error(`file empty or >${VENTURE_ASSET_MAX / 1024 / 1024}MB`);
+              fsSync.writeFileSync(path.join(dir, name), buf);
+              res.writeHead(200, { 'Content-Type': 'application/json' });
+              return res.end(JSON.stringify({ ok: true, name, size: buf.length }));
+            }
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ ok: false, error: 'unknown action' }));
+          } catch (e: any) {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ ok: false, error: String(e?.message || e) }));
+          }
+        });
+      });
+
       // ── Venture registry (/api/cortex/ventures) ──
       // Enterprise console scope dimension. GET returns the registry plus
       // live counts derived from real state — tasks (input.ventureId),
