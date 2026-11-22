@@ -899,6 +899,7 @@ export function cleanSpeech(text: string): string {
     .replace(/`(?:tool_call|json|tool)?/gi, '')
     .replace(/<(?:tool_call|function_call|invoke)[\s\S]*?(?:<\/(?:tool_call|function_call|invoke)[^>]*>|$)/gi, '')
     .replace(/\[[A-Z_]+\]/g, '')
+    .replace(/^\s*\*[^*\n]{0,140}…\*?\s*$/gm, '')
     .replace(/^\s*\*?⚡[^\n]*\n?/gm, '')
     .replace(/\((?:music|upbeat|sad|cheerful|laughs?|sighs?|whispers?|applause|silence|pause|excited|calm|dramatic|thinking|hesitant)[^)]*\)/gi, '')
     .replace(/\s{2,}/g, ' ')

@@ -67,6 +67,9 @@ export interface AgentLoopResult {
   toolCalls: Array<{ tool: string; args: Record<string, unknown>; ok: boolean }>;
   provider: string;
   error?: string;
+  /** True when the final answer already streamed live to emitToken —
+   *  callers must NOT replay it token-by-token. */
+  contentStreamed?: boolean;
 }
 
 /** Human narration for tool steps — "I need to fetch this URL" energy,
@@ -177,13 +180,17 @@ function withHeartbeat(
 
 // ── Provider call (non-streaming) ─────────────────────────────────
 
-interface LLMTurnResult {
+export interface LLMTurnResult {
   content: string;
   toolCalls: AgentToolCall[];
   provider: string;
   model: string;
   protocol: 'openai' | 'anthropic';
   rawAssistant: unknown;
+  /** Unflushed content tail held back by the fence guard. Caller emits it
+   *  only when the turn produced NO tool calls (safe to show); dropped when
+   *  tools ran (it may contain a fenced tool_call payload). */
+  tailPending?: string;
 }
 
 function keyPoolFor(p: AgentProvider): string[] {
@@ -314,6 +321,161 @@ async function callProviderOnce(
   throw lastErr || new Error(`all keys failed for ${prov.name}`);
 }
 
+// ── Streaming provider call (OpenAI-compatible SSE) ───────────────
+//
+// The responsiveness upgrade: instead of buffering the whole completion
+// and replaying tokens, content deltas stream to the client LIVE while
+// native tool_call fragments accumulate silently by index.
+//
+// Fence guard: a small tail (TAIL_HOLD chars) is always held back, and
+// emission freezes at the first '```' — so a fenced ```tool_call payload
+// can never leak into the visible stream. If the turn turns out to be a
+// normal answer (or a code block), the caller flushes tailPending at end.
+// If it's a tool call, tailPending is dropped — nothing leaks.
+
+const STREAM_TAIL_HOLD = 16;
+
+async function callProviderOnceStreaming(
+  prov: AgentProvider,
+  messages: AgentMessage[],
+  systemPrompt: string,
+  tools: unknown,
+  maxTokens: number,
+  temperature: number,
+  emitToken: ((text: string) => void) | undefined,
+  emit: ((event: Record<string, unknown>) => void) | undefined,
+): Promise<LLMTurnResult> {
+  const keys = keyPoolFor(prov);
+  let lastErr: any = null;
+
+  for (let ki = 0; ki < keys.length; ki++) {
+    try {
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), REQUEST_TIMEOUT_MS);
+      const res = await fetch(prov.url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${keys[ki]}`,
+        },
+        body: JSON.stringify({
+          model: prov.model,
+          messages: [{ role: 'system', content: systemPrompt }, ...messages],
+          max_tokens: maxTokens,
+          temperature,
+          stream: true,
+          ...(tools ? { tools, tool_choice: 'auto' } : {}),
+        }),
+        signal: ctrl.signal,
+      });
+      if (!res.ok || !res.body) {
+        clearTimeout(timer);
+        lastErr = new Error(`HTTP ${res.status}: ${(await res.text().catch(() => '')).slice(0, 160)}`);
+        continue;
+      }
+
+      // ── SSE parse ──
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buf = '';
+      let content = '';
+      let emittedLen = 0;
+      let fencePos = -1;
+      const tcMap = new Map<number, { id: string; name: string; argsRaw: string }>();
+      let finishReason: string | null = null;
+      let streamErr: any = null;
+
+      const emitSafe = () => {
+        if (!emitToken) { emittedLen = content.length; return; }
+        const cap = fencePos >= 0 ? fencePos : content.length - STREAM_TAIL_HOLD;
+        const safeLen = Math.max(emittedLen, Math.min(cap, content.length));
+        if (safeLen > emittedLen) {
+          emitToken(content.slice(emittedLen, safeLen));
+          emittedLen = safeLen;
+        }
+      };
+
+      try {
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buf += decoder.decode(value, { stream: true });
+          let nl: number;
+          while ((nl = buf.indexOf('\n')) >= 0) {
+            const line = buf.slice(0, nl).trim();
+            buf = buf.slice(nl + 1);
+            if (!line.startsWith('data:')) continue;
+            const payload = line.slice(5).trim();
+            if (payload === '[DONE]') continue;
+            let j: any;
+            try { j = JSON.parse(payload); } catch { continue; }
+            const choice = j?.choices?.[0];
+            if (!choice) continue;
+            const delta = choice.delta || {};
+            if (typeof delta.content === 'string' && delta.content) {
+              content += delta.content;
+              if (fencePos < 0) {
+                const fp = content.indexOf('```');
+                if (fp >= 0) fencePos = fp;
+              }
+              emitSafe();
+            }
+            // Reasoning deltas (deepseek/r1-style) → reasoning events, not speech.
+            const reasoning = delta.reasoning_content ?? delta.reasoning;
+            if (typeof reasoning === 'string' && reasoning) {
+              try { emit?.({ type: 'REASONING_MESSAGE_CONTENT', reasoning }); } catch {}
+            }
+            if (Array.isArray(delta.tool_calls)) {
+              for (const tc of delta.tool_calls) {
+                const idx = typeof tc?.index === 'number' ? tc.index : 0;
+                const slot = tcMap.get(idx) || { id: '', name: '', argsRaw: '' };
+                if (tc.id) slot.id += tc.id;
+                if (tc.function?.name) slot.name += tc.function.name;
+                if (typeof tc.function?.arguments === 'string') slot.argsRaw += tc.function.arguments;
+                tcMap.set(idx, slot);
+              }
+            }
+            if (choice.finish_reason) finishReason = choice.finish_reason;
+          }
+        }
+      } catch (e: any) {
+        streamErr = e;
+      } finally {
+        clearTimeout(timer);
+        try { reader.cancel(); } catch {}
+      }
+      if (streamErr) throw streamErr;
+
+      const toolCalls: AgentToolCall[] = [...tcMap.entries()]
+        .sort((a, b) => a[0] - b[0])
+        .filter(([, s]) => s.name)
+        .map(([, s], i) => {
+          const repaired = repairJsonArgs(s.argsRaw || '{}');
+          return {
+            id: s.id || `tc-${Date.now()}-${i}`,
+            name: s.name,
+            argsRaw: s.argsRaw || '{}',
+            args: repaired.ok ? repaired.args : {},
+          };
+        });
+
+      return {
+        content,
+        toolCalls,
+        provider: prov.name,
+        model: prov.model,
+        protocol: 'openai',
+        rawAssistant: { streamed: true, finishReason },
+        tailPending: content.slice(emittedLen),
+      };
+    } catch (e: any) {
+      lastErr = e;
+      if (ki < keys.length - 1) continue;
+    }
+  }
+  throw lastErr || new Error(`all keys failed for ${prov.name}`);
+}
+
 // ── Fenced tool_call fallback parser ──────────────────────────────
 
 const FENCED_RE = /```(?:tool_call|json|tool)?\s*([\s\S]*?)```/g;
@@ -409,6 +571,7 @@ export async function runAgenticTurn(
   const executeTool = withHeartbeat(deps.executeTool, deps.emit);
   const executed: AgentLoopResult['toolCalls'] = [];
   let finalContent = '';
+  let contentStreamed = false;
   let lastProvider = '';
   let steps = 0;
 
@@ -448,7 +611,11 @@ export async function runAgenticTurn(
     try {
       for (const prov of deps.providers) {
         try {
-          turn = await callProviderOnce(prov, messages, systemPrompt, tools, maxTokens, temperature);
+          // Stream OpenAI-compatible providers live; Anthropic stays
+          // non-streaming (its SSE block protocol is a separate parser).
+          turn = prov.protocol === 'anthropic'
+            ? await callProviderOnce(prov, messages, systemPrompt, tools, maxTokens, temperature)
+            : await callProviderOnceStreaming(prov, messages, systemPrompt, tools, maxTokens, temperature, deps.emitToken, deps.emit);
           lastProvider = `${prov.name}:${prov.model}`;
           break;
         } catch (e: any) {
@@ -472,9 +639,16 @@ export async function runAgenticTurn(
       calls = extractFencedToolCalls(turn.content);
     }
     if (!calls.length) {
+      // Final answer: flush the fence-guard tail so nothing is lost
+      // (code fences, trailing chars). Safe — no tool payload can be here.
+      if (turn.tailPending) {
+        try { deps.emitToken?.(turn.tailPending); } catch {}
+      }
+      contentStreamed = turn.tailPending !== undefined;
       finalContent = turn.content || finalContent;
       break;
     }
+    // Tool turn: tailPending may contain a fenced tool_call payload — drop it.
 
     // ── Execute tool calls (bounded) ──
     const toRun = calls.slice(0, MAX_TOOL_CALLS_PER_STEP);
@@ -502,5 +676,5 @@ export async function runAgenticTurn(
     }
   }
 
-  return { content: finalContent, steps, toolCalls: executed, provider: lastProvider };
+  return { content: finalContent, steps, toolCalls: executed, provider: lastProvider, contentStreamed };
 }

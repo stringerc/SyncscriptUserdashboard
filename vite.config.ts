@@ -10846,9 +10846,13 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
                   } catch {}
 
                   const finalText = loopResult.content || 'Done.';
-                  const toks = finalText.match(/\S+|\s+/g) || [finalText];
-                  for (const tok of toks) {
-                    res.write(`data: ${JSON.stringify({ token: tok })}\n\n`);
+                  // Streamed providers already emitted tokens live — only
+                  // replay for non-streaming (anthropic) final answers.
+                  if (!loopResult.contentStreamed) {
+                    const toks = finalText.match(/\S+|\s+/g) || [finalText];
+                    for (const tok of toks) {
+                      res.write(`data: ${JSON.stringify({ token: tok })}\n\n`);
+                    }
                   }
                   res.write(`data: ${JSON.stringify({ finishReason: 'stop', agentic: { steps: loopResult.steps, tools: loopResult.toolCalls.map(t => t.tool), provider: loopResult.provider } })}\n\n`);
                   res.write('data: [DONE]\n\n');
