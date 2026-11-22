@@ -198,6 +198,10 @@ export function CortexFoundryNav({ snap, onSelectAgent, selectedAgent, onOpenTow
   const [ventureFilter, setVentureFilter] = useState<string>('all');
   const [ventureConsole, setVentureConsole] = useState<string | null>(null);
   const [ventureTab, setVentureTab] = useState<string>('tasks');
+  const [ventureRoutines, setVentureRoutines] = useState<any[] | null>(null);
+  const [venturePlan, setVenturePlan] = useState<any | null>(null);
+  const [ventureMemory, setVentureMemory] = useState<any[] | null>(null);
+  const [expandedAgent, setExpandedAgent] = useState<string | null>(null);
   const [ventureSchedInput, setVentureSchedInput] = useState('');
   const [ventureBudgetInput, setVentureBudgetInput] = useState('');
   const [ventureTaskBudgetInput, setVentureTaskBudgetInput] = useState('');
@@ -487,6 +491,26 @@ export function CortexFoundryNav({ snap, onSelectAgent, selectedAgent, onOpenTow
         .then((r) => r.json())
         .then((d) => { if (Array.isArray(d?.campaigns)) setCampaignsData(d.campaigns); })
         .catch(() => setCampaignsData([]));
+    }
+    if (ventureTab === 'workflows' && ventureRoutines === null) {
+      fetch('/api/cortex/agents/routines', { cache: 'no-store' })
+        .then((r) => r.json())
+        .then((d) => setVentureRoutines(Array.isArray(d?.routines) ? d.routines : []))
+        .catch(() => setVentureRoutines([]));
+    }
+    if (ventureTab === 'plan' && venturePlan === null) {
+      fetch('/api/cortex/mission?action=state', { cache: 'no-store' })
+        .then((r) => r.json())
+        .then((d) => setVenturePlan(d && d.ok !== false ? d : { goals: [], opsItems: [], blocks: [] }))
+        .catch(() => setVenturePlan({ goals: [], opsItems: [], blocks: [] }));
+    }
+    if (ventureTab === 'memory' && ventureMemory === null && ventureConsole) {
+      const vc = (ventures?.ventures || []).find((v: any) => v.id === ventureConsole);
+      const q = encodeURIComponent(String(vc?.callSign || vc?.id || ventureConsole).toLowerCase());
+      fetch(`/api/cortex/agents/memory?q=${q}&limit=12`, { cache: 'no-store' })
+        .then((r) => r.json())
+        .then((d) => setVentureMemory(Array.isArray(d?.hits) ? d.hits : []))
+        .catch(() => setVentureMemory([]));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ventureConsole, ventureTab]);
@@ -894,6 +918,286 @@ export function CortexFoundryNav({ snap, onSelectAgent, selectedAgent, onOpenTow
     setView((v) => (v === id ? null : id));
   };
 
+  // Shared creation drawers — used by the TASKS/GOALS views AND the venture
+  // console tabs so both surfaces offer the identical create flow.
+  const renderNewTaskDrawer = () => (
+    <div style={{
+      background: 'rgba(15,23,42,0.92)',
+      border: '1px solid rgba(52,211,153,0.45)',
+      borderLeft: '3px solid #34d399',
+      borderRadius: 3,
+      padding: '10px 12px',
+      marginBottom: 10,
+      display: 'flex',
+      flexDirection: 'column',
+      gap: 8,
+      boxShadow: '0 4px 20px rgba(0,0,0,0.5)',
+    }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <span style={{ fontSize: 9, fontWeight: 800, color: '#34d399', letterSpacing: '0.14em' }}>
+          + CREATE NEW TASK
+        </span>
+        <button
+          onClick={() => setShowNewTask(false)}
+          style={{ background: 'none', border: 'none', color: DIM, cursor: 'pointer', fontSize: 11 }}
+        >
+          ✕
+        </button>
+      </div>
+
+      <input
+        type="text"
+        placeholder="Task description / operational goal…"
+        value={newTaskTitle}
+        onChange={(e) => setNewTaskTitle(e.target.value)}
+        onKeyDown={(e) => { if (e.key === 'Enter') handleCreateTask(); }}
+        style={{
+          background: 'rgba(8,14,24,0.8)',
+          border: '1px solid rgba(103,232,249,0.25)',
+          color: INK,
+          fontFamily: MONO,
+          fontSize: 10,
+          padding: '5px 8px',
+          borderRadius: 2,
+          outline: 'none',
+        }}
+        autoFocus
+      />
+
+      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
+        <span style={{ fontSize: 8, color: DIM }}>PRIORITY:</span>
+        {(['low', 'medium', 'high', 'critical'] as const).map((p) => (
+          <button
+            key={p}
+            type="button"
+            onClick={() => setNewTaskPriority(p)}
+            style={{
+              background: newTaskPriority === p ? 'rgba(52,211,153,0.25)' : 'rgba(8,14,24,0.6)',
+              border: `1px solid ${newTaskPriority === p ? '#34d399' : 'rgba(103,232,249,0.18)'}`,
+              color: newTaskPriority === p ? '#6ee7b7' : DIM,
+              fontFamily: MONO,
+              fontSize: 8,
+              padding: '2px 6px',
+              borderRadius: 2,
+              cursor: 'pointer',
+            }}
+          >
+            {p.toUpperCase()}
+          </button>
+        ))}
+
+        <span style={{ fontSize: 8, color: DIM, marginLeft: 4 }}>TARGET:</span>
+        <button
+          type="button"
+          onClick={() => setNewTaskTarget('user')}
+          style={{
+            background: newTaskTarget === 'user' ? 'rgba(251,191,36,0.25)' : 'rgba(8,14,24,0.6)',
+            border: `1px solid ${newTaskTarget === 'user' ? '#fcd34d' : 'rgba(103,232,249,0.18)'}`,
+            color: newTaskTarget === 'user' ? '#fcd34d' : DIM,
+            fontFamily: MONO,
+            fontSize: 8,
+            padding: '2px 6px',
+            borderRadius: 2,
+            cursor: 'pointer',
+          }}
+        >
+          USER
+        </button>
+        <button
+          type="button"
+          onClick={() => setNewTaskTarget('agent')}
+          style={{
+            background: newTaskTarget === 'agent' ? 'rgba(56,189,248,0.25)' : 'rgba(8,14,24,0.6)',
+            border: `1px solid ${newTaskTarget === 'agent' ? '#38bdf8' : 'rgba(103,232,249,0.18)'}`,
+            color: newTaskTarget === 'agent' ? '#7dd3fc' : DIM,
+            fontFamily: MONO,
+            fontSize: 8,
+            padding: '2px 6px',
+            borderRadius: 2,
+            cursor: 'pointer',
+          }}
+        >
+          AGENT
+        </button>
+
+        <span style={{ fontSize: 8, color: DIM, marginLeft: 4 }}>VENTURE:</span>
+        <button
+          type="button"
+          onClick={() => setNewTaskVenture('')}
+          style={{
+            background: !newTaskVenture ? 'rgba(148,163,184,0.2)' : 'rgba(8,14,24,0.6)',
+            border: `1px solid ${!newTaskVenture ? 'rgba(148,163,184,0.5)' : 'rgba(103,232,249,0.18)'}`,
+            color: !newTaskVenture ? INK : DIM,
+            fontFamily: MONO, fontSize: 8, padding: '2px 6px', borderRadius: 2, cursor: 'pointer',
+          }}
+        >FLEET</button>
+        {(ventures?.ventures || []).map((v: any) => (
+          <button
+            key={v.id}
+            type="button"
+            onClick={() => setNewTaskVenture(v.id)}
+            style={{
+              background: newTaskVenture === v.id ? 'rgba(167,139,250,0.25)' : 'rgba(8,14,24,0.6)',
+              border: `1px solid ${newTaskVenture === v.id ? '#a78bfa' : 'rgba(103,232,249,0.18)'}`,
+              color: newTaskVenture === v.id ? '#c4b5fd' : DIM,
+              fontFamily: MONO, fontSize: 8, padding: '2px 6px', borderRadius: 2, cursor: 'pointer',
+            }}
+          >{v.callSign || v.id.toUpperCase()}</button>
+        ))}
+      </div>
+
+      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 6, marginTop: 2 }}>
+        <button
+          onClick={() => setShowNewTask(false)}
+          style={{
+            background: 'none',
+            border: '1px solid rgba(148,163,184,0.25)',
+            color: DIM,
+            fontFamily: MONO,
+            fontSize: 8.5,
+            padding: '3px 8px',
+            borderRadius: 2,
+            cursor: 'pointer',
+          }}
+        >
+          CANCEL
+        </button>
+        <button
+          onClick={handleCreateTask}
+          disabled={!newTaskTitle.trim()}
+          style={{
+            background: '#059669',
+            border: '1px solid #34d399',
+            color: '#ffffff',
+            fontFamily: MONO,
+            fontSize: 8.5,
+            fontWeight: 700,
+            padding: '3px 10px',
+            borderRadius: 2,
+            cursor: newTaskTitle.trim() ? 'pointer' : 'not-allowed',
+            boxShadow: '0 0 10px rgba(16,185,129,0.3)',
+          }}
+        >
+          CONFIRM & DISPATCH
+        </button>
+      </div>
+    </div>
+  );
+
+  const renderNewGoalDrawer = () => (
+    <div style={{
+      background: 'rgba(15,23,42,0.92)',
+      border: '1px solid rgba(56,189,248,0.45)',
+      borderLeft: '3px solid #38bdf8',
+      borderRadius: 3,
+      padding: '10px 12px',
+      marginBottom: 10,
+      display: 'flex',
+      flexDirection: 'column',
+      gap: 8,
+      boxShadow: '0 4px 20px rgba(0,0,0,0.5)',
+    }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <span style={{ fontSize: 9, fontWeight: 800, color: '#38bdf8', letterSpacing: '0.14em' }}>
+          + DECLARE LIFE GOAL
+        </span>
+        <button
+          onClick={() => setShowNewGoal(false)}
+          style={{ background: 'none', border: 'none', color: DIM, cursor: 'pointer', fontSize: 11 }}
+        >
+          ✕
+        </button>
+      </div>
+
+      <input
+        type="text"
+        placeholder="Goal objective (e.g. Master neural rendering, Run half-marathon)…"
+        value={newGoalTitle}
+        onChange={(e) => setNewGoalTitle(e.target.value)}
+        onKeyDown={(e) => { if (e.key === 'Enter') handleCreateGoal(); }}
+        style={{
+          background: 'rgba(8,14,24,0.8)',
+          border: '1px solid rgba(103,232,249,0.25)',
+          color: INK,
+          fontFamily: MONO,
+          fontSize: 10,
+          padding: '5px 8px',
+          borderRadius: 2,
+          outline: 'none',
+        }}
+        autoFocus
+      />
+
+      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
+        <span style={{ fontSize: 8, color: DIM }}>HORIZON:</span>
+        {(['week', 'month', 'quarter', 'year', 'life'] as const).map((h) => (
+          <button
+            key={h}
+            type="button"
+            onClick={() => setNewGoalHorizon(h)}
+            style={{
+              background: newGoalHorizon === h ? 'rgba(56,189,248,0.25)' : 'rgba(8,14,24,0.6)',
+              border: `1px solid ${newGoalHorizon === h ? '#38bdf8' : 'rgba(103,232,249,0.18)'}`,
+              color: newGoalHorizon === h ? '#7dd3fc' : DIM,
+              fontFamily: MONO,
+              fontSize: 8,
+              padding: '2px 6px',
+              borderRadius: 2,
+              cursor: 'pointer',
+            }}
+          >
+            {h.toUpperCase()}
+          </button>
+        ))}
+      </div>
+
+      {/* VENTURE selector for the new goal */}
+      <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', alignItems: 'center' }}>
+        <span style={{ fontSize: 8, color: DIM }}>VENTURE:</span>
+        <button type="button" onClick={() => setNewGoalVenture('')} style={{ background: !newGoalVenture ? 'rgba(148,163,184,0.2)' : 'rgba(8,14,24,0.6)', border: `1px solid ${!newGoalVenture ? 'rgba(148,163,184,0.5)' : 'rgba(103,232,249,0.18)'}`, color: !newGoalVenture ? INK : DIM, fontFamily: MONO, fontSize: 8, padding: '2px 6px', borderRadius: 2, cursor: 'pointer' }}>FLEET</button>
+        {(ventures?.ventures || []).map((v: any) => (
+          <button key={v.id} type="button" onClick={() => setNewGoalVenture(v.id)} style={{ background: newGoalVenture === v.id ? 'rgba(167,139,250,0.25)' : 'rgba(8,14,24,0.6)', border: `1px solid ${newGoalVenture === v.id ? '#a78bfa' : 'rgba(103,232,249,0.18)'}`, color: newGoalVenture === v.id ? '#c4b5fd' : DIM, fontFamily: MONO, fontSize: 8, padding: '2px 6px', borderRadius: 2, cursor: 'pointer' }}>{v.callSign || v.id.toUpperCase()}</button>
+        ))}
+      </div>
+
+      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 6, marginTop: 2 }}>
+        <button
+          onClick={() => setShowNewGoal(false)}
+          style={{
+            background: 'none',
+            border: '1px solid rgba(148,163,184,0.25)',
+            color: DIM,
+            fontFamily: MONO,
+            fontSize: 8.5,
+            padding: '3px 8px',
+            borderRadius: 2,
+            cursor: 'pointer',
+          }}
+        >
+          CANCEL
+        </button>
+        <button
+          onClick={handleCreateGoal}
+          disabled={!newGoalTitle.trim()}
+          style={{
+            background: 'rgba(56,189,248,0.25)',
+            border: '1px solid #38bdf8',
+            color: '#7dd3fc',
+            fontFamily: MONO,
+            fontSize: 8.5,
+            fontWeight: 700,
+            padding: '3px 10px',
+            borderRadius: 2,
+            cursor: newGoalTitle.trim() ? 'pointer' : 'not-allowed',
+            boxShadow: '0 0 10px rgba(56,189,248,0.3)',
+          }}
+        >
+          DECLARE GOAL
+        </button>
+      </div>
+    </div>
+  );
+
   return (
     <>
       {/* Left nav rail */}
@@ -958,169 +1262,7 @@ export function CortexFoundryNav({ snap, onSelectAgent, selectedAgent, onOpenTow
           </span>
         }>
           {/* Inline HUD Task Creation Drawer */}
-          {showNewTask && (
-            <div style={{
-              background: 'rgba(15,23,42,0.92)',
-              border: '1px solid rgba(52,211,153,0.45)',
-              borderLeft: '3px solid #34d399',
-              borderRadius: 3,
-              padding: '10px 12px',
-              marginBottom: 10,
-              display: 'flex',
-              flexDirection: 'column',
-              gap: 8,
-              boxShadow: '0 4px 20px rgba(0,0,0,0.5)',
-            }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <span style={{ fontSize: 9, fontWeight: 800, color: '#34d399', letterSpacing: '0.14em' }}>
-                  + CREATE NEW TASK
-                </span>
-                <button
-                  onClick={() => setShowNewTask(false)}
-                  style={{ background: 'none', border: 'none', color: DIM, cursor: 'pointer', fontSize: 11 }}
-                >
-                  ✕
-                </button>
-              </div>
-
-              <input
-                type="text"
-                placeholder="Task description / operational goal…"
-                value={newTaskTitle}
-                onChange={(e) => setNewTaskTitle(e.target.value)}
-                onKeyDown={(e) => { if (e.key === 'Enter') handleCreateTask(); }}
-                style={{
-                  background: 'rgba(8,14,24,0.8)',
-                  border: '1px solid rgba(103,232,249,0.25)',
-                  color: INK,
-                  fontFamily: MONO,
-                  fontSize: 10,
-                  padding: '5px 8px',
-                  borderRadius: 2,
-                  outline: 'none',
-                }}
-                autoFocus
-              />
-
-              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
-                <span style={{ fontSize: 8, color: DIM }}>PRIORITY:</span>
-                {(['low', 'medium', 'high', 'critical'] as const).map((p) => (
-                  <button
-                    key={p}
-                    type="button"
-                    onClick={() => setNewTaskPriority(p)}
-                    style={{
-                      background: newTaskPriority === p ? 'rgba(52,211,153,0.25)' : 'rgba(8,14,24,0.6)',
-                      border: `1px solid ${newTaskPriority === p ? '#34d399' : 'rgba(103,232,249,0.18)'}`,
-                      color: newTaskPriority === p ? '#6ee7b7' : DIM,
-                      fontFamily: MONO,
-                      fontSize: 8,
-                      padding: '2px 6px',
-                      borderRadius: 2,
-                      cursor: 'pointer',
-                    }}
-                  >
-                    {p.toUpperCase()}
-                  </button>
-                ))}
-
-                <span style={{ fontSize: 8, color: DIM, marginLeft: 4 }}>TARGET:</span>
-                <button
-                  type="button"
-                  onClick={() => setNewTaskTarget('user')}
-                  style={{
-                    background: newTaskTarget === 'user' ? 'rgba(251,191,36,0.25)' : 'rgba(8,14,24,0.6)',
-                    border: `1px solid ${newTaskTarget === 'user' ? '#fcd34d' : 'rgba(103,232,249,0.18)'}`,
-                    color: newTaskTarget === 'user' ? '#fcd34d' : DIM,
-                    fontFamily: MONO,
-                    fontSize: 8,
-                    padding: '2px 6px',
-                    borderRadius: 2,
-                    cursor: 'pointer',
-                  }}
-                >
-                  USER
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setNewTaskTarget('agent')}
-                  style={{
-                    background: newTaskTarget === 'agent' ? 'rgba(56,189,248,0.25)' : 'rgba(8,14,24,0.6)',
-                    border: `1px solid ${newTaskTarget === 'agent' ? '#38bdf8' : 'rgba(103,232,249,0.18)'}`,
-                    color: newTaskTarget === 'agent' ? '#7dd3fc' : DIM,
-                    fontFamily: MONO,
-                    fontSize: 8,
-                    padding: '2px 6px',
-                    borderRadius: 2,
-                    cursor: 'pointer',
-                  }}
-                >
-                  AGENT
-                </button>
-
-                <span style={{ fontSize: 8, color: DIM, marginLeft: 4 }}>VENTURE:</span>
-                <button
-                  type="button"
-                  onClick={() => setNewTaskVenture('')}
-                  style={{
-                    background: !newTaskVenture ? 'rgba(148,163,184,0.2)' : 'rgba(8,14,24,0.6)',
-                    border: `1px solid ${!newTaskVenture ? 'rgba(148,163,184,0.5)' : 'rgba(103,232,249,0.18)'}`,
-                    color: !newTaskVenture ? INK : DIM,
-                    fontFamily: MONO, fontSize: 8, padding: '2px 6px', borderRadius: 2, cursor: 'pointer',
-                  }}
-                >FLEET</button>
-                {(ventures?.ventures || []).map((v: any) => (
-                  <button
-                    key={v.id}
-                    type="button"
-                    onClick={() => setNewTaskVenture(v.id)}
-                    style={{
-                      background: newTaskVenture === v.id ? 'rgba(167,139,250,0.25)' : 'rgba(8,14,24,0.6)',
-                      border: `1px solid ${newTaskVenture === v.id ? '#a78bfa' : 'rgba(103,232,249,0.18)'}`,
-                      color: newTaskVenture === v.id ? '#c4b5fd' : DIM,
-                      fontFamily: MONO, fontSize: 8, padding: '2px 6px', borderRadius: 2, cursor: 'pointer',
-                    }}
-                  >{v.callSign || v.id.toUpperCase()}</button>
-                ))}
-              </div>
-
-              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 6, marginTop: 2 }}>
-                <button
-                  onClick={() => setShowNewTask(false)}
-                  style={{
-                    background: 'none',
-                    border: '1px solid rgba(148,163,184,0.25)',
-                    color: DIM,
-                    fontFamily: MONO,
-                    fontSize: 8.5,
-                    padding: '3px 8px',
-                    borderRadius: 2,
-                    cursor: 'pointer',
-                  }}
-                >
-                  CANCEL
-                </button>
-                <button
-                  onClick={handleCreateTask}
-                  disabled={!newTaskTitle.trim()}
-                  style={{
-                    background: '#059669',
-                    border: '1px solid #34d399',
-                    color: '#ffffff',
-                    fontFamily: MONO,
-                    fontSize: 8.5,
-                    fontWeight: 700,
-                    padding: '3px 10px',
-                    borderRadius: 2,
-                    cursor: newTaskTitle.trim() ? 'pointer' : 'not-allowed',
-                    boxShadow: '0 0 10px rgba(16,185,129,0.3)',
-                  }}
-                >
-                  CONFIRM & DISPATCH
-                </button>
-              </div>
-            </div>
-          )}
+          {showNewTask && renderNewTaskDrawer()}
           {ventureChips}
           {/* UP NEXT — today's plan: mission blocks + pending user tasks */}
           {(upcomingBlocks.length > 0 || userPendingToday.length > 0) && taskSource !== 'agents' && (
@@ -1234,119 +1376,7 @@ export function CortexFoundryNav({ snap, onSelectAgent, selectedAgent, onOpenTow
           }
         >
           {/* Inline HUD Goal Creation Drawer */}
-          {showNewGoal && (
-            <div style={{
-              background: 'rgba(15,23,42,0.92)',
-              border: '1px solid rgba(56,189,248,0.45)',
-              borderLeft: '3px solid #38bdf8',
-              borderRadius: 3,
-              padding: '10px 12px',
-              marginBottom: 10,
-              display: 'flex',
-              flexDirection: 'column',
-              gap: 8,
-              boxShadow: '0 4px 20px rgba(0,0,0,0.5)',
-            }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <span style={{ fontSize: 9, fontWeight: 800, color: '#38bdf8', letterSpacing: '0.14em' }}>
-                  + DECLARE LIFE GOAL
-                </span>
-                <button
-                  onClick={() => setShowNewGoal(false)}
-                  style={{ background: 'none', border: 'none', color: DIM, cursor: 'pointer', fontSize: 11 }}
-                >
-                  ✕
-                </button>
-              </div>
-
-              <input
-                type="text"
-                placeholder="Goal objective (e.g. Master neural rendering, Run half-marathon)…"
-                value={newGoalTitle}
-                onChange={(e) => setNewGoalTitle(e.target.value)}
-                onKeyDown={(e) => { if (e.key === 'Enter') handleCreateGoal(); }}
-                style={{
-                  background: 'rgba(8,14,24,0.8)',
-                  border: '1px solid rgba(103,232,249,0.25)',
-                  color: INK,
-                  fontFamily: MONO,
-                  fontSize: 10,
-                  padding: '5px 8px',
-                  borderRadius: 2,
-                  outline: 'none',
-                }}
-                autoFocus
-              />
-
-              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
-                <span style={{ fontSize: 8, color: DIM }}>HORIZON:</span>
-                {(['week', 'month', 'quarter', 'year', 'life'] as const).map((h) => (
-                  <button
-                    key={h}
-                    type="button"
-                    onClick={() => setNewGoalHorizon(h)}
-                    style={{
-                      background: newGoalHorizon === h ? 'rgba(56,189,248,0.25)' : 'rgba(8,14,24,0.6)',
-                      border: `1px solid ${newGoalHorizon === h ? '#38bdf8' : 'rgba(103,232,249,0.18)'}`,
-                      color: newGoalHorizon === h ? '#7dd3fc' : DIM,
-                      fontFamily: MONO,
-                      fontSize: 8,
-                      padding: '2px 6px',
-                      borderRadius: 2,
-                      cursor: 'pointer',
-                    }}
-                  >
-                    {h.toUpperCase()}
-                  </button>
-                ))}
-              </div>
-
-              {/* VENTURE selector for the new goal */}
-              <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', alignItems: 'center' }}>
-                <span style={{ fontSize: 8, color: DIM }}>VENTURE:</span>
-                <button type="button" onClick={() => setNewGoalVenture('')} style={{ background: !newGoalVenture ? 'rgba(148,163,184,0.2)' : 'rgba(8,14,24,0.6)', border: `1px solid ${!newGoalVenture ? 'rgba(148,163,184,0.5)' : 'rgba(103,232,249,0.18)'}`, color: !newGoalVenture ? INK : DIM, fontFamily: MONO, fontSize: 8, padding: '2px 6px', borderRadius: 2, cursor: 'pointer' }}>FLEET</button>
-                {(ventures?.ventures || []).map((v: any) => (
-                  <button key={v.id} type="button" onClick={() => setNewGoalVenture(v.id)} style={{ background: newGoalVenture === v.id ? 'rgba(167,139,250,0.25)' : 'rgba(8,14,24,0.6)', border: `1px solid ${newGoalVenture === v.id ? '#a78bfa' : 'rgba(103,232,249,0.18)'}`, color: newGoalVenture === v.id ? '#c4b5fd' : DIM, fontFamily: MONO, fontSize: 8, padding: '2px 6px', borderRadius: 2, cursor: 'pointer' }}>{v.callSign || v.id.toUpperCase()}</button>
-                ))}
-              </div>
-
-              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 6, marginTop: 2 }}>
-                <button
-                  onClick={() => setShowNewGoal(false)}
-                  style={{
-                    background: 'none',
-                    border: '1px solid rgba(148,163,184,0.25)',
-                    color: DIM,
-                    fontFamily: MONO,
-                    fontSize: 8.5,
-                    padding: '3px 8px',
-                    borderRadius: 2,
-                    cursor: 'pointer',
-                  }}
-                >
-                  CANCEL
-                </button>
-                <button
-                  onClick={handleCreateGoal}
-                  disabled={!newGoalTitle.trim()}
-                  style={{
-                    background: 'rgba(56,189,248,0.25)',
-                    border: '1px solid #38bdf8',
-                    color: '#7dd3fc',
-                    fontFamily: MONO,
-                    fontSize: 8.5,
-                    fontWeight: 700,
-                    padding: '3px 10px',
-                    borderRadius: 2,
-                    cursor: newGoalTitle.trim() ? 'pointer' : 'not-allowed',
-                    boxShadow: '0 0 10px rgba(56,189,248,0.3)',
-                  }}
-                >
-                  DECLARE GOAL
-                </button>
-              </div>
-            </div>
-          )}
+          {showNewGoal && renderNewGoalDrawer()}
 
           {ventureChips}
           {goalList.map((g) => <CortexFoundryGoalCard key={g.id} goal={g} />)}
@@ -2820,9 +2850,17 @@ export function CortexFoundryNav({ snap, onSelectAgent, selectedAgent, onOpenTow
                   .sort((a: any, b: any) => a.start - b.start).slice(0, 12);
                 const inboxProps = (inbox || []).filter((p: any) => String(p.ventureId || '') === vc.id);
                 const vcCampaigns = vc.id === 'omni' ? (campaignsData || []) : [];
+                const planGoals = (venturePlan?.goals || []).filter((g: any) => String(g.ventureId || 'cortex') === vc.id);
+                const planOps = (venturePlan?.opsItems || []).filter((o: any) => String(o.ventureId || 'cortex') === vc.id);
+                const planBlocks = (venturePlan?.blocks || []).filter((b: any) => String(b.ventureId || 'cortex') === vc.id);
+                // Routines carry no ventureId — map by owning agent: OMNI's
+                // revenue engine is DISTRIBUTOR; CORTEX sees the whole fleet.
+                const wfRoutines = (ventureRoutines || []).filter((r: any) =>
+                  vc.id === 'cortex' ? true : vc.id === 'omni' ? r.agentId === 'distributor' : false);
                 const TABS: [string, string][] = [
-                  ['tasks', 'TASKS'], ['goals', 'GOALS'], ['calendar', 'CALENDAR'], ['agents', 'AGENTS'],
-                  ['missions', 'MISSIONS'], ['campaigns', 'CAMPAIGNS'], ['inbox', 'INBOX'],
+                  ['tasks', 'TASKS'], ['goals', 'GOALS'], ['plan', 'PLAN'], ['calendar', 'CALENDAR'],
+                  ['workflows', 'WORKFLOWS'], ['agents', 'AGENTS'], ['missions', 'MISSIONS'],
+                  ['campaigns', 'CAMPAIGNS'], ['inbox', 'INBOX'], ['memory', 'MEMORY'],
                 ];
                 const empty = (msg: string) => <div style={{ fontSize: 9, color: DIM, padding: '6px 0' }}>{msg}</div>;
                 return (
@@ -2837,6 +2875,9 @@ export function CortexFoundryNav({ snap, onSelectAgent, selectedAgent, onOpenTow
                           id === 'agents' ? agentRows.filter((r) => r.open > 0).length :
                           id === 'missions' ? missionBlocks.length :
                           id === 'campaigns' ? vcCampaigns.length :
+                          id === 'plan' ? planGoals.length + planOps.length + planBlocks.length :
+                          id === 'workflows' ? wfRoutines.length :
+                          id === 'memory' ? (ventureMemory || []).length :
                           id === 'inbox' ? inboxProps.length : 0;
                         return (
                           <button key={id} onClick={() => setVentureTab(id)}
@@ -2853,6 +2894,19 @@ export function CortexFoundryNav({ snap, onSelectAgent, selectedAgent, onOpenTow
 
                     {ventureTab === 'tasks' && (
                       <div>
+                        <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 6 }}>
+                          <button
+                            onClick={() => { setNewTaskVenture(vc.id); setShowNewTask((p) => !p); }}
+                            style={{
+                              background: showNewTask ? 'rgba(52,211,153,0.3)' : 'rgba(52,211,153,0.15)',
+                              border: '1px solid #34d399', color: '#6ee7b7', fontFamily: MONO, fontSize: 8.5,
+                              fontWeight: 800, padding: '2px 8px', borderRadius: 2, cursor: 'pointer', letterSpacing: '0.08em',
+                            }}
+                          >
+                            <span>+</span> NEW TASK
+                          </button>
+                        </div>
+                        {showNewTask && renderNewTaskDrawer()}
                         {vcAgentTasks.length > 0 && (
                           <div style={{ marginBottom: 6 }}>
                             <div style={{ fontSize: 8, fontWeight: 800, letterSpacing: '0.2em', color: '#67e8f9', borderBottom: '1px solid rgba(103,232,249,0.2)', paddingBottom: 2, marginBottom: 3 }}>
@@ -2881,6 +2935,19 @@ export function CortexFoundryNav({ snap, onSelectAgent, selectedAgent, onOpenTow
 
                     {ventureTab === 'goals' && (
                       <div>
+                        <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 6 }}>
+                          <button
+                            onClick={() => { setNewGoalVenture(vc.id); setShowNewGoal((p) => !p); }}
+                            style={{
+                              background: showNewGoal ? 'rgba(56,189,248,0.25)' : 'rgba(56,189,248,0.12)',
+                              border: '1px solid #38bdf8', color: '#7dd3fc', fontFamily: MONO, fontSize: 8.5,
+                              fontWeight: 800, padding: '2px 8px', borderRadius: 2, cursor: 'pointer', letterSpacing: '0.08em',
+                            }}
+                          >
+                            <span>+</span> NEW GOAL
+                          </button>
+                        </div>
+                        {showNewGoal && renderNewGoalDrawer()}
                         {vcGoals.slice(0, 8).map((g: any) => <CortexFoundryGoalCard key={g.id} goal={g} />)}
                         {!vcGoals.length && empty('NO GOALS — DECLARE ONE: "set a goal to …" scoped to this venture')}
                       </div>
@@ -2889,28 +2956,79 @@ export function CortexFoundryNav({ snap, onSelectAgent, selectedAgent, onOpenTow
                     {ventureTab === 'calendar' && (
                       <div>
                         {calendar === null && empty('LOADING…')}
-                        {calEvents.map((e: any) => (
-                          <Row key={e.id}>
-                            <span style={{ color: '#7dd3fc', minWidth: 92, fontSize: 8.5 }}>{new Date(e.start).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}</span>
-                            <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: INK, fontSize: 9 }}>{e.title}</span>
-                            <span style={{ fontSize: 8, color: DIM }}>{e.kind === 'venture' ? 'VENTURE' : 'EVENT'}</span>
-                          </Row>
-                        ))}
-                        {calendar !== null && !calEvents.length && empty('NO SCHEDULED EVENTS — OMNI POSTING WINDOWS APPEAR HERE WHEN DEFINED')}
+                        <CortexFoundryCalendar
+                          events={[
+                            ...calEvents,
+                            // Scheduled user tasks — dueDate renders as a calendar item.
+                            ...(userTasks || [])
+                              .filter((t: any) => !t.completed && t.dueDate && !Number.isNaN(Date.parse(t.dueDate)) && String(t.ventureId || t.input?.ventureId || 'cortex') === vc.id)
+                              .map((t: any) => ({
+                                id: `task-${t.id}`,
+                                title: `◈ ${t.title}`,
+                                start: Date.parse(t.dueDate),
+                                end: Date.parse(t.dueDate) + 30 * 60 * 1000,
+                                kind: 'task',
+                                ventureId: vc.id,
+                              })),
+                          ]}
+                          loading={calendar === null}
+                          onAddEvent={(newEvt) => setCalendar((prev) => [...(prev || []), newEvt])}
+                        />
                       </div>
                     )}
 
                     {ventureTab === 'agents' && (
                       <div>
-                        <div style={{ fontSize: 8, color: DIM, marginBottom: 4 }}>FLEET IS SHARED — COUNTS SHOW {vc.callSign || vc.id.toUpperCase()}-SCOPED OPEN WORK</div>
-                        {agentRows.map(({ a, open }: any) => (
-                          <Row key={a.id}>
-                            <span style={{ width: 8, height: 8, borderRadius: '50%', background: STATUS_COLOR[String(a.status)] || '#64748b', display: 'inline-block', flexShrink: 0 }} />
-                            <span style={{ color: INK, minWidth: 110, fontSize: 9, fontWeight: 700 }}>{a.name || a.id}</span>
-                            <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: DIM, fontSize: 8 }}>{a.role || ''}</span>
-                            <span style={{ fontSize: 8.5, color: open ? '#7dd3fc' : DIM, fontWeight: 800 }}>{open ? `${open} OPEN` : '—'}</span>
-                          </Row>
-                        ))}
+                        <div style={{ fontSize: 8, color: DIM, marginBottom: 4 }}>FLEET IS SHARED — EXPAND AN AGENT FOR DETAILS · COUNTS SHOW {vc.callSign || vc.id.toUpperCase()}-SCOPED OPEN WORK</div>
+                        {([
+                          { section: '► NORTH // EXECUTIVE & COMMAND', col: '#c084fc', ids: ['antigravity', 'strategist', 'forecaster'] },
+                          { section: '► EAST // INTEL & STRATEGIC MEMORY', col: '#fbbf24', ids: ['scout', 'librarian', 'curator', 'forecaster'] },
+                          { section: '▼ SOUTH // GOVERNANCE & INTEGRITY', col: '#fb7185', ids: ['warden', 'sentinel', 'reviewer'] },
+                          { section: '◄ WEST // GATEWAYS & DELIVERY', col: '#06b6d4', ids: ['hermes', 'openclaw', 'distributor', 'prep', 'brief', 'debrief'] },
+                          { section: '► FLIGHT CONTROLS // EXECUTION', col: '#38bdf8', ids: ['builder', 'runner', 'devin', 'claudecode'] },
+                        ] as { section: string; col: string; ids: string[] }[]).map((sec) => {
+                          const entries = sec.ids
+                            .map((id) => ({ a: agents.find((x: any) => x.id === id), open: agentOpenById.get(id) || 0 }))
+                            .filter((e: any) => e.a);
+                          if (!entries.length) return null;
+                          return (
+                            <div key={sec.section} style={{ marginBottom: 8 }}>
+                              <div style={{ fontSize: 9, fontWeight: 800, letterSpacing: '0.22em', color: sec.col, padding: '3px 2px 2px', borderBottom: `1px solid ${sec.col}33` }}>
+                                {sec.section}
+                              </div>
+                              {entries.map(({ a, open }: any) => {
+                                const expanded = expandedAgent === a.id;
+                                const vTasks = vcAgentTasks.filter((t: any) => String(t.agentId || t.agentName) === a.id);
+                                return (
+                                  <div key={a.id}>
+                                    <Row>
+                                      <button onClick={() => setExpandedAgent(expanded ? null : a.id)}
+                                        style={{ flex: 1, display: 'flex', alignItems: 'center', gap: 6, background: 'none', border: 'none', cursor: 'pointer', padding: 0, textAlign: 'left' }}>
+                                        <span style={{ color: DIM, fontSize: 8, width: 10 }}>{expanded ? '▾' : '▸'}</span>
+                                        <span style={{ width: 8, height: 8, borderRadius: '50%', background: STATUS_COLOR[String(a.status)] || '#64748b', display: 'inline-block', flexShrink: 0 }} />
+                                        <span style={{ color: INK, minWidth: 100, fontSize: 9, fontWeight: 700 }}>{a.name || a.id}</span>
+                                        <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: DIM, fontSize: 8 }}>{a.role || ''}</span>
+                                        <span style={{ fontSize: 8.5, color: open ? '#7dd3fc' : DIM, fontWeight: 800 }}>{open ? `${open} OPEN` : '—'}</span>
+                                      </button>
+                                    </Row>
+                                    {expanded && (
+                                      <div style={{ margin: '2px 0 6px 18px', padding: '6px 8px', background: 'rgba(15,23,42,0.6)', border: '1px solid rgba(148,163,184,0.15)', borderRadius: 3 }}>
+                                        <div style={{ fontSize: 8, color: DIM, marginBottom: 3 }}>
+                                          {String(a.status || '').toUpperCase()} · {a.tasksCompleted ?? 0}✓ {a.tasksFailed ? `${a.tasksFailed}✗` : ''} LIFETIME
+                                        </div>
+                                        {vTasks.length > 0 ? vTasks.slice(0, 4).map((t: any) => (
+                                          <div key={t.id} style={{ fontSize: 8.5, color: INK, padding: '1px 0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                            · {t.title}
+                                          </div>
+                                        )) : <div style={{ fontSize: 8.5, color: DIM }}>NO {vc.callSign || vc.id.toUpperCase()}-SCOPED OPEN TASKS</div>}
+                                      </div>
+                                    )}
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          );
+                        })}
                         {!agentRows.length && empty('NO AGENTS')}
                       </div>
                     )}
@@ -2956,6 +3074,86 @@ export function CortexFoundryNav({ snap, onSelectAgent, selectedAgent, onOpenTow
                           </Row>
                         ))}
                         {inbox !== null && !inboxProps.length && empty('NO PENDING DECISIONS FOR THIS VENTURE')}
+                      </div>
+                    )}
+
+                    {ventureTab === 'plan' && (
+                      <div>
+                        {venturePlan === null && empty('LOADING…')}
+                        {venturePlan !== null && (
+                          <>
+                            <div style={{ fontSize: 8, fontWeight: 800, letterSpacing: '0.2em', color: '#7dd3fc', borderBottom: '1px solid rgba(56,189,248,0.2)', paddingBottom: 2, marginBottom: 3 }}>
+                              MISSION GOALS · {planGoals.length}
+                            </div>
+                            {planGoals.map((g: any) => (
+                              <Row key={g.id}>
+                                <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: INK, fontSize: 9 }}>{g.title}</span>
+                                <span style={{ fontSize: 8, color: g.status === 'active' ? '#34d399' : DIM }}>{String(g.status || '').toUpperCase()}</span>
+                              </Row>
+                            ))}
+                            <div style={{ fontSize: 8, fontWeight: 800, letterSpacing: '0.2em', color: '#fcd34d', borderBottom: '1px solid rgba(251,191,36,0.2)', paddingBottom: 2, margin: '8px 0 3px' }}>
+                              OPS ITEMS · {planOps.length}{planOps.length ? ` · ${planOps.filter((o: any) => o.done).length} DONE` : ''}
+                            </div>
+                            {planOps.map((o: any) => (
+                              <Row key={o.id}>
+                                <span style={{ color: o.done ? '#34d399' : '#fbbf24', fontSize: 8, minWidth: 40 }}>{o.done ? '✓' : '◌'}</span>
+                                <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: INK, fontSize: 9 }}>{o.label}</span>
+                                <span style={{ fontSize: 8, color: DIM }}>{o.evidence?.itemStatus || ''}</span>
+                              </Row>
+                            ))}
+                            <div style={{ fontSize: 8, fontWeight: 800, letterSpacing: '0.2em', color: '#a78bfa', borderBottom: '1px solid rgba(167,139,250,0.2)', paddingBottom: 2, margin: '8px 0 3px' }}>
+                              SCHEDULED BLOCKS · {planBlocks.length}
+                            </div>
+                            {planBlocks.map((b: any) => (
+                              <Row key={b.id}>
+                                <span style={{ color: '#a78bfa', minWidth: 56, fontSize: 8.5 }}>{b.start ? new Date(b.start).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : '—'}</span>
+                                <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: INK, fontSize: 9 }}>{b.title}</span>
+                                <span style={{ fontSize: 8, color: DIM }}>{String(b.status || '').toUpperCase()}</span>
+                              </Row>
+                            ))}
+                            {!planGoals.length && !planOps.length && !planBlocks.length && empty('NO PLAN ITEMS TAGGED TO THIS VENTURE')}
+                          </>
+                        )}
+                      </div>
+                    )}
+
+                    {ventureTab === 'workflows' && (
+                      <div>
+                        {ventureRoutines === null && empty('LOADING…')}
+                        {ventureRoutines !== null && !wfRoutines.length && empty(vc.id === 'omni' ? 'NO DISTRIBUTOR ROUTINES — THE REVENUE ENGINE HAS NO SCHEDULED WORKFLOWS' : 'NO VENTURE-SCOPED ROUTINES')}
+                        {wfRoutines.map((r: any) => (
+                          <Row key={r.id}>
+                            <span style={{ color: '#67e8f9', minWidth: 90, fontSize: 8 }}>{String(r.agentId || '').toUpperCase()}</span>
+                            <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: INK, fontSize: 9 }}>{r.title || r.kind}</span>
+                            <span style={{ fontSize: 8, color: DIM, minWidth: 60, textAlign: 'right' }}>
+                              {r.everyMinutes ? `EVERY ${r.everyMinutes >= 60 ? `${Math.round(r.everyMinutes / 60)}H` : `${r.everyMinutes}M`}` : ''}{r.runCount ? ` · ${r.runCount}×` : ''}
+                            </span>
+                          </Row>
+                        ))}
+                        {ventureRoutines !== null && wfRoutines.length > 0 && (
+                          <div style={{ fontSize: 8, color: DIM, marginTop: 4 }}>ROUTINES ARE FLEET-WIDE — {vc.id === 'omni' ? 'SHOWING DISTRIBUTOR (REVENUE ENGINE) ONLY' : 'SHOWING FULL FLEET'}</div>
+                        )}
+                      </div>
+                    )}
+
+                    {ventureTab === 'memory' && (
+                      <div>
+                        {ventureMemory === null && empty('LOADING…')}
+                        {ventureMemory !== null && !ventureMemory.length && empty(`NOTHING IN THE TASK ARCHIVE MENTIONS ${String(vc.callSign || vc.id).toUpperCase()} YET`)}
+                        {(ventureMemory || []).map((h: any) => (
+                          <div key={h.id} style={{ padding: '4px 0', borderBottom: '1px solid rgba(148,163,184,0.08)' }}>
+                            <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                              <span style={{ color: STATUS_COLOR[String(h.status)] || DIM, fontSize: 8, minWidth: 55 }}>{String(h.status || '').toUpperCase()}</span>
+                              <span style={{ color: '#67e8f9', fontSize: 8, minWidth: 70 }}>{String(h.kind || '').toUpperCase()}</span>
+                              <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: INK, fontSize: 9 }}>{h.title}</span>
+                              <span style={{ fontSize: 8, color: DIM }}>{h.createdAt ? new Date(h.createdAt).toLocaleDateString([], { month: 'short', day: 'numeric' }) : ''}</span>
+                            </div>
+                            {h.snippet && <div style={{ fontSize: 8, color: DIM, marginTop: 1, paddingLeft: 12, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{h.snippet}</div>}
+                          </div>
+                        ))}
+                        {ventureMemory !== null && ventureMemory.length > 0 && (
+                          <div style={{ fontSize: 8, color: DIM, marginTop: 4 }}>ARCHIVE HITS FOR "{String(vc.callSign || vc.id).toUpperCase()}" — TASK LEDGER MEMORY, NOT DECLARATIVE FACTS</div>
+                        )}
                       </div>
                     )}
                   </div>
