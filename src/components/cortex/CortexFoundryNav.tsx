@@ -3198,6 +3198,15 @@ export function CortexFoundryNav({ snap, onSelectAgent, selectedAgent, onOpenTow
                               </Row>
                             ))}
                             {vcAgentTasks.length > 8 && <div style={{ fontSize: 8, color: DIM, padding: '2px 0' }}>+{vcAgentTasks.length - 8} more</div>}
+                            {vcDoneTasks.filter((t: any) => t.assetCheck).slice(-4).reverse().map((t: any) => (
+                              <div key={`ac-${t.id}`} style={{ padding: '2px 0 2px 4px', borderLeft: '2px solid rgba(52,211,153,0.4)' }}>
+                                <div style={{ display: 'flex', gap: 6, alignItems: 'baseline' }}>
+                                  <span style={{ color: STATUS_COLOR[String(t.status)] || DIM, fontSize: 8, minWidth: 52 }}>{String(t.status || '').toUpperCase()}</span>
+                                  <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: DIM, fontSize: 8.5 }}>{t.title}</span>
+                                </div>
+                                <div style={{ fontSize: 7.5, color: t.assetCheck.includes('landed') ? '#6ee7b7' : '#fcd34d', paddingLeft: 58 }}>{t.assetCheck}</div>
+                              </div>
+                            ))}
                           </div>
                         )}
                         <div style={{ fontSize: 8, fontWeight: 800, letterSpacing: '0.2em', color: '#fcd34d', borderBottom: '1px solid rgba(251,191,36,0.2)', paddingBottom: 2, marginBottom: 3 }}>

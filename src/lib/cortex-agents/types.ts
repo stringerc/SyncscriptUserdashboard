@@ -69,6 +69,8 @@ export interface AgentTask {
   model?: string;
   result?: unknown;
   error?: string;
+  /** Post-completion venture-asset verification note (scoped tasks only). */
+  assetCheck?: string;
   telemetry?: TaskTelemetry;
   createdAt: number;
   startedAt?: number;

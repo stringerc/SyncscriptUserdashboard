@@ -927,6 +927,10 @@ export class AgentRuntime {
       // Deterministic kinds (lights_status, lights_set, …) bypass the
       // agent's LLM worker entirely — hardware I/O must not depend on a
       // model lane being alive.
+      // Venture asset verification: snapshot the scoped asset dir before
+      // the run so completion can diff for landed deliverables.
+      const scopedVid = (task.input as any)?.ventureId;
+      const preAssetFiles = scopedVid && isValidVenture(scopedVid) ? this.assetDirFiles(scopedVid) : null;
       const run = task.kind === MESSAGE_FLUSH_KIND
         ? messageFlushHandler
         : (DETERMINISTIC_TASKS[task.kind] ?? (() => handler(ctx)));
@@ -935,6 +939,10 @@ export class AgentRuntime {
           // Directive ack: if the result cites a delivered directive id,
           // close the loop — Cortex sees the order was actioned.
           try { ackMentioned(agentId, JSON.stringify(result ?? '')); } catch { /* best-effort */ }
+          // Venture asset verification — did deliverables actually land?
+          if (preAssetFiles && scopedVid) {
+            try { task.assetCheck = this.checkVentureAssets(scopedVid, preAssetFiles, result); } catch { /* best-effort */ }
+          }
           // Agent-message bus: fenced ```agent_message blocks in the result
           // are validated + sent; cited inbound ids are consumed.
           try {
@@ -966,6 +974,39 @@ export class AgentRuntime {
     }
     if (!queue.length && !this.activeCount(agentId) && agent.status === 'working')
       this.setStatus(agentId, 'idle');
+  }
+
+  /** Files currently in a venture's asset drop dir (empty set if absent). */
+  private assetDirFiles(vid: string): Set<string> {
+    try {
+      const dir = path.join(process.cwd(), '.cortex-runtime', 'venture-assets', vid);
+      return new Set(fs.readdirSync(dir).filter((f) => {
+        try { return fs.statSync(path.join(dir, f)).isFile(); } catch { return false; }
+      }));
+    } catch { return new Set(); }
+  }
+
+  /**
+   * Post-completion asset audit for venture-scoped tasks. Returns a short
+   * note string or null:
+   *  - files landed in venture-assets/<vid>/ since task start → names them
+   *  - result references file deliverables but dir is unchanged → warns
+   *  - no file evidence either way → undefined (no noise on non-file tasks)
+   */
+  private checkVentureAssets(vid: string, before: Set<string>, result: unknown): string | undefined {
+    const after = this.assetDirFiles(vid);
+    const added = [...after].filter((f) => !before.has(f));
+    if (added.length) {
+      const names = added.slice(0, 5).join(', ') + (added.length > 5 ? ` +${added.length - 5} more` : '');
+      return `[asset-check] ${added.length} deliverable(s) landed in venture-assets/${vid}/: ${names}`;
+    }
+    const text = typeof result === 'string' ? result : JSON.stringify(result ?? '');
+    const claimsFiles = /\.(png|jpe?g|gif|webp|svg|pdf|zip|mp4|mov|csv|json|md)\b/i.test(text)
+      || /venture-assets|assets\//i.test(text);
+    if (claimsFiles) {
+      return `[asset-check] result references file deliverables but nothing new landed in venture-assets/${vid}/ — verify the output path`;
+    }
+    return undefined;
   }
 
   private pumpAll() {
