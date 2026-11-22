@@ -1026,6 +1026,12 @@ function apiProxyPlugin(): Plugin {
   return {
     name: 'api-proxy',
     config(_, { mode }) {
+      // Drop the key this plugin injected on a previous (in-process) restart so
+      // loadEnv() re-reads .env instead of echoing the stale process.env value.
+      const goveeInjection = globalThis as { __cortexInjectedGoveeKey?: string };
+      if (goveeInjection.__cortexInjectedGoveeKey && process.env.GOVEE_API_KEY === goveeInjection.__cortexInjectedGoveeKey) {
+        delete process.env.GOVEE_API_KEY;
+      }
       const env = loadEnv(mode, process.cwd(), '');
       kokoroTtsUrl = env.KOKORO_TTS_URL || process.env.KOKORO_TTS_URL || '';
       pocketTtsUrl = env.POCKET_TTS_URL || process.env.POCKET_TTS_URL || 'http://127.0.0.1:8890';
@@ -1089,6 +1095,14 @@ function apiProxyPlugin(): Plugin {
 
         return Array.from(found);
       };
+
+      // Govee handlers read process.env.GOVEE_API_KEY, but .env values live in
+      // loadEnv(), not process.env — publish the resolved key for them.
+      if (!process.env.GOVEE_API_KEY) {
+        const goveeKey = resolveEnvKey('GOVEE_API_KEY');
+        if (goveeKey) process.env.GOVEE_API_KEY = goveeInjection.__cortexInjectedGoveeKey = goveeKey;
+      }
+      console.info(`[api-proxy] Govee lights ${process.env.GOVEE_API_KEY ? 'enabled' : 'disabled — GOVEE_API_KEY unset'}`);
 
       aiProviders.length = 0;
       for (const p of DIRECT_AI_PROVIDERS) {
