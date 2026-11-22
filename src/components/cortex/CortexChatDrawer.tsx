@@ -326,6 +326,15 @@ function CortexChatDrawerInner({ open, onClose, payload, onSubmitText }: CortexC
   const scrollRef = useRef<HTMLDivElement>(null);
   const [draft, setDraft] = useState('');
   const [chatMenuOpen, setChatMenuOpen] = useState(false);
+  const [wakeWord, setWakeWord] = useState(() =>
+    typeof localStorage !== 'undefined' && localStorage.getItem('cortex.wakeWord') === '1');
+  const toggleWakeWord = () => {
+    setWakeWord(v => {
+      const next = !v;
+      try { localStorage.setItem('cortex.wakeWord', next ? '1' : '0'); } catch {}
+      return next;
+    });
+  };
   const [speakingId, setSpeakingId] = useState<string | null>(null);
   const [showJump, setShowJump] = useState(false);
   const audioRef = useRef<HTMLAudioElement | null>(null);
@@ -622,6 +631,15 @@ function CortexChatDrawerInner({ open, onClose, payload, onSubmitText }: CortexC
                 fontFamily: '"IBM Plex Mono", monospace',
               }}
             >OPEN FULL CHAT →</a>
+            <button
+              onClick={toggleWakeWord}
+              style={{
+                textAlign: 'left', padding: '7px 10px', borderRadius: 6, cursor: 'pointer',
+                background: 'none', border: 'none',
+                color: wakeWord ? C.cyan : C.dim, fontSize: 10, fontWeight: 600, letterSpacing: '0.16em',
+                fontFamily: '"IBM Plex Mono", monospace',
+              }}
+            >WAKE WORD · {wakeWord ? 'ON' : 'OFF'}</button>
             <button
               onClick={() => { setChatMenuOpen(false); onClose(); }}
               style={{

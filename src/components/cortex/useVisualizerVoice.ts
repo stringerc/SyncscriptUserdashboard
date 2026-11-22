@@ -66,6 +66,13 @@ const MAX_TOOL_HOPS = 3;
 const MAX_TOOLS_PER_ROUND = 2;
 const MAX_QUEUE = 4;
 const REVERB_WINDOW_MS = 1400;
+// Wake-word gate ("hey cortex"): opt-in via localStorage cortex.wakeWord=1.
+// Matching utterances arm an 8s window; interrupt/barge-in always bypass.
+const WAKE_RE = /^\s*(?:(?:hey|ok|okay|hi|hello|yo)\s+)?cortex\b[\s,.:;!?\-]*/i;
+const WAKE_ARM_MS = 8000;
+const WAKE_BYPASS_MS = 10000;
+const wakeWordEnabled = () =>
+  typeof localStorage !== 'undefined' && localStorage.getItem('cortex.wakeWord') === '1';
 // Once-per-session pin discoverability hint (see runTurn tail).
 let pinHintOffered = false;
 
@@ -1187,6 +1194,8 @@ export function useVisualizerVoice(enabled: boolean, onState: (speaking: boolean
       earlyInterruptFired: false,
       earlyCommitted: null as { text: string; at: number } | null,
       turnTimedOut: false,
+      wakeArmedUntil: 0,
+      wakeBypassUntil: 0,
       speakingSince: 0,
       turnGen: 0,
     };
@@ -2527,9 +2536,13 @@ MANDATORY: weave a 3-4 sentence spoken "state of being" answer citing at least o
         // as the VAD path: 1-2 word finals are usually speaker bleed.
         const fw = text.split(/\s+/).filter(Boolean);
         const fInterrupt = fw.some((w) => INTERRUPT_COMMANDS.has(w.toLowerCase()));
-        if (aiSpeaking && (fw.length >= 3 || fInterrupt)) {
+        // Non-interrupt barge-in also requires LOW token overlap with what
+        // Cortex is saying — mis-transcribed TTS (names, numbers, accents)
+        // produces ≥3 "novel" words and was cutting replies off mid-sentence.
+        if (aiSpeaking && (fInterrupt || (fw.length >= 3 && echo.matchRatio < 0.35))) {
           vsRef.current.stopSpeaking();
           state.interruptRequested = true;
+          state.wakeBypassUntil = Date.now() + WAKE_BYPASS_MS;
           try { turnAbortRef.current?.abort(); } catch {}
           activeSpeechRef.current = '';
           publish({ state: 'listening', level: 0.3, text: 'Interrupted — listening…' });
@@ -2553,6 +2566,9 @@ MANDATORY: weave a 3-4 sentence spoken "state of being" answer citing at least o
 
       // Strip optional leading address prefix if present (e.g. "hey cortex, open the map" -> "open the map")
       const cleanText = text.replace(/^(?:hey|ok|okay|yo|hi|hello)?\s*cortex[,\s]*/i, '').trim() || text;
+      if (wakeWordEnabled() && WAKE_RE.test(text)) {
+        state.wakeArmedUntil = Date.now() + WAKE_ARM_MS;
+      }
       if (!cleanText) return;
 
       // Tier 1: Fast direct interrupt / control command → bypass finish window and commit immediately
@@ -2713,14 +2729,35 @@ MANDATORY: weave a 3-4 sentence spoken "state of being" answer citing at least o
         // cut Cortex off mid-sentence.
         const words = text.split(/\s+/).filter(Boolean);
         const hasInterrupt = words.some((w) => INTERRUPT_COMMANDS.has(w.toLowerCase()));
-        if (aiSpeaking && (words.length >= 3 || hasInterrupt)) {
+        if (aiSpeaking && (hasInterrupt || (words.length >= 3 && echo.matchRatio < 0.35))) {
           vsRef.current.stopSpeaking();
           state.interruptRequested = true;
+          state.wakeBypassUntil = Date.now() + WAKE_BYPASS_MS;
           try { turnAbortRef.current?.abort(); } catch {}
           activeSpeechRef.current = '';
           publish({ state: 'listening', level: 0.3, text: 'Interrupted — listening…' });
         } else if (aiSpeaking || inReverb) {
           return; // short fragment during speech/reverb — treat as bleed, drop it
+        }
+      }
+
+      // ── Wake-word gate: with cortex.wakeWord=1, only "hey cortex" (or an
+      // armed 8s window / interrupt command / recent barge-in) may start a
+      // turn. Ambient speech is ignored entirely — no queue, no turn.
+      if (wakeWordEnabled()) {
+        const now = Date.now();
+        const armed = now < state.wakeArmedUntil || now < state.wakeBypassUntil;
+        const firstWord = text.split(/\s+/)[0]?.toLowerCase() || '';
+        const isControl = INTERRUPT_COMMANDS.has(firstWord) || isImmediateControlWord(text);
+        if (!armed && !isControl) {
+          if (WAKE_RE.test(text)) {
+            state.wakeArmedUntil = now + WAKE_ARM_MS;
+            const rest = text.replace(WAKE_RE, '').trim();
+            if (rest.length >= 3) text = rest;
+            else { publish({ state: 'listening', level: 0.2, text: 'Yes?' }); return; }
+          } else {
+            return; // ambient speech — not addressed to Cortex
+          }
         }
       }
 
@@ -2741,6 +2778,9 @@ MANDATORY: weave a 3-4 sentence spoken "state of being" answer citing at least o
       if (cancelled || !enabled) return;
       const text = interimText.trim();
       const cleanText = text.replace(/^(?:hey|ok|okay|yo|hi|hello)?\s*cortex[,\s]*/i, '').trim() || text;
+      if (wakeWordEnabled() && WAKE_RE.test(text)) {
+        state.wakeArmedUntil = Date.now() + WAKE_ARM_MS;
+      }
 
       if (speechFinishTimerRef.current) {
         clearTimeout(speechFinishTimerRef.current);
@@ -2768,6 +2808,7 @@ MANDATORY: weave a 3-4 sentence spoken "state of being" answer citing at least o
         speechAccumulatorRef.current = '';
         if (!state.turnInFlight && !vsRef.current.isSpeaking) return;
         state.interruptRequested = true;
+        state.wakeBypassUntil = Date.now() + WAKE_BYPASS_MS;
         try { turnAbortRef.current?.abort(); } catch {}
         vsRef.current.stopSpeaking();
         publish({ state: 'listening', level: 0.2, text: 'Interrupted — listening…' });

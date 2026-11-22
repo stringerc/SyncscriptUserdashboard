@@ -1523,9 +1523,12 @@ export function useVoiceStream(options: UseVoiceStreamOptions = {}) {
           const hasMore = streamSentenceQueueRef.current.length > 0 || !item.isFinal;
           await playAudioBlob(blob, hasMore);
         }
-      } else if (item.isFinal || streamSentenceQueueRef.current.length === 0) {
-        // Neural TTS produced nothing — never leave Cortex mute. Browser
-        // SpeechSynthesis is robotic but honest audio beats silence.
+      } else {
+        // Neural TTS produced nothing for this sentence — never leave a
+        // hole mid-reply. Browser SpeechSynthesis is robotic but honest
+        // audio beats a silently dropped sentence (the old code only
+        // fell back for the final/last item, so middle sentences just
+        // vanished = audible cutoff).
         // Kill any gapless neural sources first: otherwise the browser voice
         // talks over still-playing neural audio = two voices at once.
         for (const src of gaplessSourcesRef.current) {
