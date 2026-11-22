@@ -231,6 +231,16 @@ function CornerTicks() {
   );
 }
 
+/** Floating control chips for chromeless weather panels — frosted white
+ *  pills matching the card, revealed on hover. */
+const wxCtrlBtn: React.CSSProperties = {
+  width: 24, height: 24, borderRadius: 8, border: '1px solid rgba(255,255,255,0.55)',
+  background: 'rgba(255,255,255,0.42)', color: '#12335c', cursor: 'pointer',
+  display: 'flex', alignItems: 'center', justifyContent: 'center',
+  backdropFilter: 'blur(8px)', WebkitBackdropFilter: 'blur(8px)',
+  fontSize: 11, lineHeight: 1, padding: 0,
+};
+
 function PanelChrome({
   panel, dragging, dimmed, nudge, isFocused, onToggleFocus, onDragPointerDown, onKeyMove, onResizePointerDown, onResetSize, children
 }: {
@@ -297,15 +307,18 @@ function PanelChrome({
 
   const clusterBorder = panel.clusterColor ? `${panel.clusterColor}88` : undefined;
   const clusterGlowShadow = panel.clusterGlow ? `0 0 16px ${panel.clusterGlow}, 0 8px 32px rgba(0,0,0,0.45)` : undefined;
-  // Weather panels wear the card-native chrome: the WeatherCard's own
-  // frosted light-blue glass IS the panel — no dark mission-control
-  // frame around it. Slim light header keeps drag + controls.
+  // Weather panels are chromeless: the WeatherCard IS the panel — no
+  // title bar, no frame. Controls collapse to a hover-reveal cluster.
   const isWeatherCard = panel.artifact?.kind === 'weather';
+  const [chromeHover, setChromeHover] = useState(false);
   const chromeInk = isWeatherCard ? '#12335c' : undefined;
   const chromeDim = isWeatherCard ? '#3b6ea5' : undefined;
 
   return (
-    <div style={{
+    <div
+      onPointerEnter={() => setChromeHover(true)}
+      onPointerLeave={() => setChromeHover(false)}
+      style={{
       position: 'relative', width: '100%', height: '100%',
       background: isWeatherCard ? 'transparent' : 'linear-gradient(165deg, rgba(10,18,30,0.5) 0%, rgba(6,12,22,0.42) 55%, rgba(14,10,30,0.46) 100%)',
       border: `1px solid ${isFocused ? 'rgba(160,245,255,0.6)' : isWeatherCard ? 'rgba(224,242,254,0.55)' : clusterBorder || (panel.pinned ? 'rgba(232,121,249,0.5)' : dragging ? 'rgba(160,245,255,0.55)' : 'rgba(255,255,255,0.14)')}`,
@@ -323,13 +336,14 @@ function PanelChrome({
       display: 'flex', flexDirection: 'column', overflow: 'hidden',
       transition: 'border-color 0.2s, box-shadow 0.2s',
     }}>
-      <CornerTicks />
+      {!isWeatherCard && <CornerTicks />}
+      {!isWeatherCard && (
       <div
         onPointerDown={onDragPointerDown}
         style={{
           display: 'flex', alignItems: 'center', padding: '6px 9px',
-          borderBottom: `1px solid ${isWeatherCard ? 'rgba(30,73,118,0.10)' : C.border}`, flexShrink: 0,
-          background: isWeatherCard ? 'rgba(255,255,255,0.18)' : 'rgba(255,255,255,0.02)',
+          borderBottom: `1px solid ${C.border}`, flexShrink: 0,
+          background: 'rgba(255,255,255,0.02)',
           cursor: dragging ? 'grabbing' : 'grab',
           userSelect: 'none', WebkitUserSelect: 'none',
         }}
@@ -425,8 +439,51 @@ function PanelChrome({
           style={{ background: 'none', border: 'none', cursor: 'pointer', color: isWeatherCard ? chromeDim : C.dim, padding: 2, display: 'flex' }}
         ><X size={11} /></button>
       </div>
+      )}
 
-      <div style={{ padding: isWeatherCard ? 8 : 10, overflowY: 'auto', flex: 1, minHeight: 0, pointerEvents: (dimmed || dragging) ? 'none' : 'auto' }}>
+      {/* Weather panels: chromeless — controls appear on hover as a
+          floating cluster over the card's top-right corner. */}
+      {isWeatherCard && (
+        <div style={{
+          position: 'absolute', top: 8, right: 8, zIndex: 6,
+          display: 'flex', gap: 4,
+          opacity: chromeHover ? 1 : 0,
+          transition: 'opacity 0.2s ease',
+          pointerEvents: chromeHover ? 'auto' : 'none',
+        }}>
+          <button
+            onPointerDown={(e) => { e.stopPropagation(); onDragPointerDown(e); }}
+            aria-label={`Move panel ${panel.title}`}
+            title="Drag to move"
+            style={wxCtrlBtn}
+          >⋮⋮</button>
+          {onToggleFocus && (
+            <button
+              onPointerDown={(e) => e.stopPropagation()}
+              onClick={onToggleFocus}
+              aria-label={isFocused ? `Restore ${panel.title}` : `Focus ${panel.title}`}
+              title={isFocused ? 'Restore' : 'Focus'}
+              style={wxCtrlBtn}
+            >{isFocused ? <Minimize2 size={11} /> : <Maximize2 size={11} />}</button>
+          )}
+          <button
+            onPointerDown={(e) => e.stopPropagation()}
+            onClick={() => pinSurfacePanel(panel.id)}
+            aria-label={panel.pinned ? `Unpin ${panel.title}` : `Pin ${panel.title}`}
+            title={panel.pinned ? 'Unpin' : 'Pin'}
+            style={{ ...wxCtrlBtn, color: panel.pinned ? '#c026d3' : '#12335c' }}
+          ><Pin size={11} /></button>
+          <button
+            onPointerDown={(e) => e.stopPropagation()}
+            onClick={() => closeSurfacePanel(panel.id)}
+            aria-label={`Close ${panel.title}`}
+            title="Close"
+            style={wxCtrlBtn}
+          ><X size={11} /></button>
+        </div>
+      )}
+
+      <div style={{ padding: isWeatherCard ? 0 : 10, overflowY: 'auto', flex: 1, minHeight: 0, pointerEvents: (dimmed || dragging) ? 'none' : 'auto' }}>
         {children}
       </div>
 

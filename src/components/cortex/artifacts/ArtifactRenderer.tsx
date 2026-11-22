@@ -1348,9 +1348,15 @@ function WxRadar({ lat, lon }: { lat: number; lon: number }) {
 
 function WeatherBody({ a }: { a: WeatherArtifact }) {
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+    <div style={{ display: 'flex', flexDirection: 'column' }}>
+      {/* Card is edge-to-edge — the panel chrome is transparent for
+          weather, so the card's own 22px radius IS the panel shape. */}
       <WeatherCard a={a} />
-      {a.lat != null && a.lon != null && <WxRadar lat={a.lat} lon={a.lon} />}
+      {a.lat != null && a.lon != null && (
+        <div style={{ padding: '0 10px 10px' }}>
+          <WxRadar lat={a.lat} lon={a.lon} />
+        </div>
+      )}
     </div>
   );
 }
