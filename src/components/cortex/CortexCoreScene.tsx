@@ -2859,6 +2859,12 @@ function CameraRig({
     curRadius: 5.6,
     targetRadius: 5.6,
   });
+  // Chase-mode zoom (world units from agent) + deferred selection release so a
+  // click-drag onto another agent retargets the chase instead of zooming out.
+  const chaseZoom = useRef(2.6);
+  const chaseActiveRef = useRef(false);
+  const pendingChaseRelease = useRef(false);
+  const chaseReleaseTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const tmpV = useMemo(() => new THREE.Vector3(), []);
   const lastGoal = useRef({ px: Infinity, py: Infinity, pz: Infinity, lx: Infinity, ly: Infinity, lz: Infinity });
 
@@ -2899,15 +2905,21 @@ function CameraRig({
   }, [selectedMemoryProp]);
 
   React.useEffect(() => {
+    const clearPendingRelease = () => {
+      pendingChaseRelease.current = false;
+      if (chaseReleaseTimer.current) { clearTimeout(chaseReleaseTimer.current); chaseReleaseTimer.current = null; }
+    };
     const onSelect = (e: Event) => {
       const ce = e as CustomEvent<string | null>;
+      clearPendingRelease();
       setSelectedAgentId(ce.detail ?? null);
-      if (ce.detail) setSelectedMemoryId(null);
+      if (ce.detail) { setSelectedMemoryId(null); } else { chaseZoom.current = 2.6; }
     };
     const onSelectMem = (e: Event) => {
       const ce = e as CustomEvent<string | null>;
+      clearPendingRelease();
       setSelectedMemoryId(ce.detail ?? null);
-      if (ce.detail) setSelectedAgentId(null);
+      if (ce.detail) { setSelectedAgentId(null); } else { chaseZoom.current = 2.6; }
     };
     window.addEventListener('cortex-agent-select', onSelect);
     window.addEventListener('cortex-memory-select', onSelectMem);
@@ -2950,11 +2962,9 @@ function CameraRig({
       const dy = e.clientY - orb.startY;
       if (!orb.hasMoved && Math.hypot(dx, dy) > 4) {
         orb.hasMoved = true;
-        // Releasing agent or memory chase if currently locked
-        setSelectedAgentId(null);
-        setSelectedMemoryId(null);
-        window.dispatchEvent(new CustomEvent('cortex-agent-select', { detail: null }));
-        window.dispatchEvent(new CustomEvent('cortex-memory-select', { detail: null }));
+        // Defer releasing agent/memory chase — a click landing on another agent
+        // retargets directly; only a drag that ends on empty space releases.
+        pendingChaseRelease.current = true;
       }
       if (orb.hasMoved) {
         orb.targetTheta = orb.startTheta - dx * 0.0055;
@@ -2970,12 +2980,32 @@ function CameraRig({
       const orb = orbitState.current;
       orb.isDragging = false;
       el.style.cursor = 'grab';
+      if (pendingChaseRelease.current) {
+        pendingChaseRelease.current = false;
+        if (chaseReleaseTimer.current) clearTimeout(chaseReleaseTimer.current);
+        chaseReleaseTimer.current = setTimeout(() => {
+          chaseReleaseTimer.current = null;
+          setSelectedAgentId(null);
+          setSelectedMemoryId(null);
+          window.dispatchEvent(new CustomEvent('cortex-agent-select', { detail: null }));
+          window.dispatchEvent(new CustomEvent('cortex-memory-select', { detail: null }));
+        }, 120);
+      }
     };
 
     const onWheel = (e: WheelEvent) => {
       e.preventDefault();
       const orb = orbitState.current;
       const zoomDelta = e.deltaY * 0.004;
+      if (chaseActiveRef.current) {
+        // Locked on an agent/engram — zoom the chase camera in/out.
+        chaseZoom.current = THREE.MathUtils.clamp(
+          chaseZoom.current + zoomDelta * 1.8,
+          1.5,
+          7.0
+        );
+        return;
+      }
       orb.targetRadius = THREE.MathUtils.clamp(
         orb.targetRadius + zoomDelta,
         3.0,
@@ -3122,13 +3152,14 @@ function CameraRig({
       : selectedMemoryId
       ? memoryWorldPositions[selectedMemoryId]
       : null;
+    chaseActiveRef.current = !!targetWorldPos;
 
     if (targetWorldPos) {
       targetLookAt.current.lerp(targetWorldPos, Math.min(1, delta * 3.8));
       _chaseRadial.copy(targetWorldPos).normalize();
       if (_chaseRadial.lengthSq() < 0.001) _chaseRadial.set(0, 0, 1);
-      _chasePos.copy(targetWorldPos).addScaledVector(_chaseRadial, 2.6);
-      _chasePos.y += 0.65 + Math.sin(t * 1.5) * 0.04;
+      _chasePos.copy(targetWorldPos).addScaledVector(_chaseRadial, chaseZoom.current);
+      _chasePos.y += 0.65 * (chaseZoom.current / 2.6) + Math.sin(t * 1.5) * 0.04;
       targetCamPos.current.lerp(_chasePos, Math.min(1, delta * 3.2));
     } else {
       // ── 3. HOLOGRAPHIC WINDOW MACRO PARALLAX & 360° ORBIT ─────────────────
