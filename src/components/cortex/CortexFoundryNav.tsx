@@ -197,6 +197,7 @@ export function CortexFoundryNav({ snap, onSelectAgent, selectedAgent, onOpenTow
   const [ventures, setVentures] = useState<{ ventures?: any[]; unregisteredYield?: string[] } | null>(null);
   const [ventureFilter, setVentureFilter] = useState<string>('all');
   const [ventureConsole, setVentureConsole] = useState<string | null>(null);
+  const [ventureTab, setVentureTab] = useState<string>('tasks');
   const [ventureSchedInput, setVentureSchedInput] = useState('');
   const [ventureBudgetInput, setVentureBudgetInput] = useState('');
   const [ventureTaskBudgetInput, setVentureTaskBudgetInput] = useState('');
@@ -458,6 +459,37 @@ export function CortexFoundryNav({ snap, onSelectAgent, selectedAgent, onOpenTow
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [view]);
+
+  // Venture console tabs — lazy-load each section's data source on first open
+  // so the console never navigates away; content stays inline.
+  useEffect(() => {
+    if (!ventureConsole) return;
+    if (ventureTab === 'calendar' && calendar === null) {
+      fetch('/api/cortex/calendar/upcoming', { cache: 'no-store' })
+        .then((r) => r.json())
+        .then((d) => { if (Array.isArray(d?.events)) setCalendar(d.events); })
+        .catch(() => setCalendar((c) => c || []));
+    }
+    if (ventureTab === 'inbox' && inbox === null) {
+      fetch('/api/cortex/agents/proposals?status=pending', { cache: 'no-store' })
+        .then((r) => r.json())
+        .then((d) => setInbox(Array.isArray(d?.proposals) ? d.proposals : []))
+        .catch(() => setInbox([]));
+    }
+    if (ventureTab === 'missions' && missions === null) {
+      fetch('/api/cortex/missions', { cache: 'no-store' })
+        .then((r) => r.json())
+        .then((d) => setMissions(Array.isArray(d?.missions) ? d.missions : []))
+        .catch(() => setMissions([]));
+    }
+    if (ventureTab === 'campaigns' && campaignsData === null) {
+      fetch('/api/cortex/campaigns', { cache: 'no-store' })
+        .then((r) => r.json())
+        .then((d) => { if (Array.isArray(d?.campaigns)) setCampaignsData(d.campaigns); })
+        .catch(() => setCampaignsData([]));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ventureConsole, ventureTab]);
 
   // Campaigns poll — 30s refresh while CAMPAIGNS is open (funnel moves live).
   useEffect(() => {
@@ -727,12 +759,6 @@ export function CortexFoundryNav({ snap, onSelectAgent, selectedAgent, onOpenTow
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ id, ...patch }),
     }).then(() => reloadVentures()).catch(() => {});
-  const openVentureView = (v: string, target: FoundryView) => {
-    setVentureFilter(v);
-    setVentureConsole(null);
-    setView(target);
-  };
-
   // Venture scope (enterprise console): 'all' shows everything; a venture id
   // filters to that scope; untagged work counts under 'cortex' — never dropped.
   const ventureOf = (t: any): string => String(t?.input?.ventureId || t?.ventureId || 'cortex');
@@ -2770,45 +2796,168 @@ export function CortexFoundryNav({ snap, onSelectAgent, selectedAgent, onOpenTow
                 <button onClick={() => { const b = parseInt(ventureTaskBudgetInput, 10); if (b > 0) { updateVentureField(vc.id, { taskBudgetPerDay: b }); setVentureTaskBudgetInput(''); } }}
                   style={{ background: 'rgba(52,211,153,0.12)', border: '1px solid #34d399', color: '#6ee7b7', fontFamily: MONO, fontSize: 8.5, fontWeight: 800, padding: '2px 8px', borderRadius: 2, cursor: 'pointer', letterSpacing: '0.08em' }}>SET TASK CAP</button>
               </div>
-              {/* Scoped shortcuts — open existing views pre-filtered to this venture */}
-              <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginBottom: 4 }}>
-                {([['tasks', 'TASKS'], ['goals', 'GOALS'], ['calendar', 'SCHEDULE'], ['campaigns', 'CAMPAIGNS'], ['agents', 'AGENTS'], ['inbox', 'INBOX']] as [FoundryView, string][]).map(([v, label]) => (
-                  <button key={v} onClick={() => openVentureView(vc.id, v)}
-                    style={{ background: 'rgba(167,139,250,0.1)', border: '1px solid rgba(167,139,250,0.4)', color: '#c4b5fd', fontFamily: MONO, fontSize: 8.5, fontWeight: 800, padding: '3px 10px', borderRadius: 2, cursor: 'pointer', letterSpacing: '0.1em' }}>
-                    {label} ▸
-                  </button>
-                ))}
-                <button onClick={() => setVentureConsole(null)}
-                  style={{ background: 'none', border: '1px solid rgba(148,163,184,0.3)', color: DIM, fontFamily: MONO, fontSize: 8.5, padding: '3px 10px', borderRadius: 2, cursor: 'pointer', letterSpacing: '0.1em', marginLeft: 'auto' }}>
-                  ← ALL VENTURES
-                </button>
-              </div>
-              {/* Embedded live panes — this venture's tasks & goals, no navigation */}
+              {/* Venture console tabs — all sections render inline, no navigation */}
               {(() => {
-                const vcTasks = (userTasks || []).filter((t: any) => String(t.ventureId || t.input?.ventureId || 'cortex') === vc.id);
-                const vcOpen = vcTasks.filter((t: any) => !t.completed);
+                const vcUserTasks = (userTasks || []).filter((t: any) => String(t.ventureId || t.input?.ventureId || 'cortex') === vc.id);
+                const vcOpen = vcUserTasks.filter((t: any) => !t.completed);
+                const vcAgentTasks = allTasks.filter((t: any) => ventureOf(t) === vc.id && !['completed', 'failed', 'cancelled'].includes(String(t.status || '')));
+                const vcDoneTasks = allTasks.filter((t: any) => ventureOf(t) === vc.id && ['completed', 'failed', 'cancelled'].includes(String(t.status || '')));
                 const vcGoals = goals.list().filter((g: any) => String((g as any).ventureId || 'cortex') === vc.id);
-                if (!vcOpen.length && !vcGoals.length) return null;
+                const calEvents = [
+                  ...(calendar || []).filter((e: any) => String(e?.ventureId || 'cortex') === vc.id),
+                  ...ventureScheduleEvents(vc),
+                ].sort((a: any, b: any) => a.start - b.start).slice(0, 14);
+                const agentOpenById = new Map<string, number>();
+                for (const t of vcAgentTasks) {
+                  const aid = String((t as any).agentId || (t as any).agentName || '?');
+                  agentOpenById.set(aid, (agentOpenById.get(aid) || 0) + 1);
+                }
+                const agentRows = [...agents]
+                  .map((a: any) => ({ a, open: agentOpenById.get(String(a.id)) || 0 }))
+                  .sort((x, y) => y.open - x.open || String(x.a.name).localeCompare(String(y.a.name)));
+                const missionBlocks = (snap.mission?.upcomingBlocks || [])
+                  .filter((b: any) => String(b.ventureId || 'cortex') === vc.id)
+                  .sort((a: any, b: any) => a.start - b.start).slice(0, 12);
+                const inboxProps = (inbox || []).filter((p: any) => String(p.ventureId || '') === vc.id);
+                const vcCampaigns = vc.id === 'omni' ? (campaignsData || []) : [];
+                const TABS: [string, string][] = [
+                  ['tasks', 'TASKS'], ['goals', 'GOALS'], ['calendar', 'CALENDAR'], ['agents', 'AGENTS'],
+                  ['missions', 'MISSIONS'], ['campaigns', 'CAMPAIGNS'], ['inbox', 'INBOX'],
+                ];
+                const empty = (msg: string) => <div style={{ fontSize: 9, color: DIM, padding: '6px 0' }}>{msg}</div>;
                 return (
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 6 }}>
-                    <div>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 8, fontWeight: 800, letterSpacing: '0.2em', color: '#fcd34d', borderBottom: '1px solid rgba(251,191,36,0.2)', paddingBottom: 2, marginBottom: 3 }}>
-                        <span>TASKS · {vcOpen.length} OPEN</span>
-                        <button onClick={() => openVentureView(vc.id, 'tasks')} style={{ background: 'none', border: 'none', color: '#7dd3fc', fontFamily: MONO, fontSize: 8, cursor: 'pointer' }}>OPEN FULL ▸</button>
-                      </div>
-                      {userTasks === null && <div style={{ fontSize: 9, color: DIM, padding: '4px 0' }}>LOADING…</div>}
-                      {vcOpen.slice(0, 6).map((t: any) => <CortexFoundryTaskCard key={t.id} task={t} />)}
-                      {vcOpen.length > 6 && <div style={{ fontSize: 8, color: DIM, padding: '2px 0' }}>+{vcOpen.length - 6} more</div>}
-                      {userTasks !== null && !vcOpen.length && <div style={{ fontSize: 9, color: DIM, padding: '4px 0' }}>NO OPEN TASKS</div>}
+                  <div style={{ marginBottom: 6 }}>
+                    <div style={{ display: 'flex', gap: 3, flexWrap: 'wrap', alignItems: 'center', borderBottom: '1px solid rgba(167,139,250,0.2)', paddingBottom: 4, marginBottom: 6 }}>
+                      {TABS.map(([id, label]) => {
+                        const active = ventureTab === id;
+                        const count =
+                          id === 'tasks' ? vcOpen.length + vcAgentTasks.length :
+                          id === 'goals' ? vcGoals.length :
+                          id === 'calendar' ? calEvents.length :
+                          id === 'agents' ? agentRows.filter((r) => r.open > 0).length :
+                          id === 'missions' ? missionBlocks.length :
+                          id === 'campaigns' ? vcCampaigns.length :
+                          id === 'inbox' ? inboxProps.length : 0;
+                        return (
+                          <button key={id} onClick={() => setVentureTab(id)}
+                            style={{ background: active ? 'rgba(167,139,250,0.22)' : 'rgba(167,139,250,0.06)', border: `1px solid ${active ? '#a78bfa' : 'rgba(167,139,250,0.25)'}`, color: active ? '#e9d5ff' : '#c4b5fd', fontFamily: MONO, fontSize: 8.5, fontWeight: 800, padding: '3px 9px', borderRadius: 2, cursor: 'pointer', letterSpacing: '0.1em' }}>
+                            {label}{count ? ` ${count}` : ''}
+                          </button>
+                        );
+                      })}
+                      <button onClick={() => { setVentureConsole(null); setVentureTab('tasks'); }}
+                        style={{ background: 'none', border: '1px solid rgba(148,163,184,0.3)', color: DIM, fontFamily: MONO, fontSize: 8.5, padding: '3px 10px', borderRadius: 2, cursor: 'pointer', letterSpacing: '0.1em', marginLeft: 'auto' }}>
+                        ← ALL VENTURES
+                      </button>
                     </div>
-                    <div>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 8, fontWeight: 800, letterSpacing: '0.2em', color: '#7dd3fc', borderBottom: '1px solid rgba(56,189,248,0.2)', paddingBottom: 2, marginBottom: 3 }}>
-                        <span>GOALS · {vcGoals.length}</span>
-                        <button onClick={() => openVentureView(vc.id, 'goals')} style={{ background: 'none', border: 'none', color: '#7dd3fc', fontFamily: MONO, fontSize: 8, cursor: 'pointer' }}>OPEN FULL ▸</button>
+
+                    {ventureTab === 'tasks' && (
+                      <div>
+                        {vcAgentTasks.length > 0 && (
+                          <div style={{ marginBottom: 6 }}>
+                            <div style={{ fontSize: 8, fontWeight: 800, letterSpacing: '0.2em', color: '#67e8f9', borderBottom: '1px solid rgba(103,232,249,0.2)', paddingBottom: 2, marginBottom: 3 }}>
+                              AGENT LEDGER · {vcAgentTasks.length} OPEN{vcDoneTasks.length ? ` · ${vcDoneTasks.length} CLOSED` : ''}
+                            </div>
+                            {vcAgentTasks.slice(0, 8).map((t: any) => (
+                              <Row key={t.id}>
+                                <span style={{ color: STATUS_COLOR[String(t.status)] || DIM, minWidth: 52, fontSize: 8 }}>{String(t.status || '').toUpperCase()}</span>
+                                <span style={{ color: '#67e8f9', minWidth: 80, fontSize: 8 }}>{String(t.agentId || t.agentName || '').toUpperCase()}</span>
+                                <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: INK, fontSize: 9 }}>{t.title}</span>
+                              </Row>
+                            ))}
+                            {vcAgentTasks.length > 8 && <div style={{ fontSize: 8, color: DIM, padding: '2px 0' }}>+{vcAgentTasks.length - 8} more</div>}
+                          </div>
+                        )}
+                        <div style={{ fontSize: 8, fontWeight: 800, letterSpacing: '0.2em', color: '#fcd34d', borderBottom: '1px solid rgba(251,191,36,0.2)', paddingBottom: 2, marginBottom: 3 }}>
+                          YOUR TASKS · {vcOpen.length} OPEN
+                        </div>
+                        {userTasks === null && empty('LOADING…')}
+                        {vcOpen.slice(0, 8).map((t: any) => <CortexFoundryTaskCard key={t.id} task={t} />)}
+                        {vcOpen.length > 8 && <div style={{ fontSize: 8, color: DIM, padding: '2px 0' }}>+{vcOpen.length - 8} more</div>}
+                        {userTasks !== null && !vcOpen.length && empty('NO OPEN TASKS')}
+                        {!vcAgentTasks.length && !vcOpen.length && userTasks !== null && empty('NO VENTURE TASKS — UNTAGGED WORK COUNTS UNDER CORTEX')}
                       </div>
-                      {vcGoals.slice(0, 4).map((g: any) => <CortexFoundryGoalCard key={g.id} goal={g} />)}
-                      {!vcGoals.length && <div style={{ fontSize: 9, color: DIM, padding: '4px 0' }}>NO GOALS</div>}
-                    </div>
+                    )}
+
+                    {ventureTab === 'goals' && (
+                      <div>
+                        {vcGoals.slice(0, 8).map((g: any) => <CortexFoundryGoalCard key={g.id} goal={g} />)}
+                        {!vcGoals.length && empty('NO GOALS — DECLARE ONE: "set a goal to …" scoped to this venture')}
+                      </div>
+                    )}
+
+                    {ventureTab === 'calendar' && (
+                      <div>
+                        {calendar === null && empty('LOADING…')}
+                        {calEvents.map((e: any) => (
+                          <Row key={e.id}>
+                            <span style={{ color: '#7dd3fc', minWidth: 92, fontSize: 8.5 }}>{new Date(e.start).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}</span>
+                            <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: INK, fontSize: 9 }}>{e.title}</span>
+                            <span style={{ fontSize: 8, color: DIM }}>{e.kind === 'venture' ? 'VENTURE' : 'EVENT'}</span>
+                          </Row>
+                        ))}
+                        {calendar !== null && !calEvents.length && empty('NO SCHEDULED EVENTS — OMNI POSTING WINDOWS APPEAR HERE WHEN DEFINED')}
+                      </div>
+                    )}
+
+                    {ventureTab === 'agents' && (
+                      <div>
+                        <div style={{ fontSize: 8, color: DIM, marginBottom: 4 }}>FLEET IS SHARED — COUNTS SHOW {vc.callSign || vc.id.toUpperCase()}-SCOPED OPEN WORK</div>
+                        {agentRows.map(({ a, open }: any) => (
+                          <Row key={a.id}>
+                            <span style={{ width: 8, height: 8, borderRadius: '50%', background: STATUS_COLOR[String(a.status)] || '#64748b', display: 'inline-block', flexShrink: 0 }} />
+                            <span style={{ color: INK, minWidth: 110, fontSize: 9, fontWeight: 700 }}>{a.name || a.id}</span>
+                            <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: DIM, fontSize: 8 }}>{a.role || ''}</span>
+                            <span style={{ fontSize: 8.5, color: open ? '#7dd3fc' : DIM, fontWeight: 800 }}>{open ? `${open} OPEN` : '—'}</span>
+                          </Row>
+                        ))}
+                        {!agentRows.length && empty('NO AGENTS')}
+                      </div>
+                    )}
+
+                    {ventureTab === 'missions' && (
+                      <div>
+                        {missionBlocks.map((b: any) => (
+                          <Row key={b.id}>
+                            <span style={{ color: '#fbbf24', minWidth: 56, fontSize: 8.5 }}>{new Date(b.start).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}</span>
+                            <span style={{ color: 'rgba(125,211,252,0.8)', fontSize: 8, minWidth: 60 }}>{String(b.agentId || b.kind || 'agent').toUpperCase()}</span>
+                            <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: INK, fontSize: 9 }}>{b.title}</span>
+                          </Row>
+                        ))}
+                        {missions === null && empty('LOADING…')}
+                        {missions !== null && !missionBlocks.length && empty('NO MISSION BLOCKS SCHEDULED FOR THIS VENTURE')}
+                      </div>
+                    )}
+
+                    {ventureTab === 'campaigns' && (
+                      <div>
+                        {vc.id !== 'omni' && empty('CAMPAIGNS ARE STOREFRONT-SCOPED — THEY BELONG TO OMNI')}
+                        {vc.id === 'omni' && campaignsData === null && empty('LOADING…')}
+                        {vc.id === 'omni' && (campaignsData || []).map((c: any) => (
+                          <div key={c.id} style={{ border: '1px solid rgba(52,211,153,0.22)', borderRadius: 3, padding: '6px 8px', marginBottom: 6 }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                              <span style={{ fontSize: 10, fontWeight: 800, color: INK }}>{c.name}</span>
+                              <span style={{ fontSize: 8, fontWeight: 800, color: c.status === 'live' ? '#34d399' : '#fbbf24' }}>{String(c.status || 'draft').toUpperCase()}</span>
+                            </div>
+                            <div style={{ fontSize: 8.5, color: DIM, marginTop: 2 }}>{c.product} · {c.price} · {c.niche}</div>
+                          </div>
+                        ))}
+                        {vc.id === 'omni' && campaignsData !== null && !vcCampaigns.length && empty('NO CAMPAIGNS — add to storefront/campaigns.json')}
+                      </div>
+                    )}
+
+                    {ventureTab === 'inbox' && (
+                      <div>
+                        {inbox === null && empty('LOADING…')}
+                        {inboxProps.map((p: any) => (
+                          <Row key={p.id || p.planNote}>
+                            <span style={{ color: '#fbbf24', fontSize: 8, minWidth: 60 }}>{String(p.status || 'pending').toUpperCase()}</span>
+                            <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: INK, fontSize: 9 }}>{p.title || p.planNote || p.planTaskId || p.id}</span>
+                          </Row>
+                        ))}
+                        {inbox !== null && !inboxProps.length && empty('NO PENDING DECISIONS FOR THIS VENTURE')}
+                      </div>
+                    )}
                   </div>
                 );
               })()}
@@ -2824,7 +2973,7 @@ export function CortexFoundryNav({ snap, onSelectAgent, selectedAgent, onOpenTow
             const yieldRate = y.runs ? Math.round((y.completions / y.runs) * 100) : null;
             const d = v.distribution || { pending: 0, done: 0, failed: 0 };
             return (
-              <div key={v.id} onClick={() => setVentureConsole(v.id)} style={{
+              <div key={v.id} onClick={() => { setVentureConsole(v.id); setVentureTab('tasks'); }} style={{
                 border: '1px solid rgba(167,139,250,0.22)', borderLeft: `3px solid ${v.status === 'active' ? '#a78bfa' : DIM}`,
                 borderRadius: 3, padding: '8px 10px', marginBottom: 8, background: 'rgba(167,139,250,0.04)',
                 cursor: 'pointer', transition: 'border-color 0.15s',
