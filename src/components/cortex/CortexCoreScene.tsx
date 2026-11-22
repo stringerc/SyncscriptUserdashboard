@@ -2817,6 +2817,7 @@ const GOAL_EPS = 0.015; // min goal delta before pushing a new setLookAt transit
 const _vecOrigin = new THREE.Vector3(0, 0, 0);
 const _chaseRadial = new THREE.Vector3();
 const _chasePos = new THREE.Vector3();
+const _chaseDir = new THREE.Vector3();
 const _defaultScPos = new THREE.Vector3(2.2, 0.4, 1.2);
 const _defaultSecPos = new THREE.Vector3(-2.2, -0.3, 1.5);
 
@@ -2858,10 +2859,15 @@ function CameraRig({
     targetPhi: 1.517,
     curRadius: 5.6,
     targetRadius: 5.6,
+    lastX: 0,
+    lastY: 0,
   });
-  // Chase-mode zoom (world units from agent) + deferred selection release so a
-  // click-drag onto another agent retargets the chase instead of zooming out.
+  // Chase-mode spherical orbit (around the locked agent/engram) + deferred
+  // selection release so a click-drag onto another agent retargets the chase.
   const chaseZoom = useRef(2.6);
+  const chaseTheta = useRef(0);
+  const chasePhi = useRef(1.3);
+  const chaseKey = useRef('');
   const chaseActiveRef = useRef(false);
   const pendingChaseRelease = useRef(false);
   const chaseReleaseTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -2881,7 +2887,7 @@ function CameraRig({
     cc.touches.one = CameraControls.ACTION.NONE;
     cc.touches.two = CameraControls.ACTION.NONE;
     cc.touches.three = CameraControls.ACTION.NONE;
-    cc.minDistance = 1.4;
+    cc.minDistance = 0.3;
     cc.maxDistance = 18;
     cc.minPolarAngle = 0.1;
     cc.maxPolarAngle = Math.PI - 0.1;
@@ -2952,6 +2958,8 @@ function CameraRig({
       orb.startY = e.clientY;
       orb.startTheta = orb.targetTheta;
       orb.startPhi = orb.targetPhi;
+      orb.lastX = e.clientX;
+      orb.lastY = e.clientY;
       el.style.cursor = 'grabbing';
     };
 
@@ -2964,15 +2972,29 @@ function CameraRig({
         orb.hasMoved = true;
         // Defer releasing agent/memory chase — a click landing on another agent
         // retargets directly; only a drag that ends on empty space releases.
-        pendingChaseRelease.current = true;
+        // While locked, drags orbit the chase camera instead of releasing.
+        if (!chaseActiveRef.current) pendingChaseRelease.current = true;
       }
       if (orb.hasMoved) {
-        orb.targetTheta = orb.startTheta - dx * 0.0055;
-        orb.targetPhi = THREE.MathUtils.clamp(
-          orb.startPhi - dy * 0.0055,
-          0.15,
-          Math.PI - 0.15
-        );
+        if (chaseActiveRef.current) {
+          const mdx = e.clientX - orb.lastX;
+          const mdy = e.clientY - orb.lastY;
+          orb.lastX = e.clientX;
+          orb.lastY = e.clientY;
+          chaseTheta.current -= mdx * 0.0055;
+          chasePhi.current = THREE.MathUtils.clamp(
+            chasePhi.current - mdy * 0.0055,
+            0.12,
+            Math.PI - 0.12
+          );
+        } else {
+          orb.targetTheta = orb.startTheta - dx * 0.0055;
+          orb.targetPhi = THREE.MathUtils.clamp(
+            orb.startPhi - dy * 0.0055,
+            0.15,
+            Math.PI - 0.15
+          );
+        }
       }
     };
 
@@ -2998,11 +3020,12 @@ function CameraRig({
       const orb = orbitState.current;
       const zoomDelta = e.deltaY * 0.004;
       if (chaseActiveRef.current) {
-        // Locked on an agent/engram — zoom the chase camera in/out.
+        // Locked on an agent/engram — zoom the chase camera in/out. Floor is
+        // tight enough to fill the frame with the agent's astrolabe detail.
         chaseZoom.current = THREE.MathUtils.clamp(
           chaseZoom.current + zoomDelta * 1.8,
-          1.5,
-          7.0
+          0.35,
+          8.0
         );
         return;
       }
@@ -3153,13 +3176,31 @@ function CameraRig({
       ? memoryWorldPositions[selectedMemoryId]
       : null;
     chaseActiveRef.current = !!targetWorldPos;
+    if (!targetWorldPos) chaseKey.current = '';
 
     if (targetWorldPos) {
+      // On each new lock, seed the orbit angles from the camera's current
+      // offset so the transition stays continuous, then orbit freely.
+      const ckey = selectedAgentId ?? selectedMemoryId ?? '';
+      if (chaseKey.current !== ckey) {
+        chaseKey.current = ckey;
+        _chaseDir.copy(camera.position).sub(targetWorldPos);
+        const dlen = _chaseDir.length() || 1;
+        chasePhi.current = Math.acos(THREE.MathUtils.clamp(_chaseDir.y / dlen, -1, 1));
+        chaseTheta.current = Math.atan2(_chaseDir.x, _chaseDir.z);
+      }
       targetLookAt.current.lerp(targetWorldPos, Math.min(1, delta * 3.8));
-      _chaseRadial.copy(targetWorldPos).normalize();
-      if (_chaseRadial.lengthSq() < 0.001) _chaseRadial.set(0, 0, 1);
-      _chasePos.copy(targetWorldPos).addScaledVector(_chaseRadial, chaseZoom.current);
-      _chasePos.y += 0.65 * (chaseZoom.current / 2.6) + Math.sin(t * 1.5) * 0.04;
+      const r = chaseZoom.current;
+      const sp = Math.sin(chasePhi.current);
+      const cp = Math.cos(chasePhi.current);
+      const st = Math.sin(chaseTheta.current);
+      const ct = Math.cos(chaseTheta.current);
+      _chasePos.set(
+        targetWorldPos.x + r * sp * st,
+        targetWorldPos.y + r * cp,
+        targetWorldPos.z + r * sp * ct
+      );
+      _chasePos.y += Math.sin(t * 1.5) * 0.04 * Math.min(1, r / 2.6);
       targetCamPos.current.lerp(_chasePos, Math.min(1, delta * 3.2));
     } else {
       // ── 3. HOLOGRAPHIC WINDOW MACRO PARALLAX & 360° ORBIT ─────────────────
