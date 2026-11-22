@@ -27,12 +27,13 @@ import { FrameFeedbackEffect } from '../../lib/frame-feedback-effect';
 const MONO = '"IBM Plex Mono", ui-monospace, monospace';
 const GUST_PERIOD = 26; // seconds between auto gusts
 
-function SparkStage({ url, onReady, onFail, onGust, onVoice }: {
+function SparkStage({ url, onReady, onFail, onGust, onVoice, vineOn }: {
   url: string;
   onReady: () => void;
   onFail: () => void;
   onGust?: (active: boolean) => void;
   onVoice?: (state: string, level: number) => void;
+  vineOn?: boolean;
 }) {
   const { gl, scene, invalidate, pointer } = useThree();
   const holder = useRef<THREE.Group | null>(null);
@@ -53,6 +54,12 @@ function SparkStage({ url, onReady, onFail, onGust, onVoice }: {
   const voiceTarget = useRef({ speak: 0, listen: 0, think: 0 });
   const voiceCur = useRef({ speak: 0, listen: 0, think: 0 });
   const voiceStateRef = useRef('idle');
+  // Core→vine morph state
+  const vineGroupRef = useRef<THREE.Group | null>(null);
+  const vineLoadedRef = useRef(false);
+  const morphRef = useRef(0);
+  const isHeroRef = useRef(false);
+  const flowModRef = useRef<any>(null);
 
   useEffect(() => {
     const g = new THREE.Group();
@@ -104,9 +111,11 @@ function SparkStage({ url, onReady, onFail, onGust, onVoice }: {
     // across meshes so the whole field moves coherently.
     const flow = createFlowModifier();
     flowRef.current = flow.uniforms;
+    flowModRef.current = flow.modifier;
 
     // Splat meshes — cortex-core gets a counter-rotating ring sibling.
     const isHero = url.includes('cortex-core');
+    isHeroRef.current = isHero;
 
     // GPU physics modifiers — core+ring positions come from the ping-pong
     // sim texture; ring gets its own index offset (resolved post-init)
@@ -240,6 +249,11 @@ function SparkStage({ url, onReady, onFail, onGust, onVoice }: {
       gpuModsRef.current = [];
       packedByRole.current.clear();
       flowRef.current = null;
+      flowModRef.current = null;
+      if (vineGroupRef.current) {
+        try { scene.remove(vineGroupRef.current); vineGroupRef.current.traverse((n: any) => { try { n.dispose?.(); } catch {} }); } catch {}
+        vineGroupRef.current = null;
+      }
       gl.domElement.removeEventListener('pointerdown', onDown);
       gl.domElement.removeEventListener('pointermove', onMove);
       gl.domElement.removeEventListener('pointerenter', onEnter);
@@ -251,6 +265,21 @@ function SparkStage({ url, onReady, onFail, onGust, onVoice }: {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [gl, scene, url]);
+
+  // Lazy-load the vine splat on first toggle — hero mode only. It lives
+  // OUTSIDE the hero holder group so the core implosion (g.scale) never
+  // touches it; its own group handles bottom-anchored growth + sway.
+  useEffect(() => {
+    if (!vineOn || vineLoadedRef.current || !isHeroRef.current) return;
+    vineLoadedRef.current = true;
+    const vg = new THREE.Group();
+    scene.add(vg);
+    vineGroupRef.current = vg;
+    const mesh = new SplatMesh({ url: '/splats/vine.ply', worldModifier: flowModRef.current?.modifier });
+    vg.add(mesh);
+    // No cleanup here — vineOn toggling re-runs this effect; disposal is
+    // handled by the main mount cleanup via vineGroupRef.
+  }, [vineOn, scene]);
 
   // Pointer parallax + breathing core + counter-rotating ring + gusts.
   useFrame((state, dt) => {
@@ -343,6 +372,24 @@ function SparkStage({ url, onReady, onFail, onGust, onVoice }: {
     const breathe = 1 + 0.022 * Math.sin(t * 0.83) + 0.012 * Math.sin(t * 1.71 + 1.2) + 0.03 * gust;
     const ringSpin = -(0.1 + 0.35 * gust);
 
+    // Core→vine morph: eased 0..1. The whole hero holder implodes while
+    // the vine group — a sibling of g, so untouched by g.scale — grows
+    // from a ground anchor with a slow sway. Spore layers fade out below.
+    const mTarget = vineOn ? 1 : 0;
+    morphRef.current += (mTarget - morphRef.current) * (1 - Math.exp(-3.2 * dt));
+    const m = morphRef.current;
+    g.scale.setScalar(Math.max(0.001, 1 - m * 0.92));
+
+    const vg = vineGroupRef.current;
+    if (vg) {
+      const e = m * m * (3 - 2 * m); // smoothstep grow
+      const base = 0.62;            // fit ~3.4u vine into the 45° frame
+      vg.scale.set(base * (0.55 + 0.45 * e), base * Math.max(0.002, e), base * (0.55 + 0.45 * e));
+      vg.position.y = -1.62 * base * (1 - e); // pin the root to the ground line
+      vg.rotation.z = Math.sin(t * 0.45) * 0.045 * e;
+      vg.rotation.y += dt * 0.18 * e;
+    }
+
     for (const { mesh, role } of meshes.current) {
       if (gpuSimRef.current && (role === 'core' || role === 'ring')) continue;
       if (role === 'core') {
@@ -361,11 +408,11 @@ function SparkStage({ url, onReady, onFail, onGust, onVoice }: {
       const calm = 1 - vc.listen * 0.3 + vc.speak * 0.15;
       layers[0].fallVelocity.value = 0.03 * Math.max(0.15, (0.65 + 0.5 * Math.sin(t * 0.31) + 0.25 * Math.sin(t * 0.83 + 1.7)) * (1 + 5.5 * gust)) * surge;
       layers[0].wanderScale.value = 0.32 * (0.8 + 0.35 * Math.sin(t * 0.47 + 0.6)) * (1 + 1.6 * gust) * (1 + vc.speak * 0.9 + vc.think * 0.4);
-      layers[0].opacity.value = Math.min(0.95, 0.55 * (0.85 + 0.15 * Math.sin(t * 0.9)) * (1 + 0.7 * gust) * calm);
+      layers[0].opacity.value = Math.min(0.95, 0.55 * (0.85 + 0.15 * Math.sin(t * 0.9)) * (1 + 0.7 * gust) * calm) * (1 - m * 0.9);
       layers[1].fallVelocity.value = 0.014 * (0.9 + 0.3 * Math.sin(t * 0.21 + 2.2)) * (1 + 3 * gust) * surge;
-      layers[1].opacity.value = Math.min(0.9, 0.35 * (0.9 + 0.2 * Math.sin(t * 0.66)) * (1 + 0.8 * gust) * calm);
+      layers[1].opacity.value = Math.min(0.9, 0.35 * (0.9 + 0.2 * Math.sin(t * 0.66)) * (1 + 0.8 * gust) * calm) * (1 - m * 0.9);
       layers[2].fallVelocity.value = 0.045 * (0.85 + 0.3 * Math.sin(t * 0.57 + 4.0)) * (1 + 2.5 * gust) * (1 + vc.speak * 1.8);
-      layers[2].opacity.value = Math.min(0.95, 0.7 * (0.85 + 0.15 * Math.sin(t * 1.1 + 0.4)) * (1 + 0.9 * gust) * (1 + vc.speak * 0.6));
+      layers[2].opacity.value = Math.min(0.95, 0.7 * (0.85 + 0.15 * Math.sin(t * 1.1 + 0.4)) * (1 + 0.9 * gust) * (1 + vc.speak * 0.6)) * (1 - m * 0.9);
     }
   });
   return null;
@@ -391,7 +438,9 @@ export default function CortexSplatScene({ splat }: { splat?: string }) {
   const [ready, setReady] = useState(false);
   const [failed, setFailed] = useState(false);
   const [gusting, setGusting] = useState(false);
+  const [vineOn, setVineOn] = useState(false);
   const [voice, setVoice] = useState({ state: 'idle', level: 0 });
+  const isCore = raw === 'cortex-core';
 
   return (
     <div style={{ position: 'fixed', inset: 0, zIndex: 60, background: 'radial-gradient(ellipse at center, #050a14 0%, #01030a 100%)' }}>
@@ -401,7 +450,7 @@ export default function CortexSplatScene({ splat }: { splat?: string }) {
         camera={{ position: [0, 0.15, 3.1], fov: 45, near: 0.05, far: 60 }}
         dpr={[1, 1.75]}
       >
-        <SparkStage url={url} onReady={() => setReady(true)} onFail={() => setFailed(true)} onGust={setGusting}
+        <SparkStage url={url} onReady={() => setReady(true)} onFail={() => setFailed(true)} onGust={setGusting} vineOn={vineOn}
           onVoice={(s, l) => setVoice((v) => (v.state === s && Math.abs(v.level - l) < 0.001 ? v : { state: s, level: l }))} />
         <OrbitControls
           enablePan={false}
@@ -435,7 +484,7 @@ export default function CortexSplatScene({ splat }: { splat?: string }) {
         textShadow: gusting ? '0 0 18px rgba(255,170,80,0.7)' : '0 0 14px rgba(103,232,249,0.4)',
         transition: 'color 300ms, text-shadow 300ms',
       }}>
-        {gusting ? '✦ SOLAR GUST ✦' : voice.state !== 'idle' ? `◉ ${voice.state.toUpperCase()}` : `GAUSSIAN SPLAT // ${raw.toUpperCase()}`}
+        {gusting ? '✦ SOLAR GUST ✦' : voice.state !== 'idle' ? `◉ ${voice.state.toUpperCase()}` : vineOn ? 'SOVEREIGN VINE // LIVE GROWTH' : `GAUSSIAN SPLAT // ${raw.toUpperCase()}`}
       </div>
       {/* Persistent voice-link chip — dim at idle so the bus connection
           is verifiable even when Cortex isn't talking. */}
@@ -449,12 +498,30 @@ export default function CortexSplatScene({ splat }: { splat?: string }) {
       }}>
         VOICE·{voice.state === 'idle' ? 'STANDBY' : voice.state.toUpperCase()}
       </div>
+      {/* Core⇄Vine morph toggle — hero mode only */}
+      {isCore && (
+        <button
+          onClick={() => setVineOn((v) => !v)}
+          style={{
+            position: 'absolute', bottom: 64, right: 22, zIndex: 10,
+            padding: '7px 16px', borderRadius: 3, cursor: 'pointer',
+            fontFamily: MONO, fontSize: 9, fontWeight: 800, letterSpacing: '0.26em',
+            border: vineOn ? '1px solid rgba(134,239,172,0.55)' : '1px solid rgba(125,240,255,0.4)',
+            background: vineOn ? 'rgba(20,60,35,0.6)' : 'rgba(8,24,38,0.55)',
+            color: vineOn ? '#a7f3d0' : 'rgba(186,230,253,0.85)',
+            boxShadow: vineOn ? '0 0 14px rgba(134,239,172,0.3)' : 'none',
+            transition: 'all 0.25s',
+          }}
+        >
+          {vineOn ? '⬡ CORE' : '❦ VINE'}
+        </button>
+      )}
       <div style={{
         position: 'absolute', bottom: 18, left: '50%', transform: 'translateX(-50%)',
         fontFamily: MONO, fontSize: 8.5, letterSpacing: '0.22em',
         color: 'rgba(148,233,255,0.4)', pointerEvents: 'none',
       }}>
-        {ready ? 'DRAG TO ORBIT · SCROLL — ZOOM INSIDE · CLICK FOR GUST' : failed ? 'SPLAT LOAD FAILED' : 'DECOMPRESSING GAUSSIANS…'}
+        {ready ? (isCore ? 'DRAG TO ORBIT · SCROLL — ZOOM · CLICK FOR GUST · ❦ VINE TO TRANSFORM' : 'DRAG TO ORBIT · SCROLL — ZOOM INSIDE · CLICK FOR GUST') : failed ? 'SPLAT LOAD FAILED' : 'DECOMPRESSING GAUSSIANS…'}
       </div>
       {!ready && !failed && (
         <div style={{
