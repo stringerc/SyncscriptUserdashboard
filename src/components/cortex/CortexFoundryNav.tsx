@@ -176,7 +176,7 @@ export function CortexFoundryNav({ snap, onSelectAgent, selectedAgent, onOpenTow
   const [pipeline, setPipeline] = useState<any | null>(null);
   const [campaignsData, setCampaignsData] = useState<any[] | null>(null);
   const [videoLib, setVideoLib] = useState<any[] | null>(null);
-  const [campForm, setCampForm] = useState({ name: '', productUrl: '', price: '', niche: '' });
+  const [campForm, setCampForm] = useState({ name: '', product: '', productUrl: '', price: '', niche: '', channels: 'pinterest,reddit' });
   const [campNote, setCampNote] = useState('');
   const [scrapeBusy, setScrapeBusy] = useState<string | null>(null);
   const [counsel, setCounsel] = useState<{ sessions: any[]; consoles: any[]; scorecard?: any[] } | null>(null);
@@ -212,6 +212,10 @@ export function CortexFoundryNav({ snap, onSelectAgent, selectedAgent, onOpenTow
   const [missionKind, setMissionKind] = useState('mission');
   const [missionAgent, setMissionAgent] = useState('');
   const [missionBusy, setMissionBusy] = useState(false);
+  const [campExpanded, setCampExpanded] = useState<string | null>(null);
+  const [campMetricEdits, setCampMetricEdits] = useState<Record<string, { clicks: string; sales: string; upsells: string }>>({});
+  const [campEnq, setCampEnq] = useState<Record<string, { type: string; f1: string; f2: string; f3: string; f4: string }>>({});
+  const [campBusy, setCampBusy] = useState(false);
   const [expandedAgent, setExpandedAgent] = useState<string | null>(null);
   const [ventureSchedInput, setVentureSchedInput] = useState('');
   const [ventureBudgetInput, setVentureBudgetInput] = useState('');
@@ -352,6 +356,46 @@ export function CortexFoundryNav({ snap, onSelectAgent, selectedAgent, onOpenTow
     const due = planItemDue ? new Date(`${planItemDue}T09:00:00`).getTime() : undefined;
     planApi({ action: 'upsert', title, kind: planItemKind, dueDate: due ?? null });
     setPlanItemTitle(''); setPlanItemDue('');
+  };
+  const refreshCampaigns = () => {
+    fetch('/api/cortex/campaigns', { cache: 'no-store' })
+      .then((r) => r.json())
+      .then((d) => { if (Array.isArray(d?.campaigns)) setCampaignsData(d.campaigns); })
+      .catch(() => { });
+  };
+  const campApi = async (payload: any) => {
+    setCampBusy(true);
+    try {
+      await fetch('/api/cortex/campaigns', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+      refreshCampaigns();
+    } catch { }
+    finally { setCampBusy(false); }
+  };
+  const saveCampMetrics = async (campaignId: string) => {
+    const e = campMetricEdits[campaignId];
+    if (!e) return;
+    const num = (s: string) => s.trim() === '' ? undefined : Number(s);
+    await fetch('/api/cortex/campaigns/metrics', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ campaignId, clicks: num(e.clicks), sales: num(e.sales), upsells: num(e.upsells) }),
+    }).catch(() => { });
+    setCampMetricEdits(prev => { const n = { ...prev }; delete n[campaignId]; return n; });
+    refreshCampaigns();
+  };
+  const enqueueForCampaign = async (campaignId: string) => {
+    const e = campEnq[campaignId];
+    if (!e) return;
+    let payload: Record<string, string> = {};
+    if (e.type === 'pinterest_pin') payload = { image: e.f1, title: e.f2, link: e.f3, description: e.f4 || e.f2 };
+    else if (e.type === 'reddit_comment') payload = { permalink: e.f1, text: e.f2 };
+    else if (e.type === 'dreamina_generate') payload = { prompt: e.f1 };
+    else return;
+    payload.campaignId = campaignId;
+    await fetch('/api/cortex/distribution/enqueue', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ type: e.type, payload }),
+    }).catch(() => { });
+    setCampEnq(prev => { const n = { ...prev }; delete n[campaignId]; return n; });
   };
   const addMissionBlock = async () => {
     const title = missionTitle.trim();
@@ -2497,7 +2541,7 @@ export function CortexFoundryNav({ snap, onSelectAgent, selectedAgent, onOpenTow
                       body: JSON.stringify({ name: campForm.name, productUrl: campForm.productUrl, price: campForm.price, niche: campForm.niche }),
                     });
                     const d = await r.json();
-                    if (d?.ok) { setCampNote(`created: ${d.id}`); setCampForm({ name: '', productUrl: '', price: '', niche: '' }); }
+                    if (d?.ok) { setCampNote(`created: ${d.id}`); setCampForm({ name: '', product: '', productUrl: '', price: '', niche: '', channels: 'pinterest,reddit' }); }
                     else setCampNote(`failed: ${d?.error || r.status}`);
                   } catch (e: any) { setCampNote(`failed: ${e?.message}`); }
                 }}
@@ -3257,17 +3301,127 @@ export function CortexFoundryNav({ snap, onSelectAgent, selectedAgent, onOpenTow
                     {ventureTab === 'campaigns' && (
                       <div>
                         {vc.id !== 'omni' && empty('CAMPAIGNS ARE STOREFRONT-SCOPED — THEY BELONG TO OMNI')}
-                        {vc.id === 'omni' && campaignsData === null && empty('LOADING…')}
-                        {vc.id === 'omni' && (campaignsData || []).map((c: any) => (
-                          <div key={c.id} style={{ border: '1px solid rgba(52,211,153,0.22)', borderRadius: 3, padding: '6px 8px', marginBottom: 6 }}>
-                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                              <span style={{ fontSize: 10, fontWeight: 800, color: INK }}>{c.name}</span>
-                              <span style={{ fontSize: 8, fontWeight: 800, color: c.status === 'live' ? '#34d399' : '#fbbf24' }}>{String(c.status || 'draft').toUpperCase()}</span>
+                        {vc.id === 'omni' && (
+                          <>
+                            {/* NEW CAMPAIGN — registry write, draft status */}
+                            <div style={{ border: '1px solid rgba(52,211,153,0.3)', borderRadius: 3, padding: '6px 8px', marginBottom: 6, background: 'rgba(52,211,153,0.03)' }}>
+                              <div style={{ fontSize: 8, fontWeight: 800, letterSpacing: '0.18em', color: '#34d399', marginBottom: 4 }}>+ NEW CAMPAIGN</div>
+                              <input value={campForm.name} onChange={(e) => setCampForm(f => ({ ...f, name: e.target.value }))} placeholder="campaign name…"
+                                style={{ width: '100%', background: 'rgba(8,14,24,0.8)', border: '1px solid rgba(52,211,153,0.3)', color: INK, fontFamily: MONO, fontSize: 9, padding: '3px 7px', borderRadius: 2, outline: 'none', marginBottom: 4, boxSizing: 'border-box' }} />
+                              <input value={campForm.productUrl} onChange={(e) => setCampForm(f => ({ ...f, productUrl: e.target.value }))} placeholder="product URL (gumroad /l/…)"
+                                style={{ width: '100%', background: 'rgba(8,14,24,0.8)', border: '1px solid rgba(52,211,153,0.3)', color: INK, fontFamily: MONO, fontSize: 9, padding: '3px 7px', borderRadius: 2, outline: 'none', marginBottom: 4, boxSizing: 'border-box' }} />
+                              <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+                                <input value={campForm.product} onChange={(e) => setCampForm(f => ({ ...f, product: e.target.value }))} placeholder="product name"
+                                  style={{ flex: '1 1 120px', background: 'rgba(8,14,24,0.8)', border: '1px solid rgba(148,163,184,0.25)', color: INK, fontFamily: MONO, fontSize: 9, padding: '3px 7px', borderRadius: 2, outline: 'none' }} />
+                                <input value={campForm.price} onChange={(e) => setCampForm(f => ({ ...f, price: e.target.value }))} placeholder="price"
+                                  style={{ width: 56, background: 'rgba(8,14,24,0.8)', border: '1px solid rgba(148,163,184,0.25)', color: INK, fontFamily: MONO, fontSize: 9, padding: '3px 7px', borderRadius: 2, outline: 'none' }} />
+                                <input value={campForm.niche} onChange={(e) => setCampForm(f => ({ ...f, niche: e.target.value }))} placeholder="niche"
+                                  style={{ flex: '1 1 100px', background: 'rgba(8,14,24,0.8)', border: '1px solid rgba(148,163,184,0.25)', color: INK, fontFamily: MONO, fontSize: 9, padding: '3px 7px', borderRadius: 2, outline: 'none' }} />
+                                <button disabled={campBusy || !campForm.name.trim() || !campForm.productUrl.trim()}
+                                  onClick={async () => {
+                                    await campApi({ name: campForm.name, product: campForm.product || campForm.name, productUrl: campForm.productUrl, price: campForm.price || undefined, niche: campForm.niche || undefined, channels: campForm.channels.split(',').map(s => s.trim()).filter(Boolean) });
+                                    setCampForm({ name: '', product: '', productUrl: '', price: '', niche: '', channels: 'pinterest,reddit' });
+                                  }}
+                                  style={{ background: 'rgba(52,211,153,0.15)', border: '1px solid #34d399', color: '#6ee7b7', fontFamily: MONO, fontSize: 8, fontWeight: 800, padding: '2px 8px', borderRadius: 2, cursor: 'pointer' }}>+ CREATE</button>
+                              </div>
                             </div>
-                            <div style={{ fontSize: 8.5, color: DIM, marginTop: 2 }}>{c.product} · {c.price} · {c.niche}</div>
-                          </div>
-                        ))}
-                        {vc.id === 'omni' && campaignsData !== null && !vcCampaigns.length && empty('NO CAMPAIGNS — add to storefront/campaigns.json')}
+                            {campaignsData === null && empty('LOADING…')}
+                            {(campaignsData || []).map((c: any) => {
+                              const expanded = campExpanded === c.id;
+                              const funnel = c.funnel || {};
+                              const killColor = c.killStatus === 'TRIPPED' ? '#f87171' : c.killStatus === 'AT-RISK' ? '#fbbf24' : c.killStatus === 'ARMED' ? '#34d399' : DIM;
+                              const statusColor = c.status === 'live' ? '#34d399' : c.status === 'killed' ? '#f87171' : c.status === 'paused' ? '#fbbf24' : DIM;
+                              const m = c.metrics || {};
+                              const me = campMetricEdits[c.id] || { clicks: '', sales: '', upsells: '' };
+                              const enq = campEnq[c.id] || { type: 'pinterest_pin', f1: '', f2: '', f3: '', f4: '' };
+                              const setEnq = (patch: any) => setCampEnq(prev => ({ ...prev, [c.id]: { ...enq, ...patch } }));
+                              const setMe = (patch: any) => setCampMetricEdits(prev => ({ ...prev, [c.id]: { ...me, ...patch } }));
+                              return (
+                                <div key={c.id} style={{ border: `1px solid ${expanded ? 'rgba(52,211,153,0.45)' : 'rgba(52,211,153,0.22)'}`, borderRadius: 3, padding: '6px 8px', marginBottom: 6, background: 'rgba(52,211,153,0.03)' }}>
+                                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer' }} onClick={() => setCampExpanded(expanded ? null : c.id)}>
+                                    <span style={{ fontSize: 10, fontWeight: 800, color: INK }}>{c.name}</span>
+                                    <span style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                                      <span style={{ fontSize: 8, fontWeight: 800, color: killColor }}>KILL:{c.killStatus || 'UNMEASURED'}</span>
+                                      <span style={{ fontSize: 8, fontWeight: 800, color: statusColor }}>{String(c.status || 'draft').toUpperCase()}</span>
+                                      <span style={{ fontSize: 8, color: DIM }}>{expanded ? '▾' : '▸'}</span>
+                                    </span>
+                                  </div>
+                                  <div style={{ fontSize: 8.5, color: DIM, marginTop: 2 }}>{c.product} · {c.price || '—'} · {c.niche || '—'}</div>
+                                  {expanded && (
+                                    <div onClick={(e) => e.stopPropagation()} style={{ marginTop: 6, borderTop: '1px solid rgba(148,163,184,0.12)', paddingTop: 6 }}>
+                                      {/* funnel */}
+                                      <div style={{ display: 'flex', gap: 8, fontSize: 8.5, color: DIM, marginBottom: 5, flexWrap: 'wrap' }}>
+                                        <span>FUNNEL</span>
+                                        {['queued', 'running', 'done', 'failed', 'pending'].map(k => (
+                                          <span key={k} style={{ color: k === 'done' ? '#34d399' : k === 'failed' ? '#f87171' : k === 'running' ? '#7dd3fc' : DIM }}>{k.toUpperCase()} {funnel[k] || 0}</span>
+                                        ))}
+                                      </div>
+                                      {/* status lifecycle */}
+                                      <div style={{ display: 'flex', gap: 4, alignItems: 'center', marginBottom: 5, flexWrap: 'wrap' }}>
+                                        <span style={{ fontSize: 8, color: DIM, marginRight: 2 }}>STATUS:</span>
+                                        {['draft', 'live', 'paused', 'killed'].map(s => (
+                                          <button key={s} disabled={campBusy} onClick={() => campApi({ action: 'update', id: c.id, status: s })}
+                                            style={{ background: c.status === s ? 'rgba(52,211,153,0.25)' : 'rgba(8,14,24,0.6)', border: `1px solid ${c.status === s ? '#34d399' : 'rgba(148,163,184,0.2)'}`, color: c.status === s ? '#6ee7b7' : DIM, fontFamily: MONO, fontSize: 8, padding: '1px 6px', borderRadius: 2, cursor: 'pointer', textDecoration: s === 'killed' ? 'line-through' : 'none' }}>{s.toUpperCase()}</button>
+                                        ))}
+                                      </div>
+                                      {/* metrics */}
+                                      <div style={{ display: 'flex', gap: 4, alignItems: 'center', marginBottom: 5, flexWrap: 'wrap' }}>
+                                        <span style={{ fontSize: 8, color: DIM, marginRight: 2 }}>METRICS:</span>
+                                        {[['clicks', 'CLICKS'], ['sales', 'SALES'], ['upsells', 'UPSELLS']].map(([k, lbl]) => (
+                                          <span key={k} style={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+                                            <span style={{ fontSize: 8, color: DIM }}>{lbl}</span>
+                                            <input value={(me as any)[k]} onChange={(e) => setMe({ [k]: e.target.value })} placeholder={m[k] ?? '—'}
+                                              style={{ width: 44, background: 'rgba(8,14,24,0.8)', border: '1px solid rgba(56,189,248,0.3)', color: INK, fontFamily: MONO, fontSize: 8.5, padding: '1px 4px', borderRadius: 2, outline: 'none' }} />
+                                          </span>
+                                        ))}
+                                        <button disabled={campBusy} onClick={() => saveCampMetrics(c.id)}
+                                          style={{ background: 'rgba(56,189,248,0.12)', border: '1px solid #38bdf8', color: '#7dd3fc', fontFamily: MONO, fontSize: 8, padding: '1px 7px', borderRadius: 2, cursor: 'pointer' }}>SAVE</button>
+                                        <span style={{ fontSize: 8, color: DIM }}>GUMROAD {m.gumroad?.totalEarnings ?? 0} · {m.gumroad?.last7d ?? 0} 7d</span>
+                                      </div>
+                                      {/* verified urls */}
+                                      {(c.verifiedUrls || []).length > 0 && (
+                                        <div style={{ marginBottom: 5 }}>
+                                          {c.verifiedUrls.slice(0, 4).map((u: string) => (
+                                            <div key={u} style={{ fontSize: 8, color: '#7dd3fc', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>✓ {u}</div>
+                                          ))}
+                                        </div>
+                                      )}
+                                      {/* enqueue */}
+                                      <div style={{ borderTop: '1px solid rgba(148,163,184,0.08)', paddingTop: 5 }}>
+                                        <div style={{ fontSize: 8, fontWeight: 800, letterSpacing: '0.18em', color: '#a78bfa', marginBottom: 3 }}>+ ENQUEUE DISTRIBUTION</div>
+                                        <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', alignItems: 'center' }}>
+                                          <select value={enq.type} onChange={(e) => setEnq({ type: e.target.value, f1: '', f2: '', f3: '', f4: '' })}
+                                            style={{ background: 'rgba(8,14,24,0.8)', border: '1px solid rgba(167,139,250,0.4)', color: '#c4b5fd', fontFamily: MONO, fontSize: 8, borderRadius: 2, outline: 'none' }}>
+                                            <option value="pinterest_pin">PINTEREST PIN</option>
+                                            <option value="reddit_comment">REDDIT COMMENT</option>
+                                            <option value="dreamina_generate">DREAMINA GEN</option>
+                                          </select>
+                                          {enq.type === 'pinterest_pin' && (<>
+                                            <input value={enq.f1} onChange={(e) => setEnq({ f1: e.target.value })} placeholder="image path (storefront/…)" style={{ flex: '1 1 110px', background: 'rgba(8,14,24,0.8)', border: '1px solid rgba(148,163,184,0.2)', color: INK, fontFamily: MONO, fontSize: 8, padding: '2px 5px', borderRadius: 2, outline: 'none' }} />
+                                            <input value={enq.f2} onChange={(e) => setEnq({ f2: e.target.value })} placeholder="pin title" style={{ flex: '1 1 90px', background: 'rgba(8,14,24,0.8)', border: '1px solid rgba(148,163,184,0.2)', color: INK, fontFamily: MONO, fontSize: 8, padding: '2px 5px', borderRadius: 2, outline: 'none' }} />
+                                            <input value={enq.f3} onChange={(e) => setEnq({ f3: e.target.value })} placeholder={c.productUrl || 'link'} style={{ flex: '1 1 110px', background: 'rgba(8,14,24,0.8)', border: '1px solid rgba(148,163,184,0.2)', color: INK, fontFamily: MONO, fontSize: 8, padding: '2px 5px', borderRadius: 2, outline: 'none' }} />
+                                          </>)}
+                                          {enq.type === 'reddit_comment' && (<>
+                                            <input value={enq.f1} onChange={(e) => setEnq({ f1: e.target.value })} placeholder="thread permalink" style={{ flex: '1 1 130px', background: 'rgba(8,14,24,0.8)', border: '1px solid rgba(148,163,184,0.2)', color: INK, fontFamily: MONO, fontSize: 8, padding: '2px 5px', borderRadius: 2, outline: 'none' }} />
+                                            <input value={enq.f2} onChange={(e) => setEnq({ f2: e.target.value })} placeholder="comment text" style={{ flex: '2 1 160px', background: 'rgba(8,14,24,0.8)', border: '1px solid rgba(148,163,184,0.2)', color: INK, fontFamily: MONO, fontSize: 8, padding: '2px 5px', borderRadius: 2, outline: 'none' }} />
+                                          </>)}
+                                          {enq.type === 'dreamina_generate' && (
+                                            <input value={enq.f1} onChange={(e) => setEnq({ f1: e.target.value })} placeholder="image prompt…" style={{ flex: '1 1 200px', background: 'rgba(8,14,24,0.8)', border: '1px solid rgba(148,163,184,0.2)', color: INK, fontFamily: MONO, fontSize: 8, padding: '2px 5px', borderRadius: 2, outline: 'none' }} />
+                                          )}
+                                          <button disabled={campBusy || !enq.f1.trim() || (enq.type === 'pinterest_pin' && (!enq.f2.trim() || !enq.f3.trim())) || (enq.type === 'reddit_comment' && !enq.f2.trim())}
+                                            onClick={() => enqueueForCampaign(c.id)}
+                                            style={{ background: 'rgba(167,139,250,0.15)', border: '1px solid #a78bfa', color: '#c4b5fd', fontFamily: MONO, fontSize: 8, fontWeight: 800, padding: '2px 8px', borderRadius: 2, cursor: 'pointer' }}>QUEUE</button>
+                                        </div>
+                                        <div style={{ fontSize: 8, color: DIM, marginTop: 2 }}>QUEUED ITEMS CARRY campaignId — FUNNEL ATTRIBUTION IS AUTOMATIC</div>
+                                      </div>
+                                    </div>
+                                  )}
+                                </div>
+                              );
+                            })}
+                            {campaignsData !== null && !vcCampaigns.length && empty('NO CAMPAIGNS — CREATE ONE ABOVE')}
+                          </>
+                        )}
                       </div>
                     )}
 

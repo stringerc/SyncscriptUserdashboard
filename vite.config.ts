@@ -12527,6 +12527,29 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
             const regPath = path.join(sf, 'campaigns.json');
             const registry = (() => { try { return JSON.parse(fsSync.readFileSync(regPath, 'utf8')); } catch { return { campaigns: [] }; } })();
             const b = JSON.parse(body || '{}');
+            // action:'update' — patch an existing campaign (status lifecycle,
+            // price/niche/channels/killSwitch). Powers the console's controls.
+            if (b.action === 'update') {
+              const cid = String(b.id || b.campaignId || '');
+              const c = (registry.campaigns || []).find((x: any) => x.id === cid);
+              if (!c) throw new Error(`campaign '${cid}' not found`);
+              const STATUSES = ['draft', 'live', 'paused', 'killed'];
+              if (b.status !== undefined) {
+                if (!STATUSES.includes(String(b.status))) throw new Error(`status must be one of ${STATUSES.join('/')}`);
+                c.status = String(b.status);
+                if (c.status === 'live' && !c.launchedAt) c.launchedAt = Date.now();
+                if (c.status === 'killed') c.killedAt = Date.now();
+              }
+              for (const k of ['price', 'niche', 'upsellTarget', 'productUrl', 'product']) {
+                if (b[k] !== undefined) c[k] = b[k] === null ? null : String(b[k]).slice(0, 300);
+              }
+              if (Array.isArray(b.channels)) c.channels = b.channels.map(String).slice(0, 12);
+              if (b.killSwitch && typeof b.killSwitch === 'object') c.killSwitch = b.killSwitch;
+              c.updatedAt = Date.now();
+              fsSync.writeFileSync(regPath, JSON.stringify(registry, null, 2));
+              res.writeHead(200, { 'Content-Type': 'application/json' });
+              return res.end(JSON.stringify({ ok: true, id: c.id, status: c.status }));
+            }
             if (!b.name || !b.productUrl) throw new Error('name + productUrl required');
             const id = String(b.id || b.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')).slice(0, 60);
             if ((registry.campaigns || []).some((c: any) => c.id === id)) throw new Error(`campaign '${id}' already exists`);
