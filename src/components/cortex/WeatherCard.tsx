@@ -223,4 +223,114 @@ export function WeatherCard({ a, actions }: { a: WeatherArtifact; actions?: Reac
   );
 }
 
+/**
+ * WeatherWidget — compact glanceable variant of WeatherCard for pinned
+ * surface panels in widget mode. Same glass theme, same accent system,
+ * but sized for at-a-glance: location, hero temp + glyph, today hi/lo,
+ * and a mini next-hours strip. Fluid layout — resizable down to ~180px.
+ */
+export function WeatherWidget({ a }: { a: WeatherArtifact }) {
+  const accent = accentFor(a.condition);
+  const { num: tempNum, unit: tempUnit } = parseTemp(a.temp);
+  const hours = (a.hourly || []).slice(0, 6);
+  const today = (a.days || [])[0];
+  const precip = a.precipNow;
+
+  return (
+    <div style={{
+      width: '100%', height: '100%',
+      borderRadius: 22, cursor: 'default',
+      background: 'linear-gradient(165deg, rgba(165,220,252,0.42) 0%, rgba(96,165,250,0.30) 45%, rgba(59,130,246,0.34) 100%)',
+      border: '1px solid rgba(224,242,254,0.55)',
+      boxShadow: '0 30px 80px rgba(2,20,60,0.5), 0 0 0 1px rgba(255,255,255,0.25) inset, 0 1px 0 rgba(255,255,255,0.65) inset, 0 -1px 0 rgba(30,80,160,0.25) inset',
+      backdropFilter: 'blur(30px) saturate(1.5)', WebkitBackdropFilter: 'blur(30px) saturate(1.5)',
+      padding: '12px 14px',
+      fontFamily: 'Inter, system-ui, sans-serif',
+      display: 'flex', flexDirection: 'column', overflow: 'hidden',
+    }}>
+      {/* Location + live dot */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8, minWidth: 0 }}>
+        <MapPin size={10} style={{ color: '#1d4ed8', flexShrink: 0 }} />
+        <span style={{
+          fontSize: 10.5, fontWeight: 600, color: '#12335c', letterSpacing: '0.02em',
+          overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0,
+        }}>
+          {a.city || 'Current location'}
+        </span>
+        <span style={{
+          marginLeft: 'auto', flexShrink: 0, width: 6, height: 6, borderRadius: 999,
+          background: '#22c55e', boxShadow: '0 0 6px #22c55e',
+        }} />
+      </div>
+
+      {/* Hero — glyph + temp + condition */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8, minWidth: 0 }}>
+        <div style={{ filter: `drop-shadow(0 4px 16px ${accent}66)`, flexShrink: 0 }}>
+          <WxIcon k={heroIconKey(a)} size={56} />
+        </div>
+        <div style={{ minWidth: 0 }}>
+          <div style={{ display: 'flex', alignItems: 'baseline', gap: 3, lineHeight: 0.95 }}>
+            <span style={{
+              fontSize: 44, fontWeight: 200, color: '#0b2545',
+              fontVariantNumeric: 'tabular-nums', letterSpacing: '-0.04em',
+              textShadow: '0 1px 0 rgba(255,255,255,0.4)',
+            }}>{tempNum}</span>
+            <span style={{ fontSize: 17, fontWeight: 300, color: '#1e4976' }}>{tempUnit}</span>
+          </div>
+          <div style={{ fontSize: 12, fontWeight: 600, color: '#123a63', marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            {a.condition || a.summary || '—'}
+          </div>
+        </div>
+      </div>
+
+      {/* Today hi/lo + precip + wind — one glanceable line */}
+      <div style={{
+        display: 'flex', alignItems: 'center', gap: 8,
+        fontSize: 10, color: 'rgba(18,58,99,0.85)', fontFamily: MONO,
+        fontVariantNumeric: 'tabular-nums', marginBottom: hours.length >= 2 ? 10 : 0,
+      }}>
+        {today && (Number.isFinite(today.hi) || Number.isFinite(today.lo)) && (
+          <span>
+            H {Number.isFinite(today.hi) ? `${Math.round(today.hi!)}°` : '—'}
+            <span style={{ color: 'rgba(30,73,118,0.55)' }}> / L {Number.isFinite(today.lo) ? `${Math.round(today.lo!)}°` : '—'}</span>
+          </span>
+        )}
+        {precip != null && precip > 0 && (
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3, color: '#0369a1' }}>
+            <CloudRain size={10} />{precip}%
+          </span>
+        )}
+        {a.wind && (
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3, marginLeft: 'auto' }}>
+            <Wind size={10} />{a.wind}
+          </span>
+        )}
+      </div>
+
+      {/* Mini next-hours strip */}
+      {hours.length >= 2 && (
+        <div style={{
+          marginTop: 'auto', display: 'flex', gap: 2,
+          borderTop: '1px solid rgba(255,255,255,0.4)', paddingTop: 7,
+        }}>
+          {hours.map((h, i) => (
+            <div key={i} style={{
+              flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2,
+            }}>
+              <span style={{ fontSize: 8, color: 'rgba(30,73,118,0.7)', fontFamily: MONO, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '100%' }}>
+                {h.t}
+              </span>
+              <WxIcon k={iconKeyFor(h.cond, hourIsDay(h))} size={16} />
+              <span style={{ fontSize: 10.5, fontWeight: 600, color: '#0b2545', fontVariantNumeric: 'tabular-nums' }}>
+                {h.temp}°
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+      <style>{WX_ICON_CSS}</style>
+    </div>
+  );
+}
+
 export default WeatherCard;

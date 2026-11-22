@@ -6,7 +6,7 @@
  */
 import React, { Suspense, lazy, useEffect, useRef, useState, useCallback } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Pin, X, Crosshair, Maximize2, Minimize2, ExternalLink } from 'lucide-react';
+import { Pin, X, Crosshair, Maximize2, Minimize2, ExternalLink, LayoutGrid } from 'lucide-react';
 import { C } from './cortex-demo-helpers';
 import {
   useSurfacePanels, useSurfaceFocusMode,
@@ -15,6 +15,7 @@ import {
   ALL_ZONES, type SurfacePanel, type SurfaceZone,
 } from '../../lib/cortex-surfaces';
 import { cortexSignalBus } from './CortexVisualizer';
+import { WeatherWidget } from './WeatherCard';
 import { CortexInitiativeInbox } from './CortexInitiativeInbox';
 import type { CortexArtifact } from '../../lib/cortex-artifacts';
 import { setGlobeMode } from '../../lib/cortex-globe';
@@ -457,6 +458,21 @@ function PanelChrome({
             title="Drag to move"
             style={wxCtrlBtn}
           >⋮⋮</button>
+          <button
+            onPointerDown={(e) => e.stopPropagation()}
+            onClick={() => {
+              if (panel.widget) {
+                updateSurfacePanel(panel.id, { widget: false });
+                resizeSurfacePanel(panel.id, null);
+              } else {
+                updateSurfacePanel(panel.id, { widget: true });
+                resizeSurfacePanel(panel.id, { w: 250, h: 190 });
+              }
+            }}
+            aria-label={panel.widget ? `Expand ${panel.title} to full card` : `Widget mode for ${panel.title}`}
+            title={panel.widget ? 'Full card' : 'Widget mode'}
+            style={{ ...wxCtrlBtn, color: panel.widget ? '#1d4ed8' : '#12335c' }}
+          ><LayoutGrid size={11} /></button>
           {onToggleFocus && (
             <button
               onPointerDown={(e) => e.stopPropagation()}
@@ -1740,6 +1756,13 @@ function PanelBody({ panel, mediaFit, mediaSize }: {
   if (panel.kind === 'sheet') {
     return <SheetPanelBody panel={panel} />;
   }
+  if (panel.artifact?.kind === 'weather' && panel.widget) {
+    return (
+      <div style={{ padding: 0, height: '100%', overflow: 'hidden' }}>
+        <WeatherWidget a={panel.artifact} />
+      </div>
+    );
+  }
   if (panel.artifact) {
     return (
       <Suspense fallback={
@@ -1969,9 +1992,11 @@ export function CortexSurfaceLayer({ drawerOpen = false }: { drawerOpen?: boolea
     e.stopPropagation();
     if (e.button !== 0) return;
     const origin = { ...currentRect };
-    // Weather cards need enough room for hero + forecast strips.
+    // Weather cards need enough room for hero + forecast strips; widget
+    // mode is a true glanceable tile and may shrink much smaller.
     const isWx = panel.artifact?.kind === 'weather';
-    const rData = { id: panel.id, startX: e.clientX, startY: e.clientY, startW: origin.w, startH: origin.h, rect: origin, minW: isWx ? 300 : 220, minH: isWx ? 380 : 160 };
+    const isWxWidget = isWx && panel.widget;
+    const rData = { id: panel.id, startX: e.clientX, startY: e.clientY, startW: origin.w, startH: origin.h, rect: origin, minW: isWxWidget ? 180 : isWx ? 300 : 220, minH: isWxWidget ? 120 : isWx ? 380 : 160 };
     resizeRef.current = rData;
     setResizing(rData);
     setRaisedId(panel.id);
@@ -2141,8 +2166,9 @@ export function CortexSurfaceLayer({ drawerOpen = false }: { drawerOpen?: boolea
           const dimmed = (focusMode && !p.pinned) || (anyFocused && !isFocused);
           const baseZone = rects[p.zone];
           const isWeatherCardPanel = p.artifact?.kind === 'weather';
-          const defaultW = isWeatherCardPanel ? 400 : p.kind === 'sheet' ? Math.max(baseZone.w, 520) : p.kind === 'web' ? Math.max(baseZone.w, 540) : baseZone.w;
-          const defaultH = isWeatherCardPanel ? Math.max(baseZone.h, 600) : p.kind === 'sheet' ? Math.max(baseZone.h, 300) : p.kind === 'web' ? Math.max(baseZone.h, 380) : baseZone.h;
+          const isWxWidget = isWeatherCardPanel && p.widget;
+          const defaultW = isWxWidget ? 250 : isWeatherCardPanel ? 400 : p.kind === 'sheet' ? Math.max(baseZone.w, 520) : p.kind === 'web' ? Math.max(baseZone.w, 540) : baseZone.w;
+          const defaultH = isWxWidget ? 190 : isWeatherCardPanel ? Math.max(baseZone.h, 600) : p.kind === 'sheet' ? Math.max(baseZone.h, 300) : p.kind === 'web' ? Math.max(baseZone.h, 380) : baseZone.h;
           const w = p.customSize?.w ?? defaultW;
           const h = p.customSize?.h ?? defaultH;
 

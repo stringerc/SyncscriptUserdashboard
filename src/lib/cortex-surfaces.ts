@@ -85,6 +85,8 @@ export interface SurfacePanel {
   };
   /** 'hug' panels size to content (images); 'fill' panels take the whole zone. */
   fit?: 'fill' | 'hug';
+  /** Compact glanceable mode — weather panels render WeatherWidget instead of the full card. */
+  widget?: boolean;
   /** CCTV payload: camera name/url/coords when known. */
   cctv?: { name?: string; url?: string; lat?: number; lon?: number };
   /** Semantic cluster identification and holographic color styling */
