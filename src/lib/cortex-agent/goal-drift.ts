@@ -39,6 +39,7 @@ import { readAttributions } from './goal-linker';
 import { proposeAmbientAction } from './ambient-actions';
 import { maybeGeneratePremortem } from './goal-premortem';
 import { proposeCorrectiveMission } from './goal-corrective';
+import { onDriftEvaluation } from './goal-verification';
 
 const RUNTIME = path.resolve(process.cwd(), '.cortex-runtime');
 const ARCHIVE_PATH = path.join(RUNTIME, 'task-archive.jsonl');
@@ -205,6 +206,10 @@ export function runGoalDriftWatch(
   nowMs: number = Date.now(),
 ): { evaluated: number; alerted: number } {
   const findings = evaluateGoalDrift(nowMs);
+  // Verification loop: completed corrective missions get their drift
+  // finding re-checked every cycle — cleared → "resolved" notice;
+  // persisted past cooldown → escalation proposal for direct review.
+  try { onDriftEvaluation(findings, nowMs); } catch {}
   const state = loadState();
   let alerted = 0;
   for (const f of findings) {

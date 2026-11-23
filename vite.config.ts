@@ -264,6 +264,7 @@ import { ambientReact, startSidecarReconciler } from './src/lib/cortex-agent/amb
 import { startGoalLinker, stampTaskGoal, goalProgressDelta } from './src/lib/cortex-agent/goal-linker';
 import { startGoalDriftWatch } from './src/lib/cortex-agent/goal-drift';
 import { setPremortemNotifier } from './src/lib/cortex-agent/goal-premortem';
+import { setVerificationNotifier, handleCorrectiveResolution } from './src/lib/cortex-agent/goal-verification';
 
 // Unhandled-rejection guard: Node crashes the ENTIRE process on any
 // unhandled rejection. AbortError rejections are routine cancellation
@@ -1782,6 +1783,11 @@ function apiProxyPlugin(): Plugin {
         setPremortemNotifier((msg) => {
           try { ambientPush('ambient', msg); } catch {}
         });
+        // Verification loop: "drift resolved" / escalation notices get
+        // their own voice once the corrective's outcome is measured.
+        setVerificationNotifier((msg) => {
+          try { ambientPush('ambient', msg); } catch {}
+        });
       } catch (e: any) {
         console.warn('[goal-drift] failed to arm:', e?.message || e);
       }
@@ -1901,6 +1907,10 @@ function apiProxyPlugin(): Plugin {
       // failure evidence survive the 200-task in-memory eviction window.
       agentRuntime.setTaskFinishedHook((task, agent) => {
         archiveTask(task, agent?.name);
+        // Corrective-mission verification: a task carrying
+        // input.correctiveFor just resolved — mark its goal+kind for
+        // drift re-check (completed) or escalate immediately (failed).
+        try { handleCorrectiveResolution(task as any); } catch {}
         // Incident ticket: every failure upserts the agent|class|kind ledger.
         if (task.status === 'failed') {
           recordIncidentFailure({
