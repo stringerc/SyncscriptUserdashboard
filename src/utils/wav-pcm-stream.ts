@@ -19,6 +19,7 @@ export class PcmQueue {
   private waiters: Array<() => void> = [];
   private done = false;
   private failure: unknown = null;
+  private truncatedFlag = false;
 
   push(chunk: PcmChunk) {
     this.chunks.push(chunk);
@@ -34,6 +35,17 @@ export class PcmQueue {
     this.failure = err;
     this.done = true;
     this.wake();
+  }
+
+  /** Mark the stream as server-truncated (EOF before declared data size
+   *  or pump failure after partial delivery). Consumers use this to
+   *  re-synthesize the sentence whole instead of accepting a cutoff. */
+  markTruncated() {
+    this.truncatedFlag = true;
+  }
+
+  wasTruncated(): boolean {
+    return this.truncatedFlag || this.failure != null;
   }
 
   private wake() {
@@ -134,7 +146,7 @@ export interface WavFormat {
  */
 export async function parseWavHeader(
   reader: ReadableStreamDefaultReader<Uint8Array>,
-): Promise<{ format: WavFormat; data: ByteReader }> {
+): Promise<{ format: WavFormat; data: ByteReader; dataSize: number }> {
   const br = new ByteReader(reader);
   const riff = await br.read(12);
   if (!riff || riff.byteLength < 12) throw new Error('not a WAV stream');
@@ -143,6 +155,7 @@ export async function parseWavHeader(
   if (riffStr !== 'RIFF' || waveStr !== 'WAVE') throw new Error('not a WAV stream');
 
   let format: WavFormat | null = null;
+  let dataSize = 0;
   for (;;) {
     const head = await br.read(8);
     if (!head || head.byteLength < 8) throw new Error('WAV missing data chunk');
@@ -168,7 +181,8 @@ export async function parseWavHeader(
       if (format.audioFormat !== 1 && format.audioFormat !== 3) {
         throw new Error(`unsupported WAV encoding ${format.audioFormat}`);
       }
-      return { format, data: br };
+      dataSize = size;
+      return { format, data: br, dataSize };
     } else {
       // Skip unknown chunk (pad to even).
       const skip = size + (size & 1);
@@ -229,19 +243,30 @@ export async function pumpWavToPcm(
   const onAbort = () => { try { reader.cancel(); } catch { } };
   signal?.addEventListener('abort', onAbort, { once: true });
   try {
-    const { format, data } = await parseWavHeader(reader);
+    const { format, data, dataSize } = await parseWavHeader(reader);
     const bytesPerFrame = format.channels * (format.bitsPerSample / 8);
     const blockFrames = Math.max(1, Math.floor(PCM_BLOCK_BYTES / bytesPerFrame));
     const blockBytes = blockFrames * bytesPerFrame;
+    let payloadBytes = 0;
     for (;;) {
       if (signal?.aborted) return;
       const block = await data.read(blockBytes);
       if (!block || block.byteLength === 0) break;
+      payloadBytes += block.byteLength;
       const samples = pcmToFloat32(block, format.channels, format.bitsPerSample, format.audioFormat);
       if (samples.length) queue.push({ samples, sampleRate: format.sampleRate });
     }
+    // Declared-size check: streamed WAV headers sometimes carry a real
+    // data length. EOF short of it means the server cut the utterance —
+    // flag truncation so the consumer re-speaks the sentence whole
+    // instead of accepting an abrupt mid-word stop. dataSize <= 0 or
+    // absurdly large (0xFFFFFFFF streaming placeholder) → can't judge.
+    if (dataSize > 0 && dataSize < 0x7fffffff && payloadBytes < dataSize) {
+      queue.markTruncated();
+    }
     queue.close();
   } catch (err) {
+    queue.markTruncated();
     queue.fail(err);
     throw err;
   } finally {

@@ -106,6 +106,21 @@ const TTS_PROXY_ATTEMPTS = 3;
  *  without bursting the TTS server on long replies. */
 const TTS_PREFETCH_AHEAD = 3;
 
+// Sticky served-voice for the STREAMING path — mirrors the blob path's
+// pinServedVoice in nexus-kokoro-tts-fetch. The proxy tags each response
+// with X-TTS-Voice (the engine that actually produced the audio). Without
+// pinning, every sentence re-rolls the server's engine chain and a
+// mid-reply pocket→kokoro flip sounds like Cortex changed voices.
+const STREAM_VOICE_MS = 90_000;
+let streamServedVoice: string | null = null;
+let streamServedVoiceUntil = 0;
+function pinStreamVoice(v: string | null | undefined) {
+  if (v) { streamServedVoice = v; streamServedVoiceUntil = Date.now() + STREAM_VOICE_MS; }
+}
+function streamVoiceFor(requested: string): string {
+  return streamServedVoice && Date.now() < streamServedVoiceUntil ? streamServedVoice : requested;
+}
+
 // Fire-and-forget TTS warmup: pocket-tts cold synthesis measured ~15-21s on a
 // loaded box vs ~1s warm. One tiny request on first voice-hook mount pulls
 // model weights + connection pools so the user's first real utterance isn't
@@ -1376,7 +1391,7 @@ export function useVoiceStream(options: UseVoiceStreamOptions = {}) {
         const res = await fetch('/api/ai/tts', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ text: item.text, voice: item.voice || 'cortana', speed: item.speed || 1.0 }),
+          body: JSON.stringify({ text: item.text, voice: streamVoiceFor(item.voice || 'cortana'), speed: item.speed || 1.0 }),
           signal: streamTtsAbortRef.current?.signal,
         });
         const ct = res.headers.get('content-type') || '';
@@ -1384,6 +1399,7 @@ export function useVoiceStream(options: UseVoiceStreamOptions = {}) {
           release();
           return null;
         }
+        pinStreamVoice(res.headers.get('x-tts-voice'));
         const queue = new PcmQueue();
         void pumpWavToPcm(res.body, queue, streamTtsAbortRef.current?.signal)
           .catch(() => queue.fail(new Error('pcm pump failed')))
@@ -1398,13 +1414,18 @@ export function useVoiceStream(options: UseVoiceStreamOptions = {}) {
   }, []);
 
   /** Consume a PcmQueue: each arriving Float32 chunk becomes an AudioBuffer
-   *  scheduled on the shared gapless timeline. Resolves true once at least
-   *  one buffer was scheduled — first audio lands ~300ms into synthesis. */
-  const schedulePcmQueue = useCallback(async (queue: PcmQueue, epoch: number): Promise<boolean> => {
+   *  scheduled on the shared gapless timeline. Resolves 'full' once the
+   *  whole utterance scheduled, 'partial' when the stream truncated or
+   *  failed mid-sentence (caller must rewind + re-speak via blob), false
+   *  when nothing could be scheduled. First audio lands ~300ms into
+   *  synthesis. */
+  const schedulePcmQueue = useCallback(async (queue: PcmQueue, epoch: number): Promise<{ status: 'full' | 'partial' | false; sources: AudioBufferSourceNode[] }> => {
+    const none = { status: false as const, sources: [] as AudioBufferSourceNode[] };
     const graph = await ensureGaplessGraph();
-    if (!graph) return false;
+    if (!graph) return none;
     const { ctx, analyser } = graph;
     let scheduled = 0;
+    const mine: AudioBufferSourceNode[] = [];
     const pending: PcmChunk[] = [];
     let pendingSecs = 0;
     const scheduleOne = (chunk: PcmChunk) => {
@@ -1422,6 +1443,7 @@ export function useVoiceStream(options: UseVoiceStreamOptions = {}) {
       // the "shaken sentence" warble.
       gaplessNextStartRef.current = when + audioBuf.duration;
       gaplessSourcesRef.current.add(src);
+      mine.push(src);
       src.onended = () => {
         gaplessSourcesRef.current.delete(src);
         if (gaplessSourcesRef.current.size === 0) setTtsOutputLevel(0);
@@ -1431,7 +1453,7 @@ export function useVoiceStream(options: UseVoiceStreamOptions = {}) {
     };
     try {
       for await (const chunk of queue.iterate()) {
-        if (streamEpochRef.current !== epoch) return scheduled > 0;
+        if (streamEpochRef.current !== epoch) return { status: scheduled > 0 ? 'partial' : false, sources: mine };
         // Yield mid-sentence if another surface barged in — without this a
         // long synthesis holds scheduled audio while the thief plays.
         if ((scheduled & 7) === 0 && speechArbiter.heartbeat() === 'stolen') break;
@@ -1447,9 +1469,13 @@ export function useVoiceStream(options: UseVoiceStreamOptions = {}) {
         pendingSecs = 0;
       }
       for (const c of pending.splice(0)) scheduleOne(c);
-      return scheduled > 0;
+      if (scheduled === 0) return none;
+      // Truncated stream = server cut the utterance mid-word. Report
+      // 'partial' so the caller can kill these buffers and re-speak the
+      // sentence whole — accepting it produces the abrupt mid-word stop.
+      return { status: queue.wasTruncated() ? 'partial' : 'full', sources: mine };
     } catch {
-      return scheduled > 0;
+      return { status: scheduled > 0 ? 'partial' : false, sources: mine };
     }
   }, [ensureGaplessGraph, finalizeStreamSpeech, speechArbiter]);
 
@@ -1495,12 +1521,29 @@ export function useVoiceStream(options: UseVoiceStreamOptions = {}) {
       const streamQueue = item.streamPromise
         ? await item.streamPromise.catch(() => null)
         : null;
-      let streamed = false;
       if (streamQueue) {
-        streamed = await schedulePcmQueue(streamQueue, currentEpoch);
+        // Remember where this sentence began on the gapless timeline —
+        // a truncated stream rewinds here so the blob retry re-speaks
+        // the whole sentence instead of leaving a mid-word hole.
+        const timelineMark = gaplessNextStartRef.current;
+        const r = await schedulePcmQueue(streamQueue, currentEpoch);
+        if (streamEpochRef.current !== currentEpoch) break;
+        if (r.status === 'full') continue;
+        if (r.status === 'partial') {
+          // Server cut the utterance mid-word: kill this sentence's
+          // scheduled buffers, rewind the timeline, and fall through
+          // to the buffered blob path for a complete re-speak.
+          for (const src of r.sources) {
+            gaplessSourcesRef.current.delete(src);
+            try { src.stop(); } catch {}
+          }
+          gaplessNextStartRef.current = Math.min(gaplessNextStartRef.current, timelineMark);
+          setTtsOutputLevel(0);
+          console.info('[Streaming TTS] Truncated PCM stream — re-speaking via blob path');
+        }
+      } else {
+        if (streamEpochRef.current !== currentEpoch) break;
       }
-      if (streamed) continue;
-      if (streamEpochRef.current !== currentEpoch) break;
 
       let blob: Blob | null = null;
       try {
