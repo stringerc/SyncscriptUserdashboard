@@ -248,14 +248,20 @@ export async function pumpWavToPcm(
     const blockFrames = Math.max(1, Math.floor(PCM_BLOCK_BYTES / bytesPerFrame));
     const blockBytes = blockFrames * bytesPerFrame;
     let payloadBytes = 0;
+    let abortedMidPayload = false;
     for (;;) {
-      if (signal?.aborted) return;
+      if (signal?.aborted) { abortedMidPayload = payloadBytes > 0; break; }
       const block = await data.read(blockBytes);
       if (!block || block.byteLength === 0) break;
       payloadBytes += block.byteLength;
       const samples = pcmToFloat32(block, format.channels, format.bitsPerSample, format.audioFormat);
       if (samples.length) queue.push({ samples, sampleRate: format.sampleRate });
     }
+    // Abort mid-payload must mark truncation — previously it returned
+    // cleanly, the queue closed unflagged, and schedulePcmQueue accepted
+    // half an utterance as 'full' = the abrupt-cutoff bug through a
+    // different door.
+    if (abortedMidPayload) queue.markTruncated();
     // Declared-size check: streamed WAV headers sometimes carry a real
     // data length. EOF short of it means the server cut the utterance —
     // flag truncation so the consumer re-speaks the sentence whole
