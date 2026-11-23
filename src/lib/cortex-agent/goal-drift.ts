@@ -37,6 +37,7 @@ import { getCortexGoals, type LifeGoal } from '../cortex-goals';
 import { loadMission } from '../cortex-agents/mission';
 import { readAttributions } from './goal-linker';
 import { proposeAmbientAction } from './ambient-actions';
+import { maybeGeneratePremortem } from './goal-premortem';
 
 const RUNTIME = path.resolve(process.cwd(), '.cortex-runtime');
 const ARCHIVE_PATH = path.join(RUNTIME, 'task-archive.jsonl');
@@ -229,6 +230,13 @@ export function runGoalDriftWatch(
         },
       });
     } catch {}
+    // Pre-mortem: stall/diversion findings trigger an auto-generated
+    // "what could have gone wrong" narrative from the deviation record,
+    // ambient context, and 30d episodic memory (goal-premortem.ts).
+    // Fire-and-forget — synthesis (local LLM) must never block the watch.
+    if (f.kind === 'stall' || f.kind === 'diversion') {
+      try { void maybeGeneratePremortem(f).catch(() => {}); } catch {}
+    }
     try { onAlert?.({ ...f, alerted: true }); } catch {}
   }
   // Prune stale cooldown keys (>48h) so the state file stays bounded.

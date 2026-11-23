@@ -263,6 +263,7 @@ import { startProcessWatch, getTopMemoryProcesses, processWatchStatus } from './
 import { ambientReact, startSidecarReconciler } from './src/lib/cortex-agent/ambient-actions';
 import { startGoalLinker, stampTaskGoal, goalProgressDelta } from './src/lib/cortex-agent/goal-linker';
 import { startGoalDriftWatch } from './src/lib/cortex-agent/goal-drift';
+import { setPremortemNotifier } from './src/lib/cortex-agent/goal-premortem';
 
 // Unhandled-rejection guard: Node crashes the ENTIRE process on any
 // unhandled rejection. AbortError rejections are routine cancellation
@@ -1775,6 +1776,11 @@ function apiProxyPlugin(): Plugin {
             const icon = f.severity === 'high' ? '🚨' : '⚠️';
             ambientPush('ambient', `${icon} Goal drift (${f.kind}): "${f.goalTitle.slice(0, 60)}" — ${f.detail} Suggested: ${f.suggestion}`);
           } catch {}
+        });
+        // Pre-mortem notices get their own voice once synthesis lands
+        // (async — the drift alert itself is never delayed by the LLM).
+        setPremortemNotifier((msg) => {
+          try { ambientPush('ambient', msg); } catch {}
         });
       } catch (e: any) {
         console.warn('[goal-drift] failed to arm:', e?.message || e);

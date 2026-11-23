@@ -26,6 +26,7 @@ import { getCortexGoals } from '../cortex-goals';
 import { listConstraints, constraintDigest } from './constraints';
 import { computeSignalFeeds, resolveGoalSignals } from './signal-feeds';
 import { recentAttributions } from './goal-linker';
+import { getLatestPremortems } from './goal-premortem';
 
 const RUNTIME = path.resolve(process.cwd(), '.cortex-runtime');
 const BRIEFS_DIR = path.join(RUNTIME, 'briefs');
@@ -203,6 +204,14 @@ export function compileStrategicState(): string {
         paceLines.push(`- "${g.title}": ${gDone}/${gOps.length} ops done, ${gCommits} commits this wk, ${dl}${verdict ? ` — ${verdict}` : ''}`);
       }
       if (paceLines.length) sections.push(`## GOAL PACE (drift check vs horizon)\n${paceLines.join('\n')}`);
+      // Pre-mortems — the "why" behind stall/diversion findings, synthesized
+      // from the deviation record + ambient context + 30d episodic memory.
+      try {
+        const pms = getLatestPremortems();
+        if (pms.length) {
+          sections.push(`## PRE-MORTEMS (auto-generated failure narratives for drifting goals)\n${pms.map((p) => `- "${p.goalTitle}" [${p.kind}, ${p.engine}] — ${p.narrative}`).join('\n')}`);
+        }
+      } catch {}
     } catch {}
     const mGoals = (mission?.goals || []).filter((g: any) => g.status === 'active');
     if (mGoals.length) {
