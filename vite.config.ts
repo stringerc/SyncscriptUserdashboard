@@ -261,7 +261,7 @@ import {
 import { getWorldState, formatWorldStateHeader, startWorldStateSampler, onHostMemoryPressure, onWorldStateSample, getCachedMemFreePct, probeMemorystatusFreePct } from './src/lib/cortex-world-state';
 import { startProcessWatch, getTopMemoryProcesses, processWatchStatus } from './src/lib/cortex-agent/process-watch';
 import { ambientReact, startSidecarReconciler } from './src/lib/cortex-agent/ambient-actions';
-import { startGoalLinker } from './src/lib/cortex-agent/goal-linker';
+import { startGoalLinker, stampTaskGoal, goalProgressDelta } from './src/lib/cortex-agent/goal-linker';
 
 // Unhandled-rejection guard: Node crashes the ENTIRE process on any
 // unhandled rejection. AbortError rejections are routine cancellation
@@ -1737,6 +1737,17 @@ function apiProxyPlugin(): Plugin {
         });
       } catch (e: any) {
         console.warn('[goal-linker] failed to arm:', e?.message || e);
+      }
+      // Goal attribution on every agent dispatch + progress delta on every
+      // resolution notice. Decorator stamps input.goalId inside submitTask
+      // (covers tools, routines, retries, scheduler); annotator appends the
+      // goal's live progress line to "X reports: …" notices.
+      try {
+        const rt = getAgentRuntime();
+        rt.setTaskDecorator(stampTaskGoal);
+        rt.setResolutionAnnotator((task) => goalProgressDelta(task));
+      } catch (e: any) {
+        console.warn('[goal-attribution] failed to wire:', e?.message || e);
       }
       // ── /api/cortex/autonomy — sovereign autonomy mode (bypass-permissions).
       // GET returns the mode; POST {mode:'autonomous'|'confirm'} toggles it.

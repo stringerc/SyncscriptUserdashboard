@@ -311,6 +311,13 @@ export class AgentRuntime {
    *  which previously swallowed rejections silently (fireRoutine ignores
    *  the submitTask result). vite wires this to fileBudgetProposal. */
   private onBudgetExhausted: ((agentId: AgentId, error: string) => void) | null = null;
+  /** vite wires goal attribution here: enriches task.input (e.g. stamps
+   *  goalId) on EVERY submitTask path — tool calls, routines, retries,
+   *  scheduler fires — so attribution can't be bypassed by the caller. */
+  private taskDecorator: ((input: Record<string, unknown>) => Record<string, unknown>) | null = null;
+  /** vite wires goal progress here: suffix appended to resolution notices
+   *  so 'X reports: … — PASSED' carries its strategic delta. */
+  private resolutionAnnotator: ((task: AgentTask) => string) | null = null;
   private proposals = new Map<string, SpawnProposal>();
   private spawnCounter = 0;
   private routines = new Map<string, AgentRoutine>();
@@ -373,6 +380,19 @@ export class AgentRuntime {
    *  starvation becomes a visible governance event, not a silent skip. */
   setBudgetExhaustedHook(fn: (agentId: AgentId, error: string) => void) {
     this.onBudgetExhausted = fn;
+  }
+
+  /** Task-input decorator — runs inside submitTask before the task is
+   *  created, so goalId/venture attribution applies to every dispatch
+   *  path uniformly. Must be cheap and never throw. */
+  setTaskDecorator(fn: (input: Record<string, unknown>) => Record<string, unknown>) {
+    this.taskDecorator = fn;
+  }
+
+  /** Resolution annotator — returns a short suffix (e.g. goal progress
+   *  delta) appended to notifyOnFinish/high-signal ambient notices. */
+  setResolutionAnnotator(fn: (task: AgentTask) => string) {
+    this.resolutionAnnotator = fn;
   }
 
   attachSentinel(sources: ConstructorParameters<typeof ModelSentinel>[2], probeFactory: ConstructorParameters<typeof ModelSentinel>[3]) {
@@ -471,8 +491,15 @@ export class AgentRuntime {
       if (t.agentId === agentId && t.kind === kind && t.title === title && (t.status === 'queued' || t.status === 'running'))
         return { ok: true, task: t };
     }
+    // Goal attribution: decorator stamps input.goalId (primary goal) when
+    // the caller didn't set one — applies to tools, routines, retries,
+    // and scheduler fires alike. Explicit goalId always wins.
+    let effectiveInput = input;
+    if (this.taskDecorator) {
+      try { effectiveInput = this.taskDecorator({ ...input }); } catch { effectiveInput = input; }
+    }
     const task: AgentTask = {
-      id: newTaskId(), agentId, kind, title, input,
+      id: newTaskId(), agentId, kind, title, input: effectiveInput,
       status: 'queued', progress: null, createdAt: Date.now(),
     };
     this.tasks.set(task.id, task);
@@ -863,10 +890,14 @@ export class AgentRuntime {
             : status === 'vetoed' ? 'VETOED' : 'CANCELLED';
           const errHint = (status === 'failed' || status === 'vetoed') && task.error
             ? ` — ${String(task.error).slice(0, 120)}` : '';
+          let goalSuffix = '';
+          if (this.resolutionAnnotator) {
+            try { goalSuffix = this.resolutionAnnotator(task) || ''; } catch { goalSuffix = ''; }
+          }
           const notice = {
             id: `notice-resolve-${task.id}-${Date.now()}`,
             kind: 'ambient',
-            text: `${agent ? agent.name : 'Agent'} reports: ${task.title.slice(0, 90)} — ${outcome}.${errHint}`,
+            text: `${agent ? agent.name : 'Agent'} reports: ${task.title.slice(0, 90)} — ${outcome}.${errHint}${goalSuffix}`,
             ts: Date.now(),
           };
           fs.appendFileSync(ambientFile, JSON.stringify(notice) + '\n');

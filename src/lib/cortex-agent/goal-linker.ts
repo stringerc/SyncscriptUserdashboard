@@ -180,6 +180,51 @@ export function commitsTowardGoal(goalId: string, sinceMs: number): CommitAttrib
   return readAttributions().filter((r) => r.goalId === goalId && r.ts >= sinceMs);
 }
 
+/**
+ * Task attribution — stamp input.goalId with the primary goal when the
+ * caller didn't set one. Wired into agentRuntime.setTaskDecorator so EVERY
+ * dispatch path (cortex_agents tool, routines, retries, scheduler fires,
+ * requeues) carries the strategic objective. Explicit goalId always wins —
+ * a task aimed at a different goal keeps its own attribution.
+ */
+export function stampTaskGoal(input: Record<string, unknown>): Record<string, unknown> {
+  if (input.goalId) return input;
+  const goal = resolvePrimaryGoal();
+  if (!goal) return input;
+  return { ...input, goalId: goal.id, goalTitle: goal.title };
+}
+
+const WEEK_MS_LOCAL = 7 * 24 * 3600_000;
+
+/**
+ * Progress delta for resolution notices — the "so what" attached to a
+ * task outcome. Reads mission ops linked to the task's goal plus this
+ * week's attributed commits, and compresses it into one speakable clause:
+ *   " · toward Launch SyncScript…: 4/10 ops done, 6 commits this wk, 38d left"
+ * Cheap: two small file reads, no git calls. Returns '' when the task has
+ * no goal attribution or the goal can't be resolved.
+ */
+export function goalProgressDelta(task: { input?: Record<string, unknown> | null }): string {
+  const gid = task.input?.goalId;
+  if (!gid || typeof gid !== 'string') return '';
+  try {
+    const goal = getCortexGoals().list().find((g) => g.id === gid);
+    if (!goal) return '';
+    const ms = loadMission();
+    const linked = ms.opsItems.filter((o) => o.goalId === gid);
+    const done = linked.filter((o) => o.done).length;
+    const cutoff = Date.now() - WEEK_MS_LOCAL;
+    const commits = readAttributions().filter((r) => r.goalId === gid && r.ts >= cutoff).length;
+    const daysLeft = goal.targetDate ? Math.max(0, Math.ceil((goal.targetDate - Date.now()) / 86400_000)) : null;
+    const short = goal.title.length > 34 ? goal.title.slice(0, 33) + '…' : goal.title;
+    const parts = [`${done}/${linked.length} ops done`, `${commits} commit${commits === 1 ? '' : 's'} this wk`];
+    if (daysLeft !== null) parts.push(`${daysLeft}d left`);
+    return ` · toward "${short}": ${parts.join(', ')}`;
+  } catch {
+    return '';
+  }
+}
+
 /** All attributions in a window regardless of goal — review-level view. */
 export function recentAttributions(sinceMs: number): CommitAttribution[] {
   return readAttributions().filter((r) => r.ts >= sinceMs);

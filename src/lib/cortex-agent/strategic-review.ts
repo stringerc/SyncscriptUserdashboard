@@ -170,14 +170,39 @@ export function compileStrategicState(): string {
     // Commit attribution — every commit on the branch counts toward the
     // primary goal (goal-linker reconciler). This is the "every commit
     // contributes to the quarter target" ledger.
+    let attr: ReturnType<typeof recentAttributions> = [];
     try {
       const cutoffMs = Date.now() - WEEK_MS;
-      const attr = recentAttributions(cutoffMs);
+      attr = recentAttributions(cutoffMs);
       if (attr.length) {
         const byGoal = new Map<string, number>();
         for (const a of attr) byGoal.set(a.goalTitle, (byGoal.get(a.goalTitle) || 0) + 1);
         sections.push(`## COMMIT ATTRIBUTION (this week)\n${[...byGoal.entries()].map(([g, n]) => `- "${g}": ${n} commit${n === 1 ? '' : 's'}`).join('\n')}`);
       }
+    } catch {}
+    // Goal pace — the "accelerating toward the deadline or spinning"
+    // readout. Per active goal: ops completion, this week's commits,
+    // days remaining, and a linear pace verdict.
+    try {
+      const paceLines: string[] = [];
+      for (const g of allGoals.filter((x: any) => x.status === 'active')) {
+        const gOps = ops.filter((o: any) => o.goalId === g.id);
+        const gDone = gOps.filter((o: any) => o.done).length;
+        const gCommits = attr.filter((a: any) => a.goalId === g.id).length;
+        const daysLeft = g.targetDate ? Math.max(0, Math.ceil((g.targetDate - Date.now()) / 86400_000)) : null;
+        let verdict = '';
+        if (daysLeft !== null && gOps.length) {
+          const neededPerDay = (gOps.length - gDone) / Math.max(1, daysLeft);
+          // Rough pace proxy: ops completed per day over the last 7 days
+          // vs ops still needed per day to hit target.
+          const recentDone = gOps.filter((o: any) => o.done && Number(o.verifiedAt || 0) >= cutoff).length;
+          const pace = recentDone / 7;
+          verdict = pace >= neededPerDay * 0.8 ? 'on-pace' : pace > 0 ? 'behind-pace' : 'stalled';
+        }
+        const dl = daysLeft !== null ? `${daysLeft}d left` : 'no deadline';
+        paceLines.push(`- "${g.title}": ${gDone}/${gOps.length} ops done, ${gCommits} commits this wk, ${dl}${verdict ? ` — ${verdict}` : ''}`);
+      }
+      if (paceLines.length) sections.push(`## GOAL PACE (drift check vs horizon)\n${paceLines.join('\n')}`);
     } catch {}
     const mGoals = (mission?.goals || []).filter((g: any) => g.status === 'active');
     if (mGoals.length) {
