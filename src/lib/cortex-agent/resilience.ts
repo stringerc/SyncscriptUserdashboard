@@ -33,6 +33,7 @@ import { applyCalibration, calibrationReport } from './goal-calibration';
 import { getPaceWatchSummaries } from './goal-pace-watch';
 import { resolvePrimaryGoal, stampTaskGoal } from './goal-linker';
 import { validateDispatchTarget } from './tenants';
+import { assessCoverage, loadSkillCorpus } from './capability-map';
 
 const RUNTIME = path.resolve(process.cwd(), '.cortex-runtime');
 const REPORT = path.join(RUNTIME, 'resilience-report.json');
@@ -330,6 +331,24 @@ function experimentGoalTracking(): { slos: SloResult[]; detail: Record<string, u
     actual: JSON.stringify(smoke),
     pass: smokeOk,
   });
+
+  // 5. Capability map — every active goal must assess cleanly and the
+  //    coverage model must see the skill corpus (a zero-skill scan would
+  //    mean the corpus paths broke, silently reporting everything missing).
+  try {
+    const cap = assessCoverage();
+    const corpusSize = loadSkillCorpus().length;
+    const wellFormed = cap.goals.every((g) => g.goalId && Array.isArray(g.capabilities) && g.missing.every((m) => typeof m === 'string'));
+    slos.push({
+      name: 'capability map coverage', target: 'assesses all goals, corpus > 0 skills',
+      actual: `${cap.goals.length} goals, ${cap.summary.covered} covered / ${cap.summary.missing} missing, corpus=${corpusSize} skills`,
+      pass: wellFormed && corpusSize > 0,
+      detail: cap.goals.length ? `missing: ${JSON.stringify(cap.summary.missingByCapability)}` : 'no active goals',
+    });
+    detail.capabilityMap = { goals: cap.goals.length, missing: cap.summary.missingByCapability, corpusSize };
+  } catch (e: any) {
+    slos.push({ name: 'capability map coverage', target: 'assesses all goals', actual: `ERROR ${e?.message}`, pass: false });
+  }
 
   detail.custody = custody ? { id: custody.id, steps: custody.steps?.length, signals: custody.signals } : null;
   detail.driftMs = driftMs;

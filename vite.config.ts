@@ -227,6 +227,7 @@ import { listEvals, getEval, fileEvalDefinition, runEval, readRuns, evalScorecar
 import { computeCounselScorecard } from './src/lib/cortex-agents/counsel-scorecard';
 import { initEventLog, readEvents, getEventLogStats, verifyEventLog } from './src/lib/cortex-agents/eventlog';
 import { tailModelHealthHistory } from './src/lib/cortex-agents/sentinel';
+import { assessCoverage, assessGoal, fileCapabilityGaps } from './src/lib/cortex-agent/capability-map';
 import { recallCortexMemory, retainCortexMemory, fetchCortexMemoryGraph } from './src/lib/cortex-memory';
 import { runScenarioSimulation, getSimulationHistory } from './src/lib/cortex-simulation';
 import { probeCompetitorIntelligence, listCompetitorRadar } from './src/lib/cortex-competitor-recon';
@@ -6507,6 +6508,14 @@ end tell`;
                     targetDate: Number.isFinite(targetDate) ? targetDate : undefined,
                     signals,
                   });
+                  // Coverage chain: a new goal immediately gets its
+                  // capability assessment; missing coverage files a
+                  // strategy proposal (approve-each ledger) — fire and
+                  // forget so declare latency is unaffected.
+                  try {
+                    const a = assessGoal(goal);
+                    if (a.missing.length) fileCapabilityGaps([a]);
+                  } catch {}
                   return res.end(JSON.stringify({ ok: true, tool, action, goal, durationMs: Date.now() - startMs }));
                 }
                 if (action === 'set_status') {
@@ -15648,6 +15657,32 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
           matrix: agentRuntime.matrix.snapshot(),
           history: tailModelHealthHistory(100),
         }));
+      });
+
+      // GET /api/cortex/capabilities — goal-driven coverage map: every
+      // active goal's inferred capabilities marked covered/missing with
+      // the assets backing them. POST {run:true, fileGaps:true} re-assesses
+      // and files strategy proposals for missing coverage.
+      server.middlewares.use('/api/cortex/capabilities', async (req: any, res: any) => {
+        if (!setCortexCors(req, res)) return jsonRes(res, 403, { ok: false, error: 'forbidden' });
+        if (req.method === 'OPTIONS') { res.writeHead(204); return res.end(); }
+        if (req.method === 'GET') {
+          try {
+            return jsonRes(res, 200, { ok: true, ...assessCoverage() });
+          } catch (e: any) {
+            return jsonRes(res, 500, { ok: false, error: String(e?.message || e).slice(0, 300) });
+          }
+        }
+        if (req.method === 'POST') {
+          const body = JSON.parse(await readBody(req) || '{}');
+          try {
+            const assessment = assessCoverage({ fileGaps: body?.fileGaps === true });
+            return jsonRes(res, 200, { ok: true, ...assessment });
+          } catch (e: any) {
+            return jsonRes(res, 500, { ok: false, error: String(e?.message || e).slice(0, 300) });
+          }
+        }
+        return jsonRes(res, 405, { ok: false, error: 'method not allowed' });
       });
 
       // POST /api/cortex/agents/task — enqueue work. {agentId, kind, title, input?}
