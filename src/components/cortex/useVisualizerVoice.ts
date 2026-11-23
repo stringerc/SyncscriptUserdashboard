@@ -1162,8 +1162,16 @@ export function useVisualizerVoice(enabled: boolean, onState: (speaking: boolean
       .then((r) => (r.ok ? r.json() : null))
       .then((data) => {
         if (cancelled || !data?.ok || !Array.isArray(data.messages)) return;
+        // Same ambient-message exclusion as the server prompt builder:
+        // self-checks/strategic reviews are Cortex's own unprompted
+        // narration, not conversation — hydrating them makes her parrot
+        // them back. meta.source matches the server-side denylist.
+        const AMBIENT_SOURCES = new Set(['self-regulation', 'strategic-review']);
         const prior: ChatMsg[] = data.messages
-          .filter((m: any) => (m.role === 'user' || m.role === 'ai' || m.role === 'cortex' || m.role === 'assistant') && typeof m.content === 'string' && m.content.trim())
+          .filter((m: any) => (m.role === 'user' || m.role === 'ai' || m.role === 'cortex' || m.role === 'assistant')
+            && typeof m.content === 'string' && m.content.trim()
+            && m.meta?.ambient !== true
+            && !AMBIENT_SOURCES.has(String(m.meta?.source || '')))
           .slice(-12)
           .map((m: any) => ({
             role: (m.role === 'user' ? 'user' : 'assistant') as ChatMsg['role'],

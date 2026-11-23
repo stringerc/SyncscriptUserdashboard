@@ -11006,8 +11006,19 @@ Disposition consolidation (learned urgency/tier adjustments from proposal outcom
           try {
             parsed = JSON.parse(body);
 
+            // Ambient/self-narration messages (self-checks, strategic
+            // reviews) are UI artifacts Cortex spoke unprompted — NOT
+            // conversation. Feeding them back as assistant turns makes the
+            // model parrot them verbatim at the top of unrelated replies
+            // (observed: reply opened with a raw self-check dump). They
+            // stay in chat history for the UI; they're just excluded from
+            // model context here. meta.ambient===true future-proofs new
+            // ambient producers.
+            const AMBIENT_MSG_SOURCES = new Set(['self-regulation', 'strategic-review']);
+            const isAmbientMsg = (m: any) =>
+              m?.meta?.ambient === true || AMBIENT_MSG_SOURCES.has(String(m?.meta?.source || ''));
             const trimmedMsgs = (parsed.messages || [])
-              .filter((m: any) => m.role === 'user' || m.role === 'assistant')
+              .filter((m: any) => (m.role === 'user' || m.role === 'assistant') && !isAmbientMsg(m))
               .slice(-10);
             const latestUserMessage =
               [...trimmedMsgs].reverse().find((m: any) => m.role === 'user')?.content || '';
