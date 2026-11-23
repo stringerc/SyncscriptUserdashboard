@@ -11341,8 +11341,58 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
                   const baseName = (n: string) => n.split('#')[0];
                   const seen = new Set(matrixFast.map((p) => `${baseName(p.name)}|${p.model}`));
                   const rest = aiProviders.filter((p) => !seen.has(`${p.name}|${p.model}`));
-                  activeChain = [...matrixFast, ...rest];
-                  console.info(`[dev-proxy] chat fast-path (matrix) → ${activeChain.slice(0, 4).map(p => `${p.name}:${p.model}`).join(' -> ')} … +${rest.length} fallback`);
+                  // Quality floor: the persona surface must not silently
+                  // degrade to small fast-lane models when premium lanes
+                  // are down (observed: OpenRouter/DeepSeek 402, Groq 429 →
+                  // nemotron bolt-e4b serving every reply and looping the
+                  // same wish-template prose). Keep the best fast candidate
+                  // first for latency, but interleave healthy reason+deep
+                  // lane models ahead of the remaining fast tail — any
+                  // fast-lane failure lands on a big model, not a 4B reply
+                  // engine.
+                  let qualityChain: AIProviderCandidate[] = [];
+                  try {
+                    const qRaw = (['reason', 'deep'] as const).flatMap((tier) =>
+                      agentRuntime.matrix.ordered(tier)
+                        .map((c) => {
+                          const base = aiProviders.find((p) => p.name === c.provider);
+                          return base ? { ...base, model: c.model, name: `${base.name}#${c.model.split('/').pop()}` } : null;
+                        })
+                        .filter(Boolean) as AIProviderCandidate[]);
+                    // Cross-lane concat breaks ordered()'s health+latency
+                    // sort — re-rank so probe-healthy candidates (e.g.
+                    // mistral-1t in deep) aren't stuck behind stale
+                    // reason-lane cooldowns about to re-fail.
+                    const rank = (p: any) => {
+                      const h = agentRuntime.matrix.healthOf(p.name.split('#')[0], p.model);
+                      return h?.status === 'healthy' ? 0 : h?.status === 'degraded' ? 1 : 2;
+                    };
+                    qualityChain = qRaw
+                      .map((p, i) => ({ p, i, r: rank(p) }))
+                      .sort((a, b) => a.r - b.r || a.i - b.i)
+                      .map((x) => x.p);
+                  } catch {}
+                  const seenQ = new Set(qualityChain.map((p) => `${p.name}|${p.model}`));
+                  // When the fast lane's best candidate is itself a small
+                  // model (bolt/e4b/mini/flash-class — the only healthy
+                  // fast options during the current provider outage),
+                  // quality models go FIRST: a 700ms reply from a 4B
+                  // model that loops the same prose is worse than a 2s
+                  // reply from a 100B+ model. When a genuinely capable
+                  // fast model leads (magpie group, gpt-oss-120b), it
+                  // keeps the head and quality models stay as failover.
+                  const SMALL_MODEL_RE = /bolt|e4b|mini|nano|flash|lite|gpt-oss-20b|30b-a3b/i;
+                  const headIsSmall = matrixFast[0] ? SMALL_MODEL_RE.test(matrixFast[0].model) : false;
+                  const orderedFast = headIsSmall
+                    ? matrixFast.filter((p) => !seenQ.has(`${p.name}|${p.model}`))
+                    : [
+                        ...(matrixFast[0] && !seenQ.has(`${matrixFast[0].name}|${matrixFast[0].model}`) ? [matrixFast[0]] : []),
+                        ...matrixFast.slice(1).filter((p) => !seenQ.has(`${p.name}|${p.model}`)),
+                      ];
+                  activeChain = headIsSmall
+                    ? [...qualityChain, ...orderedFast, ...rest]
+                    : [...orderedFast.slice(0, 1), ...qualityChain, ...orderedFast.slice(1), ...rest];
+                  console.info(`[dev-proxy] chat fast-path (matrix) → ${activeChain.slice(0, 5).map(p => `${p.name}:${p.model}`).join(' -> ')} … +${rest.length} fallback`);
                 } else {
                   const fastNames = ['groq-fast', 'groq-oss'];
                   const fast = aiProviders.filter((p) => fastNames.includes(p.name));
