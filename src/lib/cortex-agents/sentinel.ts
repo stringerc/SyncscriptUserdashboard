@@ -12,6 +12,8 @@
  * monitors — it keeps reporting even in a total provider outage.
  */
 
+import * as fs from 'node:fs';
+import * as path from 'node:path';
 import type { ModelMatrix } from './registry';
 import type { AgentEvent, ModelHealth } from './types';
 
@@ -21,11 +23,51 @@ export interface CatalogSource {
   fetchIds(): Promise<string[]>;
 }
 
+export interface ProbeResult {
+  latencyMs: number;
+  /** Index into the provider's key pool that served the probe, when known. */
+  keyIndex?: number;
+}
+
 export interface ProbeTarget {
   provider: string;
   model: string;
-  /** Sends a minimal completion; resolves latencyMs or throws. */
-  probe(): Promise<number>;
+  /** Sends a minimal completion; resolves latency/keyIndex or throws. */
+  probe(): Promise<ProbeResult>;
+}
+
+const HEALTH_HISTORY_FILE = path.join(
+  process.env.CORTEX_AGENTS_STATE_DIR || path.join(process.cwd(), '.cortex-runtime'),
+  'model-health-history.jsonl',
+);
+const HEALTH_HISTORY_MAX_BYTES = 2_000_000;
+
+function healthHistoryPath(): string {
+  return HEALTH_HISTORY_FILE;
+}
+
+/** Append one probe outcome. Failures and status transitions always land;
+ *  callers decide what to log so healthy probes stay silent. */
+function appendHealthHistory(rec: Record<string, unknown>): void {
+  try {
+    try {
+      const st = fs.statSync(HEALTH_HISTORY_FILE);
+      if (st.size > HEALTH_HISTORY_MAX_BYTES) {
+        const tail = fs.readFileSync(HEALTH_HISTORY_FILE, 'utf8').split('\n').slice(-4000).join('\n');
+        fs.writeFileSync(HEALTH_HISTORY_FILE, tail, 'utf8');
+      }
+    } catch { /* first write */ }
+    fs.appendFileSync(HEALTH_HISTORY_FILE, JSON.stringify({ ts: Date.now(), ...rec }) + '\n', 'utf8');
+  } catch { /* telemetry must never break probing */ }
+}
+
+/** Tail the durable health history — newest last. Used by status surfaces. */
+export function tailModelHealthHistory(limit = 100): Record<string, unknown>[] {
+  try {
+    const lines = fs.readFileSync(HEALTH_HISTORY_FILE, 'utf8').trim().split('\n').filter(Boolean);
+    return lines.slice(-limit).map((l) => { try { return JSON.parse(l); } catch { return null; } })
+      .filter((x): x is Record<string, unknown> => !!x);
+  } catch { return []; }
 }
 
 const CATALOG_INTERVAL_MS = 5 * 60_000;
@@ -38,6 +80,7 @@ export class ModelSentinel {
   private timerProbe: ReturnType<typeof setInterval> | null = null;
   private probing = false;
   private knownCatalogIds = new Set<string>();
+  private lastLoggedStatus = new Map<string, string>();
 
   constructor(
     private matrix: ModelMatrix,
@@ -119,17 +162,40 @@ export class ModelSentinel {
       for (const t of batch) {
         const probe = this.probeFactory(t.provider, t.model);
         const started = Date.now();
+        const key = `${t.provider}:${t.model}`;
         try {
-          const latencyMs = await Promise.race([
+          const res = await Promise.race([
             probe(),
             new Promise<never>((_, rej) =>
               setTimeout(() => rej(new Error('probe timeout')), PROBE_TIMEOUT_MS)),
           ]);
-          const h = this.matrix.recordProbe(t.provider, t.model, true, latencyMs ?? Date.now() - started);
+          const latencyMs = res?.latencyMs ?? Date.now() - started;
+          const h = this.matrix.recordProbe(t.provider, t.model, true, latencyMs);
           this.emit({ type: 'model.health', model: h, at: Date.now() });
-        } catch {
-          const h = this.matrix.recordProbe(t.provider, t.model, false);
+          const prev = this.lastLoggedStatus.get(key);
+          if (prev !== h.status) {
+            this.lastLoggedStatus.set(key, h.status);
+            appendHealthHistory({
+              provider: t.provider, model: t.model, ok: true, latencyMs,
+              keyIndex: res?.keyIndex, health: h.status,
+              consecutiveFailures: h.consecutiveFailures, cooldownUntil: h.cooldownUntil,
+            });
+          }
+        } catch (e: any) {
+          // Auth/billing failures (401/402/403) can't self-heal in seconds —
+          // mark permanent so the matrix cools the model down hard instead
+          // of retrying every minute against a dead key tier.
+          const httpStatus = typeof e?.status === 'number' ? e.status : undefined;
+          const permanent = httpStatus != null && [401, 402, 403].includes(httpStatus);
+          const h = this.matrix.recordProbe(t.provider, t.model, false, undefined, permanent);
           this.emit({ type: 'model.health', model: h, at: Date.now() });
+          this.lastLoggedStatus.set(key, h.status);
+          appendHealthHistory({
+            provider: t.provider, model: t.model, ok: false,
+            httpStatus, permanent, error: String(e?.message || e).slice(0, 160),
+            health: h.status, consecutiveFailures: h.consecutiveFailures,
+            cooldownUntil: h.cooldownUntil,
+          });
         }
       }
     } finally {

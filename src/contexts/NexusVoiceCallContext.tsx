@@ -22,6 +22,7 @@ import {
   NEXUS_USER_CHAT_PATH,
 } from '../config/nexus-vercel-ai-routes';
 import { createSpeechArbiter } from '../lib/cortex-tts-arbiter';
+import { normalizeTechnicalTokensForSpeech } from '../utils/tts-lexicon';
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Types
@@ -134,6 +135,10 @@ function sanitizeForTTS(raw: string): string {
   s = s.replace(/\*\*(.+?)\*\*/g, '$1');
   s = s.replace(/\*(.+?)\*/g, '$1');
   s = s.replace(/__(.+?)__/g, '$1');
+  // Technical tokens (dotenvx, vite.config.ts, snake_case, env vars)
+  // must be spoken-form BEFORE the single-underscore italic rule, which
+  // would otherwise fuse snake_case identifiers into one mangled word.
+  s = normalizeTechnicalTokensForSpeech(s);
   s = s.replace(/(?<!\w)_([^_]+?)_(?!\w)/g, '$1');
   s = s.replace(/~~(.+?)~~/g, '$1');
   s = s.replace(/`([^`]+?)`/g, '$1');

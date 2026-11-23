@@ -110,7 +110,7 @@ describe('ModelSentinel', () => {
   it('probeCycle records health for matrix candidates', async () => {
     const m = new ModelMatrix();
     const events: AgentEvent[] = [];
-    const s = new ModelSentinel(m, (e) => events.push(e), [], () => async () => 42);
+    const s = new ModelSentinel(m, (e) => events.push(e), [], () => async () => ({ latencyMs: 42 }));
     await s.probeCycle();
     const healthEvents = events.filter((e) => e.type === 'model.health');
     expect(healthEvents.length).toBeGreaterThan(0);

@@ -404,6 +404,7 @@ function recordLLMTrace(rec: {
   provider?: string; model?: string; tier?: string; agentId?: string;
   sessionId?: string; kind?: string; status?: number | string;
   latencyMs?: number; tokensIn?: number; tokensOut?: number; error?: string;
+  keyIndex?: number;
 }) {
   try {
     const file = LLM_TRACES_FILE();
@@ -2132,7 +2133,7 @@ function apiProxyPlugin(): Plugin {
       }
 
       // Probe factory: minimal real completion against the provider endpoint.
-      const probeFactory = (providerName: string, model: string) => async (): Promise<number> => {
+      const probeFactory = (providerName: string, model: string) => async (): Promise<{ latencyMs: number; keyIndex?: number }> => {
         const prov = providerFor(providerName);
         if (!prov) throw new Error(`no credentials for ${providerName}`);
         const started = Date.now();
@@ -2155,17 +2156,19 @@ function apiProxyPlugin(): Plugin {
             // A thrown fetch (timeout/reset) on one pooled key must not abort
             // the walk — later keys may still answer (e.g. step-5-preview
             // 403s on the primary key but serves 200 on backups).
-            recordLLMTrace({ provider: prov.name, model, kind: 'probe', status: 'error', latencyMs: Date.now() - started, error: String((e as Error)?.message || e).slice(0, 200) });
+            recordLLMTrace({ provider: prov.name, model, kind: 'probe', status: 'error', latencyMs: Date.now() - started, error: String((e as Error)?.message || e).slice(0, 200), keyIndex: keyIdx });
             lastStatus = 'error';
             if (keyIdx >= keyPool.length - 1) break;
             continue;
           }
-          recordLLMTrace({ provider: prov.name, model, kind: 'probe', status: r.status, latencyMs: Date.now() - started });
-          if (r.ok) return Date.now() - started;
+          recordLLMTrace({ provider: prov.name, model, kind: 'probe', status: r.status, latencyMs: Date.now() - started, keyIndex: keyIdx });
+          if (r.ok) return { latencyMs: Date.now() - started, keyIndex: keyIdx };
           lastStatus = r.status;
           if (![401, 402, 403, 429].includes(r.status) || keyIdx >= keyPool.length - 1) break;
         }
-        throw new Error(`probe http ${lastStatus}`);
+        const err: any = new Error(`probe http ${lastStatus}`);
+        err.status = typeof lastStatus === 'number' ? lastStatus : undefined;
+        throw err;
       };
 
       agentRuntime.attachSentinel(catalogSources, probeFactory);
@@ -4091,7 +4094,7 @@ function apiProxyPlugin(): Plugin {
           } catch {}
         };
         try {
-          const WORKSPACE_NOTE = `\n\n[WORKSPACE] Host working directory: ${process.cwd()} — the SyncScript repository root. run_command, list_dir, read_file, search_code and create_document resolve relative paths here by default. Prefer relative paths; do NOT search /Users or $HOME for the project — you are already inside it.`;
+          const WORKSPACE_NOTE = `\n\n[WORKSPACE] Host working directory: ${process.cwd()} — the SyncScript repository root. Sibling roots on this host: /Users/Apple/cortex-repos (Cortex packages + LAUNCH_PLAN.md + RELEASE_STRATEGY.md), /Users/Apple/openclaw-node (OpenClaw source), /Users/Apple/.openclaw (OpenClaw state, skills, config). run_command, list_dir, read_file, search_code and create_document resolve relative paths here by default. Prefer relative paths inside the repo; for launch plans, release strategy, or Cortex-package docs check cortex-repos FIRST — do NOT search /Users broadly or ask the user for files that live in a known sibling root.`;
           const INBOUND_DIRECTIVE = `\n\n[INBOUND BRIDGE] This message arrived via the "${channel}" channel from sender "${sender}" through the OpenClaw gateway. You are Cortex — reply as yourself, concisely, in plain text (no markdown headers). If the request needs a governed multi-step action rather than a conversation, say so and offer to dispatch it.`;
           const agentSysContent = `${NEXUS_SYSTEM_PROMPT}\n\nYou are Cortex, the governed cognitive core of SyncScript — deep, honest, and precise.${WORKSPACE_NOTE}${INBOUND_DIRECTIVE}`;
           const agentMessages: AgentMessage[] = [{ role: 'user', content: message }];
@@ -12473,7 +12476,7 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
                   // Workspace grounding: without the absolute root the model
                   // burns its whole step budget hunting for the project dir
                   // (observed: 6/6 steps on list_dir/find before giving up).
-                  const WORKSPACE_NOTE = `\n\n[WORKSPACE] Host working directory: ${process.cwd()} — the SyncScript repository root. run_command, list_dir, read_file, search_code and create_document resolve relative paths here by default. Prefer relative paths; do NOT search /Users or $HOME for the project — you are already inside it.`;
+                  const WORKSPACE_NOTE = `\n\n[WORKSPACE] Host working directory: ${process.cwd()} — the SyncScript repository root. Sibling roots on this host: /Users/Apple/cortex-repos (Cortex packages + LAUNCH_PLAN.md + RELEASE_STRATEGY.md), /Users/Apple/openclaw-node (OpenClaw source), /Users/Apple/.openclaw (OpenClaw state, skills, config). run_command, list_dir, read_file, search_code and create_document resolve relative paths here by default. Prefer relative paths inside the repo; for launch plans, release strategy, or Cortex-package docs check cortex-repos FIRST — do NOT search /Users broadly or ask the user for files that live in a known sibling root.`;
                   const agentSysContent = autonomyMode === 'autonomous'
                     ? `${sysContentFull}${WORKSPACE_NOTE}${AUTONOMY_DIRECTIVE}`
                     : `${sysContentFull}${WORKSPACE_NOTE}`;

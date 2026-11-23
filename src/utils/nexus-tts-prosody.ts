@@ -3,6 +3,8 @@
  * Keeps Voice Resonance / `useVoiceStream` aligned with marketing guest voice without touching protected files.
  */
 
+import { normalizeTechnicalTokensForSpeech } from './tts-lexicon';
+
 export const NEXUS_LANDING_KOKORO_VOICE_ID = 'cortana';
 
 type SentenceKind = 'exclamation' | 'question' | 'statement';
@@ -41,6 +43,10 @@ export function sanitizeForNexusTTS(raw: string): string {
   s = s.replace(/\*\*(.+?)\*\*/g, '$1');
   s = s.replace(/\*(.+?)\*/g, '$1');
   s = s.replace(/__(.+?)__/g, '$1');
+  // Technical tokens (dotenvx, vite.config.ts, snake_case, env vars)
+  // must be spoken-form BEFORE the single-underscore italic rule, which
+  // would otherwise fuse snake_case identifiers into one mangled word.
+  s = normalizeTechnicalTokensForSpeech(s);
   s = s.replace(/(?<!\w)_([^_]+?)_(?!\w)/g, '$1');
   s = s.replace(/~~(.+?)~~/g, '$1');
   s = s.replace(/`([^`]+?)`/g, '$1');
