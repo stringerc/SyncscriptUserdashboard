@@ -19,6 +19,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import type { AttentionDecision } from './attention-schema';
+import { getInteroceptiveState } from './interoceptive';
 import { speakInner } from './inner-speech';
 
 const RUNTIME = path.resolve(process.cwd(), '.cortex-runtime');
@@ -38,6 +39,9 @@ export interface Broadcast {
   score: number;
   margin: number;
   ignited: boolean;
+  /** Somatic markers — the body state that framed this conscious moment. */
+  capacity?: number;
+  somaticLevel?: string;
   /** Modules that have acknowledged consuming this broadcast. */
   consumedBy: string[];
 }
@@ -58,7 +62,18 @@ export function broadcastAttention(decision: AttentionDecision) {
   const w = decision.winner;
   const runnerUp = decision.candidates[1];
   const margin = runnerUp ? w.score - runnerUp.score : w.score;
-  const ignited = w.score >= IGNITE_SCORE && margin >= IGNITE_MARGIN;
+  // Somatic markers: a strained/critical body lowers the ignition bar —
+  // urgency is physiology, not metaphor. Critical capacity lets
+  // system/interoception signals ignite at 0.30 instead of 0.45.
+  let somatic: { capacity: number; level: string } | null = null;
+  try {
+    const i = getInteroceptiveState();
+    somatic = { capacity: i.capacity, level: i.level };
+  } catch {}
+  const urgency = somatic?.level === 'critical' ? 1 : somatic?.level === 'strained' ? 0.5 : 0;
+  const igniteScore = IGNITE_SCORE - 0.15 * urgency;
+  const igniteMargin = IGNITE_MARGIN - 0.04 * urgency;
+  const ignited = w.score >= igniteScore && margin >= igniteMargin;
   const b: Broadcast = {
     id: `ws-${Date.now().toString(36)}-${++counter}`,
     ts: decision.ts,
@@ -67,6 +82,8 @@ export function broadcastAttention(decision: AttentionDecision) {
     score: Math.round(w.score * 1000) / 1000,
     margin: Math.round(margin * 1000) / 1000,
     ignited,
+    capacity: somatic?.capacity,
+    somaticLevel: somatic?.level,
     consumedBy: [],
   };
   append(b);
@@ -157,6 +174,8 @@ export function workspaceStats() {
   const ignited = all_b.filter((b) => b.ignited);
   const contested = ignited.filter((b) => b.margin < 0.15).length;
   const consumed = ignited.filter((b) => b.consumedBy.length > 0).length;
+  let somaticNow: { capacity: number; level: string } | null = null;
+  try { const i = getInteroceptiveState(); somaticNow = { capacity: i.capacity, level: i.level }; } catch {}
   return {
     total: all_b.length,
     ignited: ignited.length,
@@ -164,6 +183,7 @@ export function workspaceStats() {
     contestedRate: ignited.length ? Math.round((contested / ignited.length) * 100) / 100 : 0,
     consumptionRate: ignited.length ? Math.round((consumed / ignited.length) * 100) / 100 : 0,
     current: currentWorkspace(),
+    somatic: somaticNow,
     byKind: ignited.reduce((m, b) => { m[b.kind] = (m[b.kind] || 0) + 1; return m; }, {} as Record<string, number>),
   };
 }

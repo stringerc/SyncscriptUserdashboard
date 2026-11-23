@@ -14,6 +14,7 @@
 import fs from 'node:fs';
 import { speakInner } from './inner-speech';
 import { broadcastAttention, workspaceBias } from './workspace';
+import { getInteroceptiveState } from './interoceptive';
 import path from 'node:path';
 
 const DIR = path.join(process.cwd(), '.cortex-runtime');
@@ -44,7 +45,7 @@ export interface AttentionCandidate {
 
 export interface ScoredCandidate extends AttentionCandidate {
   score: number;
-  factors: { kindWeight: number; recency: number; relevance: number; priority: number; workspaceBias?: number };
+  factors: { kindWeight: number; recency: number; relevance: number; priority: number; workspaceBias?: number; somaticBias?: number };
 }
 
 export interface AttentionDecision {
@@ -123,10 +124,28 @@ export function attend(candidates: AttentionCandidate[], now = Date.now()): Atte
   // adjacent-kind) candidates BEFORE the argmax — consciousness
   // reshapes what competes next, margin-scaled so contested
   // ignitions bias less.
+  // Somatic urgency: a strained body amplifies system/interoceptive
+  // signals and suppresses ambient noise — physiology biases what
+  // competes for awareness. Strained +0.08, critical +0.15 on
+  // system/interoception; ambient/inner dampened under strain.
+  let somaticUrgency = 0;
+  try {
+    const iState = getInteroceptiveState(now);
+    somaticUrgency = iState.level === 'critical' ? 1 : iState.level === 'strained' ? 0.5 : 0;
+  } catch {}
   const scored = candidates.map((c) => {
-    const base = scoreCandidate(c, now);
-    const bias = workspaceBias(c.kind);
-    return bias > 0 ? { ...base, score: Math.round((base.score + bias) * 1000) / 1000, factors: { ...base.factors, workspaceBias: Math.round(bias * 1000) / 1000 } } : base;
+    let base = scoreCandidate(c, now);
+    const wBias = workspaceBias(c.kind);
+    let sBias = 0;
+    if (somaticUrgency > 0) {
+      if (c.kind === 'system' || c.kind === 'interoception') sBias = 0.15 * somaticUrgency;
+      else if (c.kind === 'ambient' || c.kind === 'inner') sBias = -0.05 * somaticUrgency;
+    }
+    const totalBias = wBias + sBias;
+    if (totalBias !== 0) {
+      base = { ...base, score: Math.round((base.score + totalBias) * 1000) / 1000, factors: { ...base.factors, workspaceBias: Math.round(wBias * 1000) / 1000, somaticBias: Math.round(sBias * 1000) / 1000 } };
+    }
+    return base;
   }).sort((a, b) => b.score - a.score);
   const winner = scored[0];
   const runnerUp = scored[1];

@@ -308,6 +308,8 @@ export function getSelfhood() {
     consciousContents: broadcastHistory(30).filter((b) => b.ignited).map((b) => ({
       ts: b.ts, kind: b.kind, text: b.text.slice(0, 120),
       score: b.score, margin: b.margin, consumedBy: b.consumedBy,
+      // Somatic marker: the body state that framed this moment.
+      capacity: b.capacity, somaticLevel: b.somaticLevel,
     })),
     dynamics: (() => { try { const r = dynamicsReport(); return { learnedDims: r.classes.reduce((a, c) => a + c.learned, 0), classes: r.classes.length, processedTasks: r.processedTasks }; } catch { return null; } })(),
     workspace: (() => { try { const w = workspaceStats(); return { ignited: w.ignited, ignitionRate: w.ignitionRate, current: w.current ? { kind: w.current.kind, text: w.current.text.slice(0, 80) } : null }; } catch { return null; } })(),

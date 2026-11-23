@@ -14,6 +14,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { speakInner } from './inner-speech';
+import { getInteroceptiveState, interoceptiveGate } from './interoceptive';
 
 const DIR = path.join(process.cwd(), '.cortex-runtime');
 const FILE = path.join(DIR, 'libet-veto.json');
@@ -32,6 +33,8 @@ export interface VetoIntent {
   vetoWindowMs: number;
   /** Dispatch payload — amendable during the window, read at fire time. */
   input?: Record<string, unknown>;
+  /** Body state at arm time — somatic marker for the decision gap. */
+  armedCapacity?: number;
   status: 'pending' | 'fired' | 'vetoed';
   resolvedAt?: number;
   resolvedBy?: string;
@@ -70,11 +73,14 @@ export function armVeto(opts: {
   const now = Date.now();
   const id = `libet-${now.toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
   const windowMs = Math.max(500, Math.min(30_000, opts.windowMs ?? DEFAULT_WINDOW_MS));
+  let armCapacity: number | undefined;
+  try { armCapacity = getInteroceptiveState().capacity; } catch {}
   const intent: VetoIntent = {
     id, agentId: opts.agentId, kind: opts.kind, title: opts.title.slice(0, 120),
     reason: opts.reason.slice(0, 160), armedAt: now, fireAt: now + windowMs,
     vetoWindowMs: windowMs, status: 'pending',
     input: opts.input ? { ...opts.input } : undefined,
+    armedCapacity: armCapacity,
   };
   const state = load();
   state.pending = state.pending.filter((p) => p.status === 'pending' && now - p.armedAt < 120_000);
@@ -92,6 +98,21 @@ export function armVeto(opts: {
       // Hold extension: if fireAt moved forward, reschedule.
       const remaining = i.fireAt - Date.now();
       if (remaining > 0) { scheduleFire(); return; }
+      // Somatic marker: the body gets a vote at fire time. If vitals
+      // have gone critical since arming, non-essential intents are
+      // stopped by physiology, not policy — resolvedBy says who said no.
+      const gate = interoceptiveGate(i.kind, i.title);
+      if (!gate.allow) {
+        i.status = 'vetoed'; i.resolvedAt = Date.now(); i.resolvedBy = 'somatic-marker';
+        s.pending = s.pending.filter((p) => p.id !== id);
+        s.fired.push(i);
+        if (s.fired.length > 100) s.fired = s.fired.slice(-100);
+        save(s);
+        log({ event: 'somatic-veto', id, agentId: i.agentId, kind: i.kind, title: i.title, reason: gate.reason });
+        try { speakInner({ kind: 'veto', source: 'somatic', text: `BODY VETOED ${i.agentId}/${i.kind}: "${i.title.slice(0, 50)}" — ${gate.reason}`, surprise: 0.7, valence: -0.5 }); } catch {}
+        timers.delete(id);
+        return;
+      }
       i.status = 'fired'; i.resolvedAt = Date.now(); i.resolvedBy = 'window-expired';
     s.pending = s.pending.filter((p) => p.id !== id);
     s.fired.push(i);
