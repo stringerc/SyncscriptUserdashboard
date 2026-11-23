@@ -258,7 +258,7 @@ import {
   drainSafePending as ledgerDrainSafe,
   isSafeAutoProposal,
 } from './src/lib/cortex-initiative-ledger';
-import { getWorldState, formatWorldStateHeader, startWorldStateSampler, onHostMemoryPressure, onWorldStateSample } from './src/lib/cortex-world-state';
+import { getWorldState, formatWorldStateHeader, startWorldStateSampler, onHostMemoryPressure, onWorldStateSample, getCachedMemFreePct, probeMemorystatusFreePct } from './src/lib/cortex-world-state';
 import { startProcessWatch, getTopMemoryProcesses, processWatchStatus } from './src/lib/cortex-agent/process-watch';
 
 /** Short SHA for deploy verification (Vercel sets VERCEL_GIT_COMMIT_SHA at build time). */
@@ -3222,7 +3222,10 @@ function apiProxyPlugin(): Plugin {
         try {
           const state = await getWorldState();
           const header = formatWorldStateHeader(state);
-          res.end(JSON.stringify({ ok: true, header, state }));
+          // Debug: direct probe result alongside the cached state — tells us
+          // whether the sysctl read itself works inside this process.
+          const memProbe = await probeMemorystatusFreePct();
+          res.end(JSON.stringify({ ok: true, header, state, memProbe }));
         } catch (err: any) {
           res.statusCode = 500;
           res.end(JSON.stringify({ ok: false, error: err?.message || 'World state probe failed' }));
@@ -4574,6 +4577,14 @@ function apiProxyPlugin(): Plugin {
                 'Content-Type': 'application/json',
                 'Access-Control-Allow-Origin': '*',
               });
+              // Honest memory: kernel memorystatus_level (same source as
+              // the world-state header) — os.freemem() reports ~0 on macOS
+              // permanently and made Cortex cite "0.2GB free" as real.
+              const kFreePct = getCachedMemFreePct();
+              const totalBytes = os.totalmem();
+              const honestFreeGB = kFreePct !== undefined
+                ? ((kFreePct / 100) * totalBytes / (1024 ** 3))
+                : os.freemem() / (1024 ** 3);
               return res.end(JSON.stringify({
                 ok: true,
                 tool,
@@ -4581,8 +4592,10 @@ function apiProxyPlugin(): Plugin {
                 release: os.release(),
                 arch: os.arch(),
                 cpus: os.cpus().length,
-                totalMemGB: (os.totalmem() / (1024 ** 3)).toFixed(2),
-                freeMemGB: (os.freemem() / (1024 ** 3)).toFixed(2),
+                totalMemGB: (totalBytes / (1024 ** 3)).toFixed(2),
+                freeMemGB: honestFreeGB.toFixed(2),
+                memFreePctKernel: kFreePct ?? null,
+                freeMemGBRawFreemem: (os.freemem() / (1024 ** 3)).toFixed(2),
                 uptimeHours: (os.uptime() / 3600).toFixed(1),
                 hostname: os.hostname(),
                 cwd: workspaceRoot,
@@ -7252,8 +7265,11 @@ end tell`;
 
             // 11. probe_physical_grounding
             if (tool === 'probe_physical_grounding') {
-              const freeMemMB = Math.round(os.freemem() / (1024 * 1024));
+              const kFreePct = getCachedMemFreePct();
               const totalMemMB = Math.round(os.totalmem() / (1024 * 1024));
+              const freeMemMB = kFreePct !== undefined
+                ? Math.round((kFreePct / 100) * totalMemMB)
+                : Math.round(os.freemem() / (1024 * 1024));
 
               let kokoroOk = false;
               try {
@@ -9164,7 +9180,12 @@ function triggerQuickAction() {
               const totalMem = os.totalmem();
               const freeMem = os.freemem();
               const usedMem = totalMem - freeMem;
-              const memUsedPct = totalMem > 0 ? (usedMem / totalMem) * 100 : 0;
+              // Kernel accounting when available — freemem-based memUsedPct
+              // pins at ~99% on macOS and makes somatic stress meaningless.
+              const kFreePct = getCachedMemFreePct();
+              const memUsedPct = kFreePct !== undefined
+                ? 100 - kFreePct
+                : (totalMem > 0 ? (usedMem / totalMem) * 100 : 0);
               const cpuLoad1m = loadAvg[0] || 0;
               const cpuCoreCount = cpus.length || 1;
 
@@ -9186,7 +9207,10 @@ function triggerQuickAction() {
                   emotionalValence,
                   cpuStress: parseFloat(cpuStress.toFixed(2)),
                   memStress: parseFloat(memStress.toFixed(2)),
-                  memUsedGB: (usedMem / 1073741824).toFixed(1),
+                  memUsedGB: kFreePct !== undefined
+                    ? ((100 - kFreePct) / 100 * totalMem / 1073741824).toFixed(1)
+                    : (usedMem / 1073741824).toFixed(1),
+                  memFreePctKernel: kFreePct ?? null,
                   memTotalGB: (totalMem / 1073741824).toFixed(1),
                   uptimeHours: (os.uptime() / 3600).toFixed(1),
                   somaticAdvice: allostaticLoad > 0.75
@@ -10420,10 +10444,21 @@ Disposition consolidation (learned urgency/tier adjustments from proposal outcom
             // TTS latency instrumentation — one line per synthesis request so
             // voice-turn delays are diagnosable from the dev log.
             const ttsStartMs = Date.now();
+            // Headers passed via writeHead() bypass res.getHeader() —
+            // snapshot them so the latency log names the real engine.
+            const ttsLogHdrs: Record<string, string> = {};
+            const __ttsWh = res.writeHead.bind(res);
+            (res as any).writeHead = (...args: any[]) => {
+              try {
+                const h = args.find((a) => a && typeof a === 'object' && !Array.isArray(a));
+                if (h) for (const [k, v] of Object.entries(h)) ttsLogHdrs[k.toLowerCase()] = String(v);
+              } catch { }
+              return __ttsWh(...args);
+            };
             const __ttsEnd = res.end.bind(res);
             (res as any).end = (...args: any[]) => {
               try {
-                const engine = res.getHeader('X-TTS-Engine') || res.getHeader('x-tts-engine') || 'unknown';
+                const engine = res.getHeader('X-TTS-Engine') || ttsLogHdrs['x-tts-engine'] || 'unknown';
                 console.info(`[tts] ${String(parsed.voice || 'default')} engine=${engine} ${Date.now() - ttsStartMs}ms`);
               } catch { }
               return __ttsEnd(...args);
@@ -11089,7 +11124,11 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
               let worldStateDigest = '';
               if (parsed.context === 'cortex') {
                 try {
-                  worldStateDigest = `\n\n${formatWorldStateHeader(await getWorldState())}`;
+                  // Self-describing label: without it the model sees a bare
+                  // [WORLD-STATE: ...] line and still polls tools for values
+                  // it already has (observed: she called system_info for
+                  // memory the header was already showing).
+                  worldStateDigest = `\n\n[LIVE HOST TELEMETRY — already in your context, sampled every ~3s. Use these values directly; do NOT call system_info/git/ps tools just to re-read them.]\n${formatWorldStateHeader(await getWorldState())}`;
                 } catch {}
                 try { worldStateDigest += recentAmbientDigest(); } catch {}
               }

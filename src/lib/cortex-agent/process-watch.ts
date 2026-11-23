@@ -98,6 +98,9 @@ interface PwState {
   nameNotified: Map<string, number>;     // comm basename → last event ts
   lastSnapshot: ProcInfo[] | null;       // sorted desc by rssMB
   lastTickAt: number;
+  /** Latest registered event callback — the surviving interval (armed by
+   *  the first-loaded module) reads this so post-restart arms win. */
+  onEvents?: (events: ProcEvent[]) => void;
 }
 const g = globalThis as any;
 if (!g[PW_KEY]) {
@@ -117,7 +120,7 @@ function nameCooldownOk(comm: string, now: number): boolean {
   return true;
 }
 
-async function tick(onEvents: (events: ProcEvent[]) => void): Promise<void> {
+async function tick(): Promise<void> {
   const curr = await snapshot();
   const now = Date.now();
   pw.lastTickAt = now;
@@ -177,7 +180,7 @@ async function tick(onEvents: (events: ProcEvent[]) => void): Promise<void> {
     }
   }
 
-  if (events.length) onEvents(events);
+  if (events.length) pw.onEvents?.(events);
 }
 
 /**
@@ -189,8 +192,11 @@ export function startProcessWatch(
   intervalMs = 15_000,
   onEvents: (events: ProcEvent[]) => void = () => {},
 ): void {
+  // Latest callback always wins — the timer armed by an earlier module
+  // instance keeps running (globalThis), and reads pw.onEvents per tick.
+  pw.onEvents = onEvents;
   if (pw.timer) return;
-  const run = () => { void tick(onEvents).catch(() => {}); };
+  const run = () => { void tick().catch(() => {}); };
   run(); // baseline snapshot immediately
   pw.timer = setInterval(run, intervalMs);
   pw.timer.unref?.();

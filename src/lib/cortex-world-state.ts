@@ -178,6 +178,7 @@ export async function probeBatteryPct(): Promise<number | undefined> {
 // the same number `memory_pressure` prints as "System-wide memory free
 // percentage". This is the honest signal.
 let memLevelCache: { at: number; value: number | undefined } | null = null;
+let memProbeWarnAt = 0;
 const MEM_LEVEL_TTL_MS = 15_000;
 
 export async function probeMemorystatusFreePct(): Promise<number | undefined> {
@@ -194,10 +195,30 @@ export async function probeMemorystatusFreePct(): Promise<number | undefined> {
     const { stdout } = await execFileAsync('sysctl', ['-n', 'kern.memorystatus_level'], { timeout: 1500 });
     const n = parseInt(String(stdout).trim(), 10);
     if (Number.isFinite(n) && n >= 0 && n <= 100) value = n;
-  } catch {}
+  } catch (e: any) {
+    // Throttled: failures aren't cached (fresh retry each tick) but the
+    // warning shouldn't spam the log every 3s if sysctl stays broken.
+    if (Date.now() - memProbeWarnAt > 60_000) {
+      memProbeWarnAt = Date.now();
+      console.warn('[world-state] memorystatus probe failed:', e?.message || e);
+    }
+  }
   // Only cache successes — a timed-out probe shouldn't blind us for 15s.
-  if (value !== undefined) memLevelCache = { at: now, value };
+  if (value !== undefined) {
+    memLevelCache = { at: now, value };
+    // Publish to globalThis so SYNC consumers (system_info tool, somatic
+    // tools) read the honest kernel figure without async plumbing. The
+    // sampler refreshes it every ~3s — fresh enough for telemetry.
+    (globalThis as any).__cortexMemFreePct = value;
+  }
   return value;
+}
+
+/** Synchronous read of the last kernel free% — for tool handlers that
+ *  can't await. Undefined until the first successful probe (~3s after
+ *  server start). */
+export function getCachedMemFreePct(): number | undefined {
+  return (globalThis as any).__cortexMemFreePct;
 }
 
 /** Determine host topology (Mac local vs. Oracle UTC cloud). */
@@ -253,6 +274,22 @@ export async function probeOracleAlive(instance: 'mac' | 'oracle'): Promise<bool
     oracleProbeCache = { alive: false, ts: now };
     return false;
   }
+}
+
+// Frontmost-app probe spawns osascript (~50-150ms CPU each call). At the
+// 3s sampler cadence that's ~2-5% of a core burned on telemetry — TTL it
+// so app context refreshes every ~10s while vitals stay per-tick.
+let frontmostCache: { at: number; value: UserContextState } | null = null;
+const FRONTMOST_TTL_MS = 10_000;
+
+async function probeFrontmostAppCached(): Promise<UserContextState> {
+  const now = Date.now();
+  if (frontmostCache && now - frontmostCache.at < FRONTMOST_TTL_MS) {
+    return frontmostCache.value;
+  }
+  const value = await probeFrontmostApp();
+  frontmostCache = { at: now, value };
+  return value;
 }
 
 /** Gather somatic vitals (memory, CPU load, uptime). */
@@ -380,7 +417,7 @@ async function refreshWorldState(): Promise<WorldState> {
 
   // Run async probes in parallel with timeouts
   const [user, git, batteryPct, oracleAlive, memFreePct] = await Promise.all([
-    probeFrontmostApp(),
+    probeFrontmostAppCached(),
     gitP,
     battP,
     probeOracleAlive(topology.instance),
@@ -624,10 +661,15 @@ function emitWorldSample(state: WorldState): void {
 
 export function startWorldStateSampler(intervalMs = 3000): void {
   const g = globalThis as any;
+  // Publish THIS module instance's refresh — the surviving timer (armed by
+  // whichever module loaded first) dispatches through this indirection so
+  // after a Vite restart the newest code keeps the blackboard warm instead
+  // of the zombie module probing forever with stale logic.
+  g.__cortexWsRefresh = refreshWorldState;
   if (g[SAMPLER_KEY]) return;
   const tick = () => {
-    void refreshWorldState()
-      .then((s) => {
+    void (g.__cortexWsRefresh?.() ?? refreshWorldState())
+      .then((s: WorldState) => {
         // Prefer kernel free% (honest); fall back to 100-freemem%-used
         // only where sysctl doesn't exist (non-macOS hosts).
         const freePct = s?.host?.memFreePct
