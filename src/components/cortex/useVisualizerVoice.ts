@@ -1401,7 +1401,10 @@ export function useVisualizerVoice(enabled: boolean, onState: (speaking: boolean
     // Reasoning-only providers sometimes stream zero content tokens; the
     // proxy injects this marker sentence — never speak it, treat as empty.
     const EMPTY_RESPONSE_RE = /upstream model returned an empty response/i;
+    let lastProgressAt = Date.now();
+    const touchProgress = () => { lastProgressAt = Date.now(); };
     const speakUnlessEmpty = (s: string, isFinal: boolean) => {
+      touchProgress();
       if (!EMPTY_RESPONSE_RE.test(s)) speakSentence(s, isFinal);
     };
     const agenticReply = async (): Promise<string | null> => {
@@ -1451,6 +1454,7 @@ MANDATORY: weave a 3-4 sentence spoken "state of being" answer citing at least o
       }
       let accumulatedThought = '';
       const onReasoning = (chunk: string) => {
+        touchProgress();
         accumulatedThought = (accumulatedThought + chunk).slice(-200);
         publish({
           state: 'thinking',
@@ -1519,6 +1523,7 @@ MANDATORY: weave a 3-4 sentence spoken "state of being" answer citing at least o
             : null;
           try {
             toolExecResult = gated ?? await execTool(c.tool, c.args, signal);
+            touchProgress();
           } finally {
             if (progressTimer) clearInterval(progressTimer);
           }
@@ -2173,7 +2178,21 @@ MANDATORY: weave a 3-4 sentence spoken "state of being" answer citing at least o
       // can stack past 4 minutes — a turn that runs that long is dead air.
       // Abort at 90s; the catch speaks an honest timeout instead of hanging
       // the queue behind a stuck turnInFlight.
-      const turnDeadline = setTimeout(() => {
+      const TURN_DEADLINE_MS = 90000;
+      const MAX_TURN_MS = 200000;
+      const turnStartAt = Date.now();
+      let turnDeadline: ReturnType<typeof setTimeout>;
+      const armDeadline = () => {
+      turnDeadline = setTimeout(() => {
+        // Progress-aware deadline: if tokens are still flowing or tools are
+        // executing (degraded fleet = slow but ALIVE turns), extend instead
+        // of killing a working turn. Dead air — no progress for 20s — is the
+        // real failure the deadline exists to catch.
+        if (!state.turnTimedOut && Date.now() - lastProgressAt < 20000 && Date.now() - turnStartAt < MAX_TURN_MS) {
+          try { speakSentence('Still on it — almost there…', false); } catch {}
+          armDeadline();
+          return;
+        }
         state.turnTimedOut = true;
         try { turnAbortRef.current?.abort(); } catch {}
         // Hard kill: turnAbortRef only reaches fetches that were given the
@@ -2203,7 +2222,9 @@ MANDATORY: weave a 3-4 sentence spoken "state of being" answer citing at least o
           speakSentence('Sorry, that took too long — try a simpler version or ask me to try again.', true);
           drainQueue();
         }, 8000);
-      }, 90000);
+      }, TURN_DEADLINE_MS);
+      };
+      armDeadline();
       try {
         // Memory recall runs in parallel with surface/map parsing + geocode —
         // it used to be a serial RTT before every LLM call, including "hello".
