@@ -18,6 +18,7 @@ import path from 'node:path';
 import child_process from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import type { AgentContext, AgentRuntime, WorkerHandler } from './runtime';
+import { discordApi } from '../cortex-discord';
 import { evaluatePWin, isBidViable } from '../govtech/p-win-evaluator';
 import { synthesizeProposalPackage, auditAndHealProposal } from '../govtech/compliance-matrix';
 import type { FederalSolicitation } from '../govtech/sam-types';
@@ -475,6 +476,136 @@ export async function runSamGovCapture(ctx: AgentContext, payload: Record<string
   };
 }
 
+/** campaign_metrics — scrape Pinterest pin analytics + Gumroad dashboard
+ *  revenue via the automation Chrome, merge into storefront/campaigns.json,
+ *  and evaluate kill-switches. Best-effort: scraper failures degrade to
+ *  notes, never fake numbers. */
+async function runCampaignMetrics(ctx: AgentContext, payload: Record<string, unknown>) {
+  const registryPath = path.join(STOREFRONT, 'campaigns.json');
+  const queuePath = QUEUE_FILE;
+  const readJson = (p: string) => { try { return JSON.parse(fs.readFileSync(p, 'utf8')); } catch { return null; } };
+  const writeJson = (p: string, v: any) => fs.writeFileSync(p, JSON.stringify(v, null, 2));
+  const registry = readJson(registryPath) || { campaigns: [] };
+  const queue = readJson(queuePath) || { items: [] };
+  const only = str(payload.campaignId);
+  const campaigns = (registry.campaigns || []).filter((c: any) => !only || c.id === only);
+  if (!campaigns.length) throw new Error(`campaign_metrics: no campaigns${only ? ` matching '${only}'` : ''}`);
+
+  ctx.progress(0.15);
+  // 1) Pinterest pin analytics
+  const pinOut = await sh(`node "${path.join(TOOLS, 'pinterest-analytics.mjs')}"`, ctx.telemetry, 180_000);
+  const pinData = (() => { try { return JSON.parse(String(pinOut?.stdout || '').slice(String(pinOut?.stdout || '').indexOf('{'))); } catch { return null; } })();
+  // pinId → campaignId via queue item results (same mapping the API uses)
+  const pinToCampaign = new Map<string, string>();
+  for (const i of queue.items || []) {
+    const cid = i.campaignId || (i.payload && (i.payload as any).campaignId);
+    const r = i.result;
+    if (!cid || !r || typeof r !== 'object') continue;
+    const urls: string[] = Array.isArray((r as any).pins) ? (r as any).pins : [(r as any).url].filter(Boolean);
+    for (const u of urls) {
+      const m = String(u).match(/pinterest\.com\/pin\/(\d+)/);
+      if (m) pinToCampaign.set(m[1], cid);
+    }
+  }
+  const pinStats = new Map<string, { impressions: number | null; clicks: number | null; saves: number | null }>();
+  for (const p of pinData?.pins || []) {
+    if (p.ok) pinStats.set(p.pinId, { impressions: p.impressions ?? null, clicks: p.clicks ?? null, saves: p.saves ?? null });
+  }
+
+  ctx.progress(0.5);
+  // 2) Gumroad revenue snapshot (store-wide)
+  const gumOut = await sh(`node "${path.join(TOOLS, 'gumroad-metrics.mjs')}"`, ctx.telemetry, 120_000);
+  const gumData = (() => { try { return JSON.parse(String(gumOut?.stdout || '').slice(String(gumOut?.stdout || '').indexOf('{'))); } catch { return null; } })();
+
+  ctx.progress(0.75);
+  // 3) Merge into campaigns.json — clicks = sum of pin clicks attributed
+  //    to the campaign; revenue is store-wide (single-store signal).
+  const revenue = gumData && gumData.ok ? (gumData.totalEarnings ?? gumData.balance ?? null) : null;
+  for (const c of registry.campaigns || []) {
+    if (only && c.id !== only) continue;
+    c.metrics = c.metrics || {};
+    let clicks = 0, impressions = 0, saves = 0, numeric = 0;
+    const perPin: any[] = [];
+    for (const [pid, cid] of pinToCampaign) {
+      if (cid !== c.id) continue;
+      const st = pinStats.get(pid);
+      if (!st) continue;
+      // A pin counts as measured only if at least one metric is numeric —
+      // scraped-null stays unknown, never silently becomes 0.
+      if ([st.impressions, st.clicks, st.saves].some((v) => typeof v === 'number')) numeric++;
+      clicks += st.clicks || 0; impressions += st.impressions || 0; saves += st.saves || 0;
+      perPin.push({ pinId: pid, ...st });
+    }
+    if (numeric) {
+      c.metrics.clicks = clicks;
+      c.metrics.impressions = impressions;
+      c.metrics.saves = saves;
+      c.metrics.pinStats = perPin;
+      c.metrics.metricsUpdatedAt = new Date().toISOString();
+    } else if (perPin.length) {
+      // Pins reached but metrics unparseable — keep evidence, stay UNMEASURED.
+      c.metrics.pinStats = perPin;
+      c.metrics.scraperNote = (c.metrics.scraperNote || '') + ' pin-metrics:null';
+    }
+    if (revenue !== null) {
+      c.metrics.gumroad = { balance: gumData.balance, last7d: gumData.last7d, last28d: gumData.last28d, totalEarnings: gumData.totalEarnings, checkedAt: gumData.checkedAt };
+      // Revenue > 0 is a sales signal even when per-order counts aren't scraped.
+      if (revenue > 0 && !(c.metrics.sales > 0)) c.metrics.sales = c.metrics.sales ?? 'see-gumroad';
+    }
+    c.metrics.scraperNote = [
+      pinData ? `pins:${(pinData.pins || []).filter((p: any) => p.ok).length}ok/${(pinData.pins || []).length}` : 'pins:unavailable',
+      gumData ? (gumData.ok ? 'gumroad:ok' : `gumroad:${gumData.note || 'fail'}`) : 'gumroad:unavailable',
+    ].join(' ');
+  }
+  writeJson(registryPath, registry);
+  ctx.progress(0.9);
+
+  // 4) Kill-switch evaluation — TRIPPED campaigns get flagged on the
+  //    registry (killAlertedAt dedupes repeat alerts). Persist first, then
+  //    alert — a hung Discord call must never lose the registry write.
+  const trips: string[] = [];
+  const alerts: { name: string; clicks: number; threshold: number; rule?: string; productUrl?: string }[] = [];
+  for (const c of registry.campaigns || []) {
+    const ks = c.killSwitch;
+    if (!ks || c.killAlertedAt) continue;
+    const clicks = c.metrics?.clicks;
+    const sales = c.metrics?.sales;
+    const hasRevenue = (c.metrics?.gumroad?.totalEarnings || 0) > 0;
+    const noSales = !(typeof sales === 'number' && sales > 0) && !hasRevenue && sales !== 'see-gumroad';
+    if (typeof clicks === 'number' && clicks >= (ks.threshold || Infinity) && noSales) {
+      c.killStatus = 'TRIPPED';
+      c.killAlertedAt = new Date().toISOString();
+      trips.push(`${c.name}: ${clicks} clicks ≥ ${ks.threshold}, 0 sales — ${ks.rule || 'kill'}`);
+      alerts.push({ name: c.name, clicks, threshold: ks.threshold || 0, rule: ks.rule, productUrl: c.productUrl });
+    }
+  }
+  if (trips.length) writeJson(registryPath, registry);
+  const token = process.env.DISCORD_BOT_TOKEN;
+  const channel = process.env.DISCORD_CHANNEL_ALERTS || process.env.DISCORD_CHANNEL_BRIEFS || process.env.DISCORD_CHANNEL_ID;
+  if (alerts.length && token && channel) {
+    for (const a of alerts) {
+      try {
+        await Promise.race([
+          discordApi('POST', `/channels/${channel}/messages`, {
+            token,
+            body: { content: `⚠️ **CAMPAIGN KILL-SWITCH TRIPPED** — ${a.name}\n${a.clicks} clicks ≥ ${a.threshold} with 0 sales.\nRule: ${a.rule || 'kill SKU'}\n${a.productUrl || ''}`.slice(0, 1900) },
+          }),
+          new Promise((_, rej) => setTimeout(() => rej(new Error('discord timeout')), 10_000)),
+        ]);
+      } catch (e: any) {
+        console.warn('[campaign_metrics] discord alert failed:', String(e?.message || e).slice(0, 160));
+      }
+    }
+  }
+  ctx.progress(1);
+  return {
+    campaigns: campaigns.map((c: any) => ({ id: c.id, clicks: c.metrics?.clicks ?? null, revenue: c.metrics?.gumroad?.totalEarnings ?? null })),
+    pinsScraped: pinStats.size,
+    gumroad: gumData ? { ok: gumData.ok, totalEarnings: gumData.totalEarnings } : null,
+    killSwitchTrips: trips,
+  };
+}
+
 export const ITEM_HANDLERS: Record<string, (ctx: AgentContext, p: Record<string, unknown>) => Promise<unknown>> = {
   reddit_scan: runRedditScan,
   reddit_comment: runRedditComment,
@@ -484,6 +615,7 @@ export const ITEM_HANDLERS: Record<string, (ctx: AgentContext, p: Record<string,
   dreamina_generate: runDreaminaGenerate,
   dreamina_collect: runDreaminaCollect,
   omni_publish: runOmniPublish,
+  campaign_metrics: runCampaignMetrics,
   kdp_publish: runKdpPublish,
   redbubble_publish: runRedbubblePublish,
   gumroad_publish: runGumroadPublish,
