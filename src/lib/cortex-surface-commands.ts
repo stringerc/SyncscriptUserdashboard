@@ -82,6 +82,12 @@ function pickPanelOrClarify(ref: string): { panel: SurfacePanel | null; clarify?
 export async function runSurfaceCommand(text: string): Promise<string | null> {
   const t = text.trim().toLowerCase().replace(/^(?:(?:hey|hi|hello|ok|okay)?\s*cortex[,:\s]+)/i, '').trim();
   if (!t) return null;
+  // Deterministic surface grammar is for SHORT imperative utterances.
+  // Long pasted briefs/essays must reach the LLM — their vocabulary
+  // ("review", "proactive", "initiative", "pin", "inbox") routinely
+  // collides with the matchers and hijacks the turn with a canned reply
+  // (observed: a pasted drift-watch brief opened the Initiative Inbox).
+  if (t.length > 300) return null;
 
   if (
     /\b(close|dismiss|clear|hide|unpin|remove)\b.*\b(panels?|surfaces?|widgets?|pinned\s+items?|pins?|pinned\s+panels?|all\s+pins?|items?)\b/i.test(t) ||

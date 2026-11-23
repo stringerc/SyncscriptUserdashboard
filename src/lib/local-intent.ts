@@ -119,6 +119,11 @@ async function promptApiSession() {
  * the model is available; otherwise falls back to heuristics. Never throws.
  */
 export async function classifyLocalIntent(text: string): Promise<LocalIntentResult> {
+  // Local intents are short device commands ("open safari", "take a
+  // screenshot"). Long pasted briefs must fall through to the full LLM
+  // pipeline — the Prompt API classifier would happily label a 300-char
+  // excerpt of an essay as 'open_app'.
+  if (text.trim().length > 300) return { intent: 'unknown', confidence: 0, engine: 'heuristic' };
   const fallback = heuristicIntent(text);
   if (fallback.intent !== 'unknown' && fallback.confidence >= 0.9) return fallback;
 

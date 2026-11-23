@@ -579,6 +579,12 @@ function layerIdsIn(text: string): string[] {
 export function parseMapCommand(text: string): MapCommand | null {
   const t = text.trim().replace(/^(?:(?:hey|hi|hello|ok|okay)?\s*cortex[,:\s]+)/i, '').trim();
   if (!t) return null;
+  // Deterministic map grammar is for SHORT voice commands. Long pasted
+  // briefs/essays must reach the LLM — they routinely contain layer-alias
+  // words ("fires", "awareness", "directions") plus words like "only" that
+  // hijack the parser (observed: a drift-watch brief parsed as
+  // 'layers set [fire-perimeters]' because "alert fires" + "only speaks").
+  if (t.length > 200) return null;
   // Surface / panel / artifact / resume pinning MUST NEVER be treated as a globe command
   if (/\b(?:pin|dock|keep|put)\b/i.test(t) && (ARTIFACT_NOUN_RE.test(t) || /\b(?:that|this|it|here|surface|space)\b/i.test(t))) {
     if (!/\b(?:map|globe|earth|world|route|flight|satellite|cctv)\b/i.test(t)) {
@@ -692,7 +698,10 @@ export function parseMapCommand(text: string): MapCommand | null {
     if (ids.length) {
       const cleaned = t.replace(LAYER_ONLY_RE, '');
       const place = compoundPlace(t);
-      const isOnly = /^(?:only|just)\b/i.test(t) || /\bonly\b/i.test(t);
+      // "only" must be anchored ("only flights") or paired with a layer
+      // verb ("show only flights") — a mid-sentence "only" in ordinary prose
+      // ("the alert only fires on saturdays") must not force a layer set.
+      const isOnly = /^(?:only|just)\b/i.test(t) || (/\bonly\b/i.test(t) && LAYER_VERB_RE.test(t));
       if (!isOnly && place && !isNonGeoPlace(place) && LAYER_VERB_RE.test(t) && !LAYER_HIDE_RE.test(t)) {
         return { type: 'open', place, layers: ids };
       }

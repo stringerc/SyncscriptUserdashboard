@@ -2211,7 +2211,11 @@ MANDATORY: weave a 3-4 sentence spoken "state of being" answer citing at least o
         }
 
         // ── Visualizer face grammar (switch between core, board, radial, neural, matrix) ──
-        const faceMatch = text.match(/\b(?:switch|change|set|show|turn on|go to)\b.*\b(?:face|visualizer|mode|theme)\b|\b(?:switch|change)\s+to\s+(?:the\s+)?(neural|matrix|board|circuit|circuit\s+board|radial|starburst|core|3d\s*core|sovereign\s*core)\b|\b(neural|matrix|radial|circuit\s+board)\s+(?:face|visualizer)\b/i);
+        // All inline deterministic grammars below are for SHORT imperative
+        // utterances — long pasted briefs must reach the LLM (their vocabulary
+        // collides with these matchers: "show"…"mode", "light show", "fires"…).
+        const isShortCommand = text.trim().length <= 300;
+        const faceMatch = isShortCommand ? text.match(/\b(?:switch|change|set|show|turn on|go to)\b.*\b(?:face|visualizer|mode|theme)\b|\b(?:switch|change)\s+to\s+(?:the\s+)?(neural|matrix|board|circuit|circuit\s+board|radial|starburst|core|3d\s*core|sovereign\s*core)\b|\b(neural|matrix|radial|circuit\s+board)\s+(?:face|visualizer)\b/i) : null;
         if (faceMatch) {
           const lower = text.toLowerCase();
           let targetFace: string | null = null;
@@ -2236,9 +2240,9 @@ MANDATORY: weave a 3-4 sentence spoken "state of being" answer citing at least o
         }
 
         // ── Direct Govee Room Lights grammar (instant response without multi-second LLM hops) ──
-        const lightShowMatch = text.match(/\b(?:put on|start|play|run|trigger|do|give me|activate|launch)\b[^.?!]{0,40}\b(?:light show|lightshow|disco|party mode|rave|music mode)\b|\b(?:light show|lightshow)\b/i);
-        const lightPowerMatch = !lightShowMatch && text.match(/\b(?:turn|switch)\s+(?:the\s+)?(?:room\s+|govee\s+)?lights?\s+(on|off)\b|\b(?:lights?\s+(?:on|off))\b/i);
-        const lightColorMatch = !lightShowMatch && !lightPowerMatch && text.match(/\b(?:set|turn|change|make)\s+(?:the\s+)?(?:room\s+|govee\s+)?lights?\s+(?:to\s+)?(cyberpunk|matrix|neon\s+blue|sunset|crimson|gold|stealth|white|warm\s+white|blue|cyan|green|purple|violet|red|pink|magenta|orange|yellow)\b/i);
+        const lightShowMatch = isShortCommand ? text.match(/\b(?:put on|start|play|run|trigger|do|give me|activate|launch)\b[^.?!]{0,40}\b(?:light show|lightshow|disco|party mode|rave|music mode)\b|\b(?:light show|lightshow)\b/i) : null;
+        const lightPowerMatch = !lightShowMatch && isShortCommand ? text.match(/\b(?:turn|switch)\s+(?:the\s+)?(?:room\s+|govee\s+)?lights?\s+(on|off)\b|\b(?:lights?\s+(?:on|off))\b/i) : null;
+        const lightColorMatch = !lightShowMatch && !lightPowerMatch && isShortCommand ? text.match(/\b(?:set|turn|change|make)\s+(?:the\s+)?(?:room\s+|govee\s+)?lights?\s+(?:to\s+)?(cyberpunk|matrix|neon\s+blue|sunset|crimson|gold|stealth|white|warm\s+white|blue|cyan|green|purple|violet|red|pink|magenta|orange|yellow)\b/i) : null;
 
         if (lightShowMatch || lightPowerMatch || lightColorMatch) {
           let reply = '';
@@ -2266,7 +2270,7 @@ MANDATORY: weave a 3-4 sentence spoken "state of being" answer citing at least o
         }
 
         // ── Direct Cognitive & Metacognitive Vigilance grammar ──
-        const cognitiveQueryMatch = text.match(/\b(?:cognitive|consciousness|free energy|vigilance|metacognitive|phi metric|allostatic)\b.*\b(?:status|report|state|level|score|readout|metrics?)\b|\b(?:report|what is|check|how is|give me a)\b.*\b(?:cognitive status|consciousness|free energy|vigilance|equilibrium|phi|agency)\b/i);
+        const cognitiveQueryMatch = isShortCommand ? text.match(/\b(?:cognitive|consciousness|free energy|vigilance|metacognitive|phi metric|allostatic)\b.*\b(?:status|report|state|level|score|readout|metrics?)\b|\b(?:report|what is|check|how is|give me a)\b.*\b(?:cognitive status|consciousness|free energy|vigilance|equilibrium|phi|agency)\b/i) : null;
         if (cognitiveQueryMatch) {
           const agent = getOrInitConsciousAgent();
           const st = agent.getConsciousnessState();
@@ -2306,7 +2310,7 @@ MANDATORY: weave a 3-4 sentence spoken "state of being" answer citing at least o
         // Pronoun camera fallback: "open it" / "try again" / "show the feed"
         // after a camera lock re-selects the last camera instead of hitting
         // the LLM (which would hallucinate file/browser actions).
-        if (!mapCmd && getLastCctvName() &&
+        if (!mapCmd && isShortCommand && getLastCctvName() &&
             /\b(?:open|show|watch|focus|bring up|try|retry|select)\b[^.?!]{0,30}\b(?:it|that|again|camera|cam|cctv|feed|stream)\b/i.test(text)) {
           mapCmd = { type: 'cctv', action: 'select', query: getLastCctvName()! };
         }
