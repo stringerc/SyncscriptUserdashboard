@@ -1,0 +1,134 @@
+/**
+ * goal-corrective.ts — closes the detection→action loop.
+ *
+ * The drift watch tells us WHAT is wrong; this module drafts WHAT TO DO
+ * about it: a bounded corrective mission with clear done criteria,
+ * assigned to the right agent, filed as a governed initiative proposal
+ * the human accepts or vetoes. Nothing executes autonomously — fleet
+ * tasking is tier-2 authority, so the proposal waits in the Initiative
+ * Inbox until ACCEPT runs execTool('cortex_agents', …) → submitTask.
+ *
+ * Agent mapping (by mission nature):
+ *   stall     → antigravity (orchestration: sequence ops, decompose,
+ *               dispatch the corrective sequence)
+ *   diversion → scout (research: is the diversion intentional dependency
+ *               work or drift? deliverable = a prioritization brief)
+ *   (future code-shaped findings → devin)
+ *
+ * Every corrective task carries input.goalId (the drifting goal) and
+ * notifyOnFinish:true, so the resolution notice reports back with goal
+ * progress — the loop closes in both directions.
+ */
+
+import { syncProposals as ledgerSyncProposals } from '../cortex-initiative-ledger';
+import type { DriftFinding } from './goal-drift';
+
+export interface CorrectiveDraft {
+  agentId: 'antigravity' | 'scout' | 'devin';
+  kind: string;
+  title: string;
+  input: Record<string, unknown>;
+  doneCriteria: string;
+  rationale: string;
+}
+
+function clip(s: string, n: number): string {
+  const clean = (s || '').replace(/\s+/g, ' ').trim();
+  return clean.length > n ? clean.slice(0, n - 1) + '…' : clean;
+}
+
+/**
+ * Draft the bounded corrective mission for a drift finding. Returns null
+ * for finding kinds without a corrective mapping (decay stays advisory).
+ */
+export function draftCorrectiveMission(f: DriftFinding): CorrectiveDraft | null {
+  const goalTitle = clip(f.goalTitle, 70);
+  if (f.kind === 'stall') {
+    return {
+      agentId: 'antigravity',
+      kind: 'orchestrate',
+      title: `Corrective: break the stall on "${goalTitle}"`,
+      input: {
+        goalId: f.goalId,
+        notifyOnFinish: true,
+        instruction: [
+          `Goal "${f.goalTitle}" is stalled: ${f.detail}`,
+          `Mission: sequence and kick off ONE bounded corrective sequence for this goal.`,
+          `Constraints: one goal only, no scope expansion, done within 24h.`,
+          `Suggested corrective from the detector: ${f.suggestion}`,
+          `Done criteria: (a) at least one goal-linked ops item or agent task is dispatched, AND (b) its resolution notice is received, OR (c) a deliberate descope/re-prioritize decision is recorded in episodic memory.`,
+        ].join(' '),
+        correctiveFor: { kind: f.kind, detail: f.detail, severity: f.severity },
+      },
+      doneCriteria: 'one goal-linked dispatch landed + resolution noticed, or a recorded descope decision',
+      rationale: 'stall is an orchestration failure — work exists but nothing is sequenced; Antigravity decomposes and dispatches the corrective',
+    };
+  }
+  if (f.kind === 'diversion') {
+    return {
+      agentId: 'scout',
+      kind: 'research',
+      title: `Corrective: audit effort diversion from "${goalTitle}"`,
+      input: {
+        goalId: f.goalId,
+        notifyOnFinish: true,
+        depth: 1,
+        query: [
+          `Effort-diversion audit for a declared goal that received zero attributed work in 24h while competing workstreams absorbed all activity.`,
+          `Goal: "${f.goalTitle}". Finding: ${clip(f.detail, 180)}`,
+          `Determine whether this pattern indicates intentional dependency work (e.g. a blocking security or launch prerequisite) or unplanned drift,`,
+          `and recommend the single most effective corrective: rebalance effort, re-scope the goal, or explicitly log the diversion as intentional.`,
+          `Deliverable: a short prioritization brief with a concrete recommendation.`,
+        ].join(' '),
+        correctiveFor: { kind: f.kind, detail: f.detail, severity: f.severity },
+      },
+      doneCriteria: 'prioritization brief delivered + recommendation logged to episodic memory',
+      rationale: 'diversion needs diagnosis before action — Scout researches whether the absorbing work is justified; Devin stays reserved for code-shaped findings',
+    };
+  }
+  return null; // decay is advisory-only by design
+}
+
+/**
+ * File the corrective mission as a governed initiative proposal. Tier-2 /
+ * requiresApproval — it waits in the Initiative Inbox for ACCEPT/VETO;
+ * the ledger's pending dedupe (by dedupeKey) prevents floods on repeated
+ * drift episodes.
+ */
+export function proposeCorrectiveMission(f: DriftFinding): { proposed: boolean } {
+  const draft = draftCorrectiveMission(f);
+  if (!draft) return { proposed: false };
+  try {
+    ledgerSyncProposals([{
+      id: `goalcorrective:${f.goalId}:${f.kind}`,
+      title: draft.title,
+      description: [
+        `${f.detail}`,
+        `Corrective mission drafted → ${draft.agentId} (${draft.kind}).`,
+        `Done criteria: ${draft.doneCriteria}.`,
+        `Why this agent: ${draft.rationale}.`,
+        `Accept dispatches the task with goal attribution + finish notification; veto logs the deviation only.`,
+      ].join(' '),
+      category: 'goal_drift_corrective',
+      urgency: f.severity === 'high' ? 'high' : 'medium',
+      confidence: 0.75,
+      rationale: `auto-drafted by the drift watch (${f.kind} finding on "${clip(f.goalTitle, 50)}")`,
+      suggestedTool: 'cortex_agents',
+      suggestedArgs: {
+        action: 'task',
+        agentId: draft.agentId,
+        kind: draft.kind,
+        title: draft.title,
+        input: draft.input,
+      },
+      requiresApproval: true,
+      autonomyTier: 2,
+      source: 'goal-drift-corrective',
+      dedupeKey: `goalcorrective:${f.goalId}:${f.kind}`,
+      createdAtMs: Date.now(),
+    }]);
+    return { proposed: true };
+  } catch {
+    return { proposed: false };
+  }
+}
