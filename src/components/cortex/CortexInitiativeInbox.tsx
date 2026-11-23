@@ -52,7 +52,7 @@ function ProposalCard({ p }: { p: ProactiveProposal }) {
   const [expanded, setExpanded] = useState(false);
   const simLeversRef = React.useRef<Record<string, unknown>>({});
   const fc = (p.suggestedArgs?.input?.forecastFor || null) as any;
-  const isForecast = (p.category as string) === 'goal_forecast' && !!fc && !!p.suggestedArgs?.input?.goalId;
+  const isForecast = ((p.category as string) === 'goal_forecast' || (p.category as string) === 'goal_pace_divergence') && !!fc && !!p.suggestedArgs?.input?.goalId;
   const stampLevers = () => {
     if (isForecast && Object.keys(simLeversRef.current).length && p.suggestedArgs?.input) {
       p.suggestedArgs.input.simulatedLevers = { ...simLeversRef.current };

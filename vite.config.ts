@@ -266,6 +266,7 @@ import { startGoalDriftWatch } from './src/lib/cortex-agent/goal-drift';
 import { setPremortemNotifier } from './src/lib/cortex-agent/goal-premortem';
 import { setVerificationNotifier, handleCorrectiveResolution } from './src/lib/cortex-agent/goal-verification';
 import { startGoalForecastWatch, setForecastNotifier } from './src/lib/cortex-agent/goal-forecast';
+import { startGoalPaceWatch, setPaceWatchNotifier } from './src/lib/cortex-agent/goal-pace-watch';
 
 // Unhandled-rejection guard: Node crashes the ENTIRE process on any
 // unhandled rejection. AbortError rejections are routine cancellation
@@ -1793,6 +1794,13 @@ function apiProxyPlugin(): Plugin {
         setForecastNotifier((msg) => {
           try { ambientPush('ambient', msg); } catch {}
         });
+        // Pace-watch divergence alerts get a voice as well.
+        setPaceWatchNotifier((msg) => {
+          try { ambientPush('ambient', msg); } catch {}
+        });
+        // Pace watch: accepted forecast missions tracked against their
+        // simulated trajectory; divergence files Inbox cards.
+        try { startGoalPaceWatch(); } catch {}
         // Trajectory watch: 10-min cadence, files pre-emptive proposals
         // when a goal's hit-probability drops below threshold.
         try { startGoalForecastWatch(); } catch {}
