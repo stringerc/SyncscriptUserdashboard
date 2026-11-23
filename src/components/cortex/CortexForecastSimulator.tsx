@@ -23,6 +23,11 @@ interface SimResult {
   paceRatio: number | null;
   remainingOps: number;
   basis: string;
+  portfolioImpact?: {
+    effortBudgetDaily: number;
+    leverCostDaily: number;
+    goals: Array<{ goalId: string; title: string; shareBefore: number; shareAfter: number }>;
+  };
 }
 
 interface Props {
@@ -95,6 +100,7 @@ export function CortexForecastSimulator({ goalId, baseline, onLevers }: Props) {
             paceRatio: j.forecast.paceRatio,
             remainingOps: j.forecast.remainingOps,
             basis: j.forecast.basis,
+            portfolioImpact: j.forecast.portfolioImpact,
           });
         }
       } catch {} finally { setLoading(false); }
@@ -188,6 +194,19 @@ export function CortexForecastSimulator({ goalId, baseline, onLevers }: Props) {
           )}
         </div>
       </div>
+
+      {shown.portfolioImpact && shown.portfolioImpact.leverCostDaily > 0 && (
+        <div style={{ marginTop: 6, borderTop: `1px solid ${C.border}`, paddingTop: 5 }}>
+          <div style={{ fontFamily: MONO, fontSize: 8, color: C.dim, marginBottom: 3 }}>
+            PORTFOLIO COST — +{shown.portfolioImpact.leverCostDaily}/day effort (budget ~{shown.portfolioImpact.effortBudgetDaily}/day)
+          </div>
+          {shown.portfolioImpact.goals.filter((g) => g.shareBefore > 0 || g.shareAfter !== g.shareBefore).map((g) => (
+            <div key={g.goalId} style={{ fontFamily: MONO, fontSize: 8.5, color: g.shareAfter < g.shareBefore ? C.amber : C.dim }}>
+              {g.title.slice(0, 34)}: effort share {g.shareBefore}% → {g.shareAfter}%
+            </div>
+          ))}
+        </div>
+      )}
 
       <div style={{ fontFamily: MONO, fontSize: 8, color: C.dim, marginTop: 4 }}>
         Baseline {baseP != null ? `${Math.round(baseP * 100)}%` : '—'} → simulated {p != null ? `${Math.round(p * 100)}%` : '—'} · accept stamps these levers into the mission

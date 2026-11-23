@@ -42,10 +42,26 @@ export interface GoalForecast {
   projectedFinish: string | null;
   observations: number;
   momentum: 'up' | 'flat' | 'down' | null;
+  rawProbability?: number;
+  calibrated?: boolean;
+  calibrationN?: number;
+  portfolioImpact?: {
+    effortBudgetDaily: number;
+    leverCostDaily: number;
+    goals: Array<{ goalId: string; title: string; shareBefore: number; shareAfter: number }>;
+  };
+}
+
+export interface CalibrationReport {
+  claims: number; outcomes: number; resolvedGoals: number;
+  buckets: Array<{ band: string; predicted: number; observed: number; n: number }>;
+  overallBias: number | null;
+  sufficientData: boolean;
 }
 
 export interface StrategicDashboard {
   generatedAt: number;
   goals: GoalHealth[];
   hostEffort30d: GoalTrendPoint[];
+  calibration?: CalibrationReport;
 }

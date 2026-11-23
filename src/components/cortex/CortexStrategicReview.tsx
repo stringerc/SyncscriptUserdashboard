@@ -101,6 +101,9 @@ function GoalCard({ g }: { g: GoalHealth }) {
           {g.forecast.probability != null ? (
             <div style={{ color: g.forecast.probability < 0.5 ? C.red : g.forecast.probability < 0.75 ? C.amber : C.green }}>
               🎯 P(hit {g.forecast.targetDate}) = <b>{Math.round(g.forecast.probability * 100)}%</b>
+              {g.forecast.calibrated && g.forecast.rawProbability != null && Math.abs(g.forecast.rawProbability - g.forecast.probability) > 0.01 && (
+                <span style={{ color: C.dim }}> (raw {Math.round(g.forecast.rawProbability * 100)}%, calibrated n={g.forecast.calibrationN})</span>
+              )}
               {' '}· pace {g.forecast.paceRatio}× · ETA {g.forecast.projectedFinish}
               {g.forecast.momentum === 'down' ? ' · momentum ↓' : g.forecast.momentum === 'up' ? ' · momentum ↑' : ''}
             </div>
@@ -220,6 +223,21 @@ export function CortexStrategicReview() {
           {error ? ` · ${error}` : ''}
         </div>
       </div>
+
+      {/* Calibration strip */}
+      {data?.calibration && (
+        <div style={{ fontFamily: MONO, fontSize: 9, color: C.dim, border: `1px solid ${C.border}`, borderRadius: 4, padding: '6px 8px' }}>
+          <span style={{ color: C.cyan, letterSpacing: 1 }}>CALIBRATION </span>
+          {data.calibration.resolvedGoals === 0 ? (
+            <span>no resolved outcomes yet — forecasts shipping uncalibrated ({data.calibration.claims} claims logged)</span>
+          ) : (
+            <span>
+              {data.calibration.resolvedGoals} resolved · bias {data.calibration.overallBias != null ? `${data.calibration.overallBias > 0 ? '+' : ''}${Math.round(data.calibration.overallBias * 100)}%` : '—'}
+              {data.calibration.buckets.map((b) => ` · ${b.band}: pred ${Math.round(b.predicted * 100)}% → hit ${Math.round(b.observed * 100)}% (n=${b.n})`).join('')}
+            </span>
+          )}
+        </div>
+      )}
 
       {/* Host effort context */}
       {data && (

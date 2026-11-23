@@ -19,6 +19,8 @@ import { getCortexGoals, type LifeGoal } from '../cortex-goals';
 import { loadMission } from '../cortex-agents/mission';
 import { collectEffortEvents } from './goal-drift';
 import { computeGoalForecasts } from './goal-forecast';
+import { calibrationReport } from './goal-calibration';
+import type { CalibrationReport } from '../cortex-strategic-dashboard-types';
 import type { GoalHealth, GoalTrendPoint, StrategicDashboard } from '../cortex-strategic-dashboard-types';
 
 const RUNTIME = path.resolve(process.cwd(), '.cortex-runtime');
@@ -217,5 +219,7 @@ export function getStrategicDashboard(nowMs: number = Date.now()): StrategicDash
     };
   });
 
-  return { generatedAt: nowMs, goals, hostEffort30d };
+  let calibration: CalibrationReport | undefined;
+  try { calibration = calibrationReport(); } catch {}
+  return { generatedAt: nowMs, goals, hostEffort30d, calibration };
 }

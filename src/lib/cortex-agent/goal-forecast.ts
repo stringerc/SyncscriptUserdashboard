@@ -31,6 +31,7 @@ import { getCortexGoals, type LifeGoal } from '../cortex-goals';
 import { loadMission } from '../cortex-agents/mission';
 import { syncProposals as ledgerSyncProposals } from '../cortex-initiative-ledger';
 import { collectEffortEvents } from './goal-drift';
+import { applyCalibration, logForecastClaim, resolveForecastOutcomes } from './goal-calibration';
 
 const RUNTIME = path.resolve(process.cwd(), '.cortex-runtime');
 const STATE_PATH = path.join(RUNTIME, 'goal-forecast-state.json');
@@ -54,6 +55,9 @@ export interface GoalForecast {
   projectedFinish: string | null;
   observations: number;    // completions in the 28d measurement window
   momentum: 'up' | 'flat' | 'down' | null; // effort trend last 7d vs prior 21d
+  rawProbability?: number; // pre-calibration estimate
+  calibrated?: boolean;    // whether calibration data influenced this
+  calibrationN?: number;   // resolved outcomes behind the correction
 }
 
 interface ForecastState { lastProposalWeek: Record<string, string> }
@@ -151,12 +155,54 @@ function projectHit(remainingOps: number, weeklyRate: number, weeksLeft: number,
   return { probability: Math.round(Math.min(0.98, Math.max(0.02, phi(z))) * 100) / 100, finishWeeks: mu };
 }
 
+export interface PortfolioGoalImpact { goalId: string; title: string; shareBefore: number; shareAfter: number }
+export interface PortfolioImpact {
+  effortBudgetDaily: number;   // host effort events/day (7d avg, all sources)
+  leverCostDaily: number;      // extra effort/day demanded by the levers
+  goals: PortfolioGoalImpact[]; // OTHER active goals' effort shares
+}
+
+/**
+ * Cross-goal contention: a cadence/sprint lever on one goal spends from
+ * the shared effort pool. Estimate the daily effort cost (extra ops/week
+ * × observed effort-per-completion) and show how every OTHER active
+ * goal's effort share shrinks when the pool is reallocated proportionally.
+ * Honest simplification: proportional draw, unattributed effort absorbs
+ * first-order slack — shares are indicative, not accounting.
+ */
+export function portfolioImpactFor(goalId: string, extraWeeklyOps: number, nowMs: number = Date.now()): PortfolioImpact {
+  const events = collectEffortEvents(nowMs - 7 * DAY_MS);
+  const perGoal = new Map<string, number>();
+  let total = 0;
+  for (const e of events) { total++; if (e.goalId) perGoal.set(e.goalId, (perGoal.get(e.goalId) || 0) + 1); }
+  const budgetDaily = total / 7;
+  const goalEvents = perGoal.get(goalId) || 0;
+  // effort-per-completion for THIS goal: attributed events / verified ops
+  // completed in window; fallback 25 events/op (observed fleet average-ish).
+  const mission = loadMission();
+  const doneOps = (mission.opsItems || []).filter((o: any) => o.goalId === goalId && o.done && Number(o.verifiedAt || 0) >= nowMs - 28 * DAY_MS);
+  const eventsPerOp = doneOps.length ? Math.max(5, goalEvents / Math.max(doneOps.length, 1)) : 25;
+  const leverCostDaily = Math.max(0, extraWeeklyOps) * eventsPerOp / 7;
+  const scale = budgetDaily > 0 ? Math.max(0, (budgetDaily - leverCostDaily) / budgetDaily) : 1;
+  const goals = getCortexGoals().list('active')
+    .filter((g) => g.id !== goalId)
+    .map((g) => {
+      const before = total > 0 ? (perGoal.get(g.id) || 0) / total : 0;
+      return {
+        goalId: g.id, title: g.title,
+        shareBefore: Math.round(before * 10000) / 100,
+        shareAfter: Math.round(before * scale * 10000) / 100,
+      };
+    });
+  return { effortBudgetDaily: Math.round(budgetDaily * 10) / 10, leverCostDaily: Math.round(leverCostDaily * 10) / 10, goals };
+}
+
 /**
  * What-if simulator: recompute a goal's forecast under lever overrides.
  * Same model as computeGoalForecasts — this is the cockpit math, not a
  * second model. Returns null when the goal can't be forecast honestly.
  */
-export function simulateGoalForecast(goalId: string, levers: ForecastLevers, nowMs: number = Date.now()): (GoalForecast & { levers: ForecastLevers }) | null {
+export function simulateGoalForecast(goalId: string, levers: ForecastLevers, nowMs: number = Date.now()): (GoalForecast & { levers: ForecastLevers; portfolioImpact?: PortfolioImpact }) | null {
   const g = getCortexGoals().get(goalId);
   if (!g || !g.targetDate) return null;
   const mission = loadMission();
@@ -166,7 +212,7 @@ export function simulateGoalForecast(goalId: string, levers: ForecastLevers, now
   const remainingOps = Math.max(0, linked.length - doneOps.length - Math.max(0, levers.descopeOps || 0));
   const daysLeft = Math.max(0, (g.targetDate - nowMs) / DAY_MS);
   const weeksLeft = daysLeft / 7;
-  const out: GoalForecast & { levers: ForecastLevers } = {
+  const out: GoalForecast & { levers: ForecastLevers; portfolioImpact?: PortfolioImpact } = {
     goalId, goalTitle: g.title,
     targetDate: new Date(g.targetDate).toISOString().slice(0, 10),
     daysLeft: Math.round(daysLeft),
@@ -187,9 +233,18 @@ export function simulateGoalForecast(goalId: string, levers: ForecastLevers, now
   const sprintBoost = Math.max(0, levers.sprintBoostWeekly || 0);
   const sprintWeeks = Math.max(0, levers.sprintWeeks || 0);
   const hit = projectHit(remainingOps, lambda, weeksLeft, base.observations, sprintBoost, sprintWeeks);
-  out.probability = hit.probability;
+  const cal = applyCalibration(hit.probability);
+  out.rawProbability = hit.probability;
+  out.probability = cal.probability;
+  out.calibrated = cal.calibrated;
+  out.calibrationN = cal.n;
   out.projectedFinish = new Date(nowMs + hit.finishWeeks * WEEK_MS).toISOString().slice(0, 10);
   out.basis = 'ops-gamma';
+  // Portfolio contention: extra weekly ops demanded vs the base rate,
+  // plus sprint capacity — priced in shared effort units.
+  const extraWeekly = Math.max(0, out.weeklyRate - base.lambda)
+    + (sprintBoost > 0 ? (sprintBoost * Math.min(sprintWeeks, 4)) / 4 : 0);
+  out.portfolioImpact = portfolioImpactFor(goalId, extraWeekly, nowMs);
   return out;
 }
 
@@ -258,7 +313,12 @@ export function computeGoalForecasts(nowMs: number = Date.now()): GoalForecast[]
     let p = phi(z);
     // Projected finish date at current λ.
     base.projectedFinish = new Date(nowMs + mu * WEEK_MS).toISOString().slice(0, 10);
-    base.probability = Math.round(Math.min(0.98, Math.max(0.02, p)) * 100) / 100;
+    const rawP = Math.round(Math.min(0.98, Math.max(0.02, p)) * 100) / 100;
+    const cal = applyCalibration(rawP);
+    base.rawProbability = rawP;
+    base.probability = cal.probability;
+    base.calibrated = cal.calibrated;
+    base.calibrationN = cal.n;
     base.basis = 'ops-gamma';
     base.observations = n;
     out.push(base);
@@ -276,7 +336,18 @@ export function setForecastNotifier(fn: (msg: string) => void): void { notifier 
  * dispatch, or explicit descope). Returns counts for observability.
  */
 export function runGoalForecastCheck(nowMs: number = Date.now()): { evaluated: number; proposed: number } {
+  try { resolveForecastOutcomes(nowMs); } catch {}
   const forecasts = computeGoalForecasts(nowMs);
+  for (const f of forecasts) {
+    if (f.probability == null) continue;
+    try {
+      logForecastClaim({
+        goalId: f.goalId, goalTitle: f.goalTitle, targetDate: f.targetDate || '',
+        probability: f.probability, rawProbability: f.rawProbability,
+        basis: f.basis, observations: f.observations, computedAt: nowMs,
+      });
+    } catch {}
+  }
   const state = loadState();
   const week = isoWeek();
   let proposed = 0;
