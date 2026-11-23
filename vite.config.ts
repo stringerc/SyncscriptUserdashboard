@@ -258,7 +258,7 @@ import {
   drainSafePending as ledgerDrainSafe,
   isSafeAutoProposal,
 } from './src/lib/cortex-initiative-ledger';
-import { getWorldState, formatWorldStateHeader, startWorldStateSampler } from './src/lib/cortex-world-state';
+import { getWorldState, formatWorldStateHeader, startWorldStateSampler, onHostMemoryPressure } from './src/lib/cortex-world-state';
 
 /** Short SHA for deploy verification (Vercel sets VERCEL_GIT_COMMIT_SHA at build time). */
 function resolveSyncscriptBuildSha(): string {
@@ -1528,6 +1528,33 @@ function apiProxyPlugin(): Plugin {
         startWorldStateSampler(3000);
       } catch (e: any) {
         console.warn('[world-state] sampler failed to arm:', e?.message || e);
+      }
+      // ── Host memory-pressure governor: the sampler already watches
+      // memUsedPct every 3s — on threshold crossings, reclaim RAM BEFORE
+      // the host OOMs (idle sidecars are the biggest safe lever; each is
+      // hundreds of MB and wake-on-demand makes reaping free).
+      try {
+        let lastPressurePushAt = 0;
+        onHostMemoryPressure(async (level, pct) => {
+          try {
+            const { sweepIdleSidecars } = await import('./src/lib/cortex-agent/sidecars');
+            const reaped = sweepIdleSidecars();
+            if (globalThis.gc) { try { (globalThis as any).gc(); } catch {} }
+            // Cooldown: transitions are edge-triggered, but warn↔critical
+            // can bounce — don't narrate more than once per 10min.
+            if (Date.now() - lastPressurePushAt < 10 * 60_000) return;
+            lastPressurePushAt = Date.now();
+            const freedMB = reaped.length ? ' Reclaimed idle sidecars: ' + reaped.join(', ') + '.' : '';
+            ambientPush(
+              level === 'critical' ? 'system' : 'ambient',
+              level === 'critical'
+                ? `⚠️ Host memory critical — ${pct}% used. I swept idle fleet sidecars to make headroom before anything gets OOM-killed.${freedMB}`
+                : `Memory pressure — host at ${pct}% used. I swept idle sidecars to stay ahead of it.${freedMB}`,
+            );
+          } catch {}
+        });
+      } catch (e: any) {
+        console.warn('[world-state] pressure governor failed to arm:', e?.message || e);
       }
       // ── /api/cortex/autonomy — sovereign autonomy mode (bypass-permissions).
       // GET returns the mode; POST {mode:'autonomous'|'confirm'} toggles it.
@@ -10912,12 +10939,23 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
                 } catch {}
               }
 
+              // Living world-state: inject the ambient blackboard header
+              // server-side so EVERY cortex surface (chat, voice agentic,
+              // anthropic path) perceives host reality without the client
+              // having to fetch it. Sub-ms read off the warm sampler cache.
+              let worldStateDigest = '';
+              if (parsed.context === 'cortex') {
+                try {
+                  worldStateDigest = `\n\n${formatWorldStateHeader(await getWorldState())}`;
+                } catch {}
+              }
+
               const sysContent = parsed.systemPrompt
                 ? `${sysPrefix}\n\n${parsed.systemPrompt}`
                 : (parsed.context === 'cortex'
                   ? `${sysPrefix}\n\nRespond with deep cognitive authenticity.`
                   : NEXUS_SYSTEM_PROMPT);
-              const sysContentFull = `${continuityBrief ? `${sysContent}\n\n${continuityBrief}` : sysContent}${goalDigest}`;
+              const sysContentFull = `${continuityBrief ? `${sysContent}\n\n${continuityBrief}` : sysContent}${goalDigest}${worldStateDigest}`;
 
               const chatMessages = [
                 { role: 'system', content: sysContentFull },

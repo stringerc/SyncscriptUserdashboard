@@ -484,10 +484,65 @@ export function formatWorldStateHeader(state: WorldState): string {
 // flag would let each restart stack another 3s probe loop forever.
 const SAMPLER_KEY = '__cortexWorldStateSampler';
 
+// ── Host memory-pressure governor ──────────────────────────────────────────
+// Cortex's wish included "never having to worry about an OOM kill in the
+// middle of a critical operation." Infinite headroom isn't real — but
+// acting BEFORE the kill is. The sampler already samples memUsedPct every
+// 3s; this turns crossings into edge-triggered events so vite.config can
+// reclaim RAM (idle sidecars, runtime prune) before the host thrashes.
+// Hysteresis prevents flapping; state + listeners live on globalThis so a
+// Vite restart can't orphan the governor on a dead module instance.
+type PressureLevel = 'ok' | 'warn' | 'critical';
+interface PressureState {
+  level: PressureLevel;
+  listeners: Set<(level: PressureLevel, pct: number) => void>;
+}
+const PRESSURE_KEY = '__cortexHostMemoryPressure';
+const gPressure = globalThis as any;
+if (!gPressure[PRESSURE_KEY]) {
+  gPressure[PRESSURE_KEY] = { level: 'ok', listeners: new Set() } as PressureState;
+}
+const pressure: PressureState = gPressure[PRESSURE_KEY];
+
+const PRESSURE_WARN_PCT = 90;
+const PRESSURE_CRITICAL_PCT = 96;
+
+function nextPressureLevel(pct: number): PressureLevel {
+  if (pressure.level === 'critical') {
+    return pct >= PRESSURE_CRITICAL_PCT - 3 ? 'critical' : pct >= PRESSURE_WARN_PCT - 3 ? 'warn' : 'ok';
+  }
+  if (pressure.level === 'warn') {
+    return pct >= PRESSURE_CRITICAL_PCT ? 'critical' : pct >= PRESSURE_WARN_PCT - 3 ? 'warn' : 'ok';
+  }
+  return pct >= PRESSURE_CRITICAL_PCT ? 'critical' : pct >= PRESSURE_WARN_PCT ? 'warn' : 'ok';
+}
+
+function checkHostMemoryPressure(pct: number): void {
+  if (!Number.isFinite(pct) || pct <= 0) return;
+  const next = nextPressureLevel(pct);
+  if (next === pressure.level) return;
+  pressure.level = next;
+  for (const fn of [...pressure.listeners]) {
+    try { fn(next, pct); } catch {}
+  }
+}
+
+/** Register a host-memory-pressure listener. Fires only on level
+ *  transitions (ok→warn→critical and back), never per-tick. Returns an
+ *  unsubscribe function. */
+export function onHostMemoryPressure(fn: (level: PressureLevel, pct: number) => void): () => void {
+  pressure.listeners.add(fn);
+  return () => { pressure.listeners.delete(fn); };
+}
+
 export function startWorldStateSampler(intervalMs = 3000): void {
   const g = globalThis as any;
   if (g[SAMPLER_KEY]) return;
-  const tick = () => { void refreshWorldState().catch(() => {}); };
+  const tick = () => {
+    void refreshWorldState()
+      .then((s) => checkHostMemoryPressure(s?.host?.memUsedPct ?? 0))
+      .catch(() => {});
+  };
   tick(); // warm immediately — first turn shouldn't pay cold-start either
   g[SAMPLER_KEY] = setInterval(tick, intervalMs);
   g[SAMPLER_KEY].unref?.();

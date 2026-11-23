@@ -1350,21 +1350,10 @@ export function useVisualizerVoice(enabled: boolean, onState: (speaking: boolean
     const agenticReply = async (): Promise<string | null> => {
       const signal = turnAbortRef.current?.signal;
 
-      let worldStateHeader = '';
-      try {
-        const wsRes = await fetch('/api/cortex/world-state', {
-          signal: AbortSignal.timeout(400),
-          cache: 'no-store',
-        });
-        if (wsRes.ok) {
-          const wsData = await wsRes.json();
-          if (wsData?.header) {
-            worldStateHeader = wsData.header;
-          }
-        }
-      } catch {}
-
-      let sysSuffix = [worldStateHeader, emotionGuidanceSuffix(turnEmotionRef.current), turnMemorySuffix, surfaceManifestSuffix()].filter(Boolean).join('\n\n') || undefined;
+      // World-state header is injected server-side into sysContentFull for
+      // every cortex turn — no client fetch needed (saves a serial ~400ms
+      // round-trip before the LLM call even starts).
+      let sysSuffix = [emotionGuidanceSuffix(turnEmotionRef.current), turnMemorySuffix, surfaceManifestSuffix()].filter(Boolean).join('\n\n') || undefined;
       turnMemorySuffix = '';
 
       // State-of-being deterministic orchestration — same contract as the
