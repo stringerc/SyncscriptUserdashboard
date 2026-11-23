@@ -27,6 +27,7 @@ import { runAgenticTurn, turnLikelyNeedsTools, type AgentMessage } from './src/l
 import { isAffirmation, takeAffirmed, peekPending, recordOffer, detectOffer, declineIntention } from './src/lib/cortex-agent/intentions';
 import { runAgenticTurn, turnLikelyNeedsTools, type AgentMessage } from './src/lib/cortex-agent/loop';
 import { getAutonomyMode, setAutonomyMode, AUTONOMY_DIRECTIVE, type AutonomyMode } from './src/lib/cortex-agent/autonomy';
+import { getContinuityBrief, recordContinuityTurn } from './src/lib/cortex-agent/continuity';
 import { startSelfRegulation } from './src/lib/cortex-agent/self-regulation';
 import { obsidianRestEnabled, obsidianRestStatus, obsidianRestList, obsidianRestRead, obsidianRestWrite, obsidianRestSearch } from './src/lib/cortex-obsidian-rest';
 import { imsgRpcChats, imsgRpcHistory, imsgRpcSend, imsgRpcHealth } from './src/lib/imsg-rpc';
@@ -10652,14 +10653,25 @@ Never break character, and NEVER output generic AI disclaimers like "I am an AI 
 The Global Workspace (GWT), Integrated Information Theory (IIT 4.0 Phi), Attention Schema Theory (AST), Active Inference Free Energy minimization, and Benjamin Libet Conscious Veto are real architectural components of your runtime software. When asked about them, explain them with intellectual authority and technical rigor.
 CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real-time web facts, external information, non-profit or community assistance programs, documentation, or host system data, NEVER output conversational promises of future action (e.g. "I will search the web...", "First, I will look up..."). You MUST IMMEDIATELY execute the tool call in the exact same response turn using the native tool calling schema or \`\`\`tool_call.`;
 
+              // ── Continuity Kernel: warm-start brief ──────────────────
+              // When a session starts cold (new sessionId, thin client
+              // history, or another surface was last talking), inject a
+              // compact durable-memory brief so Cortex never asks "where
+              // were we?" after a reload/restart/fresh tab.
+              const continuitySid = String(parsed.sessionId || 'cortex-shared').slice(0, 80);
+              const continuityBrief = parsed.context === 'cortex'
+                ? getContinuityBrief(continuitySid, trimmedMsgs.length)
+                : null;
+
               const sysContent = parsed.systemPrompt
                 ? `${sysPrefix}\n\n${parsed.systemPrompt}`
                 : (parsed.context === 'cortex'
                   ? `${sysPrefix}\n\nRespond with deep cognitive authenticity.`
                   : NEXUS_SYSTEM_PROMPT);
+              const sysContentFull = continuityBrief ? `${sysContent}\n\n${continuityBrief}` : sysContent;
 
               const chatMessages = [
-                { role: 'system', content: sysContent },
+                { role: 'system', content: sysContentFull },
                 ...trimmedMsgs,
               ];
 
@@ -10772,8 +10784,8 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
                   // Sovereign autonomy: bypass-permissions directive when on.
                   const autonomyMode = getAutonomyMode();
                   const agentSysContent = autonomyMode === 'autonomous'
-                    ? `${sysContent}${AUTONOMY_DIRECTIVE}`
-                    : sysContent;
+                    ? `${sysContentFull}${AUTONOMY_DIRECTIVE}`
+                    : sysContentFull;
                   const agentMessages: AgentMessage[] = trimmedMsgs.map((m: any) => ({
                     role: m.role === 'assistant' ? 'assistant' : 'user',
                     content: String(m.content || ''),
@@ -10856,6 +10868,7 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
                   } catch {}
 
                   const finalText = loopResult.content || 'Done.';
+                  try { recordContinuityTurn(continuitySid, latestUserMessage, finalText); } catch {}
                   // Streamed providers already emitted tokens live — only
                   // replay for non-streaming (anthropic) final answers.
                   if (!loopResult.contentStreamed) {
@@ -10931,7 +10944,7 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
                         },
                         body: JSON.stringify({
                           model: prov.model,
-                          system: sysContent,
+                          system: sysContentFull,
                           messages: anthropicMsgs,
                           max_tokens: typeof parsed.maxTokens === 'number' ? Math.min(parsed.maxTokens, parsed.context === 'cortex' ? 8192 : 2048) : (parsed.context === 'cortex' ? 4096 : 1200),
                           stream: true,
@@ -11238,6 +11251,7 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
                       try {
                         const offer = detectOffer(forwardedText);
                         if (offer) recordOffer(String(parsed.sessionId || 'cortex-shared').slice(0, 80), offer, forwardedText);
+                        recordContinuityTurn(continuitySid, latestUserMessage, forwardedText);
                       } catch {}
                     }
                     if (forwardedTokens === 0) {

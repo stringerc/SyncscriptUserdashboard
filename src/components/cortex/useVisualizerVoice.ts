@@ -19,6 +19,7 @@ import {
   appendCortexChatMessage, upsertCortexChatMessage,
 } from '../../lib/cortex-chat-store';
 import { claimTurn } from '../../lib/cortex-turn-arbiter';
+import { getCortexSessionId } from '../../lib/cortex-session';
 import type { ChatMessage } from './cortex-demo-helpers';
 import { useVoiceStream } from '../../hooks/useVoiceStream';
 import { isAcousticEcho, INTERRUPT_COMMANDS } from '../../utils/cortex-efference-copy';
@@ -999,16 +1000,7 @@ async function streamLLM(history: ChatMsg[], opts: StreamOpts = {}): Promise<str
     body: JSON.stringify({
       context: 'cortex',
       agentic: true,
-      sessionId: (() => {
-        try {
-          let sid = sessionStorage.getItem('cortex_voice_session');
-          if (!sid) {
-            sid = `cortex-voice-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-            sessionStorage.setItem('cortex_voice_session', sid);
-          }
-          return sid;
-        } catch { return 'cortex-voice'; }
-      })(),
+      sessionId: getCortexSessionId(),
       systemPrompt: VOICE_SYSTEM_PROMPT + (opts.systemSuffix ? `\n\n${opts.systemSuffix}` : ''),
       messages: history.slice(-12),
       stream: true,
@@ -1163,6 +1155,25 @@ export function useVisualizerVoice(enabled: boolean, onState: (speaking: boolean
   useEffect(() => {
     let cancelled = false;
     const historyRef: { current: ChatMsg[] } = { current: [] };
+    // Continuity hydration: seed voice memory from the durable server
+    // transcript so a reload/new tab doesn't reset "where were we".
+    // Merges only if local history is still thin — never clobbers live turns.
+    void fetch('/api/cortex/chat-history')
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => {
+        if (cancelled || !data?.ok || !Array.isArray(data.messages)) return;
+        const prior: ChatMsg[] = data.messages
+          .filter((m: any) => (m.role === 'user' || m.role === 'ai' || m.role === 'cortex' || m.role === 'assistant') && typeof m.content === 'string' && m.content.trim())
+          .slice(-12)
+          .map((m: any) => ({
+            role: (m.role === 'user' ? 'user' : 'assistant') as ChatMsg['role'],
+            content: String(m.content),
+          }));
+        if (prior.length && historyRef.current.length < 4) {
+          historyRef.current = [...prior, ...historyRef.current].slice(-12);
+        }
+      })
+      .catch(() => { /* offline/dev — voice just starts cold */ });
     const sessionArtifactsRef: { current: CortexArtifact[] } = { current: [] };
     const pendingQueue: string[] = [];
     const activeSpeechRef = { current: '' };

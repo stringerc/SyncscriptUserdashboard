@@ -83,6 +83,7 @@ import type { CortexVoiceState } from './CortexVisualizer';
 import { CortexMessageList } from './CortexMessageList';
 import { CortexTelemetryBar } from './CortexTelemetryBar';
 import { setCortexChatMessages, useCortexChatSnapshot, mergeChatMessages } from '../../lib/cortex-chat-store';
+import { getCortexSessionId } from '../../lib/cortex-session';
 import { claimTurn } from '../../lib/cortex-turn-arbiter';
 import { getCortexObservabilityHUD } from '../../lib/cortex-observability-hud';
 import { readCortexSSE } from './cortex-stream';
@@ -753,17 +754,11 @@ export default function CortexDemo() {
   const [proactiveDismissed, setProactiveDismissed] = useState(false);
   const lastAnnouncedInsightRef = useRef('');
   const activeAbortControllerRef = useRef<AbortController | null>(null);
-  // Stable per-tab session for the server-side Intention Kernel — pending
-  // offers persist across turns so "go ahead" resumes them deterministically.
+  // Stable shared session for the Intention + Continuity Kernels —
+  // one localStorage identity across voice, chat, tabs, and restarts.
   const agentSessionIdRef = useRef<string>('');
   if (!agentSessionIdRef.current) {
-    try {
-      agentSessionIdRef.current = sessionStorage.getItem('cortex_agent_session') || '';
-      if (!agentSessionIdRef.current) {
-        agentSessionIdRef.current = `cortex-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-        sessionStorage.setItem('cortex_agent_session', agentSessionIdRef.current);
-      }
-    } catch { agentSessionIdRef.current = 'cortex-default'; }
+    agentSessionIdRef.current = getCortexSessionId();
   }
 
   const fetchProactiveAudit = useCallback(async () => {

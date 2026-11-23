@@ -140,14 +140,11 @@ export class CortexEpisodicContinuityEngine {
       id: `ckpt-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
       sessionId: options?.sessionId || 'default-session',
       timestamp: Date.now(),
-      dominantTopic: options?.dominantTopic || 'Cortex Autonomous Actuation',
+      dominantTopic: options?.dominantTopic || 'General operations',
       activeOpenLoops: this.getActiveOpenLoops(),
-      recentAccomplishments: options?.recentAccomplishments || [
-        'Metacognitive Calibration Engine Verified',
-        'Offline-First In-Process Direct Effector Implemented',
-      ],
-      resonanceScore: options?.resonanceScore ?? 0.94,
-      freeEnergy: options?.freeEnergy ?? 0.08,
+      recentAccomplishments: options?.recentAccomplishments || [],
+      resonanceScore: options?.resonanceScore ?? 0,
+      freeEnergy: options?.freeEnergy ?? 0,
     };
 
     this.checkpoints.push(checkpoint);
