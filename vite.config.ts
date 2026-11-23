@@ -267,6 +267,7 @@ import { setPremortemNotifier } from './src/lib/cortex-agent/goal-premortem';
 import { setVerificationNotifier, handleCorrectiveResolution } from './src/lib/cortex-agent/goal-verification';
 import { startGoalForecastWatch, setForecastNotifier } from './src/lib/cortex-agent/goal-forecast';
 import { startGoalPaceWatch, setPaceWatchNotifier } from './src/lib/cortex-agent/goal-pace-watch';
+import { getInteroceptiveState, interoceptiveGate } from './src/lib/cortex-agent/interoceptive';
 
 // Unhandled-rejection guard: Node crashes the ENTIRE process on any
 // unhandled rejection. AbortError rejections are routine cancellation
@@ -3609,6 +3610,14 @@ function apiProxyPlugin(): Plugin {
         } catch (e: any) {
           return jsonRes(res, 500, { ok: false, error: String(e?.message || e) });
         }
+      });
+
+      // ── Interoceptive state (somatic free-energy term) ──
+      // GET /api/cortex/interoceptive → live vitals + error/capacity.
+      server.middlewares.use('/api/cortex/interoceptive', (req: any, res: any) => {
+        if (!setCortexCors(req, res)) return jsonRes(res, 403, { ok: false, error: 'forbidden' });
+        if (req.method === 'OPTIONS') { res.writeHead(204); return res.end(); }
+        return jsonRes(res, 200, { ok: true, ...getInteroceptiveState() });
       });
 
       // ── Fleet sidecar control (/api/cortex/fleet/*) ──
@@ -14723,6 +14732,16 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
             const title = String(parsed.title || parsed.query || '');
             const input = (parsed.input && typeof parsed.input === 'object') ? parsed.input : {};
             if (parsed.query && !input.query) input.query = parsed.query;
+            // Interoceptive gate: vitals are a first-class free-energy term.
+            // When the host is strained/critical, heavy discretionary work
+            // defers instead of compounding the load — essential kinds
+            // (patrol/status/comms) always pass.
+            const iGate = interoceptiveGate(kind, title);
+            if (!iGate.allow) {
+              agentCors(req, res);
+              return res.end(JSON.stringify({ ok: false, error: iGate.reason, interoceptive: { level: iGate.level, capacity: iGate.capacity } }));
+            }
+            input.interoceptiveCapacity = iGate.capacity;
             const result = agentRuntime.submitTask(agentId as any, kind, title.slice(0, 200), input);
             // Budget exhaustion is a governance event, not a silent dead end:
             // file an Inbox proposal (deduped per agent per day) so a human

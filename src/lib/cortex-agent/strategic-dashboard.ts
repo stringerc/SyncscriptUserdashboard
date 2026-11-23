@@ -20,6 +20,7 @@ import { loadMission } from '../cortex-agents/mission';
 import { collectEffortEvents } from './goal-drift';
 import { computeGoalForecasts } from './goal-forecast';
 import { calibrationReport } from './goal-calibration';
+import { getInteroceptiveState } from './interoceptive';
 import type { CalibrationReport } from '../cortex-strategic-dashboard-types';
 import type { GoalHealth, GoalTrendPoint, StrategicDashboard } from '../cortex-strategic-dashboard-types';
 
@@ -221,5 +222,7 @@ export function getStrategicDashboard(nowMs: number = Date.now()): StrategicDash
 
   let calibration: CalibrationReport | undefined;
   try { calibration = calibrationReport(); } catch {}
-  return { generatedAt: nowMs, goals, hostEffort30d, calibration };
+  let interoceptive: StrategicDashboard['interoceptive'];
+  try { interoceptive = getInteroceptiveState(nowMs); } catch {}
+  return { generatedAt: nowMs, goals, hostEffort30d, calibration, interoceptive };
 }

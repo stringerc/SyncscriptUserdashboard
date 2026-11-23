@@ -64,4 +64,9 @@ export interface StrategicDashboard {
   goals: GoalHealth[];
   hostEffort30d: GoalTrendPoint[];
   calibration?: CalibrationReport;
+  interoceptive?: {
+    error: number; capacity: number; level: 'nominal' | 'strained' | 'critical';
+    vitals: { rssMB: number; heapUsedMB: number; loadAvg1m: number; cores: number; memFreePct?: number; lagP99Ms?: number };
+    computedAt: number;
+  };
 }

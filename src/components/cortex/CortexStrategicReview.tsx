@@ -239,6 +239,20 @@ export function CortexStrategicReview() {
         </div>
       )}
 
+      {/* Interoceptive state — somatic free-energy term */}
+      {data?.interoceptive && (
+        <div style={{ fontFamily: MONO, fontSize: 9, color: C.dim, border: `1px solid ${data.interoceptive.level === 'nominal' ? C.border : data.interoceptive.level === 'strained' ? C.amber : C.red}55`, borderRadius: 4, padding: '6px 8px' }}>
+          <span style={{ color: C.cyan, letterSpacing: 1 }}>INTEROCEPTIVE </span>
+          <span style={{ color: data.interoceptive.level === 'nominal' ? C.green : data.interoceptive.level === 'strained' ? C.amber : C.red, fontWeight: 700 }}>
+            {data.interoceptive.level.toUpperCase()}
+          </span>
+          {' '}· error {Math.round(data.interoceptive.error * 100)}% · capacity {Math.round(data.interoceptive.capacity * 100)}%
+          {' '}· rss {data.interoceptive.vitals.rssMB}MB · heap {data.interoceptive.vitals.heapUsedMB}MB · load {data.interoceptive.vitals.loadAvg1m}/{data.interoceptive.vitals.cores}
+          {data.interoceptive.vitals.memFreePct != null ? ` · mem free ${data.interoceptive.vitals.memFreePct}%` : ''}
+          {data.interoceptive.vitals.lagP99Ms != null ? ` · lag p99 ${data.interoceptive.vitals.lagP99Ms}ms` : ''}
+        </div>
+      )}
+
       {/* Host effort context */}
       {data && (
         <div>

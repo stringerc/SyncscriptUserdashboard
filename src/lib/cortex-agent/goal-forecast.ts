@@ -32,6 +32,7 @@ import { loadMission } from '../cortex-agents/mission';
 import { syncProposals as ledgerSyncProposals } from '../cortex-initiative-ledger';
 import { collectEffortEvents } from './goal-drift';
 import { applyCalibration, logForecastClaim, resolveForecastOutcomes } from './goal-calibration';
+import { getInteroceptiveState } from './interoceptive';
 
 const RUNTIME = path.resolve(process.cwd(), '.cortex-runtime');
 const STATE_PATH = path.join(RUNTIME, 'goal-forecast-state.json');
@@ -58,6 +59,7 @@ export interface GoalForecast {
   rawProbability?: number; // pre-calibration estimate
   calibrated?: boolean;    // whether calibration data influenced this
   calibrationN?: number;   // resolved outcomes behind the correction
+  capacityFactor?: number; // host interoceptive capacity 0..1 at compute time
 }
 
 interface ForecastState { lastProposalWeek: Record<string, string> }
@@ -182,7 +184,10 @@ export function portfolioImpactFor(goalId: string, extraWeeklyOps: number, nowMs
   const mission = loadMission();
   const doneOps = (mission.opsItems || []).filter((o: any) => o.goalId === goalId && o.done && Number(o.verifiedAt || 0) >= nowMs - 28 * DAY_MS);
   const eventsPerOp = doneOps.length ? Math.max(5, goalEvents / Math.max(doneOps.length, 1)) : 25;
-  const leverCostDaily = Math.max(0, extraWeeklyOps) * eventsPerOp / 7;
+  // Strained host → the same lever costs more real capacity; floor at 0.3
+  // so a critical reading doesn't make the cost infinite (it's a model).
+  const capacity = Math.max(0.3, getInteroceptiveState(nowMs).capacity);
+  const leverCostDaily = (Math.max(0, extraWeeklyOps) * eventsPerOp / 7) / capacity;
   const scale = budgetDaily > 0 ? Math.max(0, (budgetDaily - leverCostDaily) / budgetDaily) : 1;
   const goals = getCortexGoals().list('active')
     .filter((g) => g.id !== goalId)
@@ -220,6 +225,7 @@ export function simulateGoalForecast(goalId: string, levers: ForecastLevers, now
     remainingOps, weeklyRate: 0, requiredWeekly: 0,
     paceRatio: null, projectedFinish: null, observations: base?.observations || 0,
     momentum: effortMomentum(goalId, nowMs),
+    capacityFactor: getInteroceptiveState(nowMs).capacity,
     levers,
   };
   if (daysLeft <= 0) { out.basis = 'no-target'; return out; }
@@ -274,6 +280,7 @@ export function computeGoalForecasts(nowMs: number = Date.now()): GoalForecast[]
       remainingOps: 0, weeklyRate: 0, requiredWeekly: 0,
       paceRatio: null, projectedFinish: null, observations: 0,
       momentum: effortMomentum(g.id, nowMs),
+      capacityFactor: getInteroceptiveState(nowMs).capacity,
     };
     if (daysLeft <= 0) { base.basis = 'no-target'; out.push(base); continue; }
 
