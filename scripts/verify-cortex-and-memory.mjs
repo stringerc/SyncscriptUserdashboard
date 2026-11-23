@@ -19,6 +19,7 @@ function run(label, cmd, args) {
 }
 
 run('guard:cortex-typecheck', 'node', ['scripts/guard-cortex-typecheck.mjs']);
+run('resilience-slos', 'npx', ['tsx', 'scripts/verify-cortex-resilience.ts']);
 run('cortex-full-validation', 'npx', ['tsx', 'src/lib/__tests__/cortex-full-validation.ts']);
 run('cortex-openclaw-phase1', 'npx', ['vitest', 'run', 'src/lib/__tests__/cortex-openclaw-phase1.test.ts']);
 run('cortex-hermes-phase2', 'npx', ['vitest', 'run', 'src/lib/__tests__/cortex-hermes-phase2.test.ts']);

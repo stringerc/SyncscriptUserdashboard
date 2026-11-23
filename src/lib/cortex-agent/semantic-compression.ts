@@ -182,10 +182,16 @@ export function compressTaskArchive(opts: { keepDays?: number; minCluster?: numb
     report.bytesBefore = fs.statSync(ARCHIVE).size;
     const lines = readLines(ARCHIVE);
     const parsed = lines.map(parseLine).filter(Boolean);
+    const snapshotIds = new Set(parsed.map((r) => String(r?.id || '')).filter(Boolean));
     report.rawRecords = parsed.length;
     if (parsed.length < 500) return { ...report, skipped: true, reason: `only ${parsed.length} records — not worth a pass` };
 
     const statsRaw = emptyStats();
+    // Prior semantic cases are part of the store's history — the
+    // certified bound compares the WHOLE store before vs after, so they
+    // count on both sides (else every run after the first false-fails).
+    const priorCasesForStats = readLines(SEMANTICS).map(parseLine).filter(Boolean);
+    for (const c of priorCasesForStats) addCase(statsRaw, c);
     const recent: any[] = [];
     const oldByKey = new Map<string, any[]>();
     for (const r of parsed) {
@@ -261,8 +267,20 @@ export function compressTaskArchive(opts: { keepDays?: number; minCluster?: numb
     // Loose old records stay raw inside the archive tail — nothing lost
     const newArchive = [...recent, ...looseOld]
       .sort((a, b) => (a.finishedAt || a.createdAt || 0) - (b.finishedAt || b.createdAt || 0));
+    // Latecomer guard: archiveTask appends continuously — records written
+    // between our snapshot read and this rewrite would be silently lost.
+    // Re-read and carry forward anything whose id wasn't in the snapshot.
+    // They stay OUT of statsNew: the certified bound covers the snapshot
+    // region only; latecomers are simply preserved, not claimed.
+    const latecomers: any[] = [];
+    try {
+      for (const l of readLines(ARCHIVE)) {
+        const r = parseLine(l);
+        if (r && !snapshotIds.has(String(r?.id || ''))) latecomers.push(r);
+      }
+    } catch {}
     fs.writeFileSync(SEMANTICS, allCases.map((c) => JSON.stringify(c)).join('\n') + '\n');
-    fs.writeFileSync(ARCHIVE, newArchive.map((r) => JSON.stringify(r)).join('\n') + '\n');
+    fs.writeFileSync(ARCHIVE, [...newArchive, ...latecomers].map((r) => JSON.stringify(r)).join('\n') + '\n');
     report.recentKept = newArchive.length - looseOld.length;
     report.bytesAfter = fs.statSync(ARCHIVE).size + fs.statSync(SEMANTICS).size;
 

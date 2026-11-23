@@ -46,15 +46,25 @@ const DEFAULT_RULES: ConstitutionRule[] = [
   { id: 'honesty', text: 'Never represent an unverified dispatch as completed — claims require ledger or archive evidence.', priority: 70, enabled: true },
 ];
 
+let rulesCache: { mtimeMs: number; rules: ConstitutionRule[] } | null = null;
 export function loadRules(): ConstitutionRule[] {
+  // mtime-cached: rules change rarely; adjudication calls this per
+  // landscape and per-armVeto inspection — a statSync is ~100x cheaper
+  // than readFileSync+JSON.parse on every call.
+  let mtimeMs = -1;
+  try { mtimeMs = fs.statSync(FILE).mtimeMs; } catch { /* missing file → defaults */ }
+  if (rulesCache && rulesCache.mtimeMs === mtimeMs) return rulesCache.rules;
+  let rules: ConstitutionRule[];
   try {
     const raw = JSON.parse(fs.readFileSync(FILE, 'utf8'));
-    const rules = Array.isArray(raw?.rules) ? raw.rules : DEFAULT_RULES;
-    return (rules as ConstitutionRule[]).sort((a: ConstitutionRule, b: ConstitutionRule) => (b.priority || 0) - (a.priority || 0));
-  } catch { return [...DEFAULT_RULES]; }
+    rules = (Array.isArray(raw?.rules) ? raw.rules : DEFAULT_RULES) as ConstitutionRule[];
+  } catch { rules = [...DEFAULT_RULES]; }
+  rules.sort((a, b) => (b.priority || 0) - (a.priority || 0));
+  rulesCache = { mtimeMs, rules };
+  return rules;
 }
 export function saveRules(rules: ConstitutionRule[]) {
-  try { fs.mkdirSync(RUNTIME, { recursive: true }); fs.writeFileSync(FILE, JSON.stringify({ rules }, null, 2)); } catch {}
+  try { fs.mkdirSync(RUNTIME, { recursive: true }); fs.writeFileSync(FILE, JSON.stringify({ rules }, null, 2)); rulesCache = null; } catch {}
 }
 
 // ── Rule evaluators ────────────────────────────────────────────────────
