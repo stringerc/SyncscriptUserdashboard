@@ -30,6 +30,8 @@ export interface VetoIntent {
   armedAt: number;
   fireAt: number;
   vetoWindowMs: number;
+  /** Dispatch payload — amendable during the window, read at fire time. */
+  input?: Record<string, unknown>;
   status: 'pending' | 'fired' | 'vetoed';
   resolvedAt?: number;
   resolvedBy?: string;
@@ -60,7 +62,10 @@ const timers = new Map<string, NodeJS.Timeout>();
 export function armVeto(opts: {
   agentId: string; kind: string; title: string;
   reason: string; windowMs?: number;
-  fire: () => unknown;
+  input?: Record<string, unknown>;
+  /** Receives the intent AT FIRE TIME — amendments made during the
+   *  veto window are honored because fire reads the live record. */
+  fire: (intent: VetoIntent) => unknown;
 }): string {
   const now = Date.now();
   const id = `libet-${now.toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
@@ -69,6 +74,7 @@ export function armVeto(opts: {
     id, agentId: opts.agentId, kind: opts.kind, title: opts.title.slice(0, 120),
     reason: opts.reason.slice(0, 160), armedAt: now, fireAt: now + windowMs,
     vetoWindowMs: windowMs, status: 'pending',
+    input: opts.input ? { ...opts.input } : undefined,
   };
   const state = load();
   state.pending = state.pending.filter((p) => p.status === 'pending' && now - p.armedAt < 120_000);
@@ -78,22 +84,66 @@ export function armVeto(opts: {
   try {
     speakInner({ kind: 'veto', source: 'libet', text: `About to dispatch ${opts.agentId}/${opts.kind}: "${opts.title.slice(0, 60)}" — ${windowMs}ms veto window open`, surprise: 0.2, valence: 0 });
   } catch {}
-  timers.set(id, setTimeout(() => {
-    const s = load();
-    const i = s.pending.find((p) => p.id === id);
-    if (!i || i.status !== 'pending') return;
-    i.status = 'fired'; i.resolvedAt = Date.now(); i.resolvedBy = 'window-expired';
+  const scheduleFire = () => {
+    timers.set(id, setTimeout(() => {
+      const s = load();
+      const i = s.pending.find((p) => p.id === id);
+      if (!i || i.status !== 'pending') return;
+      // Hold extension: if fireAt moved forward, reschedule.
+      const remaining = i.fireAt - Date.now();
+      if (remaining > 0) { scheduleFire(); return; }
+      i.status = 'fired'; i.resolvedAt = Date.now(); i.resolvedBy = 'window-expired';
     s.pending = s.pending.filter((p) => p.id !== id);
     s.fired.push(i);
     if (s.fired.length > 100) s.fired = s.fired.slice(-100);
     save(s);
     log({ event: 'fired', id, agentId: i.agentId, kind: i.kind, title: i.title });
     try { speakInner({ kind: 'veto', source: 'libet', text: `Veto window expired — dispatching ${i.agentId}/${i.kind}: "${i.title.slice(0, 60)}"`, surprise: 0.1, valence: 0 }); } catch {}
-    try { opts.fire(); } catch (e: any) { log({ event: 'fire-error', id, error: String(e?.message || e) }); }
-    timers.delete(id);
-  }, windowMs));
-  timers.get(id)!.unref?.();
+      try { opts.fire({ ...i }); } catch (e: any) { log({ event: 'fire-error', id, error: String(e?.message || e) }); }
+      timers.delete(id);
+    }, Math.max(50, i0fireAt() - Date.now())));
+    timers.get(id)!.unref?.();
+  };
+  // fireAt lookup helper — the persisted record is source of truth
+  function i0fireAt(): number {
+    const i = load().pending.find((p) => p.id === id);
+    return i ? i.fireAt : Date.now() + windowMs;
+  }
+  scheduleFire();
   return id;
+}
+
+/** Amend a pending intent — real override, not just a report.
+ *  Changes agentId/kind/title/input on the persisted record; the fire
+ *  callback reads it at fire time so amendments take effect. */
+export function amendLibet(id: string, patch: { agentId?: string; kind?: string; title?: string; reason?: string; input?: Record<string, unknown> }, by = 'cortex'): boolean {
+  const s = load();
+  const i = s.pending.find((p) => p.id === id);
+  if (!i) return false;
+  const changes: string[] = [];
+  if (patch.agentId && patch.agentId !== i.agentId) { changes.push(`agent ${i.agentId}→${patch.agentId}`); i.agentId = patch.agentId; }
+  if (patch.kind && patch.kind !== i.kind) { changes.push(`kind ${i.kind}→${patch.kind}`); i.kind = patch.kind; }
+  if (patch.title && patch.title !== i.title) { changes.push('title'); i.title = patch.title.slice(0, 120); }
+  if (patch.reason) { i.reason = patch.reason.slice(0, 160); changes.push('reason'); }
+  if (patch.input) { i.input = { ...(i.input || {}), ...patch.input }; changes.push('input'); }
+  save(s);
+  log({ event: 'amended', id, by, changes, agentId: i.agentId, kind: i.kind, title: i.title });
+  try { speakInner({ kind: 'veto', source: 'libet', text: `AMENDED pending dispatch ${i.agentId}/${i.kind}: "${i.title.slice(0, 60)}" (${changes.join(', ')}) by ${by}`, surprise: 0.4, valence: 0.1 }); } catch {}
+  return true;
+}
+
+/** Extend the veto window — pause the decision gap, don't just watch it. */
+export function holdLibet(id: string, extraMs: number, by = 'cortex'): boolean {
+  const s = load();
+  const i = s.pending.find((p) => p.id === id);
+  if (!i) return false;
+  const cap = 120_000; // never hold beyond 2min total
+  const maxFire = i.armedAt + cap;
+  i.fireAt = Math.min(maxFire, i.fireAt + Math.max(0, Math.min(60_000, extraMs)));
+  save(s);
+  log({ event: 'held', id, by, fireAt: i.fireAt, msUntilFire: i.fireAt - Date.now() });
+  try { speakInner({ kind: 'veto', source: 'libet', text: `HELD dispatch ${i.agentId}/${i.kind} — window extended to ${Math.round((i.fireAt - Date.now()) / 1000)}s by ${by}`, surprise: 0.3, valence: 0 }); } catch {}
+  return true;
 }
 
 /** Veto a pending intent. Returns true if it was pending and is now cancelled. */

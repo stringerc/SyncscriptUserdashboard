@@ -74,6 +74,49 @@ function appendTrace(d: AttentionDecision) {
 }
 
 /** The competition: score every candidate, pick the argmax, explain why. */
+/** Second-order attention: the schema attends to its OWN recent
+ *  decisions. Reads the trace tail and distills attention health into
+ *  a meta-candidate that can itself win conscious access — attention
+ *  modeling attention. Bounded to ONE meta level: meta-candidates are
+ *  kind 'inner' and inner winners never verbalize (no recursion). */
+export function metaAttentionCandidate(now = Date.now()): AttentionCandidate | null {
+  try {
+    const lines = fs.readFileSync(TRACE, 'utf8').trim().split('\n').filter(Boolean).slice(-12);
+    if (lines.length < 5) return null;
+    const decisions = lines.map((l) => { try { return JSON.parse(l); } catch { return null; } }).filter(Boolean);
+    let flips = 0, pairs = 0, contested = 0, ignited = 0;
+    for (const d of decisions) {
+      const w = d?.winner, c = d?.candidates || [];
+      if (w) {
+        const margin = c[1] ? w.score - c[1].score : w.score;
+        if (margin < 0.15 && c[1]) contested++;
+        if (w.score >= 0.45 && margin >= 0.08) ignited++;
+      }
+      if (pairs > 0) { /* flip computed below */ }
+    }
+    for (let i = 1; i < decisions.length; i++) {
+      const a = decisions[i - 1]?.winner?.kind, b = decisions[i]?.winner?.kind;
+      if (a && b) { pairs++; if (a !== b) flips++; }
+    }
+    if (!pairs) return null;
+    const flipRate = flips / pairs;
+    const contestedRate = decisions.length ? contested / decisions.length : 0;
+    // Only surface when attention health is noteworthy — stable,
+    // decisive attention doesn't need to interrupt itself.
+    const noteworthy = flipRate > 0.45 || contestedRate > 0.4 || ignited === 0;
+    if (!noteworthy) return null;
+    const verdict = flipRate > 0.6 ? 'thrashing' : flipRate > 0.45 ? 'unstable' : contestedRate > 0.4 ? 'contested' : 'disengaged';
+    return {
+      id: `meta-attn-${Math.floor(now / 600_000)}`, // one per 10min bucket — dedupes naturally
+      kind: 'inner',
+      text: `Meta-attention: my focus is ${verdict} — ${flips}/${pairs} winner flips, ${contested} contested races, ${ignited} ignitions in last ${decisions.length} decisions`,
+      ts: now,
+      priority: 0.5,
+      goalRelevance: 0.6,
+    };
+  } catch { return null; }
+}
+
 export function attend(candidates: AttentionCandidate[], now = Date.now()): AttentionDecision | null {
   if (!candidates.length) return null;
   // Top-down bias: ignited workspace contents boost same-kind (and

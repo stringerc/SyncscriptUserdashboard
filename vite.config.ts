@@ -268,8 +268,8 @@ import { setVerificationNotifier, handleCorrectiveResolution } from './src/lib/c
 import { startGoalForecastWatch, setForecastNotifier } from './src/lib/cortex-agent/goal-forecast';
 import { startGoalPaceWatch, setPaceWatchNotifier, notifyPaceRelevantEvent } from './src/lib/cortex-agent/goal-pace-watch';
 import { getInteroceptiveState, interoceptiveGate } from './src/lib/cortex-agent/interoceptive';
-import { armVeto, vetoLibet, listLibetPending, libetTrace, resumeLibetTimers } from './src/lib/cortex-agent/libet-veto';
-import { attend, attentionTrace, scoreCandidate, type AttentionCandidate } from './src/lib/cortex-agent/attention-schema';
+import { armVeto, vetoLibet, amendLibet, holdLibet, listLibetPending, libetTrace, resumeLibetTimers } from './src/lib/cortex-agent/libet-veto';
+import { attend, attentionTrace, scoreCandidate, metaAttentionCandidate, type AttentionCandidate } from './src/lib/cortex-agent/attention-schema';
 import { getProprioception } from './src/lib/cortex-agent/proprioception';
 import { observeWorld, queryWorldModel, topLeverage, scoreDispatch } from './src/lib/cortex-agent/world-model';
 import { getSelfhood } from './src/lib/cortex-agent/selfhood';
@@ -1189,7 +1189,7 @@ const CORTEX_TOOLS = [
       parameters: {
         type: 'object',
         properties: {
-          action: { type: 'string', enum: ['proprioception', 'attention', 'libet', 'veto', 'world', 'self', 'plan', 'dream', 'social', 'monologue', 'dynamics', 'workspace'], description: 'Which self-model surface to query' },
+          action: { type: 'string', enum: ['proprioception', 'attention', 'libet', 'veto', 'amend', 'hold', 'world', 'self', 'plan', 'dream', 'social', 'monologue', 'dynamics', 'workspace'], description: 'Which self-model surface to query' },
           id: { type: 'string', description: 'Veto intent id for action=veto (from libet pending)' },
           limit: { type: 'number', description: 'Max trace entries (default 10)' }
         },
@@ -2193,8 +2193,8 @@ function apiProxyPlugin(): Plugin {
             agentId: 'warden', kind: 'patrol',
             title: `Cortex patrol — ${reason}`,
             reason: `autonomous patrol dispatch (${reason})`,
-            windowMs: 5_000,
-            fire: () => agentRuntime.submitTask('warden', 'patrol', `Cortex patrol — ${reason}`, {}),
+            windowMs: 5_000, input: {},
+            fire: (i) => agentRuntime.submitTask(i.agentId as any, i.kind, i.title, (i.input || {}) as any),
           });
         } catch { /* warden absent or runtime mid-restore — next tick retries */ }
       };
@@ -2441,6 +2441,12 @@ function apiProxyPlugin(): Plugin {
               attentionPending.push({ id: m.id, kind: 'inner', text: m.text, ts: m.ts, priority: 0.6, goalRelevance: 0.4 });
             }
           }
+        } catch {}
+        // Second-order attention: the schema's own health joins the
+        // competition as a meta-candidate (kind 'inner', self-deduping).
+        try {
+          const meta = metaAttentionCandidate();
+          if (meta && !attentionPending.some((c) => c.id === meta.id)) attentionPending.push(meta);
         } catch {}
         if (!attentionPending.length) return;
         const batch = attentionPending.splice(0, attentionPending.length);
@@ -3701,7 +3707,15 @@ function apiProxyPlugin(): Plugin {
             const ok = vetoLibet(id, String(body?.by || 'api'));
             return jsonRes(res, ok ? 200 : 404, { ok, vetoed: ok });
           }
-          return jsonRes(res, 400, { ok: false, error: 'action must be veto' });
+          if (body?.action === 'amend') {
+            const ok = amendLibet(id, body?.patch || {}, String(body?.by || 'api'));
+            return jsonRes(res, ok ? 200 : 404, { ok, amended: ok });
+          }
+          if (body?.action === 'hold') {
+            const ok = holdLibet(id, Number(body?.extraMs) || 10_000, String(body?.by || 'api'));
+            return jsonRes(res, ok ? 200 : 404, { ok, held: ok });
+          }
+          return jsonRes(res, 400, { ok: false, error: 'action must be veto|amend|hold' });
         }
         return jsonRes(res, 405, { ok: false, error: 'method not allowed' });
       });
@@ -3773,7 +3787,8 @@ function apiProxyPlugin(): Plugin {
           const id = armVeto({
             agentId: String(c.agentId), kind: String(c.kind), title: String(c.title || 'planned dispatch'),
             reason: 'active-inference plan commitment', windowMs: 5000,
-            fire: () => agentRuntime.submitTask(String(c.agentId) as any, String(c.kind), String(c.title || 'planned dispatch'), { ...(c.input || {}), planned: true }),
+            input: { ...(c.input || {}), planned: true },
+            fire: (i) => agentRuntime.submitTask(i.agentId as any, i.kind, i.title, (i.input || {}) as any),
           });
           return jsonRes(res, 200, { ok: true, committed: true, vetoId: id, firesInMs: 5000 });
         }
@@ -5873,6 +5888,21 @@ end tell`;
                 if (action === 'veto') {
                   const ok = vetoLibet(String(args?.id || ''), 'cortex');
                   return res.end(JSON.stringify({ ok, tool, action, vetoed: ok, durationMs: Date.now() - startMs }));
+                }
+                if (action === 'amend') {
+                  const { amendLibet } = await import('./src/lib/cortex-agent/libet-veto');
+                  const ok = amendLibet(String(args?.id || ''), {
+                    agentId: args?.agentId ? String(args.agentId) : undefined,
+                    kind: args?.kind ? String(args.kind) : undefined,
+                    title: args?.title ? String(args.title) : undefined,
+                    input: args?.input && typeof args.input === 'object' ? args.input : undefined,
+                  }, 'cortex');
+                  return res.end(JSON.stringify({ ok, tool, action, amended: ok, durationMs: Date.now() - startMs }));
+                }
+                if (action === 'hold') {
+                  const { holdLibet } = await import('./src/lib/cortex-agent/libet-veto');
+                  const ok = holdLibet(String(args?.id || ''), Number(args?.extraMs) || 10_000, 'cortex');
+                  return res.end(JSON.stringify({ ok, tool, action, held: ok, durationMs: Date.now() - startMs }));
                 }
                 if (action === 'self') {
                   const which = String(args?.which || 'all');
