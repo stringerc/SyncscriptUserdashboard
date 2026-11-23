@@ -11,6 +11,7 @@
 
 import { useState } from 'react';
 import type { LifeGoal } from '../../lib/cortex-goals';
+import type { GoalHealth } from '../../lib/cortex-strategic-dashboard-types';
 import { getCortexGoals } from '../../lib/cortex-goals';
 
 const MONO = "'IBM Plex Mono', monospace";
@@ -31,7 +32,7 @@ function Spark({ values }: { values: number[] }) {
   );
 }
 
-export function CortexFoundryGoalCard({ goal }: { goal: LifeGoal }) {
+export function CortexFoundryGoalCard({ goal, health }: { goal: LifeGoal; health?: GoalHealth }) {
   const [open, setOpen] = useState(false);
   const [, setTick] = useState(0);
   const [addingStep, setAddingStep] = useState(false);
@@ -81,6 +82,16 @@ export function CortexFoundryGoalCard({ goal }: { goal: LifeGoal }) {
           <span style={{ fontSize: 8, color: '#7dd3fc', minWidth: 30, textAlign: 'right' }}>{stepPct}%</span>
         )}
         <span style={{ fontSize: 8.5, color: DIM, whiteSpace: 'nowrap' }}>{goal.horizon.toUpperCase()} · {goal.status.toUpperCase()}</span>
+        {health && (
+          <span style={{
+            fontSize: 7.5, fontWeight: 800, letterSpacing: '0.08em', whiteSpace: 'nowrap',
+            color: health.status === 'on-track' ? '#34d399' : health.status === 'drifting' ? '#fbbf24' : '#fb7185',
+            border: `1px solid ${health.status === 'on-track' ? 'rgba(52,211,153,0.4)' : health.status === 'drifting' ? 'rgba(251,191,36,0.4)' : 'rgba(251,113,133,0.4)'}`,
+            borderRadius: 2, padding: '0 4px',
+          }}>
+            {health.status === 'on-track' ? 'ON TRACK' : health.status === 'drifting' ? 'DRIFTING' : 'ESCALATED'}
+          </span>
+        )}
         {goal.targetDate && <span style={{ fontSize: 9, color: DIM }}>{new Date(goal.targetDate).toLocaleDateString()}</span>}
         <span style={{ fontSize: 8, color: DIM }}>{open ? '▾' : '▸'}</span>
       </div>
@@ -103,6 +114,50 @@ export function CortexFoundryGoalCard({ goal }: { goal: LifeGoal }) {
       </div>
       {open && (
         <div onClick={e => e.stopPropagation()} style={{ padding: '2px 10px 8px', fontSize: 9.5, color: DIM, lineHeight: 1.6 }}>
+          {health && (
+            <div style={{ margin: '4px 0 8px', border: '1px solid rgba(148,163,184,0.12)', borderRadius: 3, padding: '6px 8px', background: 'rgba(148,163,184,0.03)' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+                <span style={{ fontSize: 8, fontWeight: 800, letterSpacing: '0.18em', color: '#7dd3fc' }}>STRATEGIC HEALTH</span>
+                <span style={{ fontSize: 8, color: DIM }}>
+                  OPS {health.ops.done}/{health.ops.total} · COMMITS 7D {health.commits7d} · EFFORT 7D {health.effort7d}
+                  {health.daysLeft != null ? ` · ${health.daysLeft}D LEFT` : ''}
+                </span>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'flex-end', gap: 2, height: 26, marginBottom: 4 }}>
+                {health.trend.map((t, i) => (
+                  <div key={i} title={`${t.day}: ${t.count}`} style={{
+                    flex: 1, height: `${Math.max(8, (t.count / health.trendMax) * 100)}%`,
+                    background: t.count > 0 ? '#38bdf8' : 'rgba(148,163,184,0.10)', borderRadius: '1px 1px 0 0',
+                  }} />
+                ))}
+              </div>
+              {health.pendingVerification && (
+                <div style={{ fontSize: 8.5, color: '#fbbf24' }}>⏳ verifying {health.pendingVerification.kind} corrective — "{health.pendingVerification.correctiveTitle.slice(0, 60)}"</div>
+              )}
+              {health.lastVerification && (
+                <div style={{ fontSize: 8.5, color: health.lastVerification.outcome === 'resolved' ? '#34d399' : '#fb7185' }}>
+                  {health.lastVerification.outcome === 'resolved' ? '✅' : '⚠️'} last verification: {health.lastVerification.outcome}
+                  {health.lastVerification.correctiveKind ? ` (${health.lastVerification.correctiveKind})` : ''}
+                </div>
+              )}
+              {health.findings.slice(0, 2).map((f, i) => (
+                <div key={i} style={{ fontSize: 8.5, color: f.severity === 'high' ? '#fb7185' : '#fbbf24' }}>
+                  {f.kind}: {f.detail.slice(0, 100)}{f.detail.length > 100 ? '…' : ''}
+                </div>
+              ))}
+              {health.premortems.slice(0, 1).map((p, i) => (
+                <div key={i} style={{ fontSize: 8.5, color: '#a78bfa' }}>{p.headline.slice(0, 110)}{p.headline.length > 110 ? '…' : ''}</div>
+              ))}
+              {health.escalations.map((e) => (
+                <div key={e.id} style={{ fontSize: 8.5, color: '#fb7185' }}>🚨 {e.title}</div>
+              ))}
+              {health.correctives.slice(-2).map((c) => (
+                <div key={c.id} style={{ fontSize: 8.5, color: c.status === 'pending' ? '#fbbf24' : DIM }}>
+                  {c.status === 'pending' ? '◌' : '✓'} {c.title.slice(0, 80)}{c.agentId ? ` · ${c.agentId}` : ''}
+                </div>
+              ))}
+            </div>
+          )}
           <div style={{ margin: '4px 0' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 2 }}>
               <span style={{ fontSize: 8, fontWeight: 800, letterSpacing: '0.18em', color: '#7dd3fc' }}>STEPS</span>

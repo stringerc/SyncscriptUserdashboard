@@ -21,6 +21,7 @@ import { CortexFoundryTaskCard, RecommendNextStrip } from './CortexFoundryTaskCa
 import { CortexFoundryGoalCard } from './CortexFoundryGoalCard';
 import { CortexCouncilFloor } from './CortexCouncilFloor';
 import { playAudioArbitrated } from '../../lib/cortex-tts-arbiter';
+import type { StrategicDashboard } from '../../lib/cortex-strategic-dashboard-types';
 
 const MONO = "'IBM Plex Mono', monospace";
 const INK = '#e0f2fe';
@@ -168,6 +169,7 @@ interface Props {
 
 export function CortexFoundryNav({ snap, onSelectAgent, selectedAgent, onOpenTower }: Props) {
   const [view, setView] = useState<FoundryView | null>(null);
+  const [strategicDash, setStrategicDash] = useState<StrategicDashboard | null>(null);
   const [calendar, setCalendar] = useState<any[] | null>(null);
   const [incidents, setIncidents] = useState<any[] | null>(null);
   const [missions, setMissions] = useState<any[] | null>(null);
@@ -519,6 +521,22 @@ export function CortexFoundryNav({ snap, onSelectAgent, selectedAgent, onOpenTow
   };
 
   useEffect(() => () => goalsUnsub.current?.(), []);
+
+  // Strategic Review dashboard — live per-goal health for the GOALS tab.
+  // Polls while the view is open; read-only assembly server-side.
+  useEffect(() => {
+    if (view !== 'goals') return;
+    let alive = true;
+    const load = () => {
+      fetch('/api/cortex/strategic/dashboard', { cache: 'no-store' })
+        .then((r) => r.json())
+        .then((d) => { if (alive && d?.ok) setStrategicDash(d); })
+        .catch(() => {});
+    };
+    load();
+    const t = setInterval(load, 30_000);
+    return () => { alive = false; clearInterval(t); };
+  }, [view]);
 
   // Lazy-fetch section data when its view opens.
   useEffect(() => {
@@ -1098,6 +1116,7 @@ export function CortexFoundryNav({ snap, onSelectAgent, selectedAgent, onOpenTow
     (sameDay(t.dueDate, Date.now()) || (!t.dueDate && sameDay(t.createdAt, Date.now()))));
 
   const goalList: LifeGoal[] = goals.list().filter((g) => ventureFilter === 'all' || String((g as any).ventureId || 'cortex') === ventureFilter);
+  const healthByGoalId = new Map((strategicDash?.goals || []).map((h) => [h.id, h]));
 
   // Shared venture scope chips — same filter dimension across TASKS /
   // GOALS / CALENDAR (spec §4). Untagged items resolve to 'cortex'.
@@ -1825,7 +1844,7 @@ export function CortexFoundryNav({ snap, onSelectAgent, selectedAgent, onOpenTow
           {showNewGoal && renderNewGoalDrawer()}
 
           {ventureChips}
-          {goalList.map((g) => <CortexFoundryGoalCard key={g.id} goal={g} />)}
+          {goalList.map((g) => <CortexFoundryGoalCard key={g.id} goal={g} health={healthByGoalId.get(g.id)} />)}
           {!goalList.length && <div style={{ padding: '12px 0', color: DIM }}>NO GOALS DECLARED — USE VOICE: "set a goal to …"</div>}
         </Panel>
       )}

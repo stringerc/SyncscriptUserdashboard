@@ -18,6 +18,7 @@ import path from 'node:path';
 import { getCortexGoals, type LifeGoal } from '../cortex-goals';
 import { loadMission } from '../cortex-agents/mission';
 import { collectEffortEvents } from './goal-drift';
+import type { GoalHealth, GoalTrendPoint, StrategicDashboard } from '../cortex-strategic-dashboard-types';
 
 const RUNTIME = path.resolve(process.cwd(), '.cortex-runtime');
 const DRIFT_LOG = path.join(RUNTIME, 'goal-drift.jsonl');
@@ -26,35 +27,6 @@ const VERIFY_STATE = path.join(RUNTIME, 'goal-verification.json');
 const LEDGER_PATH = path.join(RUNTIME, 'initiative-ledger.json');
 const DAY_MS = 86400_000;
 const TREND_DAYS = 30;
-
-export interface GoalTrendPoint { day: string; count: number }
-
-export interface GoalHealth {
-  id: string;
-  title: string;
-  horizon: string;
-  targetDate: string | null;
-  daysLeft: number | null;
-  status: 'on-track' | 'drifting' | 'escalated';
-  driftScore: number;
-  ops: { done: number; total: number };
-  commits7d: number;
-  effort7d: number;
-  trend: GoalTrendPoint[]; // TREND_DAYS daily buckets, oldest→newest
-  trendMax: number;
-  findings: Array<{ kind: string; detail: string; severity: string; ts: number }>;
-  premortems: Array<{ kind: string; headline: string; engine: string; ts: number }>;
-  pendingVerification: { kind: string; correctiveTitle: string; finishedAt: number } | null;
-  lastVerification: { outcome: 'resolved' | 'escalated'; correctiveKind: string; ts: number } | null;
-  correctives: Array<{ id: string; title: string; status: string; agentId: string; createdAtMs: number }>;
-  escalations: Array<{ id: string; title: string; status: string; createdAtMs: number }>;
-}
-
-export interface StrategicDashboard {
-  generatedAt: number;
-  goals: GoalHealth[];
-  hostEffort30d: GoalTrendPoint[]; // unattributed + total context
-}
 
 function readJsonl<T>(file: string, cap = 4000): T[] {
   try {

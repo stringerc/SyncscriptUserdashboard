@@ -10,29 +10,9 @@
  */
 import React, { useEffect, useState } from 'react';
 import { C } from './cortex-demo-helpers';
+import type { GoalHealth, StrategicDashboard } from '../../lib/cortex-strategic-dashboard-types';
 
 const MONO = '"IBM Plex Mono", ui-monospace, monospace';
-
-interface GoalHealth {
-  id: string;
-  title: string;
-  horizon: string;
-  targetDate: string | null;
-  daysLeft: number | null;
-  status: 'on-track' | 'drifting' | 'escalated';
-  driftScore: number;
-  ops: { done: number; total: number };
-  commits7d: number;
-  effort7d: number;
-  trend: Array<{ day: string; count: number }>;
-  trendMax: number;
-  findings: Array<{ kind: string; detail: string; severity: string; ts: number }>;
-  premortems: Array<{ kind: string; headline: string; engine: string; ts: number }>;
-  pendingVerification: { kind: string; correctiveTitle: string; finishedAt: number } | null;
-  lastVerification: { outcome: 'resolved' | 'escalated'; correctiveKind: string; ts: number } | null;
-  correctives: Array<{ id: string; title: string; status: string; agentId: string; createdAtMs: number }>;
-  escalations: Array<{ id: string; title: string; status: string; createdAtMs: number }>;
-}
 
 const STATUS_META: Record<GoalHealth['status'], { label: string; color: string }> = {
   'on-track': { label: 'ON TRACK', color: C.green },
@@ -189,7 +169,7 @@ function GoalCard({ g }: { g: GoalHealth }) {
 }
 
 export function CortexStrategicReview() {
-  const [data, setData] = useState<{ goals: GoalHealth[]; hostEffort30d: Array<{ day: string; count: number }>; generatedAt?: number } | null>(null);
+  const [data, setData] = useState<StrategicDashboard | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
