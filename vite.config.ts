@@ -1563,6 +1563,15 @@ function apiProxyPlugin(): Plugin {
       // and push them as ambient events — she feels processes die and RAM
       // get eaten without polling. Events batch to ≤1 push per tick.
       try {
+        // Narration cooldown: during a process-churn storm (observed: ~80
+        // cluster-death events/hour from agent/Docker respawns) every tick
+        // used to push an ambient notice → proactive voice read process
+        // chatter every poll and drowned real conversation. Cluster-only
+        // batches now narrate at most once per 10min; individually
+        // significant deaths/spikes still narrate immediately.
+        let lastProcNarration = 0;
+        const PROC_NARRATION_COOLDOWN = 10 * 60_000;
+        const SIGNIFICANT_RSS = 500;
         startProcessWatch(15_000, (events) => {
           try {
             const fmtMB = (mb: number) => mb >= 1024 ? `${(mb / 1024).toFixed(1)}GB` : `${mb}MB`;
@@ -1575,7 +1584,13 @@ function apiProxyPlugin(): Plugin {
             });
             const extra = events.length > 6 ? ` (+${events.length - 6} more)` : '';
             const text = `Process watch: ${lines.join('; ')}${extra}.`;
-            ambientPush('ambient', text);
+            const significant = events.some(e =>
+              (e.kind === 'death' || e.kind === 'growth') && e.rssMB >= SIGNIFICANT_RSS);
+            const now = Date.now();
+            if (significant || now - lastProcNarration >= PROC_NARRATION_COOLDOWN) {
+              lastProcNarration = now;
+              ambientPush('ambient', text);
+            }
             // Initiative bridge: the event doesn't just get felt — it
             // queues the right investigation through the governed ledger.
             ambientReact('procwatch', { text });

@@ -879,8 +879,13 @@ export class AgentRuntime {
     if (['completed', 'failed', 'vetoed', 'cancelled'].includes(status)) {
       try {
         const HIGH_SIGNAL_RE = /gate|invariant|patrol|warden|security|launch|paying|customer|mission|audit|review|deploy|release/i;
+        // Agent housekeeping (self-healing incident sweeps, distillation,
+        // repo hygiene, trend evaluation) is routine fleet churn — spoken
+        // resolutions for it were drowning real notices. These still get
+        // the muted 'completed:' record; they just don't get a voice.
+        const HOUSEKEEPING_RE = /stale incident|incident:|repo_hygiene|distill|evaluate adopting|housekeep|trend sweep/i;
         const flagged = task.input?.notifyOnFinish === true;
-        const highSignal = HIGH_SIGNAL_RE.test(`${task.kind} ${task.title}`);
+        const highSignal = HIGH_SIGNAL_RE.test(`${task.kind} ${task.title}`) && !HOUSEKEEPING_RE.test(task.title);
         if (flagged || highSignal) {
           const ambientFile = path.join(process.cwd(), '.cache', 'cortex-ambient.jsonl');
           const dir = path.dirname(ambientFile);
