@@ -361,11 +361,18 @@ export async function runSurfaceCommand(text: string): Promise<string | null> {
       : 'The surface is full — close a panel first.';
   }
 
-  // Open Initiative Inbox: "open initiative inbox", "what needs my attention", "show proposals"
-  const initiativeM =
-    /\b(?:initiative|proactive|attention|proposals?)\b[^.?!]{0,50}\b(?:inbox|panel|surface|open|show|review|attention)\b/i.test(t) ||
-    /\b(?:open|show|review|display)\b[^.?!]{0,50}\b(?:initiative|proactive|attention)\b/i.test(t) ||
-    /\bwhat needs my attention\b/i.test(t);
+  // Open Initiative Inbox: "open initiative inbox", "what needs my attention",
+  // "show proposals". Requires an explicit open/review intent aimed at the
+  // initiative surface — bare mentions of "initiative"/"proactive" inside a
+  // pasted brief or status discussion must NOT fire this. The old loose
+  // pattern matched "quarterly review … proactive voice" and hijacked
+  // ordinary messages with the canned reply.
+  const initiativeM = t.length <= 400 && (
+    /\b(?:open|show|display|bring up|pull up|review|check|look at|see)\b[^.?!]{0,40}\b(?:initiative|proactive|attention)\s+(?:inbox|panel|proposals?|feed|queue|list|surface)\b/i.test(t) ||
+    /\b(?:initiative|proactive|attention)\s+(?:inbox|panel|proposals?|feed|queue)\b[^.?!]{0,40}\b(?:open|show|display|review|check)\b/i.test(t) ||
+    /\b(?:open|show|display)\b[^.?!]{0,30}\bproposals?\b/i.test(t) ||
+    /\bwhat needs my attention\b/i.test(t)
+  );
 
   if (initiativeM) {
     const newPanel = openSurfacePanel({

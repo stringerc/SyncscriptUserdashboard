@@ -16,7 +16,7 @@
 import { useEffect, useRef } from 'react';
 import { cortexSignalBus } from './CortexVisualizer';
 import {
-  appendCortexChatMessage, upsertCortexChatMessage,
+  appendCortexChatMessage, upsertCortexChatMessage, getCortexChatSnapshot,
 } from '../../lib/cortex-chat-store';
 import { claimTurn } from '../../lib/cortex-turn-arbiter';
 import { getCortexSessionId } from '../../lib/cortex-session';
@@ -1198,6 +1198,22 @@ export function useVisualizerVoice(enabled: boolean, onState: (speaking: boolean
     // reply within 90s — a genuinely repeated request is harmless to drop
     // since the panel is already open.
     const lastSurfaceReplyRef = { current: '' as string, at: 0 };
+    // Cross-tab echo corpus: another tab's TTS is invisible to THIS tab's
+    // speechHistoryRef, but its replies do land in the shared chat store
+    // (localStorage-synced). Union both so speaker bleed from ANY surface
+    // is recognized as echo — otherwise two open tabs echo each other
+    // forever, each blind to the other's voice.
+    const recentSpokenCorpus = (): string[] => {
+      let remote: string[] = [];
+      try {
+        const now = Date.now();
+        remote = getCortexChatSnapshot().messages
+          .filter(m => (m.role === 'ai' || m.role === 'cortex') && m.content && now - (m.timestamp || 0) < 120000)
+          .slice(-8)
+          .map(m => m.content);
+      } catch {}
+      return [...speechHistoryRef.current, ...remote];
+    };
     const turnAbortRef = { current: null as AbortController | null };
     // Per-turn user emotion (text prosody) — set in runTurn, read by the
     // system-prompt suffix, TTS speed shaping, and the signal bus.
@@ -2622,7 +2638,7 @@ MANDATORY: weave a 3-4 sentence spoken "state of being" answer citing at least o
       // "Initiative Inbox" reply kept re-firing itself forever this way.
       // Stricter threshold than the live-speech gate: only drop finals
       // that substantially overlap her recent spoken output.
-      const lateEcho = isAcousticEcho(text, '', speechHistoryRef.current, { threshold: 0.5 });
+      const lateEcho = isAcousticEcho(text, '', recentSpokenCorpus(), { threshold: 0.5 });
       if (lateEcho.isEcho) return;
 
       // Dedupe: local energy-VAD may already have committed this utterance
@@ -2818,7 +2834,7 @@ MANDATORY: weave a 3-4 sentence spoken "state of being" answer citing at least o
         // finals of Cortex's own voice can land after the reverb window.
         // Canned replies contain their own trigger words — drop finals
         // that substantially overlap her recent spoken output.
-        const lateEcho = isAcousticEcho(text, '', speechHistoryRef.current, { threshold: 0.5 });
+        const lateEcho = isAcousticEcho(text, '', recentSpokenCorpus(), { threshold: 0.5 });
         if (lateEcho.isEcho) return;
       }
 

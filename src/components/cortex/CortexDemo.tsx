@@ -82,7 +82,7 @@ import {
 import type { CortexVoiceState } from './CortexVisualizer';
 import { CortexMessageList } from './CortexMessageList';
 import { CortexTelemetryBar } from './CortexTelemetryBar';
-import { setCortexChatMessages, useCortexChatSnapshot, mergeChatMessages } from '../../lib/cortex-chat-store';
+import { setCortexChatMessages, useCortexChatSnapshot, mergeChatMessages, getCortexChatSnapshot } from '../../lib/cortex-chat-store';
 import { getCortexSessionId } from '../../lib/cortex-session';
 import { claimTurn } from '../../lib/cortex-turn-arbiter';
 import { getCortexObservabilityHUD } from '../../lib/cortex-observability-hud';
@@ -968,8 +968,18 @@ export default function CortexDemo() {
         // Late-echo guard: STT finals of Cortex's own voice can land after
         // the reverb window (TTS end + decode latency). Canned replies
         // contain their own trigger words — drop finals overlapping her
-        // recent speech at a stricter threshold.
-        const lateEcho = isAcousticEchoExternal(text, '', recentAiSpeechHistoryRef.current, { threshold: 0.5 });
+        // recent speech at a stricter threshold. Corpus includes the shared
+        // chat store so another tab's TTS is recognized too.
+        let corpus = recentAiSpeechHistoryRef.current;
+        try {
+          const now = Date.now();
+          const remote = getCortexChatSnapshot().messages
+            .filter(m => (m.role === 'ai' || m.role === 'cortex') && m.content && now - (m.timestamp || 0) < 120000)
+            .slice(-8)
+            .map(m => m.content);
+          corpus = [...corpus, ...remote];
+        } catch {}
+        const lateEcho = isAcousticEchoExternal(text, '', corpus, { threshold: 0.5 });
         if (lateEcho.isEcho) {
           console.log(`[Cortex Efference Copy] Suppressed late speaker echo (post-reverb, match: ${(lateEcho.matchRatio * 100).toFixed(0)}%): "${text}"`);
           return;
