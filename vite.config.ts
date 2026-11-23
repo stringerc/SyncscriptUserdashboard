@@ -1106,6 +1106,32 @@ const CORTEX_TOOLS = [
         required: ['problem']
       }
     }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'cortex_goals',
+      description: 'Manage the user\'s life goals — the strategic partnership layer. Declare goals by voice ("my goal this quarter is X"), list active goals with progress, pause/achieve/abandon, add or complete plan steps. Goals persist across sessions and drive drift detection + weekly strategic review. Horizons: week, month, quarter, year, life.',
+      parameters: {
+        type: 'object',
+        properties: {
+          action: {
+            type: 'string',
+            enum: ['declare', 'list', 'set_status', 'add_step', 'complete_step', 'review'],
+            description: 'declare (title+horizon), list (active goals + steps), set_status (active|paused|achieved|abandoned), add_step, complete_step, review (run drift review now)'
+          },
+          title: { type: 'string', description: 'Goal title for declare' },
+          horizon: { type: 'string', enum: ['week', 'month', 'quarter', 'year', 'life'], description: 'Goal horizon for declare (default quarter)' },
+          targetDate: { type: 'string', description: 'Optional ISO date target for declare' },
+          signals: { type: 'array', items: { type: 'string' }, description: 'Optional observable proxy metrics for drift detection (e.g. ["commits_per_week","calls_made"])' },
+          goalId: { type: 'string', description: 'Goal id for set_status/add_step/complete_step' },
+          status: { type: 'string', enum: ['active', 'paused', 'achieved', 'abandoned'], description: 'New status for set_status' },
+          step: { type: 'string', description: 'Step title for add_step' },
+          stepId: { type: 'string', description: 'Step id for complete_step' }
+        },
+        required: ['action']
+      }
+    }
   }
 ];
 
@@ -5083,6 +5109,63 @@ end tell`;
                 else facts = activeFacts({ subject: args?.subject ? String(args.subject) : undefined, predicate: args?.predicate ? String(args.predicate) : undefined });
                 res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
                 return res.end(JSON.stringify({ ok: true, tool, action, facts, durationMs: Date.now() - startMs }));
+              } catch (e: any) {
+                res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+                return res.end(JSON.stringify({ ok: false, tool, error: String(e?.message || e) }));
+              }
+            }
+
+            // cortex_goals — strategic partnership layer: declarable,
+            // persistent life goals with drift detection and weekly review.
+            if (tool === 'cortex_goals') {
+              try {
+                const { getCortexGoals } = await import('./src/lib/cortex-goals');
+                const goals = getCortexGoals();
+                const action = String(args?.action || 'list').trim();
+
+                res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+                if (action === 'declare') {
+                  const title = String(args?.title || '').trim();
+                  if (!title) return res.end(JSON.stringify({ ok: false, tool, error: 'title required' }));
+                  const horizon = ['week', 'month', 'quarter', 'year', 'life'].includes(String(args?.horizon)) ? String(args.horizon) as any : 'quarter';
+                  const targetDate = args?.targetDate ? Date.parse(String(args.targetDate)) : undefined;
+                  const signals = Array.isArray(args?.signals) ? args.signals.map(String).slice(0, 8) : [];
+                  const goal = goals.declare({
+                    title, horizon,
+                    targetDate: Number.isFinite(targetDate) ? targetDate : undefined,
+                    signals,
+                  });
+                  return res.end(JSON.stringify({ ok: true, tool, action, goal, durationMs: Date.now() - startMs }));
+                }
+                if (action === 'set_status') {
+                  const ok = goals.setStatus(String(args?.goalId || ''), String(args?.status || 'active') as any);
+                  return res.end(JSON.stringify({ ok, tool, action, durationMs: Date.now() - startMs }));
+                }
+                if (action === 'add_step' || action === 'complete_step') {
+                  const gid = String(args?.goalId || '');
+                  const g = goals.get(gid);
+                  if (!g) return res.end(JSON.stringify({ ok: false, tool, error: 'goal not found' }));
+                  const steps = (g.steps || []).map(s => ({ ...s }));
+                  if (action === 'add_step') {
+                    const title = String(args?.step || '').trim();
+                    if (!title) return res.end(JSON.stringify({ ok: false, tool, error: 'step title required' }));
+                    steps.push({ id: `step-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`, title });
+                  } else {
+                    const sid = String(args?.stepId || '');
+                    const st = steps.find(s => s.id === sid);
+                    if (!st) return res.end(JSON.stringify({ ok: false, tool, error: 'step not found' }));
+                    st.completed = true;
+                  }
+                  goals.updateDetails(gid, { steps });
+                  return res.end(JSON.stringify({ ok: true, tool, action, goal: goals.get(gid), durationMs: Date.now() - startMs }));
+                }
+                if (action === 'review') {
+                  const r = goals.reviewGoals({});
+                  return res.end(JSON.stringify({ ok: true, tool, action, ...r, durationMs: Date.now() - startMs }));
+                }
+                // list (default)
+                const list = goals.list(args?.status ? String(args.status) as any : undefined);
+                return res.end(JSON.stringify({ ok: true, tool, action: 'list', goals: list, count: list.length, durationMs: Date.now() - startMs }));
               } catch (e: any) {
                 res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
                 return res.end(JSON.stringify({ ok: false, tool, error: String(e?.message || e) }));
@@ -10664,12 +10747,32 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
                 ? getContinuityBrief(continuitySid, trimmedMsgs.length)
                 : null;
 
+              // Strategic partnership context: active life goals ride
+              // every cortex turn so advice connects to what the user is
+              // becoming, not just what they're doing right now.
+              let goalDigest = '';
+              if (parsed.context === 'cortex') {
+                try {
+                  const { getCortexGoals } = await import('./src/lib/cortex-goals');
+                  const activeGoals = getCortexGoals().list('active').slice(0, 6);
+                  if (activeGoals.length) {
+                    goalDigest = '\n\n[LIFE GOALS — strategic partnership context]\n'
+                      + activeGoals.map((g: any) =>
+                        `- ${g.title} (${g.horizon}${g.targetDate ? `, target ${new Date(g.targetDate).toISOString().slice(0, 10)}` : ''})`
+                        + (g.steps?.length ? ` — ${g.steps.filter((s: any) => !s.completed).length}/${g.steps.length} steps remaining` : '')
+                        + (g.driftScore && g.driftScore > 0.4 ? ` — drift ${Math.round(g.driftScore * 100)}%` : '')
+                      ).join('\n')
+                      + '\nConnect relevant work to these goals naturally. When the user declares a life-defining aim, persist it via the cortex_goals tool.';
+                  }
+                } catch {}
+              }
+
               const sysContent = parsed.systemPrompt
                 ? `${sysPrefix}\n\n${parsed.systemPrompt}`
                 : (parsed.context === 'cortex'
                   ? `${sysPrefix}\n\nRespond with deep cognitive authenticity.`
                   : NEXUS_SYSTEM_PROMPT);
-              const sysContentFull = continuityBrief ? `${sysContent}\n\n${continuityBrief}` : sysContent;
+              const sysContentFull = `${continuityBrief ? `${sysContent}\n\n${continuityBrief}` : sysContent}${goalDigest}`;
 
               const chatMessages = [
                 { role: 'system', content: sysContentFull },

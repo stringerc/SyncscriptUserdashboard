@@ -245,6 +245,8 @@ async function notifyChat(port: number, text: string) {
 }
 
 let lastNotifyAt = 0;
+let lastGoalPulseAt = 0;
+const GOAL_PULSE_MS = 24 * 60 * 60 * 1000;
 
 async function runCheck(port: number) {
   const vitals = collectVitals();
@@ -286,6 +288,46 @@ async function runCheck(port: number) {
   }
 
   persist({ vitals, findings, actions, mode, notified: shouldNotify });
+
+  // ── Strategic pulse — once per day ──────────────────────────────
+  // The life-goals engine is declarable but was unwired: nothing ever
+  // surfaced it. Once a day, pick the highest-leverage strategic fact
+  // (goal nearing target, or an active goal with no plan steps) and
+  // narrate one partnership nudge. Respects the notify cooldown.
+  if (Date.now() - lastGoalPulseAt > GOAL_PULSE_MS) {
+    lastGoalPulseAt = Date.now();
+    try {
+      const { getCortexGoals } = await import('../cortex-goals');
+      const goals = getCortexGoals();
+      const active = goals.list('active');
+      let pulse: string | null = null;
+      if (active.length) {
+        const withTarget = active
+          .filter((g: any) => g.targetDate && g.targetDate > Date.now())
+          .sort((a: any, b: any) => a.targetDate - b.targetDate);
+        const nearest = withTarget[0] as any;
+        if (nearest?.targetDate) {
+          const days = Math.ceil((nearest.targetDate - Date.now()) / 86400000);
+          const openSteps = (nearest.steps || []).filter((s: any) => !s.completed).length;
+          if (days <= 14) {
+            pulse = days <= 0
+              ? `Strategic pulse: "${nearest.title}" hit its target date — celebrate the win or re-target?`
+              : `Strategic pulse: "${nearest.title}" targets in ${days}d with ${openSteps} step(s) open. Want me to map the next move?`;
+          }
+        }
+        if (!pulse) {
+          const noPlan = active.find((g: any) => !(g.steps || []).length);
+          if (noPlan) {
+            pulse = `Strategic pulse: "${noPlan.title}" (${noPlan.horizon}) has no plan steps yet — say the word and I'll help break it down.`;
+          }
+        }
+      }
+      if (pulse && Date.now() - lastNotifyAt > NOTIFY_COOLDOWN_MS) {
+        lastNotifyAt = Date.now();
+        await notifyChat(port, `🎯 ${pulse}`);
+      }
+    } catch {}
+  }
 }
 
 /** Start the governed self-regulation loop. Call once from configureServer. */

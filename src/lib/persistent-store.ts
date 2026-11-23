@@ -180,6 +180,53 @@ function resolveBackend(): { store: KeyValueStore | null; durable: boolean } {
 const backend = resolveBackend();
 const backendStore = backend.store;
 
+// ── Node durability mirror ─────────────────────────────────────────
+// Under Node there is no localStorage or IndexedDB — without this
+// mirror every cortex module's "persistent" state dies with the dev
+// server (life goals, episodic checkpoints, instincts, patterns).
+// Mirror the memory map to .cortex-runtime/persistent-store.json with
+// a debounced flush. Uses process.getBuiltinModule so the module stays
+// import-safe in browser bundles (no node: imports).
+const nodeProc = (globalThis as { process?: { versions?: { node?: string }; getBuiltinModule?: (id: string) => any; cwd?: () => string } }).process;
+const isNodeRuntime = !!nodeProc?.versions?.node && typeof nodeProc.getBuiltinModule === 'function';
+let nodeFs: any = null;
+let nodePathMod: any = null;
+let nodeStoreFile: string | null = null;
+let nodeFlushTimer: ReturnType<typeof setTimeout> | null = null;
+let nodeFlushWarned = false;
+
+if (isNodeRuntime) {
+  try {
+    nodeFs = nodeProc!.getBuiltinModule!('node:fs');
+    nodePathMod = nodeProc!.getBuiltinModule!('node:path');
+    nodeStoreFile = nodePathMod.join(nodeProc!.cwd!(), '.cortex-runtime', 'persistent-store.json');
+    const parsed = JSON.parse(nodeFs.readFileSync(nodeStoreFile, 'utf8'));
+    if (parsed && typeof parsed === 'object') {
+      for (const [k, v] of Object.entries(parsed)) {
+        if (typeof v === 'string') memory.set(k, v);
+      }
+    }
+  } catch { /* first boot — file absent or corrupt */ }
+}
+
+function scheduleNodeFlush(): void {
+  if (!isNodeRuntime || !nodeStoreFile) return;
+  if (nodeFlushTimer) clearTimeout(nodeFlushTimer);
+  nodeFlushTimer = setTimeout(() => {
+    nodeFlushTimer = null;
+    try {
+      const payload = JSON.stringify(Object.fromEntries(memory));
+      if (payload.length > 8_000_000) {
+        if (!nodeFlushWarned) { nodeFlushWarned = true; console.warn('[persistentStore] Node mirror skipped — state exceeds 8MB'); }
+        return;
+      }
+      nodeFs.mkdirSync(nodePathMod.dirname(nodeStoreFile), { recursive: true });
+      nodeFs.writeFileSync(nodeStoreFile, payload);
+    } catch { /* disk pressure — memory copy still serves this process */ }
+  }, 750);
+  if (typeof nodeFlushTimer.unref === 'function') nodeFlushTimer.unref();
+}
+
 const hybridStore: AsyncKeyValueStore = {
   getItem: (key: string): string | null => {
     if (backendStore) {
@@ -207,6 +254,7 @@ const hybridStore: AsyncKeyValueStore = {
 
     // 3. Mirror/persist to IndexedDB asynchronously
     idbSet(key, value).catch(() => {});
+    scheduleNodeFlush();
   },
   removeItem: (key: string): void => {
     memory.delete(key);
@@ -217,6 +265,7 @@ const hybridStore: AsyncKeyValueStore = {
       } catch {}
     }
     idbRemove(key).catch(() => {});
+    scheduleNodeFlush();
   },
   getItemAsync: async (key: string): Promise<string | null> => {
     const syncVal = hybridStore.getItem(key);
@@ -245,7 +294,7 @@ export const persistentStore: AsyncKeyValueStore = hybridStore;
 
 /** True only when writes survive process/session exit. */
 export function isDurable(): boolean {
-  return backend.durable || Boolean(getIndexedDB());
+  return backend.durable || Boolean(getIndexedDB()) || isNodeRuntime;
 }
 
 /** Test hook: clear the in-memory backend between runs. */
