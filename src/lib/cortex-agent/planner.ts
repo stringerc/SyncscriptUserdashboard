@@ -53,6 +53,8 @@ export const CLASS_OF = (kind: string, title: string): ActionClass => {
   return 'research';
 };
 
+const RISK_DIMS: Dim[] = ['driftRisk', 'surprise', 'hostLoad', 'forecastRisk'];
+
 // ── Rollout: propagate latent state forward under an action sequence ──
 interface RolloutResult {
   sequence: string[];
@@ -61,14 +63,31 @@ interface RolloutResult {
   predictedSurprise: number;
   risk: number;
   ambiguity: number;
+  saturation: number;
   finalDims: Record<Dim, number>;
+}
+
+/** Action→dim effects: learned dynamics override priors where measured —
+ *  EXCEPT risk dims, which take the conservative max of prior and learned.
+ *  Telemetry under-samples hostLoad (a dispatch's load spike decays before
+ *  the next snapshot), so learned estimates on downside dims skew optimistic.
+ *  max(prior, learned) keeps the worse-case cost — the same reason the
+ *  generative dream flagged orchestrate→hostLoad: assume the load is real
+ *  even when the data failed to catch it. */
+function actionEffects(cls: ActionClass): Partial<Record<Dim, number>> {
+  const prior = ACTION_PRIORS[cls] || {};
+  const learned = learnedEffects(cls);
+  const eff: Partial<Record<Dim, number>> = { ...prior, ...learned };
+  for (const d of RISK_DIMS) {
+    const p = prior[d] ?? 0, l = learned[d] ?? 0;
+    if (p > 0 || l > 0) eff[d] = Math.max(p, l);
+  }
+  return eff;
 }
 
 function applyAction(dims: Record<Dim, number>, cls: ActionClass, strength = 1): Record<Dim, number> {
   const next = { ...dims };
-  // Learned dynamics override stated priors where real task→dim pairs
-  // exist; priors remain the fallback for unmeasured effects.
-  const eff = { ...(ACTION_PRIORS[cls] || {}), ...learnedEffects(cls) };
+  const eff = actionEffects(cls);
   for (const [d, v] of Object.entries(eff) as [Dim, number][]) {
     next[d] = Math.max(0, Math.min(1, next[d] + (v as number) * strength));
   }
@@ -116,18 +135,45 @@ function ambiguityOf(dims: Record<Dim, number>, evidence: Record<Dim, number>, c
   return evidenceAmbiguity * 0.5 + dynU * 0.5;
 }
 
+/** Saturation loss: dims clamp at [0,1], so when an action's learned/prior
+ *  push exceeds remaining headroom the realized trajectory diverges from
+ *  the model — the generative-dream fault line (orchestrate→hostLoad ×8)
+ *  showed dreamed states where the learned effect physically cannot
+ *  materialize. Penalize the unrealized fraction, weighted toward risk
+ *  dims: pushing a saturated hostLoad leaves zero margin and the
+ *  prediction itself is unreliable exactly when it matters most. */
+function saturationLoss(from: Record<Dim, number>, to: Record<Dim, number>, cls: ActionClass): number {
+  const eff = actionEffects(cls);
+  let loss = 0;
+  for (const [d, v] of Object.entries(eff) as [Dim, number][]) {
+    const intended = Math.abs(v as number);
+    if (intended < 0.005) continue;
+    const realized = Math.abs(to[d] - from[d]);
+    const unrealized = Math.max(0, intended - realized);
+    if (unrealized < 0.005) continue;
+    const w = d === 'hostLoad' ? 2.0 : RISK_DIMS.includes(d) ? 1.5 : 0.5;
+    loss += unrealized * w;
+  }
+  return loss;
+}
+
 /** Expected free energy for one action from current state. */
-function evaluateAction(state: WorldState, cls: ActionClass, dims: Record<Dim, number>): { g: number; utility: number; surprise: number; risk: number; ambiguity: number; next: Record<Dim, number> } {
+function evaluateAction(state: WorldState, cls: ActionClass, dims: Record<Dim, number>): { g: number; utility: number; surprise: number; risk: number; ambiguity: number; saturation: number; next: Record<Dim, number> } {
   const next = applyAction(dims, cls);
   const utility = utilityOf(next, state.weights);
   const surprise = surpriseOfMove(dims, next, cls);
-  // Risk: negative valence dims moving up = bad (driftRisk, surprise, hostLoad up = risk)
-  const riskDims: Dim[] = ['driftRisk', 'surprise', 'hostLoad', 'forecastRisk'];
-  const risk = riskDims.reduce((a, d) => a + Math.max(0, next[d] - dims[d]), 0) / riskDims.length;
+  // Risk: negative valence dims moving up = bad (driftRisk, surprise, hostLoad
+  // up = risk). Headroom-weighted: pushing hostLoad 0.90→0.96 is far worse
+  // than 0.30→0.36 — a near-ceiling dim has no slack, so marginal pushes
+  // scale with current level. This is what hardens orchestrate/devin on a
+  // saturated host: their +hostLoad priors cost disproportionately more
+  // exactly when the machine can least afford them.
+  const risk = RISK_DIMS.reduce((a, d) => a + Math.max(0, next[d] - dims[d]) * (1 + 2 * dims[d]), 0) / RISK_DIMS.length;
   const ambiguity = ambiguityOf(next, state.evidence, cls);
-  // Expected free energy: high utility lowers G; surprise/risk/ambiguity raise it
-  const g = surprise * 0.4 + risk * 0.35 + ambiguity * 0.25 - utility * 0.5;
-  return { g, utility, surprise, risk, ambiguity, next };
+  const saturation = saturationLoss(dims, next, cls);
+  // Expected free energy: high utility lowers G; surprise/risk/ambiguity/saturation raise it
+  const g = surprise * 0.4 + risk * 0.35 + ambiguity * 0.25 + saturation * 0.5 - utility * 0.5;
+  return { g, utility, surprise, risk, ambiguity, saturation, next };
 }
 
 /** Greedy rollout: at each step pick the action class minimizing G.
@@ -138,19 +184,19 @@ export function rolloutPlan(state: WorldState, horizon = 3): RolloutResult {
   const classes = Object.keys(ACTION_PRIORS) as ActionClass[];
   let current = { ...state.dims };
   const seq: string[] = [];
-  let totalG = 0, totalUtility = 0, totalSurprise = 0, totalRisk = 0, totalAmbiguity = 0;
+  let totalG = 0, totalUtility = 0, totalSurprise = 0, totalRisk = 0, totalAmbiguity = 0, totalSaturation = 0;
 
   for (let step = 0; step < horizon; step++) {
-    let best: { cls: ActionClass; g: number; next: Record<Dim, number>; u: number; s: number; r: number; a: number } | null = null;
+    let best: { cls: ActionClass; g: number; next: Record<Dim, number>; u: number; s: number; r: number; a: number; sat: number } | null = null;
     for (const cls of classes) {
       const e = evaluateAction(state, cls, current);
       // Diminishing returns: later steps discounted
       const discounted = e.g * Math.pow(0.85, step);
-      if (!best || discounted < best.g) best = { cls, g: discounted, next: e.next, u: e.utility, s: e.surprise, r: e.risk, a: e.ambiguity };
+      if (!best || discounted < best.g) best = { cls, g: discounted, next: e.next, u: e.utility, s: e.surprise, r: e.risk, a: e.ambiguity, sat: e.saturation };
     }
     if (!best) break;
     seq.push(best.cls);
-    totalG += best.g; totalUtility += best.u; totalSurprise += best.s; totalRisk += best.r; totalAmbiguity += best.a;
+    totalG += best.g; totalUtility += best.u; totalSurprise += best.s; totalRisk += best.r; totalAmbiguity += best.a; totalSaturation += best.sat;
     current = best.next;
   }
   return {
@@ -160,6 +206,7 @@ export function rolloutPlan(state: WorldState, horizon = 3): RolloutResult {
     predictedSurprise: Math.round(totalSurprise * 1000) / 1000,
     risk: Math.round(totalRisk * 1000) / 1000,
     ambiguity: Math.round(totalAmbiguity * 1000) / 1000,
+    saturation: Math.round(totalSaturation * 1000) / 1000,
     finalDims: current,
   };
 }
@@ -172,7 +219,7 @@ export function rolloutFrom(state: WorldState, firstCls: ActionClass, horizon = 
   const classes = Object.keys(ACTION_PRIORS) as ActionClass[];
   let current = { ...state.dims };
   const trajectory: Array<{ step: number; cls: ActionClass; g: number }> = [];
-  let totalG = 0, totalUtility = 0, totalSurprise = 0, totalRisk = 0, totalAmbiguity = 0;
+  let totalG = 0, totalUtility = 0, totalSurprise = 0, totalRisk = 0, totalAmbiguity = 0, totalSaturation = 0;
 
   for (let step = 0; step < horizon; step++) {
     const cls = step === 0 ? firstCls : (() => {
@@ -186,7 +233,7 @@ export function rolloutFrom(state: WorldState, firstCls: ActionClass, horizon = 
     const e = evaluateAction(state, cls, current);
     trajectory.push({ step, cls, g: Math.round(e.g * 1000) / 1000 });
     totalG += e.g * Math.pow(0.85, step);
-    totalUtility += e.utility; totalSurprise += e.surprise; totalRisk += e.risk; totalAmbiguity += e.ambiguity;
+    totalUtility += e.utility; totalSurprise += e.surprise; totalRisk += e.risk; totalAmbiguity += e.ambiguity; totalSaturation += e.saturation;
     current = e.next;
   }
   return {
@@ -197,6 +244,7 @@ export function rolloutFrom(state: WorldState, firstCls: ActionClass, horizon = 
     predictedSurprise: Math.round(totalSurprise * 1000) / 1000,
     risk: Math.round(totalRisk * 1000) / 1000,
     ambiguity: Math.round(totalAmbiguity * 1000) / 1000,
+    saturation: Math.round(totalSaturation * 1000) / 1000,
     finalDims: current,
   };
 }
@@ -212,6 +260,9 @@ export interface PlanEvaluation {
   surprise: number;
   risk: number;
   ambiguity: number;
+  /** Unrealized dim push at [0,1] bounds — high = model predicts effects
+   *  the saturated state physically can't deliver (dream fault lines). */
+  saturation: number;
   /** 0..1 — how much of this action's dynamics are learned vs assumed. */
   dynamicsConfidence: number;
   rank: number;
@@ -254,6 +305,7 @@ export function planDispatches(candidates: DispatchCandidate[], state?: WorldSta
       surprise: Math.round(first.surprise * 1000) / 1000,
       risk: Math.round(first.risk * 1000) / 1000,
       ambiguity: Math.round(first.ambiguity * 1000) / 1000,
+      saturation: Math.round(first.saturation * 1000) / 1000,
       dynamicsConfidence: Math.round((1 - dynamicsUncertainty(cls)) * 100) / 100,
       rank: 0,
       reason: '',
@@ -261,9 +313,10 @@ export function planDispatches(candidates: DispatchCandidate[], state?: WorldSta
   }).sort((a, b) => a.freeEnergy - b.freeEnergy);
   evals.forEach((e, i) => { e.rank = i + 1; });
   evals.forEach((e) => {
+    const satNote = e.saturation > 0.1 ? ` — ${e.saturation > 0.3 ? 'severe' : 'notable'} saturation: predicted effects can't materialize at current dim bounds` : '';
     e.reason = e.rank === 1
-      ? `lowest expected free energy (${e.freeEnergy}) — best predicted utility ${e.utility} with ${e.risk > 0.15 ? 'elevated' : 'manageable'} risk`
-      : `free energy ${e.freeEnergy} vs best ${evals[0].freeEnergy} — ${e.freeEnergy - evals[0].freeEnergy > 0.2 ? 'clearly worse' : 'marginally worse'} path`;
+      ? `lowest expected free energy (${e.freeEnergy}) — best predicted utility ${e.utility} with ${e.risk > 0.15 ? 'elevated' : 'manageable'} risk${satNote}`
+      : `free energy ${e.freeEnergy} vs best ${evals[0].freeEnergy} — ${e.freeEnergy - evals[0].freeEnergy > 0.2 ? 'clearly worse' : 'marginally worse'} path${satNote}`;
   });
   try {
     if (evals[0]) {
