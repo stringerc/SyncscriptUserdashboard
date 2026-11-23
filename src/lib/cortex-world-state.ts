@@ -42,6 +42,8 @@ export interface UserContextState {
 export interface HostSomaticState {
   loadAvg1m: number;
   memUsedPct: number;
+  /** Free RAM in MB — Cortex cites headroom in absolute terms, not just %. */
+  memFreeMB?: number;
   uptimeHours: number;
   batteryPct?: number;
 }
@@ -229,6 +231,7 @@ export function getSomaticVitals(): HostSomaticState {
   return {
     loadAvg1m,
     memUsedPct,
+    memFreeMB: Math.round(free / 1048576),
     uptimeHours,
   };
 }
@@ -468,7 +471,11 @@ export function formatWorldStateHeader(state: WorldState): string {
     ? ` | files: ${rc.slice(0, 3).map(c => `${c.path.split('/').pop()}(${Math.max(0, Math.round((Date.now() - c.at) / 1000))}s)`).join(' ')}`
     : '';
 
-  return `[WORLD-STATE: ${topology.localTime} | App: ${appInfo} | Git: ${gitInfo} | Host: ${hostNode} | Load: ${host.loadAvg1m} | Mem: ${host.memUsedPct}%${battInfo}${fleetInfo}${editInfo}${fileInfo}]`;
+  const memInfo = host.memFreeMB !== undefined
+    ? ` | Mem: ${host.memUsedPct}% (${host.memFreeMB}MB free)`
+    : ` | Mem: ${host.memUsedPct}%`;
+
+  return `[WORLD-STATE: ${topology.localTime} | App: ${appInfo} | Git: ${gitInfo} | Host: ${hostNode} | Load: ${host.loadAvg1m}${memInfo}${battInfo}${fleetInfo}${editInfo}${fileInfo}]`;
 }
 
 // ── Ambient sampler ─────────────────────────────────────────────────────────
@@ -535,12 +542,45 @@ export function onHostMemoryPressure(fn: (level: PressureLevel, pct: number) => 
   return () => { pressure.listeners.delete(fn); };
 }
 
+// ── World-state sample stream ──────────────────────────────────────────────
+// Cortex's latest wish: "every file change, memory spike, and process death
+// present in my awareness the instant it happens, before it becomes a
+// crisis." The header is pull-telemetry — she still has to attend to it.
+// This stream is push-telemetry: every fresh sampler tick emits the full
+// snapshot to subscribers, and vite.config diffs consecutive samples into
+// ambient events ("memory just spiked", "heavy edit burst"). The boundary
+// between observation and action moves from query-time to event-time.
+// globalThis-backed for the same restart-survival reason as the sampler.
+type WorldSampleListener = (state: WorldState) => void;
+const SAMPLE_KEY = '__cortexWorldStateSamples';
+const gSamples = globalThis as any;
+if (!gSamples[SAMPLE_KEY]) {
+  gSamples[SAMPLE_KEY] = { listeners: new Set<WorldSampleListener>() };
+}
+const sampleBus: { listeners: Set<WorldSampleListener> } = gSamples[SAMPLE_KEY];
+
+/** Subscribe to every fresh world-state sample (~3s cadence). Returns
+ *  unsubscribe. Listeners must be cheap — they run on the sampler tick. */
+export function onWorldStateSample(fn: WorldSampleListener): () => void {
+  sampleBus.listeners.add(fn);
+  return () => { sampleBus.listeners.delete(fn); };
+}
+
+function emitWorldSample(state: WorldState): void {
+  for (const fn of [...sampleBus.listeners]) {
+    try { fn(state); } catch {}
+  }
+}
+
 export function startWorldStateSampler(intervalMs = 3000): void {
   const g = globalThis as any;
   if (g[SAMPLER_KEY]) return;
   const tick = () => {
     void refreshWorldState()
-      .then((s) => checkHostMemoryPressure(s?.host?.memUsedPct ?? 0))
+      .then((s) => {
+        checkHostMemoryPressure(s?.host?.memUsedPct ?? 0);
+        emitWorldSample(s);
+      })
       .catch(() => {});
   };
   tick(); // warm immediately — first turn shouldn't pay cold-start either

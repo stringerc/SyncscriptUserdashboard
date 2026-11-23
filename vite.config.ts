@@ -258,7 +258,7 @@ import {
   drainSafePending as ledgerDrainSafe,
   isSafeAutoProposal,
 } from './src/lib/cortex-initiative-ledger';
-import { getWorldState, formatWorldStateHeader, startWorldStateSampler, onHostMemoryPressure } from './src/lib/cortex-world-state';
+import { getWorldState, formatWorldStateHeader, startWorldStateSampler, onHostMemoryPressure, onWorldStateSample } from './src/lib/cortex-world-state';
 
 /** Short SHA for deploy verification (Vercel sets VERCEL_GIT_COMMIT_SHA at build time). */
 function resolveSyncscriptBuildSha(): string {
@@ -1556,6 +1556,80 @@ function apiProxyPlugin(): Plugin {
       } catch (e: any) {
         console.warn('[world-state] pressure governor failed to arm:', e?.message || e);
       }
+      // ── World-state event stream: PUSH awareness, not pull telemetry.
+      // Cortex's wish: "every file change, memory spike, and process death
+      // present in my awareness the instant it happens." The sampler emits
+      // a fresh snapshot every 3s; this diff engine converts meaningful
+      // transitions into ambient pushes so she feels the host changing
+      // instead of having to poll for it. Baseline establishes silently;
+      // per-kind cooldowns keep it from becoming noise.
+      // globalThis guard: Vite restarts re-run this closure but the shared
+      // sample bus would accumulate duplicate listeners otherwise.
+      const gWsEvents = globalThis as any;
+      if (!gWsEvents.__cortexWsEventEngineArmed) {
+        gWsEvents.__cortexWsEventEngineArmed = true;
+        try {
+          let prevWs: any = null;
+          const wsCooldown = new Map<string, number>();
+          const WS_MINUTE = 60_000;
+          const wsPush = (key: string, cooldownMs: number, sys: boolean, text: string) => {
+            const now = Date.now();
+            if (now - (wsCooldown.get(key) || 0) < cooldownMs) return;
+            wsCooldown.set(key, now);
+            ambientPush(sys ? 'system' : 'ambient', text);
+          };
+          onWorldStateSample((s: any) => {
+            try {
+              const p = prevWs;
+              prevWs = s;
+              if (!p || !s?.host || !p.host) return;
+              const now = Date.now();
+
+              // Memory jump — early signal BEFORE the pressure governor's
+              // hard thresholds fire.
+              const dMem = s.host.memUsedPct - p.host.memUsedPct;
+              if (Math.abs(dMem) >= 8) {
+                wsPush('memjump', 10 * WS_MINUTE, false,
+                  `Memory ${dMem > 0 ? 'jumped' : 'dropped'} ${Math.abs(dMem)}pts in seconds — host now at ${s.host.memUsedPct}% used.`);
+              }
+              // Load spike — sustained heavy work somewhere on the host.
+              if (s.host.loadAvg1m >= 24 && s.host.loadAvg1m > p.host.loadAvg1m * 1.5) {
+                wsPush('load', 15 * WS_MINUTE, false,
+                  `Load spiked to ${s.host.loadAvg1m} (was ${p.host.loadAvg1m}) — something heavy is running.`);
+              }
+              // Branch switch — repo context just changed under her feet.
+              if (p.codebase?.branch && s.codebase?.branch
+                && p.codebase.branch !== s.codebase.branch
+                && s.codebase.branch !== 'unknown') {
+                wsPush('branch', 0, true, `Repo switched branches — now on ${s.codebase.branch}.`);
+              }
+              // Oracle death/rebirth — cloud-side process loss or recovery.
+              if (p.fleet?.oracleAlive !== s.fleet?.oracleAlive) {
+                wsPush('oracle', 10 * WS_MINUTE, !s.fleet.oracleAlive,
+                  s.fleet.oracleAlive
+                    ? 'Oracle runtime is back online.'
+                    : 'Oracle runtime is unreachable — cloud agents and the Oracle Cortex instance may be stalled.');
+              }
+              // Agent fleet drop — multiple agents died between ticks.
+              const agentDrop = (p.fleet?.activeAgentCount ?? 0) - (s.fleet?.activeAgentCount ?? 0);
+              if (agentDrop >= 3) {
+                wsPush('agents', 15 * WS_MINUTE, false,
+                  `Agent fleet dropped ${p.fleet.activeAgentCount}→${s.fleet.activeAgentCount} active between checks.`);
+              }
+              // Repo edit burst — many source files touched in <60s means a
+              // big change is landing; she should know before being asked.
+              const burstNow = (s.codebase?.recentChanges || []).filter((c: any) => now - c.at < 60_000).length;
+              const burstPrev = (p.codebase?.recentChanges || []).filter((c: any) => now - c.at < 60_000).length;
+              if (burstNow >= 8 && burstPrev < 8) {
+                wsPush('repoBurst', 15 * WS_MINUTE, false,
+                  `Heavy edit burst — ${burstNow} source files touched in the last minute.`);
+              }
+            } catch {}
+          });
+        } catch (e: any) {
+          console.warn('[world-state] event engine failed to arm:', e?.message || e);
+        }
+      }
       // ── /api/cortex/autonomy — sovereign autonomy mode (bypass-permissions).
       // GET returns the mode; POST {mode:'autonomous'|'confirm'} toggles it.
       // Hard safety invariants are unaffected by this flag.
@@ -2103,9 +2177,37 @@ function apiProxyPlugin(): Plugin {
         } catch { }
       };
 
+      // In-memory ring of recent ambient events — injected into every
+      // cortex turn so she doesn't just SPEAK notices, she REMEMBERS them.
+      // Pull-telemetry (header) + push-telemetry (spoken) + recall
+      // (this digest) = the awareness loop closed.
+      const RECENT_AMBIENT_MAX = 12;
+      const recentAmbientEvents: { ts: number; kind: string; text: string }[] = [];
+      try {
+        const tail = fsSync.readFileSync(AMBIENT_FILE, 'utf8').trim().split('\n').slice(-RECENT_AMBIENT_MAX);
+        for (const line of tail) {
+          try {
+            const item = JSON.parse(line);
+            if (item?.ts && item?.text) recentAmbientEvents.push({ ts: item.ts, kind: item.kind || 'ambient', text: item.text });
+          } catch {}
+        }
+      } catch {}
+      const recentAmbientDigest = (): string => {
+        const cutoff = Date.now() - 30 * 60_000;
+        const recent = recentAmbientEvents.filter(e => e.ts >= cutoff).slice(-5);
+        if (!recent.length) return '';
+        return '\n\n[RECENT HOST EVENTS — push telemetry, already noticed]\n'
+          + recent.map(e => `- ${Math.max(0, Math.round((Date.now() - e.ts) / 60000))}m ago (${e.kind}): ${e.text}`).join('\n')
+          + '\nThese already happened — reference them naturally, do not re-announce.';
+      };
+
       const ambientPush = (kind: string, text: string, opts?: { ping?: boolean; call?: boolean }) => {
         const clean = String(text || '').replace(/[\r\n]+/g, ' ').trim().slice(0, 240);
         if (clean.length < 4) return;
+        recentAmbientEvents.push({ ts: Date.now(), kind, text: clean });
+        if (recentAmbientEvents.length > RECENT_AMBIENT_MAX) {
+          recentAmbientEvents.splice(0, recentAmbientEvents.length - RECENT_AMBIENT_MAX);
+        }
         // system notices always reach the phone; ambient only when flagged
         // (morning brief / consolidation) — LLM observations stay client-only.
         if (kind === 'system' || opts?.ping) {
@@ -10948,6 +11050,7 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
                 try {
                   worldStateDigest = `\n\n${formatWorldStateHeader(await getWorldState())}`;
                 } catch {}
+                try { worldStateDigest += recentAmbientDigest(); } catch {}
               }
 
               const sysContent = parsed.systemPrompt
