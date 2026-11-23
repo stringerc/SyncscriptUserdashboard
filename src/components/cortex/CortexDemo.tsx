@@ -964,6 +964,16 @@ export default function CortexDemo() {
           setInterruptedNotice(true);
           setTimeout(() => setInterruptedNotice(false), 2500);
         }
+      } else {
+        // Late-echo guard: STT finals of Cortex's own voice can land after
+        // the reverb window (TTS end + decode latency). Canned replies
+        // contain their own trigger words — drop finals overlapping her
+        // recent speech at a stricter threshold.
+        const lateEcho = isAcousticEchoExternal(text, '', recentAiSpeechHistoryRef.current, { threshold: 0.5 });
+        if (lateEcho.isEcho) {
+          console.log(`[Cortex Efference Copy] Suppressed late speaker echo (post-reverb, match: ${(lateEcho.matchRatio * 100).toFixed(0)}%): "${text}"`);
+          return;
+        }
       }
 
       // Genuine user speech reached us — count it as activity so the

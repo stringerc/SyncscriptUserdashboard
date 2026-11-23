@@ -2616,6 +2616,15 @@ MANDATORY: weave a 3-4 sentence spoken "state of being" answer citing at least o
         }
       }
 
+      // Late-echo guard: STT finals of Cortex's own voice can land AFTER
+      // the reverb window closes (TTS end + decode latency exceeds it).
+      // Canned replies literally contain their own trigger words — the
+      // "Initiative Inbox" reply kept re-firing itself forever this way.
+      // Stricter threshold than the live-speech gate: only drop finals
+      // that substantially overlap her recent spoken output.
+      const lateEcho = isAcousticEcho(text, '', speechHistoryRef.current, { threshold: 0.5 });
+      if (lateEcho.isEcho) return;
+
       // Dedupe: local energy-VAD may already have committed this utterance
       // early (Chrome's final arrives ~0.5-1.5s later with near-identical
       // text). Consume the marker once; a substantially different final is a
@@ -2804,6 +2813,13 @@ MANDATORY: weave a 3-4 sentence spoken "state of being" answer citing at least o
         } else if (aiSpeaking || inReverb) {
           return; // short fragment during speech/reverb — treat as bleed, drop it
         }
+      } else {
+        // Late-echo guard (VAD commits bypass onTranscript's): STT/VAD
+        // finals of Cortex's own voice can land after the reverb window.
+        // Canned replies contain their own trigger words — drop finals
+        // that substantially overlap her recent spoken output.
+        const lateEcho = isAcousticEcho(text, '', speechHistoryRef.current, { threshold: 0.5 });
+        if (lateEcho.isEcho) return;
       }
 
       // ── Wake-word gate: with cortex.wakeWord=1, only "hey cortex" (or an
