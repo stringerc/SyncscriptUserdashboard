@@ -3035,6 +3035,14 @@ MANDATORY: weave a 3-4 sentence spoken "state of being" answer citing at least o
     // Enabled → start recognition; disabled → full stop. The busTimer above
     // mirrors isListening → 'listening' publishes, so no manual publish needed.
     if (enabled) {
+      // Wake the lazy voice sidecars (parakeet-stt, chatterbox-tts) so the
+      // first real utterance doesn't pay the cold-start tax. Fire-and-
+      // forget — failures degrade to the cloud/browser fallback chain.
+      void fetch('/api/cortex/fleet/warm', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ voice: true }),
+      }).catch(() => {});
       vsRef.current.startListening();
       publish({ state: 'listening', level: 0.08, text: 'Listening…' });
     } else {

@@ -247,6 +247,7 @@ async function notifyChat(port: number, text: string) {
 let lastNotifyAt = 0;
 let lastGoalPulseAt = 0;
 const GOAL_PULSE_MS = 24 * 60 * 60 * 1000;
+let strategicReviewRunning = false;
 
 async function runCheck(port: number) {
   const vitals = collectVitals();
@@ -289,6 +290,14 @@ async function runCheck(port: number) {
 
   persist({ vitals, findings, actions, mode, notified: shouldNotify });
 
+  // Reap lazy sidecars we spawned that have been quiet >30min — RAM
+  // conservation resumes once the feature that woke them goes idle.
+  try {
+    const { sweepIdleSidecars } = await import('./sidecars');
+    const reaped = sweepIdleSidecars();
+    if (reaped.length) console.info(`[self-regulation] reaped idle sidecars: ${reaped.join(', ')}`);
+  } catch {}
+
   // ── Strategic pulse — once per day ──────────────────────────────
   // The life-goals engine is declarable but was unwired: nothing ever
   // surfaced it. Once a day, pick the highest-leverage strategic fact
@@ -325,6 +334,27 @@ async function runCheck(port: number) {
       if (pulse && Date.now() - lastNotifyAt > NOTIFY_COOLDOWN_MS) {
         lastNotifyAt = Date.now();
         await notifyChat(port, `🎯 ${pulse}`);
+      }
+    } catch {}
+  }
+
+  // ── Strategic review — weekly deep-tier ritual ─────────────────
+  // Compiles life goals, constraints, ops, ventures, events, fleet,
+  // and measured signals into a written brief via the deep model.
+  // 6-day gate persisted in strategic-review.json; in-flight guard
+  // prevents overlapping runs across ticks.
+  if (!strategicReviewRunning) {
+    try {
+      const { strategicReviewDue, runStrategicReview } = await import('./strategic-review');
+      if (strategicReviewDue()) {
+        strategicReviewRunning = true;
+        runStrategicReview(port)
+          .then((r) => {
+            if (r.ok) console.info(`[strategic-review] brief written: ${r.briefPath}`);
+            else console.warn(`[strategic-review] failed: ${r.error}`);
+          })
+          .catch(() => {})
+          .finally(() => { strategicReviewRunning = false; });
       }
     } catch {}
   }

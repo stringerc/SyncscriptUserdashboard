@@ -29,6 +29,7 @@ import { runAgenticTurn, turnLikelyNeedsTools, type AgentMessage } from './src/l
 import { getAutonomyMode, setAutonomyMode, AUTONOMY_DIRECTIVE, type AutonomyMode } from './src/lib/cortex-agent/autonomy';
 import { getContinuityBrief, recordContinuityTurn } from './src/lib/cortex-agent/continuity';
 import { precompileReflex } from './src/lib/cortex-agent/reflex';
+import { ensureSidecar, warmSidecar, warmVoiceStack, sweepIdleSidecars, sidecarStatus } from './src/lib/cortex-agent/sidecars';
 import { startSelfRegulation } from './src/lib/cortex-agent/self-regulation';
 import { obsidianRestEnabled, obsidianRestStatus, obsidianRestList, obsidianRestRead, obsidianRestWrite, obsidianRestSearch } from './src/lib/cortex-obsidian-rest';
 import { imsgRpcChats, imsgRpcHistory, imsgRpcSend, imsgRpcHealth } from './src/lib/imsg-rpc';
@@ -1117,8 +1118,8 @@ const CORTEX_TOOLS = [
         properties: {
           action: {
             type: 'string',
-            enum: ['declare', 'list', 'set_status', 'add_step', 'complete_step', 'review'],
-            description: 'declare (title+horizon), list (active goals + steps), set_status (active|paused|achieved|abandoned), add_step, complete_step, review (run drift review now)'
+            enum: ['declare', 'list', 'set_status', 'add_step', 'complete_step', 'review', 'declare_constraint', 'list_constraints', 'remove_constraint', 'link_work', 'unlink_work'],
+            description: 'declare (title+horizon), list (active goals + steps), set_status (active|paused|achieved|abandoned), add_step, complete_step, review (run drift review now), declare_constraint/list_constraints/remove_constraint (strategy limits: time budgets, risk, freezes), link_work/unlink_work (tag a mission ops item with goalId for effort attribution)'
           },
           title: { type: 'string', description: 'Goal title for declare' },
           horizon: { type: 'string', enum: ['week', 'month', 'quarter', 'year', 'life'], description: 'Goal horizon for declare (default quarter)' },
@@ -1127,7 +1128,11 @@ const CORTEX_TOOLS = [
           goalId: { type: 'string', description: 'Goal id for set_status/add_step/complete_step' },
           status: { type: 'string', enum: ['active', 'paused', 'achieved', 'abandoned'], description: 'New status for set_status' },
           step: { type: 'string', description: 'Step title for add_step' },
-          stepId: { type: 'string', description: 'Step id for complete_step' }
+          stepId: { type: 'string', description: 'Step id for complete_step' },
+          constraintKind: { type: 'string', enum: ['time_budget', 'risk', 'freeze', 'spend', 'other'], description: 'Constraint kind for declare_constraint' },
+          constraintRule: { type: 'string', description: 'The constraint rule text for declare_constraint (e.g. "max 10h/week on side projects")' },
+          constraintId: { type: 'string', description: 'Constraint id for remove_constraint' },
+          opsId: { type: 'string', description: 'Mission ops item id for link_work/unlink_work' }
         },
         required: ['action']
       }
@@ -3210,6 +3215,57 @@ function apiProxyPlugin(): Plugin {
         }
       });
 
+      // ── Strategic review on demand ──
+      // POST /api/cortex/strategic/review → run the weekly ritual now.
+      // GET → last run state. The 6-day cadence lives in self-regulation.
+      server.middlewares.use('/api/cortex/strategic/review', async (req: any, res: any) => {
+        if (!setCortexCors(req, res)) return jsonRes(res, 403, { ok: false, error: 'forbidden' });
+        if (req.method === 'OPTIONS') { res.writeHead(204); return res.end(); }
+        try {
+          const { runStrategicReview, strategicReviewDue } = await import('./src/lib/cortex-agent/strategic-review');
+          if (req.method === 'GET') {
+            const fsSync2 = await import('node:fs');
+            let state: any = {};
+            try { state = JSON.parse(fsSync2.readFileSync(path.join(process.cwd(), '.cortex-runtime', 'strategic-review.json'), 'utf8')); } catch {}
+            return jsonRes(res, 200, { ok: true, due: strategicReviewDue(), state });
+          }
+          if (req.method === 'POST') {
+            const port = process.env.PORT ? parseInt(process.env.PORT, 10) : 5173;
+            const result = await runStrategicReview(port);
+            return jsonRes(res, result.ok ? 200 : 500, result);
+          }
+          return jsonRes(res, 405, { ok: false, error: 'method not allowed' });
+        } catch (e: any) {
+          return jsonRes(res, 500, { ok: false, error: String(e?.message || e) });
+        }
+      });
+
+      // ── Fleet sidecar control (/api/cortex/fleet/*) ──
+      // Lazy nodes are dark by design (RAM conservation) — this is the
+      // wake-on-demand surface: clients warm the voice stack on session
+      // start; status reports spawn state for observability.
+      server.middlewares.use('/api/cortex/fleet/status', (req: any, res: any) => {
+        if (!setCortexCors(req, res)) return jsonRes(res, 403, { ok: false, error: 'forbidden' });
+        if (req.method === 'OPTIONS') { res.writeHead(204); return res.end(); }
+        return jsonRes(res, 200, { ok: true, sidecars: sidecarStatus() });
+      });
+
+      server.middlewares.use('/api/cortex/fleet/warm', async (req: any, res: any) => {
+        if (!setCortexCors(req, res)) return jsonRes(res, 403, { ok: false, error: 'forbidden' });
+        if (req.method === 'OPTIONS') { res.writeHead(204); return res.end(); }
+        try {
+          const body = req.method === 'POST' ? JSON.parse(await readBody(req) || '{}') : {};
+          const voice = body?.voice === true || body?.profile === 'voice';
+          if (voice) warmVoiceStack();
+          const named = Array.isArray(body?.nodes) ? body.nodes.map(String).slice(0, 8) : [];
+          for (const n of named) warmSidecar(n);
+          // Always report current spawn state — warming is async by design.
+          return jsonRes(res, 200, { ok: true, warming: voice || named.length > 0, sidecars: sidecarStatus() });
+        } catch (e: any) {
+          return jsonRes(res, 500, { ok: false, error: String(e?.message || e) });
+        }
+      });
+
       // ── Cortex Visualizer Signal Bus Endpoint (/api/cortex/bus/state) ──
       server.middlewares.use('/api/cortex/bus/state', (req: any, res: any) => {
         res.setHeader('Content-Type', 'application/json');
@@ -3424,6 +3480,9 @@ function apiProxyPlugin(): Plugin {
         req.on('data', (c: Buffer) => chunks.push(c));
         req.on('end', async () => {
           try {
+            // Wake the lazy parakeet sidecar in the background — by the
+            // time the Groq rung resolves, the local fallback is booting.
+            warmSidecar('parakeet-stt');
             const audio = Buffer.concat(chunks);
             if (audio.length < 100) {
               res.statusCode = 400;
@@ -5162,6 +5221,39 @@ end tell`;
                 if (action === 'review') {
                   const r = goals.reviewGoals({});
                   return res.end(JSON.stringify({ ok: true, tool, action, ...r, durationMs: Date.now() - startMs }));
+                }
+                // ── Constraint model — strategy limits alongside goals ──
+                if (action === 'declare_constraint' || action === 'list_constraints' || action === 'remove_constraint') {
+                  const { declareConstraint, listConstraints, removeConstraint } = await import('./src/lib/cortex-agent/constraints');
+                  if (action === 'declare_constraint') {
+                    const c = declareConstraint({
+                      kind: String(args?.constraintKind || 'other') as any,
+                      rule: String(args?.constraintRule || args?.title || ''),
+                    });
+                    return res.end(JSON.stringify({ ok: !('error' in c), tool, action, constraint: c, durationMs: Date.now() - startMs }));
+                  }
+                  if (action === 'remove_constraint') {
+                    const ok = removeConstraint(String(args?.constraintId || ''));
+                    return res.end(JSON.stringify({ ok, tool, action, durationMs: Date.now() - startMs }));
+                  }
+                  const cl = listConstraints(false);
+                  return res.end(JSON.stringify({ ok: true, tool, action, constraints: cl, count: cl.length, durationMs: Date.now() - startMs }));
+                }
+                // ── Goal-linked work — tag mission ops items with a life
+                // goal id so the strategic review can attribute effort.
+                if (action === 'link_work' || action === 'unlink_work') {
+                  const gid = String(args?.goalId || '');
+                  const oid = String(args?.opsId || '');
+                  if (!oid) return res.end(JSON.stringify({ ok: false, tool, error: 'opsId required' }));
+                  if (action === 'link_work' && !goals.get(gid)) {
+                    return res.end(JSON.stringify({ ok: false, tool, error: 'goal not found' }));
+                  }
+                  const ms = loadMission();
+                  const item = ms.opsItems.find((o) => o.id === oid);
+                  if (!item) return res.end(JSON.stringify({ ok: false, tool, error: 'ops item not found' }));
+                  if (action === 'link_work') item.goalId = gid; else delete item.goalId;
+                  saveMission(ms);
+                  return res.end(JSON.stringify({ ok: true, tool, action, opsId: oid, goalId: item.goalId || null, durationMs: Date.now() - startMs }));
                 }
                 // list (default)
                 const list = goals.list(args?.status ? String(args.status) as any : undefined);
@@ -9993,6 +10085,9 @@ Disposition consolidation (learned urgency/tier adjustments from proposal outcom
             // spawns imsg inside this process — the documented hang). Honest
             // degrade: ok:false when the daemon isn't running.
             if (tool === 'imessage_status' || tool === 'imessage_chats' || tool === 'imessage_history' || tool === 'imessage_send') {
+              // imsg-rpc is a lazy sidecar — wake it before the call so
+              // iMessage tools work on demand instead of degrading dark.
+              await ensureSidecar('imsg-rpc', 15_000);
               if (tool === 'imessage_status') {
                 const h = await imsgRpcHealth();
                 res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
@@ -10211,6 +10306,9 @@ Disposition consolidation (learned urgency/tier adjustments from proposal outcom
 
             if (mlxAudioUrl && isChatterboxRequested) {
               try {
+                // Chatterbox is a lazy sidecar — wake it (opt-in voice can
+                // absorb the cold start) before attempting synthesis.
+                await ensureSidecar('chatterbox-tts', 60_000);
                 recordConnectionAudit(`${mlxAudioUrl}/v1/audio/speech`, '/api/cortex/tts');
                 const cbRes = await fetch(`${mlxAudioUrl}/v1/audio/speech`, {
                   method: 'POST',
@@ -10985,7 +11083,7 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
                   } catch {}
 
                   const finalText = loopResult.content || 'Done.';
-                  try { recordContinuityTurn(continuitySid, latestUserMessage, finalText); } catch {}
+                  if (parsed.internal !== true) { try { recordContinuityTurn(continuitySid, latestUserMessage, finalText); } catch {} }
                   // Streamed providers already emitted tokens live — only
                   // replay for non-streaming (anthropic) final answers.
                   if (!loopResult.contentStreamed) {
@@ -11368,7 +11466,7 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
                       try {
                         const offer = detectOffer(forwardedText);
                         if (offer) recordOffer(String(parsed.sessionId || 'cortex-shared').slice(0, 80), offer, forwardedText);
-                        recordContinuityTurn(continuitySid, latestUserMessage, forwardedText);
+                        if (parsed.internal !== true) recordContinuityTurn(continuitySid, latestUserMessage, forwardedText);
                       } catch {}
                     }
                     if (forwardedTokens === 0) {
@@ -15161,6 +15259,7 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
                   done: false,
                   staleAfterDays: p.staleAfterDays,
                   ventureId: p.ventureId ? String(p.ventureId) : undefined,
+                  goalId: p.goalId ? String(p.goalId).slice(0, 60) : undefined,
                   createdAt: Date.now(),
                 };
                 if (!item.label) return send(400, { ok: false, error: 'label required' });

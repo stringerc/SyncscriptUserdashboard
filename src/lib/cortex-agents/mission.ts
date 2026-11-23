@@ -50,6 +50,9 @@ export interface OpsItem {
   staleAfterDays?: number;       // manual items rot visibly after this
   /** Venture scope (enterprise spec). */
   ventureId?: string;
+  /** Life-goal link (cortex-goals id) — effort attribution: which
+   *  declared life goal this ops item serves. */
+  goalId?: string;
   createdAt: number;
 }
 
