@@ -33,6 +33,7 @@ import { listCommitments, trustScores } from './commitments';
 import { recentMonologue } from './inner-speech';
 import { dynamicsReport } from './empirical-dynamics';
 import { workspaceStats, broadcastHistory } from './workspace';
+import { valencePrior, recentValenceArc } from './valence-memory';
 
 const RUNTIME = path.resolve(process.cwd(), '.cortex-runtime');
 const readJsonl = (f: string, tail = 400) => {
@@ -288,6 +289,80 @@ export function getFleetMinds(): AgentMind[] {
   return minds.sort((a, b) => b.tasks - a.tasks).slice(0, 8);
 }
 
+// ── Social cognition: predicted reactions + user model ─────────────────
+/** What will this agent likely DO and FEEL about a proposed dispatch?
+ *  ToM made actionable: the simulator asks "will they expect this,
+ *  succeed at it, and how will it land?" */
+export function expectedReaction(agentId: string, kind: string, title: string) {
+  const minds = getFleetMinds();
+  const mind = minds.find((m) => m.agentId === agentId);
+  const cls = (() => { const t = `${kind} ${title}`.toLowerCase();
+    if (/orchestrate|antigravity/.test(t)) return 'orchestrate';
+    if (/devin|code|build|sprint/.test(t)) return 'devin';
+    if (/patrol|status|watchdog|warden/.test(t)) return 'patrol';
+    if (/corrective|verify|resolve/.test(t)) return 'corrective';
+    if (/forecast|premortem/.test(t)) return 'forecast';
+    return 'research'; })() as any;
+  const vp = valencePrior(cls);
+  if (!mind) {
+    return { agentId, expectation: 'no model — insufficient task history', confidence: 0, expectedValence: 0, basis: 'no fleet data' };
+  }
+  // Expected valence: success likelihood × trust × learned preference
+  const successExpect = mind.successRate;
+  const trustExpect = mind.trust ?? 0.5;
+  const prefExpect = vp ? (vp.mean + 1) / 2 : 0.5; // valence -1..1 → 0..1
+  const expectedValence = Math.round((successExpect * 0.5 + trustExpect * 0.25 + prefExpect * 0.25 - 0.5) * 100) / 100;
+  const confidence = Math.min(1, mind.tasks / 20) * (1 - mind.modelError * 0.5);
+  const expectation =
+    expectedValence > 0.2 ? `${agentId} likely receives this well — predictable, trusted, positive history`
+    : expectedValence > -0.1 ? `${agentId} is a neutral bet — workable model, mixed history`
+    : `${agentId} is a risky dispatch — unpredictable or historically negative outcomes`;
+  return {
+    agentId, expectation,
+    confidence: Math.round(confidence * 100) / 100,
+    expectedValence,
+    predictedNext: mind.predictedNext,
+    basis: `success ${(mind.successRate * 100).toFixed(0)}%, modelError ${mind.modelError}, trust ${mind.trust ?? 'n/a'}, preference n=${vp?.n ?? 0}`,
+  };
+}
+
+/** User mental model — the other mind in the loop. Tracks engagement
+ *  from ambient telemetry: how present is Chris right now? */
+export function userModel() {
+  // Real signal: the shared chat history — user-role messages with
+  // timestamps. This is the other mind in the loop, measured.
+  try {
+    const raw = fs.readFileSync(path.resolve(process.cwd(), '.cache/cortex_chat_history.json'), 'utf8');
+    const msgs = JSON.parse(raw);
+    const arr = Array.isArray(msgs) ? msgs : (msgs.messages || []);
+    const now = Date.now();
+    let lastUserTs = 0, count1h = 0, count24h = 0;
+    for (const m of arr.slice(-500)) {
+      if (String(m?.role || '') !== 'user') continue;
+      const ts = Number(m?.timestamp || m?.ts || 0);
+      if (!ts) continue;
+      if (ts > lastUserTs) lastUserTs = ts;
+      if (now - ts < 3600_000) count1h++;
+      if (now - ts < 86400_000) count24h++;
+    }
+    const lastActiveMin = lastUserTs ? Math.round((now - lastUserTs) / 60_000) : null;
+    const state = !lastUserTs ? 'unknown'
+      : lastActiveMin! < 15 ? 'present — actively engaged'
+      : lastActiveMin! < 120 ? 'recently active'
+      : 'absent — likely away';
+    return {
+      lastActiveMin, messagesLastHour: count1h, messagesLast24h: count24h,
+      state,
+      inferredIntent: count1h > 4 ? 'high engagement — expects responsiveness'
+        : count1h > 0 ? 'moderate engagement'
+        : count24h > 0 ? 'periodically engaged'
+        : 'disengaged or away',
+    };
+  } catch {
+    return { lastActiveMin: null, messagesLastHour: 0, messagesLast24h: 0, state: 'unknown', inferredIntent: 'no chat data' };
+  }
+}
+
 // ═══ Unified self-model readout ═════════════════════════════════════════
 export function getSelfhood() {
   const openCommits = listCommitments({ status: 'open' });
@@ -310,8 +385,11 @@ export function getSelfhood() {
       score: b.score, margin: b.margin, consumedBy: b.consumedBy,
       // Somatic marker: the body state that framed this moment.
       capacity: b.capacity, somaticLevel: b.somaticLevel,
+      agency: b.agency, valence: b.valence,
     })),
     dynamics: (() => { try { const r = dynamicsReport(); return { learnedDims: r.classes.reduce((a, c) => a + c.learned, 0), classes: r.classes.length, processedTasks: r.processedTasks }; } catch { return null; } })(),
+    valence: (() => { try { return recentValenceArc(30); } catch { return null; } })(),
+    user: userModel(),
     workspace: (() => { try { const w = workspaceStats(); return { ignited: w.ignited, ignitionRate: w.ignitionRate, current: w.current ? { kind: w.current.kind, text: w.current.text.slice(0, 80) } : null }; } catch { return null; } })(),
   };
 }

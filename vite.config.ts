@@ -1189,7 +1189,7 @@ const CORTEX_TOOLS = [
       parameters: {
         type: 'object',
         properties: {
-          action: { type: 'string', enum: ['proprioception', 'attention', 'libet', 'veto', 'amend', 'hold', 'world', 'self', 'plan', 'dream', 'social', 'monologue', 'dynamics', 'workspace', 'simulate'], description: 'Which self-model surface to query' },
+          action: { type: 'string', enum: ['proprioception', 'attention', 'libet', 'veto', 'amend', 'hold', 'world', 'self', 'plan', 'dream', 'social', 'monologue', 'dynamics', 'workspace', 'simulate', 'valence', 'reaction'], description: 'Which self-model surface to query' },
           id: { type: 'string', description: 'Veto intent id for action=veto (from libet pending)' },
           limit: { type: 'number', description: 'Max trace entries (default 10)' }
         },
@@ -3788,6 +3788,7 @@ function apiProxyPlugin(): Plugin {
             agentId: String(c.agentId), kind: String(c.kind), title: String(c.title || 'planned dispatch'),
             reason: 'active-inference plan commitment', windowMs: 5000,
             input: { ...(c.input || {}), planned: true },
+            origin: 'external',
             fire: (i) => agentRuntime.submitTask(i.agentId as any, i.kind, i.title, (i.input || {}) as any),
           });
           return jsonRes(res, 200, { ok: true, committed: true, vetoId: id, firesInMs: 5000 });
@@ -3934,6 +3935,15 @@ function apiProxyPlugin(): Plugin {
         }
         const out = sim.simulatePendingLibet();
         return jsonRes(res, 200, { ok: true, ...out });
+      });
+
+      // ── Valence memory: affect-tagged outcome history ──
+      server.middlewares.use('/api/cortex/valence', async (req: any, res: any) => {
+        if (!setCortexCors(req, res)) return jsonRes(res, 403, { ok: false, error: 'forbidden' });
+        if (req.method === 'OPTIONS') { res.writeHead(204); return res.end(); }
+        const vm = await import('./src/lib/cortex-agent/valence-memory');
+        const added = vm.learnValence();
+        return jsonRes(res, 200, { ok: true, added, stats: vm.valenceStats() });
       });
 
       // ── Selfhood: narrative self + metacognition + fleet ToM ──
@@ -5951,6 +5961,16 @@ end tell`;
                     trust: ts(),
                     durationMs: Date.now() - startMs,
                   }));
+                }
+                if (action === 'valence') {
+                  const vm = await import('./src/lib/cortex-agent/valence-memory');
+                  const added = vm.learnValence();
+                  return res.end(JSON.stringify({ ok: true, tool, action, added, stats: vm.valenceStats(), durationMs: Date.now() - startMs }));
+                }
+                if (action === 'reaction') {
+                  const sh = await import('./src/lib/cortex-agent/selfhood');
+                  const r = sh.expectedReaction(String(args?.agentId || ''), String(args?.kind || ''), String(args?.title || ''));
+                  return res.end(JSON.stringify({ ok: true, tool, action, reaction: r, durationMs: Date.now() - startMs }));
                 }
                 if (action === 'simulate') {
                   const sim = await import('./src/lib/cortex-agent/simulator');

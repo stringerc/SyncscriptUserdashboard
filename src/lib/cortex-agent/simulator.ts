@@ -20,6 +20,8 @@ import { commitmentUtility } from './commitments';
 import { currentWorkspace, consumeBroadcast } from './workspace';
 import { speakInner } from './inner-speech';
 import { listLibetPending, type VetoIntent } from './libet-veto';
+import { learnValence, valencePrior } from './valence-memory';
+import { expectedReaction } from './selfhood';
 
 export interface SimulatedAction {
   candidate: DispatchCandidate;
@@ -42,6 +44,12 @@ export interface SimulatedAction {
   socialUtility: number;
   /** Global-workspace alignment discount applied. */
   workspaceBias: number;
+  /** Preference learning: historical outcome valence for this class.
+   *  Positive valence lowers free energy — she prefers trajectories
+   *  that historically reduced prediction error. */
+  preference: { mean: number; n: number } | null;
+  /** Social cognition: predicted reaction of the target agent. */
+  socialExpectation: { expectation: string; confidence: number; expectedValence: number } | null;
   rank: number;
   verdict: string;
 }
@@ -51,6 +59,7 @@ export interface SimulatedAction {
  *  total predicted free energy including somatic/social/workspace
  *  adjustments. */
 export function simulateDispatches(candidates: DispatchCandidate[], world?: WorldState): { landscape: SimulatedAction[]; best: SimulatedAction | null; simulatedAt: number } {
+  learnValence(); // fold new outcomes into preference memory first
   const s = world || observeWorld();
   const base = planDispatches(candidates, s);
   const ws = currentWorkspace();
@@ -60,6 +69,11 @@ export function simulateDispatches(candidates: DispatchCandidate[], world?: Worl
     const traj = rolloutFrom(s, cls, 3);
     const gate = interoceptiveGate(c.kind, c.title);
     const social = commitmentUtility(String(c.agentId || ''), c.kind, c.title);
+    // Preference learning: outcomes that historically felt good lower G
+    const vp = valencePrior(cls);
+    const preferenceAdjustment = vp ? -vp.mean * 0.3 : 0;
+    // Social cognition: what will the target agent likely feel?
+    const reaction = c.agentId ? expectedReaction(String(c.agentId), c.kind, c.title) : null;
 
     // Workspace alignment — same rule as planDispatches
     let workspaceBias = 0;
@@ -77,7 +91,8 @@ export function simulateDispatches(candidates: DispatchCandidate[], world?: Worl
 
     // plans are sorted — match by candidate identity, not index
     const evalPlan = base.plans.find((pl) => pl.candidate === c);
-    const freeEnergy = (evalPlan?.freeEnergy ?? traj.expectedFreeEnergy) + somaticPenalty;
+    const freeEnergy = (evalPlan?.freeEnergy ?? traj.expectedFreeEnergy) + somaticPenalty + preferenceAdjustment
+      + (reaction && reaction.expectedValence < -0.2 ? 0.15 : 0); // socially costly dispatches pay a little
 
     // Predicted shifts: top dim movements over the trajectory
     const shifts = Object.keys(traj.finalDims)
@@ -100,6 +115,8 @@ export function simulateDispatches(candidates: DispatchCandidate[], world?: Worl
       somaticGate: { allow: gate.allow, reason: gate.reason, level: gate.level, capacity: gate.capacity },
       socialUtility: Math.round(social * 1000) / 1000,
       workspaceBias,
+      preference: vp,
+      socialExpectation: reaction ? { expectation: reaction.expectation, confidence: reaction.confidence, expectedValence: reaction.expectedValence } : null,
       rank: 0,
       verdict: '',
     };

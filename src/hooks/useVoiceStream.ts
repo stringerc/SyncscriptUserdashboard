@@ -300,6 +300,7 @@ export function useVoiceStream(options: UseVoiceStreamOptions = {}) {
     speed?: number;
   }
   const streamSentenceQueueRef = useRef<StreamSentenceItem[]>([]);
+  const lastStreamItemRef = useRef<StreamSentenceItem | null>(null);
   const isDrainingStreamRef = useRef(false);
   const streamEpochRef = useRef<number>(0);
   const streamTtsAbortRef = useRef<AbortController | null>(null);
@@ -1635,6 +1636,7 @@ export function useVoiceStream(options: UseVoiceStreamOptions = {}) {
       }
       streamEpochRef.current += 1;
       streamSentenceQueueRef.current = [];
+      lastStreamItemRef.current = null;
       streamTtsAbortRef.current = new AbortController();
       isSpeakingRef.current = true;
       setIsSpeaking(true);
@@ -1671,6 +1673,7 @@ export function useVoiceStream(options: UseVoiceStreamOptions = {}) {
     };
 
     streamSentenceQueueRef.current.push(item);
+    lastStreamItemRef.current = item;
     prefetchStreamTts();
     void drainStreamQueue();
   }, [drainStreamQueue, prefetchStreamTts, ttsVoice, ttsRate, speechArbiter]);
@@ -1683,8 +1686,18 @@ export function useVoiceStream(options: UseVoiceStreamOptions = {}) {
       setState(prev => ({ ...prev, status: 'idle' }));
       onStatusChangeRef.current?.('idle');
       speechArbiter.release();
-    } else if (streamSentenceQueueRef.current.length > 0) {
-      streamSentenceQueueRef.current[streamSentenceQueueRef.current.length - 1].isFinal = true;
+    } else {
+      // The drain loop may have already shifted the last item off the
+      // queue — mark it via the ref so hasMore resolves correctly and
+      // the <audio> fallback releases the speaking state. Without this,
+      // the final sentence kept isFinal=false → hasMore stayed true →
+      // keepSpeakingState swallowed the release → Cortex went mute
+      // after the reply ended (the 'cuts out at the end' bug).
+      const last = lastStreamItemRef.current;
+      if (last) last.isFinal = true;
+      else if (streamSentenceQueueRef.current.length > 0) {
+        streamSentenceQueueRef.current[streamSentenceQueueRef.current.length - 1].isFinal = true;
+      }
     }
   }, [speechArbiter]);
 

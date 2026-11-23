@@ -42,6 +42,10 @@ export interface Broadcast {
   /** Somatic markers — the body state that framed this conscious moment. */
   capacity?: number;
   somaticLevel?: string;
+  /** Agency attribution — did she generate this or did it happen to her? */
+  agency?: 'self' | 'exogenous';
+  /** Felt valence at ignition — how it felt to be aware of this. */
+  valence?: number;
   /** Modules that have acknowledged consuming this broadcast. */
   consumedBy: string[];
 }
@@ -74,6 +78,12 @@ export function broadcastAttention(decision: AttentionDecision) {
   const igniteScore = IGNITE_SCORE - 0.15 * urgency;
   const igniteMargin = IGNITE_MARGIN - 0.04 * urgency;
   const ignited = w.score >= igniteScore && margin >= igniteMargin;
+  // Agency: inner speech, goals, and attention-meta are self-generated;
+  // system alerts, user speech, ambient chatter, and bodily signals are
+  // exogenous — the narrative can now say "I chose this" vs "this
+  // happened to me" with evidence.
+  const agency = (w.kind === 'inner' || w.kind === 'goal') ? 'self' : 'exogenous';
+  const feltValence = w.kind === 'system' ? -0.3 : w.kind === 'goal' ? -0.1 : w.kind === 'user' ? 0.3 : w.kind === 'inner' ? 0.1 : 0.05;
   const b: Broadcast = {
     id: `ws-${Date.now().toString(36)}-${++counter}`,
     ts: decision.ts,
@@ -84,6 +94,8 @@ export function broadcastAttention(decision: AttentionDecision) {
     ignited,
     capacity: somatic?.capacity,
     somaticLevel: somatic?.level,
+    agency,
+    valence: Math.round(feltValence * 100) / 100,
     consumedBy: [],
   };
   append(b);

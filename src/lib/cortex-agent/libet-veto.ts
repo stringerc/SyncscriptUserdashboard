@@ -35,6 +35,8 @@ export interface VetoIntent {
   input?: Record<string, unknown>;
   /** Body state at arm time — somatic marker for the decision gap. */
   armedCapacity?: number;
+  /** Who armed this — 'self' (autonomous) vs 'external' (API/user). */
+  origin?: 'self' | 'external';
   status: 'pending' | 'fired' | 'vetoed';
   resolvedAt?: number;
   resolvedBy?: string;
@@ -66,6 +68,7 @@ export function armVeto(opts: {
   agentId: string; kind: string; title: string;
   reason: string; windowMs?: number;
   input?: Record<string, unknown>;
+  origin?: 'self' | 'external';
   /** Receives the intent AT FIRE TIME — amendments made during the
    *  veto window are honored because fire reads the live record. */
   fire: (intent: VetoIntent) => unknown;
@@ -81,6 +84,7 @@ export function armVeto(opts: {
     vetoWindowMs: windowMs, status: 'pending',
     input: opts.input ? { ...opts.input } : undefined,
     armedCapacity: armCapacity,
+    origin: opts.origin || 'self',
   };
   const state = load();
   state.pending = state.pending.filter((p) => p.status === 'pending' && now - p.armedAt < 120_000);
