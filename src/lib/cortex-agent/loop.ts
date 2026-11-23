@@ -58,7 +58,7 @@ export interface AgentLoopDeps {
   maxTokens?: number;
   temperature?: number;
   /** Deterministic first action — pending intention resumed on affirmation. */
-  initialToolCall?: { name: string; args: Record<string, unknown> } | null;
+  initialToolCall?: { name: string; args: Record<string, unknown>; kind?: 'intention' | 'reflex' } | null;
 }
 
 export interface AgentLoopResult {
@@ -135,7 +135,7 @@ const TOOL_TURN_RE = new RegExp(
     + 'list|ls\\b|dir\\b|what(?:\'s| is)\s+in|show\s+(?:me\s+)?(?:the\s+)?(?:files?|directory|folder|contents)|'
     + 'read\s+(?:the\s+)?(?:file|code|log|config)|'
     + 'create|write|edit|update|delete|move|copy|rename|generate|compose|draft|'
-    + 'system[_ ]info|cpu|memory usage|disk space|processes?|ports?|logs?\\b|'
+    + 'system[_ ]info|system\\s+(?:status|health)|clipboard|cpu|memory usage|disk space|processes?|ports?|logs?\\b|'
     + 'weather|forecast|time\\b|date\\b|calendar|schedule|email|message|send|'
     + 'translate|convert|calculate|math|screenshot|record|capture|'
     + 'cortex[_ ]?(?:agents?|fleet|memory|dream|skill|tool)|agent[_ ]?status|'
@@ -583,7 +583,7 @@ export async function runAgenticTurn(
   // ── Deterministic seed: pending intention resumed on affirmation ──
   if (deps.initialToolCall) {
     const seed = deps.initialToolCall;
-    deps.emit?.({ type: 'tool_step', step: 0, tool: seed.name, status: 'resumed_intention', args: seed.args });
+    deps.emit?.({ type: 'tool_step', step: 0, tool: seed.name, status: seed.kind === 'reflex' ? 'reflex' : 'resumed_intention', args: seed.args });
     deps.emitToken?.(`\n\n*${friendlyToolLabel(seed.name, seed.args)}*\n\n`);
     try {
       const result = await executeTool(seed.name, seed.args);

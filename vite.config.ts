@@ -28,6 +28,7 @@ import { isAffirmation, takeAffirmed, peekPending, recordOffer, detectOffer, dec
 import { runAgenticTurn, turnLikelyNeedsTools, type AgentMessage } from './src/lib/cortex-agent/loop';
 import { getAutonomyMode, setAutonomyMode, AUTONOMY_DIRECTIVE, type AutonomyMode } from './src/lib/cortex-agent/autonomy';
 import { getContinuityBrief, recordContinuityTurn } from './src/lib/cortex-agent/continuity';
+import { precompileReflex } from './src/lib/cortex-agent/reflex';
 import { startSelfRegulation } from './src/lib/cortex-agent/self-regulation';
 import { obsidianRestEnabled, obsidianRestStatus, obsidianRestList, obsidianRestRead, obsidianRestWrite, obsidianRestSearch } from './src/lib/cortex-obsidian-rest';
 import { imsgRpcChats, imsgRpcHistory, imsgRpcSend, imsgRpcHealth } from './src/lib/imsg-rpc';
@@ -10800,7 +10801,7 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
                   // pending intention. Deterministic seed when args are
                   // known; otherwise an instruction message lets the loop's
                   // first LLM step emit the call with completed args.
-                  let initialToolCall: { name: string; args: Record<string, unknown> } | null = null;
+                  let initialToolCall: { name: string; args: Record<string, unknown>; kind?: 'intention' | 'reflex' } | null = null;
                   if (isAffirmation(latestUserMessage)) {
                     const pending = takeAffirmed(sessionId);
                     if (pending) {
@@ -10812,6 +10813,19 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
                           content: `[Pending Intention Affirmed] The user approved your earlier offer. Execute it NOW — emit the tool_call for "${pending.tool}" with complete arguments inferred from the conversation. Do not re-ask, do not re-explain.`,
                         });
                       }
+                    }
+                  }
+
+                  // Reflex Arc: unambiguous commands ("search for X",
+                  // "read file Y", bare URL) skip the generative
+                  // tool-call step entirely — the governed tool executes
+                  // immediately and the model only has to speak the
+                  // answer. Affirmation seeds take precedence; anything
+                  // ambiguous falls through to the model.
+                  if (!initialToolCall) {
+                    const reflex = precompileReflex(latestUserMessage);
+                    if (reflex) {
+                      initialToolCall = { name: reflex.name, args: reflex.args, kind: 'reflex' };
                     }
                   }
 
