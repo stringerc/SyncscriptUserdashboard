@@ -83,3 +83,24 @@ Notes:
 - .github/workflows/ci.yml written locally (vitest cortex suite + scoped
   strict tsc) but NOT pushed — OAuth token lacks `workflow` scope.
   Run `gh auth refresh -s workflow` then I can push it.
+
+## 2026-11-19 — AI Listing Hook Pack (tripwire SKU, csl-4d884c50)
+
+- **Product**: AI Listing Hook Pack: 50 Scroll-Stopping Opening Lines for Real Estate Listings
+- **Price**: $12 | **Gumroad**: https://syncmaster1.gumroad.com/l/sbiozo (published, cover+file verified, page 200)
+- **Counsel basis**: csl-4d884c50 CONDITIONAL GO — deliberate-gap tripwire → $24 Listing Kit upsell
+- **Distribution enqueued** (NOT posted — verification pending): pin-hookpack-01, reddit-hookpack-value-01, omni-hookpack-record
+- **Pin asset**: assets/pins/pin-ai-listing-hook-pack.png (1664×2496, Dreamina job hookpack-pin-v1 done)
+- **Kill-switch metrics** (per council conditions):
+  - 100 pin clicks → 0 sales = KILL SKU, do not iterate
+  - Paid boost window: within 48h of first distribution push (council condition)
+  - Day-3/7 gates: track CTR, CVR, upsell-to-Kit rate separately
+  - Funnel check: measure whether hook pack creates NEW pain pulling buyers to $24 kit (the $11 tripwire's fatal flaw was 0% upsell)
+
+### Distribution verification — 2026-11-19 (post-restart)
+
+- **Pinterest**: 2 VIDEO pins LIVE on /thecsholdinggroup/pins/ — pin/961870432944191822 + pin/961870432944190766, both linking to gumroad.com/l/sbiozo (Pinterest auto-UTM). Handler's toast check false-negatived; verified by profile scrape. PNG image pin unconfirmed — video pins are the live creative.
+- **Reddit**: value-first comment POSTED + verified on-page on r/RealEstate "3 years of posting on social and almost no clients" — no product link (warming phase correct). Screenshot: browser/reddit-2026-11-19T21-53-12-650Z.png
+- **Video**: promo-hookpack/out/hookpack-promo.mp4 (15s 1080p) rendered; distributed via the 2 video pins.
+- **Incident**: vite dev server wedged twice under agent-swarm load; restarted. Queue drains resumed after.
+- **Still 0 sales** — distribution is live, conversion unproven. Kill-switch: 100 clicks → 0 sales.

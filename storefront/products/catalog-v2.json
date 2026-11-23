@@ -356,6 +356,22 @@
       "heroPrompt": "Professional digital product hero banner, dark editor-themed background, bold white typography 'CURSOR POWER-USER', IDE interface mockup with rules file, MCP config panel, and agent workflow diagram glowing in green and purple, premium developer-tools box-art style",
       "heroImage": "assets/hero-cursor-power-user-pack.png",
       "heroImageAlt": "assets/alt-hero-cursor-power-user-pack.png"
+    },
+    {
+      "rank": "11",
+      "slug": "ai-listing-hook-pack",
+      "tier": "tripwire",
+      "name": "AI Listing Hook Pack: 50 Scroll-Stopping Opening Lines for Real Estate Listings",
+      "price": "12",
+      "summary": "50 ready-to-use listing opening lines across 5 hook categories \u2014 the deliberate-gap tripwire to the $24 Listing Kit",
+      "counselSession": "csl-4d884c50",
+      "status": "live",
+      "gumroadUrl": "https://syncmaster1.gumroad.com/l/sbiozo",
+      "files": [
+        "products/ai-listing-hook-pack.zip"
+      ],
+      "deliverable": "md",
+      "killSwitch": "100 clicks \u2192 0 sales = kill SKU"
     }
   ],
   "launchOrder": [

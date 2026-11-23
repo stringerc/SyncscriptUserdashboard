@@ -1,0 +1,58 @@
+{
+  "version": 1,
+  "campaigns": [
+    {
+      "id": "hookpack-launch",
+      "name": "AI Listing Hook Pack Launch",
+      "product": "AI Listing Hook Pack: 50 Scroll-Stopping Opening Lines for Real Estate Listings",
+      "productUrl": "https://syncmaster1.gumroad.com/l/sbiozo",
+      "price": "$12",
+      "niche": "real-estate / realtor listing copy",
+      "counselSession": "csl-4d884c50",
+      "upsellTarget": "Real Estate AI Listing Kit ($24)",
+      "status": "live",
+      "createdAt": 1795120400000,
+      "killSwitch": {
+        "metric": "pinterest_clicks",
+        "threshold": 100,
+        "windowDays": 14,
+        "rule": "100 clicks → 0 sales = KILL SKU, do not iterate",
+        "paidBoostWindowHours": 48
+      },
+      "metrics": {
+        "clicks": null,
+        "sales": null,
+        "upsells": null,
+        "notes": "Metrics are agent/Crew-updated. clicks=summed Pinterest pin clicks; sales=Gumroad orders; upsells=orders of the $24 kit attributed to this campaign.",
+        "scraperNote": "pins:2ok/3 gumroad:ok",
+        "impressions": null,
+        "saves": null,
+        "pinStats": [
+          {
+            "pinId": "961870432944191822",
+            "impressions": null,
+            "clicks": null,
+            "saves": null
+          },
+          {
+            "pinId": "961870432944190766",
+            "impressions": null,
+            "clicks": null,
+            "saves": null
+          }
+        ],
+        "gumroad": {
+          "balance": 0,
+          "last7d": 0,
+          "last28d": 0,
+          "totalEarnings": 0,
+          "checkedAt": "2026-11-19T23:56:09.470Z"
+        }
+      },
+      "channels": [
+        "pinterest",
+        "reddit"
+      ]
+    }
+  ]
+}
