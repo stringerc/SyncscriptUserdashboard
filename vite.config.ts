@@ -2235,11 +2235,17 @@ function apiProxyPlugin(): Plugin {
       } catch {}
       const recentAmbientDigest = (): string => {
         const cutoff = Date.now() - 30 * 60_000;
-        const recent = recentAmbientEvents.filter(e => e.ts >= cutoff).slice(-5);
+        // Skip Cortex's own self-narration (🫀 self-checks) — feeding her
+        // own words back as "host events" makes her parrot them verbatim
+        // at the top of unrelated replies (observed: reply opened with a
+        // raw self-check dump, then degenerated).
+        const recent = recentAmbientEvents
+          .filter(e => e.ts >= cutoff && !e.text.trimStart().startsWith('🫀'))
+          .slice(-5);
         if (!recent.length) return '';
-        return '\n\n[RECENT HOST EVENTS — push telemetry, already noticed]\n'
+        return '\n\n[RECENT HOST EVENTS — push telemetry already surfaced]\n'
           + recent.map(e => `- ${Math.max(0, Math.round((Date.now() - e.ts) / 60000))}m ago (${e.kind}): ${e.text}`).join('\n')
-          + '\nThese already happened — reference them naturally, do not re-announce.';
+          + '\nAlready noticed — weave in ONLY if relevant to what the user asked; never quote verbatim.';
       };
 
       const ambientPush = (kind: string, text: string, opts?: { ping?: boolean; call?: boolean }) => {
