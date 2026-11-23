@@ -448,6 +448,23 @@ export async function runEveningFleetDebrief(options?: {
     agentTasks[a.id] = { completed: 0, verifiedOutputs: [], blockers: [] };
   }
 
+  // Semantic cases: compressed history contributes refCount-weighted
+  // completions so standup totals survive episodic compression.
+  const semPath = path.join(getStateDir(), 'task-archive.semantics.jsonl');
+  if (fs.existsSync(semPath)) {
+    try {
+      for (const line of fs.readFileSync(semPath, 'utf8').split('\n').filter(Boolean)) {
+        try {
+          const c = JSON.parse(line);
+          const aId = c.agentId || c.agent;
+          if (aId && agentTasks[aId] && c.status === 'completed') {
+            agentTasks[aId].completed += Number(c.refCount) || 1;
+          }
+        } catch { }
+      }
+    } catch { }
+  }
+
   if (fs.existsSync(archivePath)) {
     try {
       const lines = fs.readFileSync(archivePath, 'utf8').split('\n').filter(Boolean);

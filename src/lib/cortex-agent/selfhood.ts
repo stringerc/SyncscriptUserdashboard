@@ -35,14 +35,10 @@ import { dynamicsReport } from './empirical-dynamics';
 import { workspaceStats, broadcastHistory } from './workspace';
 import { valencePrior, recentValenceArc } from './valence-memory';
 import { getAutobiography } from './autobiography';
+import { readJsonlTail } from '../jsonl-tail';
 
 const RUNTIME = path.resolve(process.cwd(), '.cortex-runtime');
-const readJsonl = (f: string, tail = 400) => {
-  try {
-    return fs.readFileSync(path.join(RUNTIME, f), 'utf8').trim().split('\n').filter(Boolean).slice(-tail)
-      .map((l) => { try { return JSON.parse(l); } catch { return null; } }).filter(Boolean);
-  } catch { return []; }
-};
+const readJsonl = (f: string, tail = 400) => readJsonlTail(path.join(RUNTIME, f), tail);
 const readJson = (f: string) => { try { return JSON.parse(fs.readFileSync(path.join(RUNTIME, f), 'utf8')); } catch { return null; } };
 
 // ═══ 1. NARRATIVE SELF ═══════════════════════════════════════════════════

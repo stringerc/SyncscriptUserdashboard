@@ -23,6 +23,7 @@ import { discordApi } from '../cortex-discord';
 import { listStrategyProposals } from './strategy-proposals';
 import { getCortexEnergySpineBridge } from '../cortex-energy-spine';
 import { ensureMorningFleetStandup } from './standup';
+import { readJsonlTail } from '../jsonl-tail';
 
 const RUNTIME_DIR = process.env.CORTEX_AGENTS_STATE_DIR || path.join(process.cwd(), '.cortex-runtime');
 const BRIEFS_DIR = path.join(RUNTIME_DIR, 'briefs');
@@ -32,11 +33,7 @@ function readJson<T>(file: string, fallback: T): T {
   try { return JSON.parse(fs.readFileSync(file, 'utf8')) as T; } catch { return fallback; }
 }
 function readJsonl<T>(file: string, limit = 500): T[] {
-  try {
-    return fs.readFileSync(file, 'utf8').split('\n').filter(Boolean).slice(-limit)
-      .map((l) => { try { return JSON.parse(l) as T; } catch { return null; } })
-      .filter((x): x is T => x !== null);
-  } catch { return []; }
+  return readJsonlTail<T>(file, limit);
 }
 
 const DAY_MS = 86_400_000;

@@ -21,6 +21,7 @@ import {
 import { discordApi } from '../cortex-discord';
 import { listStrategyProposals } from './strategy-proposals';
 import { runEveningFleetDebrief } from './standup';
+import { readJsonlTail } from '../jsonl-tail';
 
 const RUNTIME_DIR = process.env.CORTEX_AGENTS_STATE_DIR || path.join(process.cwd(), '.cortex-runtime');
 const DEBRIEFS_DIR = path.join(RUNTIME_DIR, 'debriefs');
@@ -30,11 +31,7 @@ function readJson<T>(file: string, fallback: T): T {
   try { return JSON.parse(fs.readFileSync(file, 'utf8')) as T; } catch { return fallback; }
 }
 function readJsonl<T>(file: string, limit = 800): T[] {
-  try {
-    return fs.readFileSync(file, 'utf8').split('\n').filter(Boolean).slice(-limit)
-      .map((l) => { try { return JSON.parse(l) as T; } catch { return null; } })
-      .filter((x): x is T => x !== null);
-  } catch { return []; }
+  return readJsonlTail<T>(file, limit);
 }
 function localDayBounds(now: number): { start: number; end: number; dayKey: string } {
   const d = new Date(now);

@@ -21,6 +21,7 @@ import path from 'node:path';
 import { DIMS, loadWorld, type Dim, type WorldState } from './world-model';
 import { ACTION_PRIORS, CLASS_OF, type ActionClass } from './planner';
 import { speakInner } from './inner-speech';
+import { readJsonlTail } from '../jsonl-tail';
 
 const RUNTIME = path.resolve(process.cwd(), '.cortex-runtime');
 const FILE = path.join(RUNTIME, 'dynamics-learned.json');
@@ -149,16 +150,13 @@ export function learnDynamics(world?: WorldState): { paired: number; skipped: nu
   const snaps = w.snapshots || [];
   if (!snaps.length) return { paired: 0, skipped: 0, learnedDims: 0 };
 
-  let raw = '';
-  try { raw = fs.readFileSync(TASK_ARCHIVE, 'utf8'); } catch { return { paired: 0, skipped: 0, learnedDims: 0 }; }
-  const lines = raw.trim().split('\n');
-  // Only scan the tail — old tasks lack snapshot coverage anyway
-  const tail = lines.slice(-400);
+  // Byte-tail read: the file hit 36MB; only the last ~400 records can
+  // pair with dim snapshots anyway (10min tolerance).
+  const tail = readJsonlTail<any>(TASK_ARCHIVE, 400);
   const seen = new Set(s.processed);
   let paired = 0, skipped = 0, newLearned = 0;
 
-  for (const line of tail) {
-    let t: any; try { t = JSON.parse(line); } catch { continue; }
+  for (const t of tail) {
     const id = String(t.id || '');
     if (!id || seen.has(id)) continue;
     const status = String(t.status || '');

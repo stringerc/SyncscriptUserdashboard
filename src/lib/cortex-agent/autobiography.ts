@@ -25,6 +25,7 @@ import { recentMonologue, monologueStats } from './inner-speech';
 import { recentValenceArc, valenceStats } from './valence-memory';
 import { listCommitments, trustScores } from './commitments';
 import { getFleetMinds } from './selfhood';
+import { getSemanticCases } from './semantic-compression';
 
 const RUNTIME = path.resolve(process.cwd(), '.cortex-runtime');
 const FILE = path.join(RUNTIME, 'autobiography.json');
@@ -39,6 +40,10 @@ export interface Autobiography {
   themes: Array<{ theme: string; evidence: string; count: number }>;
   turningPoints: Array<{ ts: number; event: string; why: string }>;
   identityClaims: Array<{ claim: string; evidence: string; confidence: number }>;
+  /** Canonical semantic cases — compressed redundancy lines with refCounts.
+   *  Shorter and more authoritative than the raw episode stream: one
+   *  cited precedent instead of eighty repeated episodes. */
+  precedents: Array<{ source: string; key: string; refCount: number; lastAt: number }>;
   openQuestions: string[];
 }
 
@@ -208,16 +213,25 @@ function construct(a: ReturnType<typeof gather>): Autobiography {
       monologue: a.monologue.total,
       valenceRecords: a.valence.stats.total,
     },
-    narrative, themes, turningPoints, identityClaims, openQuestions,
+    narrative, themes, turningPoints, identityClaims,
+    precedents: a.precedents || [],
+    openQuestions,
   };
 }
 
 function gather() {
+  let precedents: Autobiography['precedents'] = [];
+  try {
+    precedents = getSemanticCases()
+      .slice(0, 12)
+      .map((c) => ({ source: c.source, key: c.key, refCount: c.refCount, lastAt: c.lastAt }));
+  } catch {}
   return {
     broadcasts: analyzeBroadcasts(),
     monologue: analyzeMonologue(),
     valence: analyzeValence(),
     commitments: analyzeCommitments(),
+    precedents,
   };
 }
 

@@ -23,6 +23,8 @@
 import fs from 'node:fs';
 import { causalReport } from './causal-inference';
 import path from 'node:path';
+import { compressTaskArchive, mineRedundancyLines } from './semantic-compression';
+import { readJsonlTail } from '../jsonl-tail';
 
 const RUNTIME = path.resolve(process.cwd(), '.cortex-runtime');
 const STATE_FILE = path.join(RUNTIME, 'dream-state.json');
@@ -30,12 +32,7 @@ const INSIGHTS_FILE = path.join(RUNTIME, 'dream-insights.jsonl');
 const THREADS_FILE = path.join(RUNTIME, 'dream-threads.json');
 const MIN_INTERVAL_MS = 20 * 60_000; // consolidation is expensive; 20min floor
 
-const readJsonl = (f: string, tail = 800) => {
-  try {
-    return fs.readFileSync(path.join(RUNTIME, f), 'utf8').trim().split('\n').filter(Boolean).slice(-tail)
-      .map((l) => { try { return JSON.parse(l); } catch { return null; } }).filter(Boolean);
-  } catch { return []; }
-};
+const readJsonl = (f: string, tail = 800) => readJsonlTail(path.join(RUNTIME, f), tail);
 const readJson = (f: string) => { try { return JSON.parse(fs.readFileSync(path.join(RUNTIME, f), 'utf8')); } catch { return null; } };
 
 interface DreamState {
@@ -228,6 +225,8 @@ export interface ConsolidationResult {
   patterns: number;
   hypotheses: number;
   topHypothesis?: string;
+  compression?: { cases: number; bytesBefore: number; bytesAfter: number; certifiedError: number } | null;
+  redundancyCases?: number;
 }
 
 export function runConsolidation(now = Date.now(), force = false): ConsolidationResult {
@@ -257,6 +256,19 @@ export function runConsolidation(now = Date.now(), force = false): Consolidation
     fs.writeFileSync(THREADS_FILE, JSON.stringify({ computedAt: now, chapters, patterns: patterns.slice(0, 8) }));
   } catch {}
 
+  // Semantic compression: collapse old episodic traces into certified
+  // canonical cases (raw gzip-archived, reconstructable). Runs after the
+  // analytical passes so they see the full record first.
+  let compression = null;
+  try {
+    const rep = compressTaskArchive();
+    if (!rep.skipped) {
+      compression = { cases: rep.casesWritten, bytesBefore: rep.bytesBefore, bytesAfter: rep.bytesAfter, certifiedError: rep.certifiedError };
+    }
+  } catch {}
+  let redundancyCases = 0;
+  try { redundancyCases = mineRedundancyLines().cases; } catch {}
+
   state.lastRunAt = now;
   state.runs++;
   state.episodesProcessed += eps.length;
@@ -268,6 +280,7 @@ export function runConsolidation(now = Date.now(), force = false): Consolidation
     episodes: eps.length, chapters: chapters.length,
     patterns: patterns.length, hypotheses: hyps.length,
     topHypothesis: hyps[0]?.claim,
+    compression, redundancyCases,
   };
 }
 
