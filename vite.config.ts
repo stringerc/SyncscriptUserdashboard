@@ -277,7 +277,7 @@ import { speakInner, recentMonologue, monologueStats } from './src/lib/cortex-ag
 import { planDispatches, rolloutPlan } from './src/lib/cortex-agent/planner';
 import { runConsolidation, getDreamState } from './src/lib/cortex-agent/consolidation';
 import { runResilienceHarness, getResilienceReport } from './src/lib/cortex-agent/resilience';
-import { authenticateTenant, createTenant, listTenants, updateTenant, contractCheck, contractSummary, recordDispatch, tenantIntentLookup } from './src/lib/cortex-agent/tenants';
+import { authenticateTenant, createTenant, listTenants, updateTenant, contractCheck, contractSummary, recordDispatch, tenantIntentLookup, validateDispatchTarget } from './src/lib/cortex-agent/tenants';
 import { recordCommitment, reconcileCommitments, sweepOverdue, listCommitments, trustScores, resolveCommitment } from './src/lib/cortex-agent/commitments';
 
 // Unhandled-rejection guard: Node crashes the ENTIRE process on any
@@ -3850,9 +3850,13 @@ function apiProxyPlugin(): Plugin {
       // ── Customer dispatch API: paying tenants arm intents through the
       // same Libet cockpit the operator uses. Contract enforced in code:
       // quota, kind whitelist, inspection card, tenant-scoped control.
-      server.middlewares.use('/api/cortex/dispatch', async (req: any, res: any) => {
+      server.middlewares.use('/api/cortex/dispatch', async (req: any, res: any, next: any) => {
         if (!setCortexCors(req, res)) return jsonRes(res, 403, { ok: false, error: 'forbidden' });
         if (req.method === 'OPTIONS') { res.writeHead(204); return res.end(); }
+        // Sub-paths (e.g. /control) belong to their own middleware — this
+        // mount is prefix-matched, so without this guard it swallows them.
+        const subPath = String(req.url || '/').split('?')[0];
+        if (subPath !== '/' && subPath !== '') return next();
 
         // POST /api/cortex/dispatch — submit a dispatch intent
         if (req.method === 'POST') {
@@ -3863,6 +3867,12 @@ function apiProxyPlugin(): Plugin {
           const kind = String(body?.kind || '');
           const title = String(body?.title || '');
           if (!agentId || !kind || !title) return jsonRes(res, 400, { ok: false, error: 'agentId, kind, title required' });
+
+          const target = validateDispatchTarget(agentId, kind);
+          if (!target.ok) {
+            recordDispatch(tenant.id, { event: 'rejected', reason: target.error, agentId, kind });
+            return jsonRes(res, 400, { ok: false, error: target.error, validKinds: target.validKinds, validAgents: target.validAgents });
+          }
 
           const check = contractCheck(tenant, kind);
           if (!check.ok) {
@@ -3876,7 +3886,11 @@ function apiProxyPlugin(): Plugin {
             windowMs: Number(body?.windowMs) || 5_000,
             input: { ...(body?.input && typeof body.input === 'object' ? body.input : {}), tenantId: tenant.id },
             origin: 'external', tenantId: tenant.id,
-            fire: (i) => agentRuntime.submitTask(i.agentId as any, i.kind, i.title, (i.input || {}) as any),
+            fire: (i) => {
+              const r = agentRuntime.submitTask(i.agentId as any, i.kind, i.title, (i.input || {}) as any);
+              if (!r.ok) throw new Error(`submitTask rejected: ${r.error}`);
+              return r;
+            },
           });
           const pending = listLibetPending().find((p) => p.id === id);
           recordDispatch(tenant.id, { event: 'accepted', vetoId: id, agentId, kind, title: title.slice(0, 120), inspection: pending?.inspection ?? null });

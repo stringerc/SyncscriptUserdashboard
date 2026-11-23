@@ -27,6 +27,12 @@ import { rolloutFrom, inspectDispatch } from './planner';
 import { loadWorld } from './world-model';
 import { readJsonlTail } from '../jsonl-tail';
 import { compressTaskArchive } from './semantic-compression';
+import { evaluateGoalDrift, type DriftFinding } from './goal-drift';
+import { draftCorrectiveMission } from './goal-corrective';
+import { applyCalibration, calibrationReport } from './goal-calibration';
+import { getPaceWatchSummaries } from './goal-pace-watch';
+import { resolvePrimaryGoal, stampTaskGoal } from './goal-linker';
+import { validateDispatchTarget } from './tenants';
 
 const RUNTIME = path.resolve(process.cwd(), '.cortex-runtime');
 const REPORT = path.join(RUNTIME, 'resilience-report.json');
@@ -236,6 +242,102 @@ function experimentMemoryPath(): { slos: SloResult[]; detail: Record<string, unk
   };
 }
 
+/** Experiment 6 — goal-tracking custody gate. The life-goal stack
+ *  (custody goal, drift detection, pace watch, calibration, linker,
+ *  corrective drafting) is a custody promise: it must keep working.
+ *  Real store reads, real functions; the only synthetic input is a
+ *  fabricated stall finding used to prove corrective drafts dispatch
+ *  to an agent that actually accepts the kind. */
+function experimentGoalTracking(): { slos: SloResult[]; detail: Record<string, unknown> } {
+  const slos: SloResult[] = [];
+  const detail: Record<string, unknown> = {};
+
+  // 1. Custody goal integrity — the goal must exist, be active, and
+  //    carry a real plan. Read the persisted store directly so a
+  //    corrupted/missing goal fails the build, not just a code path.
+  let custody: any = null;
+  let goalsLoaded = 0;
+  try {
+    const store = JSON.parse(fs.readFileSync(path.join(RUNTIME, 'persistent-store.json'), 'utf8'));
+    const raw = JSON.parse(store['cortex:goals:v1'] || '{}');
+    const goals = Array.isArray(raw?.goals) ? raw.goals : [];
+    goalsLoaded = goals.length;
+    custody = goals.find((g: any) => /custody|daughter/i.test(String(g?.title || ''))) || null;
+  } catch (e: any) {
+    detail.storeError = String(e?.message || e);
+  }
+  const custodyOk = !!custody && custody.status === 'active' && Array.isArray(custody.steps) && custody.steps.length >= 3;
+  slos.push({
+    name: 'custody goal tracked', target: 'active life-goal with >=3 plan steps',
+    actual: custody ? `${custody.id} "${String(custody.title).slice(0, 50)}" steps=${custody.steps?.length} horizon=${custody.horizon}` : `MISSING (goals loaded: ${goalsLoaded})`,
+    pass: custodyOk,
+    detail: custody ? `targetDate=${custody.targetDate ? new Date(custody.targetDate).toISOString().slice(0, 10) : 'none'} signals=${JSON.stringify(custody.signals || [])}` : undefined,
+  });
+
+  // 2. Drift evaluation — real goals, real effort events. Must complete
+  //    and emit well-formed findings (or honestly none).
+  const t0 = performance.now();
+  let findings: DriftFinding[] = [];
+  let driftError = '';
+  try { findings = evaluateGoalDrift(); } catch (e: any) { driftError = String(e?.message || e); }
+  const driftMs = performance.now() - t0;
+  const wellFormed = findings.every((f) => f.goalId && typeof f.goalTitle === 'string' && ['decay', 'stall', 'diversion'].includes(f.kind));
+  slos.push({
+    name: 'goal drift evaluation', target: '< 2000ms, well-formed findings',
+    actual: driftError ? `ERROR ${driftError}` : `${driftMs.toFixed(0)}ms, ${findings.length} findings${wellFormed ? '' : ' (MALFORMED)'}`,
+    pass: !driftError && driftMs < 2000 && wellFormed,
+    detail: findings.slice(0, 3).map((f) => `${f.kind}:${f.goalTitle.slice(0, 30)}`).join(' | ') || 'no drift findings',
+  });
+
+  // 3. Corrective mission dispatchability — a stall finding must draft
+  //    a mission whose agentId+kind the dispatch layer will actually
+  //    accept. This is the custody-critical invariant: drift → corrective
+  //    → dispatch must not dead-end at the worker.
+  const synthetic: DriftFinding = {
+    goalId: custody?.id || 'goal-test', goalTitle: custody?.title || 'custody goal',
+    kind: 'stall', detail: 'harness synthetic stall finding',
+    suggestion: 'harness test', severity: 'high',
+  };
+  const draft = draftCorrectiveMission(synthetic);
+  const targetCheck = draft ? validateDispatchTarget(draft.agentId, draft.kind) : null;
+  slos.push({
+    name: 'corrective mission dispatchable', target: 'draft exists and passes dispatch validation',
+    actual: draft ? `${draft.agentId}/${draft.kind} → ${targetCheck?.ok ? 'VALID' : targetCheck?.error}` : 'no draft produced for stall finding',
+    pass: !!draft && !!targetCheck?.ok,
+  });
+
+  // 4. Goal-tracking read surfaces — pace watch, calibration, linker.
+  //    All must answer without throwing on the live store.
+  const smoke: Record<string, string> = {};
+  let smokeOk = true;
+  try {
+    const pace = getPaceWatchSummaries();
+    smoke.pace = `${pace.length} watches`;
+  } catch (e: any) { smoke.pace = `ERR ${e?.message}`; smokeOk = false; }
+  try {
+    const cal = applyCalibration(0.5);
+    const rep = calibrationReport();
+    smoke.calibration = `p=${cal.probability} calibrated=${cal.calibrated} report=${rep ? 'ok' : 'null'}`;
+    if (!(cal.probability >= 0 && cal.probability <= 1)) smokeOk = false;
+  } catch (e: any) { smoke.calibration = `ERR ${e?.message}`; smokeOk = false; }
+  try {
+    const primary = resolvePrimaryGoal();
+    const stamped = stampTaskGoal({ title: 'harness' });
+    smoke.linker = `primary=${primary ? primary.id : 'none'} stamped=${stamped?.goalId ? 'yes' : 'no'}`;
+  } catch (e: any) { smoke.linker = `ERR ${e?.message}`; smokeOk = false; }
+  slos.push({
+    name: 'goal-tracking read surfaces', target: 'pace/calibration/linker all respond',
+    actual: JSON.stringify(smoke),
+    pass: smokeOk,
+  });
+
+  detail.custody = custody ? { id: custody.id, steps: custody.steps?.length, signals: custody.signals } : null;
+  detail.driftMs = driftMs;
+  detail.draft = draft ? { agentId: draft.agentId, kind: draft.kind } : null;
+  detail.smoke = smoke;
+  return { slos, detail };
+}
+
 /** Run the full harness — every experiment against the real stack. */
 export async function runResilienceHarness(): Promise<ResilienceReport> {
   const experiments: Record<string, unknown> = {};
@@ -255,6 +357,9 @@ export async function runResilienceHarness(): Promise<ResilienceReport> {
 
   const mem = experimentMemoryPath();
   experiments.memoryPath = mem.detail; slos.push(...mem.slos);
+
+  const goals = experimentGoalTracking();
+  experiments.goalTracking = goals.detail; slos.push(...goals.slos);
 
   const report: ResilienceReport = {
     ranAt: Date.now(),

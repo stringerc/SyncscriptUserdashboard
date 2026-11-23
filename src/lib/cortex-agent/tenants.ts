@@ -137,6 +137,53 @@ export function recordDispatch(tenantId: string, entry: Record<string, unknown>)
   logDispatch({ tenantId, ...entry });
 }
 
+/** Registered worker ids — mirrors registerWorker calls in
+ *  cortex-agents. Agents absent from AGENT_KINDS accept dynamic kinds. */
+export const KNOWN_AGENTS = new Set([
+  'antigravity', 'sentinel', 'scout', 'librarian', 'builder', 'devin',
+  'claudecode', 'openclaw', 'hermes', 'curator', 'reviewer', 'runner',
+  'forecaster', 'prep', 'strategist', 'brief', 'debrief', 'trainer',
+  'warden', 'distributor', 'radar',
+]);
+
+/** Verified kind whitelists per agent, extracted from each worker's
+ *  kind dispatch. Agents not listed handle kinds dynamically — the
+ *  runtime remains the final arbiter for those. */
+export const AGENT_KINDS: Record<string, string[]> = {
+  warden: ['patrol', 'counsel_position', 'file_integrity', 'heal_anomaly', 'repo_hygiene'],
+  sentinel: ['catalog_scan', 'counsel_position', 'probe_model'],
+  scout: ['agent_ideas', 'counsel_persona_position', 'github_trend_scan', 'radar_sweep', 'repo_scan', 'social_scan'],
+  librarian: ['distill', 'graph_query', 'instinct_cycle', 'recall', 'skill_audit', 'vault_sync'],
+  builder: ['verify_gate'],
+  reviewer: ['verify_gate'],
+  runner: ['calendar_create', 'test'],
+  forecaster: ['forecast_cycle', 'forecast_status', 'counsel_position'],
+  devin: ['devin_ask', 'devin_task', 'pickup'],
+  // antigravity intentionally absent: its worker decomposes arbitrary
+  // kinds (comm/handoff are fast paths, everything else orchestrates).
+  claudecode: ['cli_exec'],
+  openclaw: ['browser_navigate', 'dom_inspect', 'portal_submit'],
+  curator: ['audit_self', 'optimize_agent', 'radar_agents', 'radar_sweep'],
+  distributor: ['distribution_status', 'reddit_draft'],
+  prep: ['engagement_plan', 'initiative_drain', 'meeting_brief', 'mission_plan', 'prep_sweep'],
+  strategist: ['cluster', 'plan', 'manifest', 'regress', 'propose_skill', 'propose_agent', 'counsel_convene', 'counsel_synthesize', 'counsel_personas', 'counsel_persona_position', 'counsel_persona_positions', 'counsel_position', 'goal_plan', 'goal_review', 'tune_cycle'],
+  brief: ['family', 'health', 'legal', 'personal'],
+};
+
+/** Pre-flight dispatch validation — reject kinds the target agent
+ *  cannot execute BEFORE arming, so tenants never burn quota or wait
+ *  through a veto window for a guaranteed runtime failure. */
+export function validateDispatchTarget(agentId: string, kind: string): { ok: boolean; error?: string; validKinds?: string[]; validAgents?: string[] } {
+  if (!KNOWN_AGENTS.has(agentId)) {
+    return { ok: false, error: `unknown agent '${agentId}'`, validAgents: [...KNOWN_AGENTS].sort() };
+  }
+  const kinds = AGENT_KINDS[agentId];
+  if (kinds && !kinds.includes(kind)) {
+    return { ok: false, error: `agent '${agentId}' does not accept kind '${kind}'`, validKinds: kinds };
+  }
+  return { ok: true };
+}
+
 /** Tenant-scoped control: only intents this tenant armed. */
 export function tenantIntentLookup(tenantId: string, vetoId: string) {
   try {
