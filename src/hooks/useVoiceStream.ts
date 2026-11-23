@@ -1466,12 +1466,15 @@ export function useVoiceStream(options: UseVoiceStreamOptions = {}) {
         if ((scheduled & 7) === 0 && speechArbiter.heartbeat() === 'stolen') break;
         pending.push(chunk);
         pendingSecs += chunk.samples.length / chunk.sampleRate;
-        // Prebuffer the head of the stream: pocket-tts delivers PCM in
-        // ~1s bursts with holes, so the first second arrives unevenly —
-        // starting playback on the first ~340ms chunk guarantees an
-        // underrun gap moments later. Hold until ~1s is queued (cushion
-        // absorbs the first generation hole), then flush as one batch.
-        if (scheduled === 0 && pendingSecs < 1.0) continue;
+        // Burst cushion: pocket-tts delivers PCM in ~1s bursts with holes,
+        // so scheduling each ~340ms chunk the instant it lands starves the
+        // playback clock (0.34s audio per ~1s arrival = 66% duty cycle =
+        // audible choppiness/pauses, worst on cold first sentences). Hold
+        // ~1s before the first schedule, then ~0.6s per flush so arrival
+        // jitter is absorbed into contiguous scheduled blocks. Tail flush
+        // after the loop covers whatever remains under the cushion.
+        const cushion = scheduled === 0 ? 1.0 : 0.6;
+        if (pendingSecs < cushion) continue;
         for (const c of pending.splice(0)) scheduleOne(c);
         pendingSecs = 0;
       }

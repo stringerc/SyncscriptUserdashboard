@@ -265,9 +265,13 @@ export async function pumpWavToPcm(
     // Declared-size check: streamed WAV headers sometimes carry a real
     // data length. EOF short of it means the server cut the utterance —
     // flag truncation so the consumer re-speaks the sentence whole
-    // instead of accepting an abrupt mid-word stop. dataSize <= 0 or
-    // absurdly large (0xFFFFFFFF streaming placeholder) → can't judge.
-    if (dataSize > 0 && dataSize < 0x7fffffff && payloadBytes < dataSize) {
+    // instead of accepting an abrupt mid-word stop.
+    // pocket-tts writes a 2,000,000,000-byte placeholder for `data` on
+    // EVERY streamed response (it can't know the length upfront) — any
+    // implausibly large size is "unknown", not a target. Real sentence
+    // WAVs are tens of MB at most; 1GiB is generous headroom.
+    const PLAUSIBLE_MAX = 0x40000000;
+    if (dataSize > 0 && dataSize < PLAUSIBLE_MAX && payloadBytes < dataSize) {
       queue.markTruncated();
     }
     queue.close();

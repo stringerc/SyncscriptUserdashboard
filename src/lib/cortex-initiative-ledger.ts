@@ -74,24 +74,22 @@ function writeLedger(data: LedgerFile): void {
   fs.renameSync(tmp, LEDGER_PATH);
 }
 
-/** Tools an agent may approve without the Crew. Everything else waits. */
+/** Tools an agent may approve without the Crew. Everything else waits.
+ *  Every entry must name a tool that ACTUALLY executes — the previous
+ *  list whitelisted 11 phantom names (cortex_journal, cortex_diagnostics,
+ *  cortex_fleet_status, lights_status, cortex_search, cortex_weather,
+ *  cortex_brief, cortex_radar, cortex_analytics, cortex_proposals,
+ *  cortex_govtech) that exist nowhere in the dispatch layer, so
+ *  auto-approved proposals were guaranteed to fail at execTool.
+ *  Keep in sync with SAFE_AUTO_TOOLS in cortex-proactive-initiative.ts. */
 export const SAFE_AUTO_TOOLS = new Set([
   'cortex_goals',
   'cortex_metacognition',
   'cortex_accomplishments',
-  'cortex_search',
   'read_file',
   'cortex_memory',
-  'cortex_govtech',
-  'lights_status',
-  'cortex_journal',
-  'cortex_diagnostics',
-  'cortex_proposals',
-  'cortex_fleet_status',
-  'cortex_radar',
-  'cortex_analytics',
-  'cortex_brief',
-  'cortex_weather',
+  'system_info',
+  'cortex_lights',
 ]);
 
 export function isSafeAutoProposal(p: Pick<LedgerProposal, 'autonomyTier' | 'requiresApproval' | 'suggestedTool'>): boolean {

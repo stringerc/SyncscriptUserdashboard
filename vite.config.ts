@@ -260,6 +260,7 @@ import {
 } from './src/lib/cortex-initiative-ledger';
 import { getWorldState, formatWorldStateHeader, startWorldStateSampler, onHostMemoryPressure, onWorldStateSample, getCachedMemFreePct, probeMemorystatusFreePct } from './src/lib/cortex-world-state';
 import { startProcessWatch, getTopMemoryProcesses, processWatchStatus } from './src/lib/cortex-agent/process-watch';
+import { ambientReact, startSidecarReconciler } from './src/lib/cortex-agent/ambient-actions';
 
 // Unhandled-rejection guard: Node crashes the ENTIRE process on any
 // unhandled rejection. AbortError rejections are routine cancellation
@@ -1571,7 +1572,11 @@ function apiProxyPlugin(): Plugin {
               return `${name} memory spiked ${fmtMB(e.prevMB || 0)}→${fmtMB(e.rssMB)}`;
             });
             const extra = events.length > 6 ? ` (+${events.length - 6} more)` : '';
-            ambientPush('ambient', `Process watch: ${lines.join('; ')}${extra}.`);
+            const text = `Process watch: ${lines.join('; ')}${extra}.`;
+            ambientPush('ambient', text);
+            // Initiative bridge: the event doesn't just get felt — it
+            // queues the right investigation through the governed ledger.
+            ambientReact('procwatch', { text });
           } catch {}
         });
       } catch (e: any) {
@@ -1617,6 +1622,7 @@ function apiProxyPlugin(): Plugin {
                 ? `⚠️ Host memory critical — ${usedPct}% used (${pct}% free by kernel accounting).${culprits} I swept idle fleet sidecars to make headroom before anything gets OOM-killed.${freedMB}`
                 : `Memory pressure — host at ${usedPct}% used.${culprits} I swept idle sidecars to stay ahead of it.${freedMB}`,
             );
+            ambientReact('mempressure', { text: `level=${level} used=${usedPct}%` });
           } catch {}
         });
       } catch (e: any) {
@@ -1638,11 +1644,14 @@ function apiProxyPlugin(): Plugin {
           let prevWs: any = null;
           const wsCooldown = new Map<string, number>();
           const WS_MINUTE = 60_000;
-          const wsPush = (key: string, cooldownMs: number, sys: boolean, text: string) => {
+          const wsPush = (key: string, cooldownMs: number, sys: boolean, text: string, reactKind?: string) => {
             const now = Date.now();
             if (now - (wsCooldown.get(key) || 0) < cooldownMs) return;
             wsCooldown.set(key, now);
             ambientPush(sys ? 'system' : 'ambient', text);
+            // Initiative bridge — the event queues governed action, not
+            // just narration. reactKind omitted for good-news transitions.
+            if (reactKind) ambientReact(reactKind, { text });
           };
           onWorldStateSample((s: any) => {
             try {
@@ -1656,31 +1665,35 @@ function apiProxyPlugin(): Plugin {
               const dMem = s.host.memUsedPct - p.host.memUsedPct;
               if (Math.abs(dMem) >= 8) {
                 wsPush('memjump', 10 * WS_MINUTE, false,
-                  `Memory ${dMem > 0 ? 'jumped' : 'dropped'} ${Math.abs(dMem)}pts in seconds — host now at ${s.host.memUsedPct}% used.`);
+                  `Memory ${dMem > 0 ? 'jumped' : 'dropped'} ${Math.abs(dMem)}pts in seconds — host now at ${s.host.memUsedPct}% used.`,
+                  'memjump');
               }
               // Load spike — sustained heavy work somewhere on the host.
               if (s.host.loadAvg1m >= 24 && s.host.loadAvg1m > p.host.loadAvg1m * 1.5) {
                 wsPush('load', 15 * WS_MINUTE, false,
-                  `Load spiked to ${s.host.loadAvg1m} (was ${p.host.loadAvg1m}) — something heavy is running.`);
+                  `Load spiked to ${s.host.loadAvg1m} (was ${p.host.loadAvg1m}) — something heavy is running.`,
+                  'load');
               }
               // Branch switch — repo context just changed under her feet.
               if (p.codebase?.branch && s.codebase?.branch
                 && p.codebase.branch !== s.codebase.branch
                 && s.codebase.branch !== 'unknown') {
-                wsPush('branch', 0, true, `Repo switched branches — now on ${s.codebase.branch}.`);
+                wsPush('branch', 0, true, `Repo switched branches — now on ${s.codebase.branch}.`, 'branch');
               }
               // Oracle death/rebirth — cloud-side process loss or recovery.
               if (p.fleet?.oracleAlive !== s.fleet?.oracleAlive) {
                 wsPush('oracle', 10 * WS_MINUTE, !s.fleet.oracleAlive,
                   s.fleet.oracleAlive
                     ? 'Oracle runtime is back online.'
-                    : 'Oracle runtime is unreachable — cloud agents and the Oracle Cortex instance may be stalled.');
+                    : 'Oracle runtime is unreachable — cloud agents and the Oracle Cortex instance may be stalled.',
+                  s.fleet.oracleAlive ? undefined : 'oracle');
               }
               // Agent fleet drop — multiple agents died between ticks.
               const agentDrop = (p.fleet?.activeAgentCount ?? 0) - (s.fleet?.activeAgentCount ?? 0);
               if (agentDrop >= 3) {
                 wsPush('agents', 15 * WS_MINUTE, false,
-                  `Agent fleet dropped ${p.fleet.activeAgentCount}→${s.fleet.activeAgentCount} active between checks.`);
+                  `Agent fleet dropped ${p.fleet.activeAgentCount}→${s.fleet.activeAgentCount} active between checks.`,
+                  'agents');
               }
               // Repo edit burst — many source files touched in <60s means a
               // big change is landing; she should know before being asked.
@@ -1688,13 +1701,27 @@ function apiProxyPlugin(): Plugin {
               const burstPrev = (p.codebase?.recentChanges || []).filter((c: any) => now - c.at < 60_000).length;
               if (burstNow >= 8 && burstPrev < 8) {
                 wsPush('repoBurst', 15 * WS_MINUTE, false,
-                  `Heavy edit burst — ${burstNow} source files touched in the last minute.`);
+                  `Heavy edit burst — ${burstNow} source files touched in the last minute.`,
+                  'repoBurst');
               }
             } catch {}
           });
         } catch (e: any) {
           console.warn('[world-state] event engine failed to arm:', e?.message || e);
         }
+      }
+      // ── Sidecar crash reconciler: lazy fleet members are dark BY DESIGN,
+      // but one this manager spawned that then died was expected up —
+      // relaunch it and narrate the resurrection. 60s cadence, globalThis
+      // guard survives Vite restarts.
+      try {
+        startSidecarReconciler((name) => {
+          try {
+            ambientPush('ambient', `Sidecar ${name} crashed while in service — I relaunched it.`);
+          } catch {}
+        });
+      } catch (e: any) {
+        console.warn('[sidecar-reconciler] failed to arm:', e?.message || e);
       }
       // ── /api/cortex/autonomy — sovereign autonomy mode (bypass-permissions).
       // GET returns the mode; POST {mode:'autonomous'|'confirm'} toggles it.
@@ -10665,14 +10692,29 @@ Disposition consolidation (learned urgency/tier adjustments from proposal outcom
                 recordConnectionAudit(`${cortanaPocketTarget}/tts`, '/api/cortex/tts');
                 const cfd = new FormData();
                 cfd.append('text', String(text || '').slice(0, 2000));
-                // Length-scaled timeout: Pocket clone is ~2s int8 unloaded but
-                // ~15s+ when the host is CPU-saturated (load>20 observed). A
-                // floor below real degraded latency guarantees abort→fallback
-                // voice-salad. Floor 18s, scale with length, cap 55s.
+                // Length-scaled timeout covers TIME-TO-HEADERS only.
+                // pocket-tts sends headers ~150ms in, then streams the WAV
+                // as it generates — a cold first sentence under host
+                // saturation can take 15s+ to finish generating, and a
+                // whole-request timeout kills the body mid-WAV. The client
+                // sees a truncated stream → kills partial audio → re-speaks
+                // via blob = the "restart + long pause" heard at the start
+                // of cold responses. Disarm on headers; the body gets a
+                // stall watchdog instead (no bytes for 30s = dead upstream).
                 const cpTimeout = Math.min(55000, 18000 + String(text || '').length * 10);
-                const cpRes = await fetch(`${cortanaPocketTarget}/tts`, {
-                  method: 'POST', body: cfd, signal: AbortSignal.timeout(cpTimeout),
-                });
+                const cpAbort = new AbortController();
+                const cpTimer = setTimeout(() => cpAbort.abort(), cpTimeout);
+                cpTimer.unref?.();
+                let cpRes: any;
+                try {
+                  cpRes = await fetch(`${cortanaPocketTarget}/tts`, {
+                    method: 'POST', body: cfd, signal: cpAbort.signal,
+                  });
+                } catch (cpFetchErr) {
+                  clearTimeout(cpTimer);
+                  throw cpFetchErr;
+                }
+                clearTimeout(cpTimer);
                 if (cpRes.ok) {
                   const upstreamType = cpRes.headers.get('content-type') || '';
                   // pocket-tts streams a WAV as it generates (TTFB ~150ms).
@@ -10689,8 +10731,14 @@ Disposition consolidation (learned urgency/tier adjustments from proposal outcom
                       'X-TTS-Voice': voice || 'cortana',
                     });
                     const teeChunks: Buffer[] = [];
+                    let lastChunkAt = Date.now();
+                    const stallWatch = setInterval(() => {
+                      if (Date.now() - lastChunkAt > 30_000) cpAbort.abort();
+                    }, 5_000);
+                    stallWatch.unref?.();
                     try {
                       for await (const chunk of cpRes.body as any) {
+                        lastChunkAt = Date.now();
                         const b = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
                         teeChunks.push(b);
                         res.write(b);
@@ -10701,11 +10749,28 @@ Disposition consolidation (learned urgency/tier adjustments from proposal outcom
                         ttsCacheSet(cpCacheKey, full);
                       }
                     } catch {
-                      try { res.end(); } catch { }
+                      // Destroy rather than end(): a graceful res.end()
+                      // is indistinguishable from a completed WAV upstream
+                      // (pocket-tts sends a placeholder data size, so the
+                      // client can't detect short reads). Destroying the
+                      // socket makes the client pump fail → markTruncated
+                      // → clean re-speak instead of a silent mid-word cut.
+                      try { res.destroy(); } catch { try { res.end(); } catch { } }
+                    } finally {
+                      clearInterval(stallWatch);
                     }
                     return;
                   }
-                  const buf = Buffer.from(await cpRes.arrayBuffer());
+                  // Non-streaming payload: bound the body read with a fresh
+                  // abort budget on the same controller.
+                  const bufTimer = setTimeout(() => cpAbort.abort(), 30000);
+                  bufTimer.unref?.();
+                  let buf: Buffer;
+                  try {
+                    buf = Buffer.from(await cpRes.arrayBuffer());
+                  } finally {
+                    clearTimeout(bufTimer);
+                  }
                   if (buf.length > 200 && buf.slice(0, 4).toString('ascii') === 'RIFF') {
                     ttsCacheSet(cpCacheKey, buf);
                     res.writeHead(200, {
@@ -12673,8 +12738,12 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
         snapshot.uncommittedFileCount = cachedGitStatusFiles;
         sources.git = 'live';
 
-        const freeMemMB = Math.round(os.freemem() / (1024 * 1024));
+        // os.freemem() lies on macOS (always ~0 — kernel uses idle RAM for
+        // cache/compressed pages). The kernel memorystatus level is the
+        // honest signal; the world-state sampler publishes it every 3s.
         const totalMemMB = Math.round(os.totalmem() / (1024 * 1024));
+        const freePct = getCachedMemFreePct() ?? (await probeMemorystatusFreePct()) ?? 50;
+        const freeMemMB = Math.round((totalMemMB * freePct) / 100);
         snapshot.freeMemMB = freeMemMB;
         sources.memory = 'live';
 

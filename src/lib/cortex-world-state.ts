@@ -427,11 +427,15 @@ async function refreshWorldState(): Promise<WorldState> {
   if (batteryPct !== undefined) {
     host.batteryPct = batteryPct;
   }
-  if (memFreePct !== undefined) {
-    host.memFreePct = memFreePct;
+  // Fresh probe failed (sysctl can time out under heavy load) → fall back
+  // to the last successful kernel reading published on globalThis. Stale-
+  // by-seconds honest data beats the freemem artifact every time.
+  const effectiveMemFreePct = memFreePct ?? getCachedMemFreePct();
+  if (effectiveMemFreePct !== undefined) {
+    host.memFreePct = effectiveMemFreePct;
     // Estimated absolute headroom from kernel accounting — honest "XGB
     // free" instead of the ~140MB freemem artifact macOS always reports.
-    host.memFreeMB = Math.round((memFreePct / 100) * os.totalmem() / 1048576);
+    host.memFreeMB = Math.round((effectiveMemFreePct / 100) * os.totalmem() / 1048576);
   }
 
   // Probe fleet status from local state files
