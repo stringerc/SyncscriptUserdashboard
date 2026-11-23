@@ -274,6 +274,7 @@ import { getProprioception } from './src/lib/cortex-agent/proprioception';
 import { observeWorld, queryWorldModel, topLeverage, scoreDispatch } from './src/lib/cortex-agent/world-model';
 import { getSelfhood } from './src/lib/cortex-agent/selfhood';
 import { planDispatches, rolloutPlan } from './src/lib/cortex-agent/planner';
+import { runConsolidation, getDreamState } from './src/lib/cortex-agent/consolidation';
 
 // Unhandled-rejection guard: Node crashes the ENTIRE process on any
 // unhandled rejection. AbortError rejections are routine cancellation
@@ -1186,7 +1187,7 @@ const CORTEX_TOOLS = [
       parameters: {
         type: 'object',
         properties: {
-          action: { type: 'string', enum: ['proprioception', 'attention', 'libet', 'veto', 'world', 'self', 'plan'], description: 'Which self-model surface to query' },
+          action: { type: 'string', enum: ['proprioception', 'attention', 'libet', 'veto', 'world', 'self', 'plan', 'dream'], description: 'Which self-model surface to query' },
           id: { type: 'string', description: 'Veto intent id for action=veto (from libet pending)' },
           limit: { type: 'number', description: 'Max trace entries (default 10)' }
         },
@@ -3761,6 +3762,42 @@ function apiProxyPlugin(): Plugin {
         return jsonRes(res, 400, { ok: false, error: 'provide candidates[] or commit{agentId,kind,title}' });
       });
 
+      // ── Dreaming: offline memory consolidation ──
+      // GET → dream state + rewired threads + insights. POST {run:true}
+      // forces a pass (20min cooldown otherwise). Top hypotheses surface
+      // into the attention stream — dreams can win awareness.
+      server.middlewares.use('/api/cortex/dream', async (req: any, res: any) => {
+        if (!setCortexCors(req, res)) return jsonRes(res, 403, { ok: false, error: 'forbidden' });
+        if (req.method === 'OPTIONS') { res.writeHead(204); return res.end(); }
+        if (req.method === 'GET') return jsonRes(res, 200, { ok: true, ...getDreamState() });
+        if (req.method === 'POST') {
+          const body = JSON.parse(await readBody(req) || '{}');
+          const result = runConsolidation(Date.now(), body?.run === true);
+          if (!result.skipped && result.topHypothesis) {
+            attentionPending.push({
+              id: `dream-${Date.now()}`, kind: 'ambient',
+              text: `💭 Dream insight: ${result.topHypothesis.slice(0, 180)}`,
+              ts: Date.now(), priority: 0.7, goalRelevance: 0.6,
+            });
+          }
+          return jsonRes(res, 200, { ok: true, ...result });
+        }
+        return jsonRes(res, 405, { ok: false, error: 'method not allowed' });
+      });
+      const dreamTimer = setInterval(() => {
+        try {
+          const r = runConsolidation();
+          if (!r.skipped && r.topHypothesis) {
+            attentionPending.push({
+              id: `dream-${Date.now()}`, kind: 'ambient',
+              text: `💭 Dream insight: ${r.topHypothesis.slice(0, 180)}`,
+              ts: Date.now(), priority: 0.7, goalRelevance: 0.6,
+            });
+          }
+        } catch {}
+      }, 30 * 60_000);
+      dreamTimer.unref?.();
+
       // ── Selfhood: narrative self + metacognition + fleet ToM ──
       server.middlewares.use('/api/cortex/selfhood', (req: any, res: any) => {
         if (!setCortexCors(req, res)) return jsonRes(res, 403, { ok: false, error: 'forbidden' });
@@ -5752,6 +5789,12 @@ end tell`;
                     return res.end(JSON.stringify({ ok: true, tool, action, ...r, durationMs: Date.now() - startMs }));
                   }
                   return res.end(JSON.stringify({ ok: true, tool, action, baseline: rp(state, 3), durationMs: Date.now() - startMs }));
+                }
+                if (action === 'dream') {
+                  const { runConsolidation: rc, getDreamState: gd } = await import('./src/lib/cortex-agent/consolidation');
+                  const force = args?.run === true || args?.run === 'true';
+                  const result = force ? rc(Date.now(), true) : null;
+                  return res.end(JSON.stringify({ ok: true, tool, action, ...(result ? { consolidation: result } : {}), state: gd(), durationMs: Date.now() - startMs }));
                 }
                 if (action === 'world') {
                   const { observeWorld: obs, queryWorldModel: qry, topLeverage: lev } = await import('./src/lib/cortex-agent/world-model');
