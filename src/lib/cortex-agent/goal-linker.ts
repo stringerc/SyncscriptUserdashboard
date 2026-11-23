@@ -127,7 +127,7 @@ function appendAttribution(records: CommitAttribution[]): void {
   } catch {}
 }
 
-function readAttributions(): CommitAttribution[] {
+export function readAttributions(): CommitAttribution[] {
   try {
     return fs.readFileSync(ATTR_PATH, 'utf8').trim().split('\n')
       .map((l) => { try { return JSON.parse(l); } catch { return null; } })

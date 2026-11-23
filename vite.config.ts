@@ -262,6 +262,7 @@ import { getWorldState, formatWorldStateHeader, startWorldStateSampler, onHostMe
 import { startProcessWatch, getTopMemoryProcesses, processWatchStatus } from './src/lib/cortex-agent/process-watch';
 import { ambientReact, startSidecarReconciler } from './src/lib/cortex-agent/ambient-actions';
 import { startGoalLinker, stampTaskGoal, goalProgressDelta } from './src/lib/cortex-agent/goal-linker';
+import { startGoalDriftWatch } from './src/lib/cortex-agent/goal-drift';
 
 // Unhandled-rejection guard: Node crashes the ENTIRE process on any
 // unhandled rejection. AbortError rejections are routine cancellation
@@ -1748,6 +1749,20 @@ function apiProxyPlugin(): Plugin {
         rt.setResolutionAnnotator((task) => goalProgressDelta(task));
       } catch (e: any) {
         console.warn('[goal-attribution] failed to wire:', e?.message || e);
+      }
+      // Goal drift watch — predictive decay + real-time stall/diversion
+      // alerts every 5min. Findings append to goal-drift.jsonl (the
+      // quarterly-review record), new alerts push ambient + file a
+      // governed cortex_memory proposal (log the deviation).
+      try {
+        startGoalDriftWatch((f) => {
+          try {
+            const icon = f.severity === 'high' ? '🚨' : '⚠️';
+            ambientPush('ambient', `${icon} Goal drift (${f.kind}): "${f.goalTitle.slice(0, 60)}" — ${f.detail} Suggested: ${f.suggestion}`);
+          } catch {}
+        });
+      } catch (e: any) {
+        console.warn('[goal-drift] failed to arm:', e?.message || e);
       }
       // ── /api/cortex/autonomy — sovereign autonomy mode (bypass-permissions).
       // GET returns the mode; POST {mode:'autonomous'|'confirm'} toggles it.
