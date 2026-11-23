@@ -24,6 +24,7 @@ import { loadWorld, DIMS, type Dim, type WorldState } from './world-model';
 import { commitmentUtility } from './commitments';
 import { speakInner } from './inner-speech';
 import { learnedEffects, dynamicsUncertainty, effectPosterior } from './empirical-dynamics';
+import { currentWorkspace, consumeBroadcast } from './workspace';
 
 // ── Action classes and their plausible effect priors ──────────────────
 // Priors are explicit assumptions, labeled as such; empirical estimates
@@ -80,10 +81,23 @@ function utilityOf(dims: Record<Dim, number>, weights: Record<Dim, number>): num
   return u;
 }
 
-function surpriseOfMove(from: Record<Dim, number>, to: Record<Dim, number>): number {
-  let s = 0;
-  for (const d of DIMS) s += Math.abs(to[d] - from[d]);
-  return s / DIMS.length;
+function surpriseOfMove(from: Record<Dim, number>, to: Record<Dim, number>, cls?: ActionClass): number {
+  // Precision-weighted: a move on a dim with confident learned dynamics
+  // is more surprising than the same move on an uncertain dim — the
+  // prediction error is weighted by how much we trust the model.
+  let s = 0, wsum = 0;
+  for (const d of DIMS) {
+    const delta = Math.abs(to[d] - from[d]);
+    if (delta < 0.0005) continue;
+    let precision = 0.5; // unmeasured dims get neutral precision
+    if (cls) {
+      const p = effectPosterior(cls, d);
+      precision = p.n > 0 ? Math.min(1, 1 - p.sd / 0.2) : 0.3;
+    }
+    s += delta * precision;
+    wsum += precision;
+  }
+  return wsum > 0 ? s / wsum : 0;
 }
 
 function ambiguityOf(dims: Record<Dim, number>, evidence: Record<Dim, number>, cls?: ActionClass): number {
@@ -102,7 +116,7 @@ function ambiguityOf(dims: Record<Dim, number>, evidence: Record<Dim, number>, c
 function evaluateAction(state: WorldState, cls: ActionClass, dims: Record<Dim, number>): { g: number; utility: number; surprise: number; risk: number; ambiguity: number; next: Record<Dim, number> } {
   const next = applyAction(dims, cls);
   const utility = utilityOf(next, state.weights);
-  const surprise = surpriseOfMove(dims, next);
+  const surprise = surpriseOfMove(dims, next, cls);
   // Risk: negative valence dims moving up = bad (driftRisk, surprise, hostLoad up = risk)
   const riskDims: Dim[] = ['driftRisk', 'surprise', 'hostLoad', 'forecastRisk'];
   const risk = riskDims.reduce((a, d) => a + Math.max(0, next[d] - dims[d]), 0) / riskDims.length;
@@ -180,7 +194,18 @@ export function planDispatches(candidates: DispatchCandidate[], state?: WorldSta
     // Shared utility: keeping an open commitment is goal-positive —
     // the planner optimizes the crew's word, not just her own.
     const social = commitmentUtility(String(c.agentId || ''), c.kind, c.title);
-    const freeEnergy = first.g + (secondG === Infinity ? 0 : secondG * 0.85) - social * 0.5;
+    // Global workspace: if a signal ignited, actions aligned with its
+    // kind get a small discount — consciousness biases action selection.
+    const ws = currentWorkspace();
+    let workspaceBias = 0;
+    if (ws) {
+      const aligned = (ws.kind === 'goal' && /corrective|forecast|orchestrate/.test(cls)) ||
+                      (ws.kind === 'system' && /patrol|comm|forecast/.test(cls)) ||
+                      (ws.kind === 'interoception' && /patrol|comm/.test(cls)) ||
+                      (ws.kind === 'inner' || ws.kind === 'ambient');
+      if (aligned) { workspaceBias = -0.08; consumeBroadcast(ws.id, 'planner'); }
+    }
+    const freeEnergy = first.g + (secondG === Infinity ? 0 : secondG * 0.85) - social * 0.5 + workspaceBias;
     return {
       candidate: c, actionClass: cls,
       freeEnergy: Math.round(freeEnergy * 1000) / 1000,

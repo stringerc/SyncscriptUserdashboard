@@ -13,6 +13,7 @@
  */
 import fs from 'node:fs';
 import { speakInner } from './inner-speech';
+import { broadcastAttention } from './workspace';
 import path from 'node:path';
 
 const DIR = path.join(process.cwd(), '.cortex-runtime');
@@ -83,6 +84,7 @@ export function attend(candidates: AttentionCandidate[], now = Date.now()): Atte
     : `"${winner.text.slice(0, 60)}" won uncontested — score ${winner.score} (kind ${winner.kind})`;
   const decision: AttentionDecision = { ts: now, winner, reason, candidates: scored };
   appendTrace(decision);
+  try { broadcastAttention(decision); } catch {}
   // Meta-attention doesn't verbalize — prevents inner-speech recursion
   // (monologue → candidate → winner → monologue → ...).
   if (winner.kind === 'inner') return decision;

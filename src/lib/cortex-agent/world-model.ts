@@ -27,6 +27,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { getInteroceptiveState } from './interoceptive';
+import { currentWorkspace, consumeBroadcast } from './workspace';
 
 const RUNTIME = path.resolve(process.cwd(), '.cortex-runtime');
 const STATE_FILE = path.join(RUNTIME, 'world-model.json');
@@ -197,6 +198,16 @@ export function observeWorld(now = Date.now()): WorldState {
     const i = getInteroceptiveState(now);
     bump(state, 'capacity', i.capacity, 0.6);
     bump(state, 'surprise', i.surprise ?? 0, 0.6);
+  } catch {}
+  // Global workspace: an ignited broadcast modulates attentionLoad —
+  // contested consciousness is literally a load on the system.
+  try {
+    const ws = currentWorkspace(now);
+    if (ws) {
+      const competition = Math.max(0, 1 - ws.margin * 4); // tight races = high load
+      bump(state, 'attentionLoad', Math.min(1, 0.3 + competition * 0.7), 0.4);
+      consumeBroadcast(ws.id, 'world-model');
+    }
   } catch {}
   // Snapshot ring — the dynamics learner pairs these with task events.
   const lastSnap = state.snapshots[state.snapshots.length - 1];

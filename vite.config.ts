@@ -1189,7 +1189,7 @@ const CORTEX_TOOLS = [
       parameters: {
         type: 'object',
         properties: {
-          action: { type: 'string', enum: ['proprioception', 'attention', 'libet', 'veto', 'world', 'self', 'plan', 'dream', 'social', 'monologue', 'dynamics'], description: 'Which self-model surface to query' },
+          action: { type: 'string', enum: ['proprioception', 'attention', 'libet', 'veto', 'world', 'self', 'plan', 'dream', 'social', 'monologue', 'dynamics', 'workspace'], description: 'Which self-model surface to query' },
           id: { type: 'string', description: 'Veto intent id for action=veto (from libet pending)' },
           limit: { type: 'number', description: 'Max trace entries (default 10)' }
         },
@@ -3886,6 +3886,14 @@ function apiProxyPlugin(): Plugin {
         return jsonRes(res, 200, { ok: true, entries: recentMonologue(limit), stats: monologueStats() });
       });
 
+      // ── Global workspace: ignition + broadcast stream ──
+      server.middlewares.use('/api/cortex/workspace', (req: any, res: any) => {
+        if (!setCortexCors(req, res)) return jsonRes(res, 403, { ok: false, error: 'forbidden' });
+        if (req.method === 'OPTIONS') { res.writeHead(204); return res.end(); }
+        return import('./src/lib/cortex-agent/workspace').then((m) =>
+          jsonRes(res, 200, { ok: true, stats: m.workspaceStats(), recent: m.broadcastHistory(15) }));
+      });
+
       // ── Empirical dynamics: learned action→dim transitions ──
       server.middlewares.use('/api/cortex/dynamics', async (req: any, res: any) => {
         if (!setCortexCors(req, res)) return jsonRes(res, 403, { ok: false, error: 'forbidden' });
@@ -5895,6 +5903,10 @@ end tell`;
                     trust: ts(),
                     durationMs: Date.now() - startMs,
                   }));
+                }
+                if (action === 'workspace') {
+                  const m = await import('./src/lib/cortex-agent/workspace');
+                  return res.end(JSON.stringify({ ok: true, tool, action, stats: m.workspaceStats(), recent: m.broadcastHistory(10), durationMs: Date.now() - startMs }));
                 }
                 if (action === 'dynamics') {
                   const { learnDynamics: ld, dynamicsReport: dr } = await import('./src/lib/cortex-agent/empirical-dynamics');
