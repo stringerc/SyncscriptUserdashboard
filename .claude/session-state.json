@@ -1,18 +1,20 @@
 {
-  "timestamp": "2026-11-15T16:37:38Z",
-  "session_id": "f66e264a-626b-41c7-8ed4-54c266cd7022",
+  "timestamp": "2026-11-23T08:04:15Z",
+  "session_id": "a1cc2de2-c71a-47eb-aec3-99280053f971",
   "cwd": "/Users/Apple/syncscript",
   "product_rank_a": "SESSION_START.md + MEMORY.md (product)",
   "git": {
     "branch": "security-hardening",
-    "uncommitted": " M .claude/active-task.md\n M .claude/session-state.json\n M .cortex/bus/state.json\n M morning-briefing.md\n M storefront/GUMROAD_LAUNCH_LOG.md\n M storefront/browser/latest.png\n M storefront/browser/latest.txt\n M storefront/distribution-queue.json\n M tsconfig.tsbuildinfo\n?? .github/\n?? .next/\n?? archive/\n?? storefront/assets/dreamina/.jobs/job-mwhw0jh8-b5ac0a.json\n?? storefront/assets/dreamina/meeting-intelligence-kit-alt.png",
-    "recent_commits": "d58025f fix(cortex): persist visualizer chat across proxy resets\n95b5923 fix(cortex): quarter-scale enterprise satellite hulls\nd14245a fix(cortex): halve enterprise satellite hull scale\n2c6bab0 feat(cortex): realistic enterprise satellite hulls on core scene\n6e7bfc3 feat(cortex): visualizer fleet tiers, 18-zone surfaces, distribution engine"
+    "uncommitted": " M .claude/active-task.md\n M .claude/session-state.json\n M .cortex/bus/state.json\n M MEMORY.md\n M SESSION_START.md\n D build/index.html\n M dream-log.md\n M morning-briefing.md\n M node_modules/.package-lock.json\n M node_modules/.vite/deps/@radix-ui_react-avatar@1__1__3.js\n M node_modules/.vite/deps/@radix-ui_react-slot@1__1__2.js\n M node_modules/.vite/deps/_metadata.json\n M node_modules/.vite/deps/class-variance-authority@0__7__1.js\n M node_modules/.vite/deps/clsx.js\n M node_modules/.vite/deps/lucide-react.js\n M node_modules/.vite/deps/motion_react.js\n M node_modules/.vite/deps/react-dom_client.js\n M node_modules/.vite/deps/react-router-dom.js\n M node_modules/.vite/deps/react.js\n M node_modules/.vite/deps/react_jsx-dev-runtime.js",
+    "recent_commits": "8390266f Inner speech: verbal reasoning inside the cognitive loop\n936fcf3d Voice-turn forensics: error beacon + honest provider-exhaustion fallback\n2374257c Social embodiment: commitment ledger, trust priors, shared utility\nc952a275 Memory consolidation: offline dreaming \u2014 thread rewiring, pattern mining, hypotheses\n4b8e06fb Active inference planner: counterfactual rollouts scored by world model"
   },
   "recent_files": [
     "/Users/Apple/.claude/CLAUDE.md",
     "/Users/Apple/AGENTS.md",
     "/Users/Apple/CONSOLIDPVE_DOCUMENTATION/PROCEDURES_CONSOLIDPVE.md"
   ],
-  "active_task": "# Sticky active task (auto — do not treat as Rank A product history)  # Sticky active task (auto — do not treat as Rank A product history)  # Sticky active task (auto — do not treat as Rank A product history)  # Sticky active task (auto — do not treat as Rank A product history)  # Sticky active task (auto — do not treat as Rank A product history)  # Sticky active task (auto — do not treat as Rank ",
-  "agent_intents": ""
+  "active_task": "# Sticky active task (auto \u2014 do not treat as Rank A product history)  # Sticky active task (auto \u2014 do not treat as Rank A product history)  # Active task \u2014 splat visualizer  voice arbitration (2026-11-20)  STATUS: Phases 1-5 of EXTERNAL_STACK_DEEP_DIVE.md shipped  stress-tested. Prod build green (0b0e6742), verify:cortex full pass, inspect eval 6/6 @1.000. See bottom of file for final verifi",
+  "agent_intents": "",
+  "last_session_note": "2026-11-23d: aesthetic.ts (parsimony/coherence/resonance/grace scoring, wired into simulator), constitution adjudicateConflicts (irreversibility\u2192stakes\u2192priority moral weight), generative-dream.ts (synthetic scenario stress-testing, 15 dreams found orchestrate\u2192hostLoad fault line x8), TTS truncation heuristic (expected-bytes + hot-tail RMS).",
+  "updated_at": "2026-11-23T09:01:31.166229"
 }

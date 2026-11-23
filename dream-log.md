@@ -1,3 +1,51 @@
+## [2026-11-23T08:00:05.630Z] Circadian Dream Consolidation (Git: `8390266f`)
+- **Free Energy F:** 0.0850 (Grade: stressed)
+- **Harmony H:** 0.5193
+- **Epistemic Status:** FAIL (9 proposals generated)
+- **Draft:** `.cache/dream-consolidation/2026-11-23T08-00-05-630Z-draft.md`
+
+## [2026-11-23T08:00:04.100Z] Circadian Dream Consolidation (Git: `8390266f`)
+- **Free Energy F:** 0.0850 (Grade: stressed)
+- **Harmony H:** 0.5193
+- **Epistemic Status:** FAIL (9 proposals generated)
+- **Draft:** `.cache/dream-consolidation/2026-11-23T08-00-04-100Z-draft.md`
+
+## [2026-11-22T08:00:05.513Z] Circadian Dream Consolidation (Git: `d6ea793b`)
+- **Free Energy F:** 0.0850 (Grade: stressed)
+- **Harmony H:** 0.5193
+- **Epistemic Status:** FAIL (9 proposals generated)
+- **Draft:** `.cache/dream-consolidation/2026-11-22T08-00-05-513Z-draft.md`
+
+## [2026-11-22T08:00:05.129Z] Circadian Dream Consolidation (Git: `d6ea793b`)
+- **Free Energy F:** 0.0850 (Grade: stressed)
+- **Harmony H:** 0.5193
+- **Epistemic Status:** FAIL (9 proposals generated)
+- **Draft:** `.cache/dream-consolidation/2026-11-22T08-00-05-129Z-draft.md`
+
+## [2026-11-21T08:00:03.756Z] Circadian Dream Consolidation (Git: `32ffca42`)
+- **Free Energy F:** 0.0826 (Grade: stressed)
+- **Harmony H:** 0.5206
+- **Epistemic Status:** FAIL (9 proposals generated)
+- **Draft:** `.cache/dream-consolidation/2026-11-21T08-00-03-756Z-draft.md`
+
+## [2026-11-21T08:00:03.621Z] Circadian Dream Consolidation (Git: `32ffca42`)
+- **Free Energy F:** 0.0826 (Grade: stressed)
+- **Harmony H:** 0.5206
+- **Epistemic Status:** FAIL (9 proposals generated)
+- **Draft:** `.cache/dream-consolidation/2026-11-21T08-00-03-621Z-draft.md`
+
+## [2026-11-20T08:00:06.134Z] Circadian Dream Consolidation (Git: `bac7381`)
+- **Free Energy F:** 0.0826 (Grade: stressed)
+- **Harmony H:** 0.5206
+- **Epistemic Status:** FAIL (9 proposals generated)
+- **Draft:** `.cache/dream-consolidation/2026-11-20T08-00-06-134Z-draft.md`
+
+## [2026-11-20T08:00:02.429Z] Circadian Dream Consolidation (Git: `bac7381`)
+- **Free Energy F:** 0.0826 (Grade: stressed)
+- **Harmony H:** 0.5206
+- **Epistemic Status:** FAIL (9 proposals generated)
+- **Draft:** `.cache/dream-consolidation/2026-11-20T08-00-02-429Z-draft.md`
+
 ## [2026-11-19T08:00:03.332Z] Circadian Dream Consolidation (Git: `ab2f033`)
 - **Free Energy F:** 0.0798 (Grade: stressed)
 - **Harmony H:** 0.5222
