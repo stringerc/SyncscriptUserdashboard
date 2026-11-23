@@ -258,7 +258,7 @@ import {
   drainSafePending as ledgerDrainSafe,
   isSafeAutoProposal,
 } from './src/lib/cortex-initiative-ledger';
-import { getWorldState, formatWorldStateHeader } from './src/lib/cortex-world-state';
+import { getWorldState, formatWorldStateHeader, startWorldStateSampler } from './src/lib/cortex-world-state';
 
 /** Short SHA for deploy verification (Vercel sets VERCEL_GIT_COMMIT_SHA at build time). */
 function resolveSyncscriptBuildSha(): string {
@@ -1520,6 +1520,14 @@ function apiProxyPlugin(): Plugin {
         startSelfRegulation(selfRegPort);
       } catch (e: any) {
         console.warn('[self-regulation] failed to arm:', e?.message || e);
+      }
+      // ── Ambient world-state sampler: keeps the blackboard perpetually
+      // fresh so every turn reads a sub-ms snapshot instead of paying
+      // probe latency on first ask. 3s cadence; slow probes TTL-cached.
+      try {
+        startWorldStateSampler(3000);
+      } catch (e: any) {
+        console.warn('[world-state] sampler failed to arm:', e?.message || e);
       }
       // ── /api/cortex/autonomy — sovereign autonomy mode (bypass-permissions).
       // GET returns the mode; POST {mode:'autonomous'|'confirm'} toggles it.
@@ -10250,6 +10258,45 @@ Disposition consolidation (learned urgency/tier adjustments from proposal outcom
               } catch { }
               return __ttsEnd(...args);
             };
+            // TTS capture tap: when .cortex-runtime/tts-capture.enabled
+            // exists, tee every synthesized WAV to tts-capture/ so agent
+            // debugging can inspect exactly what Cortex said (and through
+            // which engine/voice). Toggle by creating/deleting the flag
+            // file — no client changes, zero cost when off.
+            try {
+              const captureFlag = path.join(process.cwd(), '.cortex-runtime', 'tts-capture.enabled');
+              if (fsSync.existsSync(captureFlag)) {
+                const chunks: Buffer[] = [];
+                // Headers passed via writeHead() bypass res.getHeader() —
+                // snapshot them so capture filenames carry engine/voice.
+                const whdrs: Record<string, string> = {};
+                const __wh = res.writeHead.bind(res);
+                (res as any).writeHead = (...args: any[]) => {
+                  try {
+                    const h = args.find((a) => a && typeof a === 'object' && !Array.isArray(a));
+                    if (h) for (const [k, v] of Object.entries(h)) whdrs[k.toLowerCase()] = String(v);
+                  } catch { }
+                  return __wh(...args);
+                };
+                const __write = res.write.bind(res);
+                (res as any).write = (chunk: any, ...rest: any[]) => {
+                  try { chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)); } catch { }
+                  return __write(chunk, ...rest);
+                };
+                const __end2 = (res as any).end;
+                (res as any).end = (...args: any[]) => {
+                  try {
+                    const dir = path.join(process.cwd(), '.cortex-runtime', 'tts-capture');
+                    fsSync.mkdirSync(dir, { recursive: true });
+                    const engine = String(res.getHeader('X-TTS-Engine') || whdrs['x-tts-engine'] || 'unknown').replace(/[^a-z0-9-]/gi, '');
+                    const voice = String(res.getHeader('X-TTS-Voice') || whdrs['x-tts-voice'] || 'unknown').replace(/[^a-z0-9_-]/gi, '');
+                    const safeText = String(text || '').replace(/[^a-z0-9]+/gi, '-').slice(0, 40);
+                    fsSync.writeFileSync(path.join(dir, `${Date.now()}-${engine}-${voice}-${safeText}.wav`), Buffer.concat(chunks));
+                  } catch { }
+                  return __end2(...args);
+                };
+              }
+            } catch { }
             const { text: rawText, speed } = parsed;
             // Crew-pinned default voice when the caller doesn't specify one.
             const voice = parsed.voice || loadVoiceConfig().defaultVoice || undefined;

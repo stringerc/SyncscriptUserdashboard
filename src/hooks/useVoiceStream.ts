@@ -18,7 +18,7 @@ import { useState, useRef, useCallback, useEffect } from 'react';
 import { disableTtsProxyForSession, isTtsProxyDisabled } from '../utils/tts-proxy-session';
 import { NEXUS_LANDING_KOKORO_VOICE_ID } from '../utils/nexus-tts-prosody';
 import { playNexusLandingKokoroTTS } from '../utils/nexus-kokoro-landing-playback';
-import { ensureKokoroOriginsLoaded, getKokoroDirectBases, fetchKokoroBufferForNexusSegment } from '../utils/nexus-kokoro-tts-fetch';
+import { ensureKokoroOriginsLoaded, getKokoroDirectBases, fetchKokoroBufferForNexusSegment, getLastTtsMeta } from '../utils/nexus-kokoro-tts-fetch';
 import { sentenceToNexusProsodySegment } from '../utils/nexus-tts-prosody';
 import { PcmQueue, pumpWavToPcm, type PcmChunk } from '../utils/wav-pcm-stream';
 import { reportTtsRum } from '../utils/tts-rum-beacon';
@@ -292,6 +292,9 @@ export function useVoiceStream(options: UseVoiceStreamOptions = {}) {
      *  be scheduled the moment the first frames arrive instead of after the
      *  whole utterance synthesizes. Null when the proxy can't stream. */
     streamPromise?: Promise<PcmQueue | null>;
+    /** Engine/voice that actually served the stream response — logged
+     *  per sentence so voice-flap debugging is a grep, not a guess. */
+    streamMeta?: { engine: string | null; voice: string | null };
     queuedAt: number;
     voice?: string;
     speed?: number;
@@ -1400,6 +1403,10 @@ export function useVoiceStream(options: UseVoiceStreamOptions = {}) {
           return null;
         }
         pinStreamVoice(res.headers.get('x-tts-voice'));
+        item.streamMeta = {
+          engine: res.headers.get('x-tts-engine'),
+          voice: res.headers.get('x-tts-voice'),
+        };
         const queue = new PcmQueue();
         void pumpWavToPcm(res.body, queue, streamTtsAbortRef.current?.signal)
           .catch(() => queue.fail(new Error('pcm pump failed')))
@@ -1497,6 +1504,15 @@ export function useVoiceStream(options: UseVoiceStreamOptions = {}) {
     }
   }, [startStreamFetch]);
 
+  /** Per-sentence TTS telemetry — which engine/voice/path actually spoke
+   *  each sentence. Voice-flap and cutoff debugging becomes a grep. */
+  const logSpokenSentence = useCallback((item: StreamSentenceItem, path: 'stream' | 'blob' | 'browser', ms: number) => {
+    try {
+      const meta = path === 'stream' ? (item.streamMeta ?? null) : getLastTtsMeta();
+      console.info(`[tts-sentence] path=${path} engine=${meta?.engine || '?'} voice=${meta?.voice || '?'} ${ms}ms "${item.text.slice(0, 48).replace(/\s+/g, ' ')}${item.text.length > 48 ? '…' : ''}"`);
+    } catch {}
+  }, []);
+
   const drainStreamQueue = useCallback(async () => {
     if (isDrainingStreamRef.current) return;
     isDrainingStreamRef.current = true;
@@ -1528,7 +1544,10 @@ export function useVoiceStream(options: UseVoiceStreamOptions = {}) {
         const timelineMark = gaplessNextStartRef.current;
         const r = await schedulePcmQueue(streamQueue, currentEpoch);
         if (streamEpochRef.current !== currentEpoch) break;
-        if (r.status === 'full') continue;
+        if (r.status === 'full') {
+          logSpokenSentence(item, 'stream', Date.now() - item.queuedAt);
+          continue;
+        }
         if (r.status === 'partial') {
           // Server cut the utterance mid-word: kill this sentence's
           // scheduled buffers, rewind the timeline, and fall through
@@ -1560,6 +1579,7 @@ export function useVoiceStream(options: UseVoiceStreamOptions = {}) {
           getCortexObservabilityHUD().recordVoiceLatency(Date.now() - item.queuedAt);
         } catch {}
         const scheduled = await scheduleStreamBlob(blob);
+        logSpokenSentence(item, 'blob', Date.now() - item.queuedAt);
         if (!scheduled) {
           // No WebAudio — fall back to per-blob <audio> playback (slightly
           // gappy but still speaks).
@@ -1585,13 +1605,14 @@ export function useVoiceStream(options: UseVoiceStreamOptions = {}) {
             { text: item.text, config: { voice: item.voice, speed: item.speed } },
             speechEpochRef.current,
           );
+          logSpokenSentence(item, 'browser', Date.now() - item.queuedAt);
         } catch {}
       }
     }
 
     isDrainingStreamRef.current = false;
     finalizeStreamSpeech();
-  }, [playAudioBlob, scheduleStreamBlob, schedulePcmQueue, speakBrowserFallback, finalizeStreamSpeech, prefetchStreamTts, startStreamFetch, speechArbiter]);
+  }, [playAudioBlob, scheduleStreamBlob, schedulePcmQueue, speakBrowserFallback, finalizeStreamSpeech, prefetchStreamTts, startStreamFetch, speechArbiter, logSpokenSentence]);
 
   /** Progressive streaming sentence playback: queues sentence chunks and starts playing in sub-600ms */
   const speakStreamSentence = useCallback((sentence: string, isFinal = false, config?: { voice?: string; speed?: number; skipCartesia?: boolean }) => {

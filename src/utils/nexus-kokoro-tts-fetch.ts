@@ -126,6 +126,7 @@ async function fetchDirectKokoroBuffer(
         // Direct path bypasses the proxy — pin the voice id actually sent
         // (cortana maps to af_sky here) so the next segment stays consistent.
         pinServedVoice(voice === 'cortana' ? 'af_sky' : voice);
+        lastTtsMeta = { engine: 'kokoro-direct', voice: voice === 'cortana' ? 'af_sky' : voice, via: 'direct' };
         return buffer;
       }
     } catch {
@@ -137,6 +138,12 @@ async function fetchDirectKokoroBuffer(
   }
   return null;
 }
+
+// Last proxy/direct response metadata — the drain loop reads this to log
+// which engine+voice actually produced each spoken sentence.
+export interface TtsResponseMeta { engine: string | null; voice: string | null; via: 'proxy' | 'direct' | null }
+let lastTtsMeta: TtsResponseMeta = { engine: null, voice: null, via: null };
+export function getLastTtsMeta(): TtsResponseMeta { return lastTtsMeta; }
 
 /**
  * One segment, landing-style voice fallbacks + proxy retries + optional direct Kokoro.
@@ -170,6 +177,11 @@ export async function fetchKokoroBufferForNexusSegment(
             const buffer = await response.arrayBuffer();
             if (buffer.byteLength > 0) {
               pinServedVoice(servedVoice);
+              lastTtsMeta = {
+                engine: response.headers.get('x-tts-engine'),
+                voice: servedVoice || voice,
+                via: 'proxy',
+              };
               return buffer;
             }
             break;

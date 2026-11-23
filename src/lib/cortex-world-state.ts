@@ -54,6 +54,10 @@ export interface CodebaseState {
   statusKnown?: boolean;
   /** Epoch ms of last detected source-tree change (fs.watch), if watcher active. */
   lastRepoChangeAt?: number;
+  /** Recently changed source files (path → epoch ms), newest first, capped.
+   *  The "state of your files" sense — Cortex knows WHAT changed, not
+   *  just THAT something changed. */
+  recentChanges?: { path: string; at: number }[];
 }
 
 export interface FleetState {
@@ -232,19 +236,65 @@ export function getSomaticVitals(): HostSomaticState {
 // ── Repo-change watcher (FSEvents-backed fs.watch, macOS/Windows recursive) ──
 // Watches src/ recursively plus key root manifests. .cortex-runtime and other
 // runtime writes live outside src/, so they don't keep this timestamp hot.
-let repoWatcherStarted = false;
-let lastRepoChangeAt: number | undefined;
-let repoChangePending = false;
+// State lives on globalThis: Vite restarts re-evaluate this module but
+// cannot cancel the previous module's fs.watch handles or intervals —
+// module-level vars would let each restart stack duplicate watchers that
+// write into dead state. Sharing via globalThis keeps one watcher set and
+// one recency map across reloads.
+const REPO_STATE_KEY = '__cortexRepoWatchState';
+interface RepoWatchState {
+  started: boolean;
+  lastChangeAt?: number;
+  pending: boolean;
+  recent: Map<string, number>;
+}
+const g = globalThis as any;
+if (!g[REPO_STATE_KEY]) {
+  g[REPO_STATE_KEY] = { started: false, pending: false, recent: new Map<string, number>() } as RepoWatchState;
+}
+const repoState: RepoWatchState = g[REPO_STATE_KEY];
+const RECENT_CHANGES_MAX = 30;
+const RECENT_CHANGES_TTL_MS = 10 * 60_000;
+const recentChanges = repoState.recent;
+
+function recordRepoChange(filename: string | Buffer | null, watchRoot: string) {
+  repoState.pending = true;
+  if (!filename) return;
+  // fs.watch reports paths relative to the WATCHED dir (src/, scripts/),
+  // not the repo root — resolve against watchRoot then relativize to cwd.
+  const rel = path.relative(process.cwd(), path.join(watchRoot, String(filename))).replace(/\\/g, '/');
+  if (!rel || rel.startsWith('..')) return;
+  recentChanges.set(rel, Date.now());
+  if (recentChanges.size > RECENT_CHANGES_MAX) {
+    // Evict oldest entries first.
+    const entries = [...recentChanges.entries()].sort((a, b) => a[1] - b[1]);
+    for (const [k] of entries.slice(0, recentChanges.size - RECENT_CHANGES_MAX)) {
+      recentChanges.delete(k);
+    }
+  }
+}
+
+function prunedRecentChanges(): { path: string; at: number }[] {
+  const cutoff = Date.now() - RECENT_CHANGES_TTL_MS;
+  const out: { path: string; at: number }[] = [];
+  for (const [p, at] of recentChanges) {
+    if (at >= cutoff) out.push({ path: p, at });
+    else recentChanges.delete(p);
+  }
+  return out.sort((a, b) => b.at - a.at).slice(0, 8);
+}
 
 function ensureRepoWatcher(): void {
-  if (repoWatcherStarted || process.env.CORTEX_WORLD_STATE_WATCH === '0') return;
-  repoWatcherStarted = true;
+  if (repoState.started || process.env.CORTEX_WORLD_STATE_WATCH === '0') return;
+  repoState.started = true;
   const root = process.cwd();
   const targets = [path.join(root, 'src'), path.join(root, 'scripts')];
-  const onEvent = () => {
-    repoChangePending = true;
-  };
   for (const t of targets) {
+    // Per-watcher closure: fs.watch filenames are relative to THEIR
+    // watched dir, so each watcher needs its own root binding.
+    const onEvent = (_ev: string, filename: string | Buffer | null) => {
+      recordRepoChange(filename, t);
+    };
     try {
       fs.watch(t, { recursive: true }, onEvent);
     } catch {
@@ -254,12 +304,12 @@ function ensureRepoWatcher(): void {
   }
   // Root manifests that affect the build but live outside watched dirs.
   for (const f of ['vite.config.ts', 'package.json', 'tsconfig.json']) {
-    try { fs.watch(path.join(root, f), onEvent); } catch {}
+    try { fs.watch(path.join(root, f), () => recordRepoChange(f, root)); } catch {}
   }
   const flusher = setInterval(() => {
-    if (repoChangePending) {
-      repoChangePending = false;
-      lastRepoChangeAt = Date.now();
+    if (repoState.pending) {
+      repoState.pending = false;
+      repoState.lastChangeAt = Date.now();
     }
   }, 2000);
   flusher.unref?.();
@@ -267,17 +317,33 @@ function ensureRepoWatcher(): void {
 
 // ── Refresh & Aggregation ───────────────────────────────────────────────────
 
+// Slow-probe caches: the ambient sampler refreshes every ~3s, but git
+// status porcelain and pmset are too heavy for that cadence — reuse
+// their results on a slower TTL. App/vitals probes stay per-refresh.
+const GIT_STATUS_TTL_MS = 15_000;
+const BATTERY_TTL_MS = 60_000;
+let gitStatusCache: { at: number; value: { isClean: boolean; dirtyCount: number; ok: boolean } } | null = null;
+let batteryCache: { at: number; value: number | undefined } | null = null;
+
 async function refreshWorldState(): Promise<WorldState> {
   ensureRepoWatcher();
+  const now = Date.now();
   const topology = getTopology();
   const host = getSomaticVitals();
   const branch = getFastGitBranch();
 
+  const gitP = (!gitStatusCache || now - gitStatusCache.at >= GIT_STATUS_TTL_MS)
+    ? getGitStatus().then((v) => { gitStatusCache = { at: Date.now(), value: v }; return v; })
+    : Promise.resolve(gitStatusCache.value);
+  const battP = (!batteryCache || now - batteryCache.at >= BATTERY_TTL_MS)
+    ? probeBatteryPct().then((v) => { batteryCache = { at: Date.now(), value: v }; return v; })
+    : Promise.resolve(batteryCache.value);
+
   // Run async probes in parallel with timeouts
   const [user, git, batteryPct, oracleAlive] = await Promise.all([
     probeFrontmostApp(),
-    getGitStatus(),
-    probeBatteryPct(),
+    gitP,
+    battP,
     probeOracleAlive(topology.instance),
   ]);
 
@@ -306,7 +372,8 @@ async function refreshWorldState(): Promise<WorldState> {
       isClean: git.isClean,
       dirtyCount: git.dirtyCount,
       statusKnown: git.ok,
-      lastRepoChangeAt,
+      lastRepoChangeAt: repoState.lastChangeAt,
+      recentChanges: prunedRecentChanges(),
     },
     fleet: {
       activeAgentCount,
@@ -394,5 +461,34 @@ export function formatWorldStateHeader(state: WorldState): string {
     : undefined;
   const editInfo = editAgeS !== undefined && editAgeS < 120 ? ` | edit: ${editAgeS}s ago` : '';
 
-  return `[WORLD-STATE: ${topology.localTime} | App: ${appInfo} | Git: ${gitInfo} | Host: ${hostNode} | Load: ${host.loadAvg1m} | Mem: ${host.memUsedPct}%${battInfo}${fleetInfo}${editInfo}]`;
+  // Named recent file changes — "state of your files" sense. Top 3 with
+  // ages, e.g. "files: loop.ts(8s) mission.ts(41s)".
+  const rc = state.codebase.recentChanges;
+  const fileInfo = rc?.length
+    ? ` | files: ${rc.slice(0, 3).map(c => `${c.path.split('/').pop()}(${Math.max(0, Math.round((Date.now() - c.at) / 1000))}s)`).join(' ')}`
+    : '';
+
+  return `[WORLD-STATE: ${topology.localTime} | App: ${appInfo} | Git: ${gitInfo} | Host: ${hostNode} | Load: ${host.loadAvg1m} | Mem: ${host.memUsedPct}%${battInfo}${fleetInfo}${editInfo}${fileInfo}]`;
+}
+
+// ── Ambient sampler ─────────────────────────────────────────────────────────
+// Cortex's wish: "perfect, instantaneous, lossless integration between the
+// abstract models and the concrete, messy reality of the host." The SWR
+// cache only refreshed when a turn asked — meaning the FIRST turn after a
+// quiet period paid probe latency and saw stale state. This sampler keeps
+// the blackboard perpetually warm: every turn now reads a sub-ms fresh
+// snapshot instead of triggering probes. Slow probes (git/battery) are
+// TTL-cached inside refreshWorldState, so a 3s cadence stays cheap.
+// Guard on globalThis, not module scope: Vite restarts re-evaluate this
+// module but can't cancel the old module's setInterval — a module-level
+// flag would let each restart stack another 3s probe loop forever.
+const SAMPLER_KEY = '__cortexWorldStateSampler';
+
+export function startWorldStateSampler(intervalMs = 3000): void {
+  const g = globalThis as any;
+  if (g[SAMPLER_KEY]) return;
+  const tick = () => { void refreshWorldState().catch(() => {}); };
+  tick(); // warm immediately — first turn shouldn't pay cold-start either
+  g[SAMPLER_KEY] = setInterval(tick, intervalMs);
+  g[SAMPLER_KEY].unref?.();
 }
