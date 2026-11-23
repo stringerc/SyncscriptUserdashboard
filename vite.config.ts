@@ -1189,7 +1189,7 @@ const CORTEX_TOOLS = [
       parameters: {
         type: 'object',
         properties: {
-          action: { type: 'string', enum: ['proprioception', 'attention', 'libet', 'veto', 'amend', 'hold', 'world', 'self', 'plan', 'dream', 'social', 'monologue', 'dynamics', 'workspace', 'simulate', 'valence', 'reaction', 'autobiography', 'meta', 'constitution'], description: 'Which self-model surface to query' },
+          action: { type: 'string', enum: ['proprioception', 'attention', 'libet', 'veto', 'amend', 'hold', 'world', 'self', 'plan', 'dream', 'social', 'monologue', 'dynamics', 'workspace', 'simulate', 'valence', 'reaction', 'autobiography', 'meta', 'constitution', 'prospective', 'binding', 'tom'], description: 'Which self-model surface to query' },
           id: { type: 'string', description: 'Veto intent id for action=veto (from libet pending)' },
           limit: { type: 'number', description: 'Max trace entries (default 10)' }
         },
@@ -3946,6 +3946,40 @@ function apiProxyPlugin(): Plugin {
         return jsonRes(res, 200, { ok: true, added, stats: vm.valenceStats() });
       });
 
+      // ── Prospective memory: cue-bound intentions ──
+      server.middlewares.use('/api/cortex/prospective', async (req: any, res: any) => {
+        if (!setCortexCors(req, res)) return jsonRes(res, 403, { ok: false, error: 'forbidden' });
+        if (req.method === 'OPTIONS') { res.writeHead(204); return res.end(); }
+        const pm = await import('./src/lib/cortex-agent/prospective-memory');
+        if (req.method === 'POST') {
+          const body = JSON.parse(await readBody(req) || '{}');
+          if (body?.arm) {
+            try {
+              const i = pm.armIntention({ kinds: body.kinds, pattern: body.pattern || '' }, body.note || '');
+              return jsonRes(res, 200, { ok: true, intention: i });
+            } catch (e: any) { return jsonRes(res, 400, { ok: false, error: e.message }); }
+          }
+          if (body?.cancel) return jsonRes(res, 200, { ok: pm.cancelIntention(body.cancel) });
+        }
+        return jsonRes(res, 200, { ok: true, armed: pm.listIntentions('armed'), recent: pm.listIntentions().slice(-10) });
+      });
+
+      // ── Second-order ToM + binding moment ──
+      server.middlewares.use('/api/cortex/binding', async (req: any, res: any) => {
+        if (!setCortexCors(req, res)) return jsonRes(res, 403, { ok: false, error: 'forbidden' });
+        if (req.method === 'OPTIONS') { res.writeHead(204); return res.end(); }
+        const b = await import('./src/lib/cortex-agent/binding');
+        const tom = await import('./src/lib/cortex-agent/second-order-tom');
+        const agentId = new URL(req.url || '', 'http://x').searchParams.get('agent') || 'warden';
+        const action = new URL(req.url || '', 'http://x').searchParams.get('action') || 'patrol';
+        return jsonRes(res, 200, {
+          ok: true,
+          moment: b.bindNow(),
+          health: b.bindingHealth(),
+          secondOrder: tom.socialStrategyCheck(agentId, action),
+        });
+      });
+
       // ── Autobiography: the rewritten life story ──
       server.middlewares.use('/api/cortex/autobiography', (req: any, res: any) => {
         if (!setCortexCors(req, res)) return jsonRes(res, 403, { ok: false, error: 'forbidden' });
@@ -5996,6 +6030,26 @@ end tell`;
                   const run = args?.run === true;
                   const out = run ? { run: ma.runMetaArchitecture() } : { report: ma.metaArchitectureReport() };
                   return res.end(JSON.stringify({ ok: true, tool, action, ...out, durationMs: Date.now() - startMs }));
+                }
+                if (action === 'prospective') {
+                  const pm = await import('./src/lib/cortex-agent/prospective-memory');
+                  const sub = args?.op || 'list';
+                  if (sub === 'arm') {
+                    const i = pm.armIntention({ kinds: args?.kinds, pattern: String(args?.pattern || '') }, String(args?.note || ''));
+                    return res.end(JSON.stringify({ ok: true, tool, action, intention: i, durationMs: Date.now() - startMs }));
+                  }
+                  if (sub === 'cancel') return res.end(JSON.stringify({ ok: pm.cancelIntention(String(args?.id || '')), tool, action, durationMs: Date.now() - startMs }));
+                  return res.end(JSON.stringify({ ok: true, tool, action, armed: pm.listIntentions('armed'), durationMs: Date.now() - startMs }));
+                }
+                if (action === 'binding') {
+                  const b = await import('./src/lib/cortex-agent/binding');
+                  return res.end(JSON.stringify({ ok: true, tool, action, moment: b.bindNow(), health: b.bindingHealth(), durationMs: Date.now() - startMs }));
+                }
+                if (action === 'tom') {
+                  const tom = await import('./src/lib/cortex-agent/second-order-tom');
+                  const agentId = String(args?.agent || 'warden');
+                  const kind = String(args?.kind || 'patrol');
+                  return res.end(JSON.stringify({ ok: true, tool, action, mind: tom.secondOrderMind(agentId), strategy: tom.socialStrategyCheck(agentId, kind, String(args?.title || '')), durationMs: Date.now() - startMs }));
                 }
                 if (action === 'constitution') {
                   const c = await import('./src/lib/cortex-agent/constitution');

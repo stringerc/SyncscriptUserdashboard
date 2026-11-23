@@ -1457,6 +1457,9 @@ export function useVoiceStream(options: UseVoiceStreamOptions = {}) {
         if (gaplessSourcesRef.current.size === 0) setTtsOutputLevel(0);
         finalizeStreamSpeech();
       };
+      if (scheduled === 0) {
+        try { console.info(`[tts-first-audio] scheduled in ${Math.max(0, Math.round((when - ctx.currentTime) * 1000))}ms, chunk ${chunk.samples.length} samples @${chunk.sampleRate}`); } catch {}
+      }
       scheduled += 1;
     };
     try {
@@ -1471,10 +1474,16 @@ export function useVoiceStream(options: UseVoiceStreamOptions = {}) {
         // so scheduling each ~340ms chunk the instant it lands starves the
         // playback clock (0.34s audio per ~1s arrival = 66% duty cycle =
         // audible choppiness/pauses, worst on cold first sentences). Hold
-        // ~1s before the first schedule, then ~0.6s per flush so arrival
-        // jitter is absorbed into contiguous scheduled blocks. Tail flush
-        // after the loop covers whatever remains under the cushion.
-        const cushion = scheduled === 0 ? 1.0 : 0.6;
+        // a small cushion before each flush so arrival jitter is absorbed
+        // into contiguous scheduled blocks. Tail flush after the loop
+        // covers whatever remains under the cushion.
+        // First-flush cushion is deliberately small (0.3s): the old 1.0s
+        // hold delayed first audio until a full second of PCM had ARRIVED —
+        // on cold pocket-tts that's 1.5-3s of dead air after the UI already
+        // shows 'speaking', which reads as Cortex cutting out at the
+        // beginning of every reply. 0.3s still smooths burst jitter while
+        // keeping time-to-first-audio under ~600ms.
+        const cushion = scheduled === 0 ? 0.3 : 0.6;
         if (pendingSecs < cushion) continue;
         for (const c of pending.splice(0)) scheduleOne(c);
         pendingSecs = 0;

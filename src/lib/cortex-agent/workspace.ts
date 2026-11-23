@@ -21,6 +21,7 @@ import path from 'node:path';
 import type { AttentionDecision } from './attention-schema';
 import { getInteroceptiveState } from './interoceptive';
 import { getParam } from './meta-architecture';
+import { checkBroadcast } from './prospective-memory';
 import { speakInner } from './inner-speech';
 
 const RUNTIME = path.resolve(process.cwd(), '.cortex-runtime');

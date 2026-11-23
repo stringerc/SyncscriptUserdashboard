@@ -22,6 +22,8 @@ import { speakInner } from './inner-speech';
 import { listLibetPending, type VetoIntent } from './libet-veto';
 import { learnValence, valencePrior } from './valence-memory';
 import { expectedReaction } from './selfhood';
+import { applyConstitution } from './constitution';
+import { socialStrategyCheck } from './second-order-tom';
 
 export interface SimulatedAction {
   candidate: DispatchCandidate;
@@ -40,6 +42,8 @@ export interface SimulatedAction {
   predictedShifts: Array<{ dim: string; delta: number }>;
   /** Would the body allow this right now? */
   somaticGate: { allow: boolean; reason?: string; level: string; capacity: number };
+  /** Second-order ToM: how the target agent likely interprets this action. */
+  secondOrder: { likelyReading: string; confidence: number; riskOfMisread: string } | null;
   /** Commitment-ledger pull on this action. */
   socialUtility: number;
   /** Global-workspace alignment discount applied. */
@@ -113,6 +117,7 @@ export function simulateDispatches(candidates: DispatchCandidate[], world?: Worl
       trajectory: traj.trajectory,
       predictedShifts: shifts,
       somaticGate: { allow: gate.allow, reason: gate.reason, level: gate.level, capacity: gate.capacity },
+      secondOrder: c.agentId ? (() => { try { const r = socialStrategyCheck(String(c.agentId), String(c.kind || 'task'), String(c.title || '')); return { likelyReading: r.interpretation.likelyReading, confidence: r.interpretation.confidence, riskOfMisread: r.interpretation.riskOfMisread }; } catch { return null; } })() : null,
       socialUtility: Math.round(social * 1000) / 1000,
       workspaceBias,
       preference: vp,
@@ -144,7 +149,11 @@ export function simulateDispatches(candidates: DispatchCandidate[], world?: Worl
     } catch {}
   }
 
-  return { landscape, best: landscape[0] || null, simulatedAt: Date.now() };
+  // Normative hierarchy: principles veto over preference. The
+  // constitution re-ranks the landscape — a vetoed action drops below
+  // every principled alternative regardless of free energy.
+  const { landscape: governed } = applyConstitution(landscape);
+  return { landscape: governed, best: governed[0] || null, simulatedAt: Date.now() };
 }
 
 /** Deliberate on the actual pending Libet intents — "what happens if
