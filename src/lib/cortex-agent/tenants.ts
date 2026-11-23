@@ -162,7 +162,7 @@ export const AGENT_KINDS: Record<string, string[]> = {
   // antigravity intentionally absent: its worker decomposes arbitrary
   // kinds (comm/handoff are fast paths, everything else orchestrates).
   claudecode: ['cli_exec'],
-  openclaw: ['browser_navigate', 'dom_inspect', 'portal_submit'],
+  openclaw: ['browser_navigate', 'dom_inspect', 'portal_submit', 'gateway_task'],
   curator: ['audit_self', 'optimize_agent', 'radar_agents', 'radar_sweep'],
   distributor: ['distribution_status', 'reddit_draft'],
   prep: ['engagement_plan', 'initiative_drain', 'meeting_brief', 'mission_plan', 'prep_sweep'],

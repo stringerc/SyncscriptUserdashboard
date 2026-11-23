@@ -2989,6 +2989,81 @@ const openclawWorker: WorkerHandler = async (ctx) => {
 
   ctx.progress(0.1);
 
+  // gateway_task — REAL delegation to the OpenClaw gateway. Cortex is
+  // the governed brain; OpenClaw is the body with channel reach
+  // (WhatsApp/Telegram/iMessage/etc). One agent turn via
+  // `openclaw agent --json`, scoped to a dedicated cortex-bridge
+  // session so delegated work doesn't pollute the main session.
+  // Delivery to channels stays OFF unless input.deliver is set —
+  // slice 1 returns the reply to Cortex; outbound channel delivery
+  // is a separate governed decision.
+  if (ctx.task.kind === 'gateway_task') {
+    const agentId = str(ctx.task.input.agent);
+    const model = str(ctx.task.input.model);
+    const sessionId = str(ctx.task.input.sessionId) || 'cortex-bridge';
+    const deliver = ctx.task.input.deliver === true;
+    const replyChannel = str(ctx.task.input.replyChannel);
+    const replyTo = str(ctx.task.input.replyTo);
+    const timeoutSec = Math.max(15, Math.min(300, Number(ctx.task.input.timeoutSec) || 120));
+    const bin = process.env.OPENCLAW_BIN || 'openclaw';
+
+    const args = ['agent', '--json', '--timeout', String(timeoutSec), '--session-id', sessionId];
+    if (agentId) args.push('--agent', agentId);
+    if (model) args.push('--model', model);
+    if (deliver) args.push('--deliver');
+    if (replyChannel) args.push('--reply-channel', replyChannel);
+    if (replyTo) args.push('--reply-to', replyTo);
+    args.push('--message', instruction.slice(0, 8000));
+
+    ctx.progress(0.3);
+    const { stdout, stderr } = await new Promise<{ stdout: string; stderr: string }>((resolve, reject) => {
+      execFile(bin, args, { timeout: (timeoutSec + 15) * 1000, maxBuffer: 4 * 1024 * 1024 }, (err: any, so: string, se: string) => {
+        // CLI prints its JSON result to stdout even on agent-level
+        // failure; only a spawn/timeout error rejects.
+        if (err && !so) reject(err);
+        else resolve({ stdout: String(so || ''), stderr: String(se || '') });
+      });
+    });
+
+    ctx.progress(0.85);
+    let parsed: any = null;
+    try {
+      const start = stdout.indexOf('{');
+      if (start >= 0) parsed = JSON.parse(stdout.slice(start));
+    } catch {}
+
+    const gwResult = parsed?.result || {};
+    const replyText = String(gwResult.finalAssistantVisibleText || gwResult.finalAssistantRawText || parsed?.summary || '').trim();
+    const agentError = gwResult.error?.message || parsed?.error?.message || null;
+    const ok = parsed?.ok === true || (parsed?.status === 'ok') || (!!replyText && !agentError);
+
+    ctx.progress(1);
+    const result = {
+      ok,
+      agent: 'openclaw',
+      kind: ctx.task.kind,
+      gateway: 'openclaw',
+      runId: parsed?.runId || null,
+      sessionId,
+      reply: replyText.slice(0, 8000) || null,
+      delivered: deliver || undefined,
+      provider: gwResult.agentMeta?.provider || undefined,
+      model: gwResult.agentMeta?.model || undefined,
+      durationMs: gwResult.meta?.durationMs || undefined,
+      error: ok ? undefined : (agentError || stderr.slice(0, 300) || 'openclaw agent turn failed'),
+      summary: ok
+        ? `OpenClaw turn complete (${gwResult.agentMeta?.provider || 'gateway'}${gwResult.agentMeta?.model ? '/' + gwResult.agentMeta.model : ''}) — reply captured, ${replyText.length} chars`
+        : `OpenClaw turn failed: ${String(agentError || 'unknown').slice(0, 200)}`,
+    };
+    // A failed delegation is a FAILED task, not a completed one — throw so
+    // the runtime records status:'failed' + error honestly. runId/session
+    // survive inside the message for correlation.
+    if (!ok) {
+      throw new Error(`gateway_task failed (runId=${result.runId || 'n/a'}, session=${sessionId}): ${String(result.error).slice(0, 260)}`);
+    }
+    return result;
+  }
+
   // If browser navigation or execution via cortex-browser-bridge
   const url = str(ctx.task.input.url);
   const action = str(ctx.task.input.action || (ctx.task.kind === 'dom_inspect' ? 'inspect' : ctx.task.kind === 'portal_submit' ? 'submit' : 'navigate'));
