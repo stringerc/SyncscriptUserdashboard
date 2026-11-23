@@ -130,7 +130,7 @@ const TOOL_TURN_RE = new RegExp(
   [
     'https?://',                          // explicit URL
     '\\b(fetch|pull up|open|browse|scrape|read|show me|find|search|look up|'
-    + 'google|check|inspect|scan|analy[sz]e|summari[sz]e|explain\s+this\s+(?:file|code|error)|'
+    + 'google|inspect|scan|analy[sz]e|summari[sz]e|explain\s+this\s+(?:file|code|error)|'
     + 'run|execute|launch|install|deploy|build|compile|test|debug|fix|'
     + 'list|ls\\b|dir\\b|what(?:\'s| is)\s+in|show\s+(?:me\s+)?(?:the\s+)?(?:files?|directory|folder|contents)|'
     + 'read\s+(?:the\s+)?(?:file|code|log|config)|'
@@ -155,7 +155,12 @@ export function turnLikelyNeedsTools(text: string): boolean {
   return TOOL_TURN_RE.test(t);
 }
 const MAX_TOOL_CALLS_PER_STEP = 2;
-const REQUEST_TIMEOUT_MS = 60_000;
+// 30s per key attempt: with a ~14-provider reason chain, 60s timeouts
+// could burn 90s+ before failover — past the voice turn deadline.
+const REQUEST_TIMEOUT_MS = 30_000;
+// Whole-loop wall clock: past this, return what we have gracefully
+// instead of letting the client deadline abort mid-thought.
+const MAX_LOOP_MS = 75_000;
 const HEARTBEAT_MS = 8_000;
 
 /** Wrap executeTool with periodic ping events so SSE clients with
@@ -599,10 +604,19 @@ export async function runAgenticTurn(
     steps = 1;
   }
 
+  const loopStart = Date.now();
   for (; steps < maxSteps; steps++) {
+    // Whole-loop deadline: bail gracefully before the client turn timeout.
+    if (Date.now() - loopStart > MAX_LOOP_MS) {
+      return {
+        content: finalContent || 'That took longer than I like — the provider chain is degraded right now. Say "retry" and I will run it again.',
+        steps, toolCalls: executed, provider: lastProvider,
+        error: 'loop deadline exceeded',
+      };
+    }
     // ── LLM call across provider chain (first OK wins) ──
-    // Heartbeat: non-streaming provider calls can take 10-60s; silence
-    // would trip client watchdogs (voice: 12s token-silence abort).
+    // Heartbeat: provider calls can take 10-30s; silence would trip
+    // client watchdogs (voice: 12s token-silence abort).
     const llmBeat = deps.emit ? setInterval(() => {
       try { deps.emit!({ type: 'ping', tool: 'llm' }); } catch {}
     }, HEARTBEAT_MS) : null;
@@ -610,6 +624,9 @@ export async function runAgenticTurn(
     let chainError: any = null;
     try {
       for (const prov of deps.providers) {
+        // Provider-try telemetry: which lane is being attempted — makes
+        // chain degradation visible in the SSE stream instead of silent pings.
+        try { deps.emit?.({ type: 'provider_try', provider: prov.name, model: prov.model }); } catch {}
         try {
           // Stream OpenAI-compatible providers live; Anthropic stays
           // non-streaming (its SSE block protocol is a separate parser).

@@ -2081,6 +2081,32 @@ MANDATORY: weave a 3-4 sentence spoken "state of being" answer citing at least o
       state.turnTimedOut = false;
       state.interruptRequested = false;
       turnAbortRef.current = new AbortController();
+
+      // ── Thinking filler ──
+      // Long provider/tool waits are dead air — after ~2.8s of thinking
+      // with no speech, say a short human filler; one more at ~11s if the
+      // turn is still grinding. Never fires while Cortex is already
+      // talking, after interrupt, or once the turn went stale.
+      const THINKING_FILLERS = [
+        'Give me a moment…',
+        'Still thinking…',
+        'One sec — digging into it…',
+        'Hang tight…',
+        'Working on it…',
+      ];
+      let lastFillerIdx = -1;
+      const fillerAt = (delayMs: number, slot: number) => {
+        setTimeout(() => {
+          if (cancelled || stale() || state.interruptRequested || !state.turnInFlight) return;
+          if (vsRef.current.isSpeaking) return; // already talking — no filler needed
+          let idx = Math.floor(Math.random() * THINKING_FILLERS.length);
+          if (idx === lastFillerIdx) idx = (idx + 1) % THINKING_FILLERS.length;
+          lastFillerIdx = idx;
+          speakSentence(THINKING_FILLERS[idx], false);
+        }, delayMs);
+      };
+      fillerAt(2800, 0);
+      fillerAt(11000, 1);
       // Hard turn deadline: tool hops + streams are individually bounded but
       // can stack past 4 minutes — a turn that runs that long is dead air.
       // Abort at 90s; the catch speaks an honest timeout instead of hanging
