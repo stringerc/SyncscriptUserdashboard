@@ -693,5 +693,46 @@ export async function runAgenticTurn(
     }
   }
 
+  // ── Synthesis fallback ──────────────────────────────────────────
+  // Step budget exhausted mid-investigation: tools ran but the model
+  // never produced prose, so finalContent is still ''. Without this the
+  // caller emits a bare "Done." — the user gets nothing. Force one last
+  // provider call with tools removed and an explicit "answer now"
+  // instruction so every turn ends with a real answer or an honest
+  // "here is what I found" partial.
+  if (!finalContent) {
+    messages.push({
+      role: 'user',
+      content: '[Host] Investigation step budget reached — no more tool calls are available. Using ONLY what you already gathered, give the user your complete answer now: what you found, what it means, and what to do next. If key data is missing, say exactly what is unknown rather than inventing it.',
+    });
+    const synthBeat = deps.emit ? setInterval(() => {
+      try { deps.emit!({ type: 'ping', tool: 'llm' }); } catch {}
+    }, HEARTBEAT_MS) : null;
+    let synth: LLMTurnResult | null = null;
+    for (const prov of deps.providers) {
+      try { deps.emit?.({ type: 'provider_try', provider: prov.name, model: prov.model }); } catch {}
+      try {
+        synth = prov.protocol === 'anthropic'
+          ? await callProviderOnce(prov, messages, systemPrompt, [], maxTokens, temperature)
+          : await callProviderOnceStreaming(prov, messages, systemPrompt, [], maxTokens, temperature, deps.emitToken, deps.emit);
+        lastProvider = `${prov.name}:${prov.model}`;
+        break;
+      } catch { continue; }
+    }
+    if (synthBeat) clearInterval(synthBeat);
+    if (synth?.content) {
+      if (synth.tailPending) {
+        try { deps.emitToken?.(synth.tailPending); } catch {}
+      }
+      contentStreamed = synth.tailPending !== undefined;
+      finalContent = synth.content;
+    } else {
+      const ranTools = executed.map(t => t.tool).filter((v, i, a) => a.indexOf(v) === i).join(', ');
+      finalContent = ranTools
+        ? `I hit my step limit mid-investigation after running ${ranTools} — the provider chain didn't return a summary in time. Say "continue" and I'll pick up from what I found.`
+        : 'I could not complete that turn — the provider chain returned nothing. Say "retry" and I will run it again.';
+    }
+  }
+
   return { content: finalContent, steps, toolCalls: executed, provider: lastProvider, contentStreamed };
 }

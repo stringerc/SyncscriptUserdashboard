@@ -10985,9 +10985,13 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
                   const sessionId = agenticSessionId;
                   // Sovereign autonomy: bypass-permissions directive when on.
                   const autonomyMode = getAutonomyMode();
+                  // Workspace grounding: without the absolute root the model
+                  // burns its whole step budget hunting for the project dir
+                  // (observed: 6/6 steps on list_dir/find before giving up).
+                  const WORKSPACE_NOTE = `\n\n[WORKSPACE] Host working directory: ${process.cwd()} — the SyncScript repository root. run_command, list_dir, read_file, search_code and create_document resolve relative paths here by default. Prefer relative paths; do NOT search /Users or $HOME for the project — you are already inside it.`;
                   const agentSysContent = autonomyMode === 'autonomous'
-                    ? `${sysContentFull}${AUTONOMY_DIRECTIVE}`
-                    : sysContentFull;
+                    ? `${sysContentFull}${WORKSPACE_NOTE}${AUTONOMY_DIRECTIVE}`
+                    : `${sysContentFull}${WORKSPACE_NOTE}`;
                   const agentMessages: AgentMessage[] = trimmedMsgs.map((m: any) => ({
                     role: m.role === 'assistant' ? 'assistant' : 'user',
                     content: String(m.content || ''),
@@ -11067,7 +11071,7 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
                     providers: agenticProviders,
                     executeTool,
                     tools: CORTEX_TOOLS,
-                    maxSteps: 6,
+                    maxSteps: 8,
                     maxTokens: 4096,
                     temperature: 0.2,
                     initialToolCall,
@@ -11082,7 +11086,7 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
                     if (offer) recordOffer(sessionId, offer, loopResult.content || '');
                   } catch {}
 
-                  const finalText = loopResult.content || 'Done.';
+                  const finalText = loopResult.content || 'I hit a snag finishing that — say "retry" and I will run it again.';
                   if (parsed.internal !== true) { try { recordContinuityTurn(continuitySid, latestUserMessage, finalText); } catch {} }
                   // Streamed providers already emitted tokens live — only
                   // replay for non-streaming (anthropic) final answers.
