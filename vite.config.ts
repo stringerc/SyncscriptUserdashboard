@@ -1189,7 +1189,7 @@ const CORTEX_TOOLS = [
       parameters: {
         type: 'object',
         properties: {
-          action: { type: 'string', enum: ['proprioception', 'attention', 'libet', 'veto', 'amend', 'hold', 'world', 'self', 'plan', 'dream', 'social', 'monologue', 'dynamics', 'workspace', 'simulate', 'valence', 'reaction', 'autobiography', 'meta', 'constitution', 'prospective', 'binding', 'tom'], description: 'Which self-model surface to query' },
+          action: { type: 'string', enum: ['proprioception', 'attention', 'libet', 'veto', 'amend', 'hold', 'world', 'self', 'plan', 'dream', 'social', 'monologue', 'dynamics', 'workspace', 'simulate', 'valence', 'reaction', 'autobiography', 'meta', 'constitution', 'prospective', 'binding', 'tom', 'quantum', 'causal', 'selfmod'], description: 'Which self-model surface to query' },
           id: { type: 'string', description: 'Veto intent id for action=veto (from libet pending)' },
           limit: { type: 'number', description: 'Max trace entries (default 10)' }
         },
@@ -3946,6 +3946,52 @@ function apiProxyPlugin(): Plugin {
         return jsonRes(res, 200, { ok: true, added, stats: vm.valenceStats() });
       });
 
+      // ── Quantum calibration: belief fidelity ──
+      server.middlewares.use('/api/cortex/quantum', async (req: any, res: any) => {
+        if (!setCortexCors(req, res)) return jsonRes(res, 403, { ok: false, error: 'forbidden' });
+        if (req.method === 'OPTIONS') { res.writeHead(204); return res.end(); }
+        const q = await import('./src/lib/cortex-agent/quantum-calibration');
+        return jsonRes(res, 200, { ok: true, report: q.quantumCalibrationReport() });
+      });
+
+      // ── Causal inference: correlation vs causation ──
+      server.middlewares.use('/api/cortex/causal', async (req: any, res: any) => {
+        if (!setCortexCors(req, res)) return jsonRes(res, 403, { ok: false, error: 'forbidden' });
+        if (req.method === 'OPTIONS') { res.writeHead(204); return res.end(); }
+        const c = await import('./src/lib/cortex-agent/causal-inference');
+        return jsonRes(res, 200, { ok: true, ...c.causalReport() });
+      });
+
+      // ── Self-modification: gated architecture evolution ──
+      server.middlewares.use('/api/cortex/self-mod', async (req: any, res: any) => {
+        if (!setCortexCors(req, res)) return jsonRes(res, 403, { ok: false, error: 'forbidden' });
+        if (req.method === 'OPTIONS') { res.writeHead(204); return res.end(); }
+        const sm = await import('./src/lib/cortex-agent/self-modification');
+        if (req.method === 'POST') {
+          const body = JSON.parse(await readBody(req) || '{}');
+          if (body?.propose) {
+            const p = sm.proposeSelfModification(
+              String(body.surfaceId || ''), String(body.changeType || ''),
+              String(body.description || ''), String(body.patch || ''), String(body.rationale || ''),
+            );
+            return jsonRes(res, 200, { ok: true, proposal: p });
+          }
+          if (body?.approve) {
+            const p = sm.approveSelfModification(String(body.id || ''), String(body.by || 'user'));
+            return jsonRes(res, p ? 200 : 404, { ok: !!p, proposal: p });
+          }
+          if (body?.apply) {
+            const r = sm.applySelfModification(String(body.id || ''));
+            return jsonRes(res, r.ok ? 200 : 400, { ok: r.ok, ...r });
+          }
+          if (body?.rollback) {
+            const r = sm.rollbackSelfModification(String(body.id || ''));
+            return jsonRes(res, r.ok ? 200 : 400, { ok: r.ok, ...r });
+          }
+        }
+        return jsonRes(res, 200, { ok: true, ...sm.selfModReport() });
+      });
+
       // ── Prospective memory: cue-bound intentions ──
       server.middlewares.use('/api/cortex/prospective', async (req: any, res: any) => {
         if (!setCortexCors(req, res)) return jsonRes(res, 403, { ok: false, error: 'forbidden' });
@@ -6050,6 +6096,36 @@ end tell`;
                   const agentId = String(args?.agent || 'warden');
                   const kind = String(args?.kind || 'patrol');
                   return res.end(JSON.stringify({ ok: true, tool, action, mind: tom.secondOrderMind(agentId), strategy: tom.socialStrategyCheck(agentId, kind, String(args?.title || '')), durationMs: Date.now() - startMs }));
+                }
+                if (action === 'quantum') {
+                  const q = await import('./src/lib/cortex-agent/quantum-calibration');
+                  return res.end(JSON.stringify({ ok: true, tool, action, report: q.quantumCalibrationReport(), durationMs: Date.now() - startMs }));
+                }
+                if (action === 'causal') {
+                  const c = await import('./src/lib/cortex-agent/causal-inference');
+                  const r = c.causalReport();
+                  return res.end(JSON.stringify({ ok: true, tool, action, summary: r.summary, topEstimates: r.estimates.slice(0, 10), durationMs: Date.now() - startMs }));
+                }
+                if (action === 'selfmod') {
+                  const sm = await import('./src/lib/cortex-agent/self-modification');
+                  const op = args?.op || 'report';
+                  if (op === 'propose') {
+                    const p = sm.proposeSelfModification(String(args?.surface || ''), String(args?.changeType || ''), String(args?.description || ''), String(args?.patch || ''), String(args?.rationale || ''));
+                    return res.end(JSON.stringify({ ok: true, tool, action, proposal: p, durationMs: Date.now() - startMs }));
+                  }
+                  if (op === 'approve') {
+                    const p = sm.approveSelfModification(String(args?.id || ''), String(args?.by || 'user'));
+                    return res.end(JSON.stringify({ ok: !!p, tool, action, proposal: p, durationMs: Date.now() - startMs }));
+                  }
+                  if (op === 'apply') {
+                    const r = sm.applySelfModification(String(args?.id || ''));
+                    return res.end(JSON.stringify({ ok: r.ok, tool, action, ...r, durationMs: Date.now() - startMs }));
+                  }
+                  if (op === 'rollback') {
+                    const r = sm.rollbackSelfModification(String(args?.id || ''));
+                    return res.end(JSON.stringify({ ok: r.ok, tool, action, ...r, durationMs: Date.now() - startMs }));
+                  }
+                  return res.end(JSON.stringify({ ok: true, tool, action, ...sm.selfModReport(), durationMs: Date.now() - startMs }));
                 }
                 if (action === 'constitution') {
                   const c = await import('./src/lib/cortex-agent/constitution');
