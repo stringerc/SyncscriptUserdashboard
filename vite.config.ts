@@ -272,6 +272,7 @@ import { armVeto, vetoLibet, listLibetPending, libetTrace, resumeLibetTimers } f
 import { attend, attentionTrace, scoreCandidate, type AttentionCandidate } from './src/lib/cortex-agent/attention-schema';
 import { getProprioception } from './src/lib/cortex-agent/proprioception';
 import { observeWorld, queryWorldModel, topLeverage, scoreDispatch } from './src/lib/cortex-agent/world-model';
+import { getSelfhood } from './src/lib/cortex-agent/selfhood';
 
 // Unhandled-rejection guard: Node crashes the ENTIRE process on any
 // unhandled rejection. AbortError rejections are routine cancellation
@@ -1184,7 +1185,7 @@ const CORTEX_TOOLS = [
       parameters: {
         type: 'object',
         properties: {
-          action: { type: 'string', enum: ['proprioception', 'attention', 'libet', 'veto', 'world'], description: 'Which self-model surface to query' },
+          action: { type: 'string', enum: ['proprioception', 'attention', 'libet', 'veto', 'world', 'self'], description: 'Which self-model surface to query' },
           id: { type: 'string', description: 'Veto intent id for action=veto (from libet pending)' },
           limit: { type: 'number', description: 'Max trace entries (default 10)' }
         },
@@ -3731,6 +3732,13 @@ function apiProxyPlugin(): Plugin {
       worldModelTimer.unref?.();
       try { observeWorld(); } catch {}
 
+      // ── Selfhood: narrative self + metacognition + fleet ToM ──
+      server.middlewares.use('/api/cortex/selfhood', (req: any, res: any) => {
+        if (!setCortexCors(req, res)) return jsonRes(res, 403, { ok: false, error: 'forbidden' });
+        if (req.method === 'OPTIONS') { res.writeHead(204); return res.end(); }
+        return jsonRes(res, 200, { ok: true, ...getSelfhood() });
+      });
+
       // ── Fleet sidecar control (/api/cortex/fleet/*) ──
       // Lazy nodes are dark by design (RAM conservation) — this is the
       // wake-on-demand surface: clients warm the voice stack on session
@@ -5694,6 +5702,16 @@ end tell`;
                 if (action === 'veto') {
                   const ok = vetoLibet(String(args?.id || ''), 'cortex');
                   return res.end(JSON.stringify({ ok, tool, action, vetoed: ok, durationMs: Date.now() - startMs }));
+                }
+                if (action === 'self') {
+                  const which = String(args?.which || 'all');
+                  const sh = await import('./src/lib/cortex-agent/selfhood');
+                  const out: any = { ok: true, tool, action };
+                  if (which === 'all' || which === 'narrative') out.narrative = sh.getNarrative();
+                  if (which === 'all' || which === 'metacognition') out.metacognition = sh.getMetacognition();
+                  if (which === 'all' || which === 'fleet' || which === 'tom') out.fleetMinds = sh.getFleetMinds();
+                  out.durationMs = Date.now() - startMs;
+                  return res.end(JSON.stringify(out));
                 }
                 if (action === 'world') {
                   const { observeWorld: obs, queryWorldModel: qry, topLeverage: lev } = await import('./src/lib/cortex-agent/world-model');
