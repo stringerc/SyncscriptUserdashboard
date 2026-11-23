@@ -160,7 +160,10 @@ const MAX_TOOL_CALLS_PER_STEP = 2;
 const REQUEST_TIMEOUT_MS = 30_000;
 // Whole-loop wall clock: past this, return what we have gracefully
 // instead of letting the client deadline abort mid-thought.
-const MAX_LOOP_MS = 75_000;
+// Whole-loop deadline must stay under the voice turn ceiling (~200s)
+// so a slow-but-progressing turn finishes instead of asking the user
+// to say "retry". Genuine stalls still die here.
+const MAX_LOOP_MS = 170_000;
 const HEARTBEAT_MS = 8_000;
 
 /** Wrap executeTool with periodic ping events so SSE clients with

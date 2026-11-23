@@ -12448,7 +12448,13 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
                     }
                   } catch {}
 
-                  const loopResult = await runAgenticTurn(agentSysContent, agentMessages, {
+                  // Autonomous retry: when the loop returns nothing usable
+                  // AND no tools executed, the failure is a pure provider
+                  // flake — safe to retry once without duplicating side
+                  // effects. Once tools have run we never auto-retry (a
+                  // second pass could repeat real actions); the honest
+                  // fallback message stands instead.
+                  const runTurn = () => runAgenticTurn(agentSysContent, agentMessages, {
                     providers: agenticProviders,
                     executeTool,
                     tools: CORTEX_TOOLS,
@@ -12459,6 +12465,13 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
                     emit: (ev) => { try { res.write(`data: ${JSON.stringify(ev)}\n\n`); } catch {} },
                     emitToken: (t) => { try { res.write(`data: ${JSON.stringify({ token: t })}\n\n`); } catch {} },
                   });
+                  let loopResult = await runTurn();
+                  const unusable = (!loopResult.content || loopResult.error)
+                    && loopResult.error !== 'loop deadline exceeded'; // a second 170s pass would blow the voice ceiling
+                  if (unusable && loopResult.toolCalls.length === 0) {
+                    try { res.write(`data: ${JSON.stringify({ type: 'auto_retry', attempt: 2, reason: String(loopResult.error || 'empty response').slice(0, 120) })}\n\n`); } catch {}
+                    loopResult = await runTurn();
+                  }
 
                   // Record a new pending offer from the final answer so the
                   // next affirmation resumes it — closes the "go ahead" loop.
