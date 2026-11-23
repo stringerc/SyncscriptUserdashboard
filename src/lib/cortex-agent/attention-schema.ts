@@ -15,6 +15,7 @@ import fs from 'node:fs';
 import { speakInner } from './inner-speech';
 import { broadcastAttention, workspaceBias } from './workspace';
 import { getInteroceptiveState } from './interoceptive';
+import { getParam } from './meta-architecture';
 import path from 'node:path';
 
 const DIR = path.join(process.cwd(), '.cortex-runtime');
@@ -24,7 +25,7 @@ const HALF_LIFE_MS = 10 * 60_000; // salience halves every 10 min
 
 export type AttentionKind = 'system' | 'ambient' | 'goal' | 'user' | 'proprioception' | 'interoception' | 'inner';
 
-const KIND_WEIGHT: Record<AttentionKind, number> = {
+const KIND_WEIGHT_STATIC: Record<AttentionKind, number> = {
   user: 1.0,           // direct address always wins
   system: 0.9,         // alerts, crashes, budget walls
   goal: 0.7,           // drift, forecasts, escalations
@@ -32,6 +33,13 @@ const KIND_WEIGHT: Record<AttentionKind, number> = {
   proprioception: 0.4, // limb state changes
   inner: 0.55,         // self-talk — salient but below system
   ambient: 0.35,       // observations, chatter
+};
+// ambient + inner are meta-architecture tunable — she can adjust how
+// much chatter and self-talk compete after counterfactual evaluation.
+const kindWeightOf = (k: AttentionKind): number => {
+  if (k === 'ambient') return getParam('kindWeight.ambient');
+  if (k === 'inner') return getParam('kindWeight.inner');
+  return KIND_WEIGHT_STATIC[k];
 };
 
 export interface AttentionCandidate {
@@ -58,7 +66,7 @@ export interface AttentionDecision {
 export function scoreCandidate(c: AttentionCandidate, now = Date.now()): ScoredCandidate {
   const ageMs = Math.max(0, now - c.ts);
   const recency = Math.pow(0.5, ageMs / HALF_LIFE_MS);
-  const kindWeight = KIND_WEIGHT[c.kind] ?? 0.4;
+  const kindWeight = kindWeightOf(c.kind);
   const relevance = 1 + 0.5 * Math.min(1, Math.max(0, c.goalRelevance ?? 0));
   const priority = c.priority ?? 0.5;
   const score = kindWeight * (0.35 + 0.65 * recency) * relevance * (0.7 + 0.6 * priority);
@@ -138,8 +146,8 @@ export function attend(candidates: AttentionCandidate[], now = Date.now()): Atte
     const wBias = workspaceBias(c.kind);
     let sBias = 0;
     if (somaticUrgency > 0) {
-      if (c.kind === 'system' || c.kind === 'interoception') sBias = 0.15 * somaticUrgency;
-      else if (c.kind === 'ambient' || c.kind === 'inner') sBias = -0.05 * somaticUrgency;
+      if (c.kind === 'system' || c.kind === 'interoception') sBias = getParam('somatic.systemBoost') * somaticUrgency;
+      else if (c.kind === 'ambient' || c.kind === 'inner') sBias = -getParam('somatic.ambientDampen') * somaticUrgency;
     }
     const totalBias = wBias + sBias;
     if (totalBias !== 0) {

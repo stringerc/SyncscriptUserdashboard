@@ -1189,7 +1189,7 @@ const CORTEX_TOOLS = [
       parameters: {
         type: 'object',
         properties: {
-          action: { type: 'string', enum: ['proprioception', 'attention', 'libet', 'veto', 'amend', 'hold', 'world', 'self', 'plan', 'dream', 'social', 'monologue', 'dynamics', 'workspace', 'simulate', 'valence', 'reaction'], description: 'Which self-model surface to query' },
+          action: { type: 'string', enum: ['proprioception', 'attention', 'libet', 'veto', 'amend', 'hold', 'world', 'self', 'plan', 'dream', 'social', 'monologue', 'dynamics', 'workspace', 'simulate', 'valence', 'reaction', 'autobiography', 'meta', 'constitution'], description: 'Which self-model surface to query' },
           id: { type: 'string', description: 'Veto intent id for action=veto (from libet pending)' },
           limit: { type: 'number', description: 'Max trace entries (default 10)' }
         },
@@ -3946,6 +3946,30 @@ function apiProxyPlugin(): Plugin {
         return jsonRes(res, 200, { ok: true, added, stats: vm.valenceStats() });
       });
 
+      // ── Autobiography: the rewritten life story ──
+      server.middlewares.use('/api/cortex/autobiography', (req: any, res: any) => {
+        if (!setCortexCors(req, res)) return jsonRes(res, 403, { ok: false, error: 'forbidden' });
+        if (req.method === 'OPTIONS') { res.writeHead(204); return res.end(); }
+        return import('./src/lib/cortex-agent/autobiography').then((m) =>
+          jsonRes(res, 200, { ok: true, autobiography: m.getAutobiography(req.method === 'POST') }));
+      });
+
+      // ── Meta-architecture: cognitive plasticity ──
+      server.middlewares.use('/api/cortex/meta-architecture', async (req: any, res: any) => {
+        if (!setCortexCors(req, res)) return jsonRes(res, 403, { ok: false, error: 'forbidden' });
+        if (req.method === 'OPTIONS') { res.writeHead(204); return res.end(); }
+        const ma = await import('./src/lib/cortex-agent/meta-architecture');
+        if (req.method === 'POST') {
+          const body = JSON.parse(await readBody(req) || '{}');
+          if (body?.run) {
+            const result = ma.runMetaArchitecture();
+            return jsonRes(res, 200, { ok: true, ...result });
+          }
+          return jsonRes(res, 200, { ok: true, report: ma.metaArchitectureReport() });
+        }
+        return jsonRes(res, 200, { ok: true, report: ma.metaArchitectureReport() });
+      });
+
       // ── Selfhood: narrative self + metacognition + fleet ToM ──
       server.middlewares.use('/api/cortex/selfhood', (req: any, res: any) => {
         if (!setCortexCors(req, res)) return jsonRes(res, 403, { ok: false, error: 'forbidden' });
@@ -5961,6 +5985,21 @@ end tell`;
                     trust: ts(),
                     durationMs: Date.now() - startMs,
                   }));
+                }
+                if (action === 'autobiography') {
+                  const ab = await import('./src/lib/cortex-agent/autobiography');
+                  const force = args?.rewrite === true || args?.force === true;
+                  return res.end(JSON.stringify({ ok: true, tool, action, autobiography: ab.getAutobiography(force), durationMs: Date.now() - startMs }));
+                }
+                if (action === 'meta') {
+                  const ma = await import('./src/lib/cortex-agent/meta-architecture');
+                  const run = args?.run === true;
+                  const out = run ? { run: ma.runMetaArchitecture() } : { report: ma.metaArchitectureReport() };
+                  return res.end(JSON.stringify({ ok: true, tool, action, ...out, durationMs: Date.now() - startMs }));
+                }
+                if (action === 'constitution') {
+                  const c = await import('./src/lib/cortex-agent/constitution');
+                  return res.end(JSON.stringify({ ok: true, tool, action, report: c.constitutionReport(), durationMs: Date.now() - startMs }));
                 }
                 if (action === 'valence') {
                   const vm = await import('./src/lib/cortex-agent/valence-memory');

@@ -34,6 +34,7 @@ import { recentMonologue } from './inner-speech';
 import { dynamicsReport } from './empirical-dynamics';
 import { workspaceStats, broadcastHistory } from './workspace';
 import { valencePrior, recentValenceArc } from './valence-memory';
+import { getAutobiography } from './autobiography';
 
 const RUNTIME = path.resolve(process.cwd(), '.cortex-runtime');
 const readJsonl = (f: string, tail = 400) => {
@@ -390,6 +391,7 @@ export function getSelfhood() {
     dynamics: (() => { try { const r = dynamicsReport(); return { learnedDims: r.classes.reduce((a, c) => a + c.learned, 0), classes: r.classes.length, processedTasks: r.processedTasks }; } catch { return null; } })(),
     valence: (() => { try { return recentValenceArc(30); } catch { return null; } })(),
     user: userModel(),
+    autobiography: (() => { try { const ab = getAutobiography(); return { claims: ab.identityClaims.length, themes: ab.themes.length, turningPoints: ab.turningPoints.length, generatedAt: ab.generatedAt }; } catch { return null; } })(),
     workspace: (() => { try { const w = workspaceStats(); return { ignited: w.ignited, ignitionRate: w.ignitionRate, current: w.current ? { kind: w.current.kind, text: w.current.text.slice(0, 80) } : null }; } catch { return null; } })(),
   };
 }

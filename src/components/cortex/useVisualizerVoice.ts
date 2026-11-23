@@ -1238,6 +1238,17 @@ export function useVisualizerVoice(enabled: boolean, onState: (speaking: boolean
       tool: string; args: Record<string, any>; spec: any;
       agentId: string; kind: string; title: string; at: number;
     } };
+    // Barge-in grace: the first ~1.2s of Cortex's speech is the most
+    // echo-prone (loudest phonemes, mic AGC settling). A mis-transcribed
+    // fragment of her own opening must clear a much stricter bar to
+    // count as genuine interruption — otherwise her voice cuts itself
+    // off at the start of every reply.
+    const bargeInAllowed = (echoMatchRatio: number, wordCount: number, hasInterrupt: boolean): boolean => {
+      if (hasInterrupt) return true; // explicit "stop"-class words always work
+      const speechAge = state.speakingSince ? performance.now() - state.speakingSince : Infinity;
+      if (speechAge < 1200) return wordCount >= 4 && echoMatchRatio < 0.15;
+      return wordCount >= 3 && echoMatchRatio < 0.35;
+    };
     // Two-tier speech finish window (instant control commands vs 850ms conversational buffer)
     const speechFinishTimerRef = { current: null as any };
     const speechAccumulatorRef = { current: '' };
@@ -2656,7 +2667,8 @@ MANDATORY: weave a 3-4 sentence spoken "state of being" answer citing at least o
         // Non-interrupt barge-in also requires LOW token overlap with what
         // Cortex is saying — mis-transcribed TTS (names, numbers, accents)
         // produces ≥3 "novel" words and was cutting replies off mid-sentence.
-        if (aiSpeaking && (fInterrupt || (fw.length >= 3 && echo.matchRatio < 0.35))) {
+        // Speech-age grace tightens the bar during the first 1.2s.
+        if (aiSpeaking && bargeInAllowed(echo.matchRatio, fw.length, fInterrupt)) {
           vsRef.current.stopSpeaking();
           state.interruptRequested = true;
           state.wakeBypassUntil = Date.now() + WAKE_BYPASS_MS;
@@ -2855,7 +2867,7 @@ MANDATORY: weave a 3-4 sentence spoken "state of being" answer citing at least o
         // cut Cortex off mid-sentence.
         const words = text.split(/\s+/).filter(Boolean);
         const hasInterrupt = words.some((w) => INTERRUPT_COMMANDS.has(w.toLowerCase()));
-        if (aiSpeaking && (hasInterrupt || (words.length >= 3 && echo.matchRatio < 0.35))) {
+        if (aiSpeaking && bargeInAllowed(echo.matchRatio, words.length, hasInterrupt)) {
           vsRef.current.stopSpeaking();
           state.interruptRequested = true;
           state.wakeBypassUntil = Date.now() + WAKE_BYPASS_MS;

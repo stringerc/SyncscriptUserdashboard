@@ -20,6 +20,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import type { AttentionDecision } from './attention-schema';
 import { getInteroceptiveState } from './interoceptive';
+import { getParam } from './meta-architecture';
 import { speakInner } from './inner-speech';
 
 const RUNTIME = path.resolve(process.cwd(), '.cortex-runtime');
@@ -28,8 +29,10 @@ const MAX = 300;
 
 /** A winner must clear this score AND beat the runner-up by this
  *  margin to ignite — below that it's selected but not broadcast. */
-const IGNITE_SCORE = 0.45;
-const IGNITE_MARGIN = 0.08;
+// Tunable via meta-architecture — she can adjust her own ignition bar
+// after counterfactual evaluation, not just live with fixed code.
+const igniteScore = () => getParam('ignite.score');
+const igniteMargin = () => getParam('ignite.margin');
 
 export interface Broadcast {
   id: string;
@@ -75,9 +78,9 @@ export function broadcastAttention(decision: AttentionDecision) {
     somatic = { capacity: i.capacity, level: i.level };
   } catch {}
   const urgency = somatic?.level === 'critical' ? 1 : somatic?.level === 'strained' ? 0.5 : 0;
-  const igniteScore = IGNITE_SCORE - 0.15 * urgency;
-  const igniteMargin = IGNITE_MARGIN - 0.04 * urgency;
-  const ignited = w.score >= igniteScore && margin >= igniteMargin;
+  const scoreThreshold = igniteScore() - 0.15 * urgency;
+  const marginThreshold = igniteMargin() - 0.04 * urgency;
+  const ignited = w.score >= scoreThreshold && margin >= marginThreshold;
   // Agency: inner speech, goals, and attention-meta are self-generated;
   // system alerts, user speech, ambient chatter, and bodily signals are
   // exogenous — the narrative can now say "I chose this" vs "this
