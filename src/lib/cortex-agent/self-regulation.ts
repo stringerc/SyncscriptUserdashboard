@@ -41,7 +41,54 @@ const HEAP_WARN_MB = 1900;
 const LAG_P99_WARN_MS = 1500;
 const RUNTIME_BLOAT_MB = 400;
 const FILE_TRUNCATE_MB = 20;
-const FILE_STALE_DAYS = 7;
+
+// ── Discernment: which caches need clearing vs which hold context ──
+// Cortex's second wish: know the difference. A file is only prunable when
+// it is simultaneously COLD (untouched for days), DISPOSABLE (regenerable
+// log/tmp — not state), and WORTHLESS-TO-KEEP (large enough to matter).
+// Anything holding context — memory stores, facts, chat history, live
+// state, anything touched in the last day — is left strictly alone.
+const ACTIVE_WINDOW_MS = 24 * 3600_000;      // touched <24h → doing its job
+const MIN_PRUNE_BYTES = 256 * 1024;          // <256KB → not worth the risk
+const DISCERNMENT_DIRS = /(?:^|[/\\])(?:memory|facts|counsel|debriefs?|knowledge|briefs?|intentions?|chat)[/\\]/i;
+const PROTECTED_FILE = /(?:^|[/\\])(?:facts\.db|chat-history|intentions\.json|autonomy\.json|latest\.json|history\.jsonl|self-regulation)(?:[/\\.]|$)/i;
+const DISPOSABLE_EXT = /\.(log|tmp|old|bak|jsonl|cache|pid|swp)$/i;
+
+interface FileVerdict {
+  path: string;
+  sizeKB: number;
+  ageDays: number;
+  verdict: 'kept-active' | 'kept-context' | 'kept-small' | 'kept-protected' | 'pruned';
+  reason: string;
+}
+
+/** Classify one runtime file. Returns the verdict — the caller acts only
+ *  on 'pruned'. Order matters: protection wins over everything. */
+export function classifyRuntimeFile(absPath: string, size: number, mtimeMs: number, now: number): FileVerdict {
+  const rel = path.relative(RUNTIME_DIR, absPath);
+  const ageDays = Math.round(((now - mtimeMs) / 86400_000) * 10) / 10;
+  const sizeKB = Math.round(size / 1024);
+  const base = { path: rel, sizeKB, ageDays };
+
+  if (PROTECTED_FILE.test(rel)) {
+    return { ...base, verdict: 'kept-protected', reason: 'live state / context store — never touched' };
+  }
+  if (DISCERNMENT_DIRS.test(rel)) {
+    return { ...base, verdict: 'kept-context', reason: 'memory/context directory — holds needed state' };
+  }
+  if (now - mtimeMs < ACTIVE_WINDOW_MS) {
+    return { ...base, verdict: 'kept-active', reason: 'touched within 24h — doing its job' };
+  }
+  if (size < MIN_PRUNE_BYTES) {
+    return { ...base, verdict: 'kept-small', reason: 'under 256KB — not worth pruning' };
+  }
+  // Only cold + disposable-extension files are prunable. A cold non-
+  // disposable file might be dormant state — discernment says keep it.
+  if (DISPOSABLE_EXT.test(path.basename(rel))) {
+    return { ...base, verdict: 'pruned', reason: 'cold disposable file — regenerable' };
+  }
+  return { ...base, verdict: 'kept-small', reason: 'cold non-disposable — possible dormant state, keep' };
+}
 
 interface Vitals {
   at: number;
@@ -103,12 +150,22 @@ function collectVitals(): Vitals {
   };
 }
 
-/** Safe prune: stale logs/tmp + tail-truncate oversized append logs.
- *  NEVER touches .json state files, NEVER deletes user content. */
-function pruneRuntime(): Remediation {
+interface Remediation {
+  kind: string;
+  detail: string;
+  bytesFreed: number;
+  filesTouched: number;
+  verdicts?: FileVerdict[];
+}
+
+/** Discerned prune: every file gets a verdict; only 'pruned' verdicts act.
+ *  Oversized cold logs keep their last 512KB (recent context preserved);
+ *  everything else disposable is deleted. NEVER touches state/context. */
+function pruneRuntime(): Remediation & { verdicts: FileVerdict[] } {
   let bytesFreed = 0, filesTouched = 0;
   const actions: string[] = [];
-  const staleCutoff = Date.now() - FILE_STALE_DAYS * 86400_000;
+  const verdicts: FileVerdict[] = [];
+  const now = Date.now();
   const walk = (dir: string, depth: number) => {
     if (depth > 3) return;
     let entries: fs.Dirent[] = [];
@@ -121,15 +178,10 @@ function pruneRuntime(): Remediation {
           walk(p, depth + 1);
         } else if (e.isFile()) {
           const st = fs.statSync(p);
-          const isLogLike = /\.(log|tmp|old|bak|jsonl)$/i.test(e.name);
-          // Stale disposable files → delete
-          if (isLogLike && st.mtimeMs < staleCutoff && st.size > 0) {
-            fs.unlinkSync(p);
-            bytesFreed += st.size; filesTouched += 1;
-            actions.push(`deleted ${path.relative(RUNTIME_DIR, p)}`);
-            continue;
-          }
-          // Oversized append-logs → keep last 512KB
+          const v = classifyRuntimeFile(p, st.size, st.mtimeMs, now);
+          verdicts.push(v);
+          if (v.verdict !== 'pruned') continue;
+          // Act: oversized append-logs keep their tail; rest are deleted.
           if (/\.(log|jsonl)$/i.test(e.name) && st.size > FILE_TRUNCATE_MB * 1048576) {
             const fd = fs.openSync(p, 'r');
             const tailSize = 512 * 1024;
@@ -138,7 +190,11 @@ function pruneRuntime(): Remediation {
             fs.closeSync(fd);
             fs.writeFileSync(p, buf);
             bytesFreed += st.size - tailSize; filesTouched += 1;
-            actions.push(`truncated ${path.relative(RUNTIME_DIR, p)} (${Math.round(st.size / 1048576)}MB→512KB)`);
+            actions.push(`truncated ${v.path} tail`);
+          } else {
+            fs.unlinkSync(p);
+            bytesFreed += st.size; filesTouched += 1;
+            actions.push(`deleted ${v.path}`);
           }
         }
       } catch {}
@@ -147,9 +203,10 @@ function pruneRuntime(): Remediation {
   walk(RUNTIME_DIR, 0);
   return {
     kind: 'prune-runtime',
-    detail: actions.slice(0, 8).join('; ') || 'nothing stale',
+    detail: actions.slice(0, 8).join('; ') || 'nothing prunable',
     bytesFreed,
     filesTouched,
+    verdicts,
   };
 }
 
