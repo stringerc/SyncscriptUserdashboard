@@ -31,6 +31,7 @@ import path from 'node:path';
 import { getInteroceptiveState } from './interoceptive';
 import { listCommitments, trustScores } from './commitments';
 import { recentMonologue } from './inner-speech';
+import { dynamicsReport } from './empirical-dynamics';
 
 const RUNTIME = path.resolve(process.cwd(), '.cortex-runtime');
 const readJsonl = (f: string, tail = 400) => {
@@ -271,5 +272,6 @@ export function getSelfhood() {
       trust: trustScores(),
     },
     monologue: recentMonologue(5).map((m) => ({ ts: m.ts, kind: m.kind, text: m.text, surprise: m.surprise, valence: m.valence })),
+    dynamics: (() => { try { const r = dynamicsReport(); return { learnedDims: r.classes.reduce((a, c) => a + c.learned, 0), classes: r.classes.length, processedTasks: r.processedTasks }; } catch { return null; } })(),
   };
 }

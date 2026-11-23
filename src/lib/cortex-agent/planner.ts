@@ -23,13 +23,14 @@
 import { loadWorld, DIMS, type Dim, type WorldState } from './world-model';
 import { commitmentUtility } from './commitments';
 import { speakInner } from './inner-speech';
+import { learnedEffects, dynamicsUncertainty, effectPosterior } from './empirical-dynamics';
 
 // ── Action classes and their plausible effect priors ──────────────────
 // Priors are explicit assumptions, labeled as such; empirical estimates
 // from telemetry override them as evidence accrues.
 export type ActionClass = 'orchestrate' | 'research' | 'corrective' | 'patrol' | 'comm' | 'forecast' | 'devin';
 
-const ACTION_PRIORS: Record<ActionClass, Partial<Record<Dim, number>>> = {
+export const ACTION_PRIORS: Record<ActionClass, Partial<Record<Dim, number>>> = {
   orchestrate: { executionFlow: 0.5, goalPressure: 0.4, capacity: -0.15, hostLoad: 0.2 },
   devin:        { executionFlow: 0.6, goalPressure: 0.5, capacity: -0.25, hostLoad: 0.3, surprise: -0.1 },
   research:     { driftRisk: -0.3, goalPressure: 0.3, capacity: -0.1, forecastRisk: -0.2 },
@@ -39,7 +40,7 @@ const ACTION_PRIORS: Record<ActionClass, Partial<Record<Dim, number>>> = {
   forecast:     { forecastRisk: -0.4, goalPressure: 0.2, capacity: -0.05 },
 };
 
-const CLASS_OF = (kind: string, title: string): ActionClass => {
+export const CLASS_OF = (kind: string, title: string): ActionClass => {
   const t = `${kind} ${title}`.toLowerCase();
   if (/orchestrate|antigravity/.test(t)) return 'orchestrate';
   if (/devin|code|build|sprint/.test(t)) return 'devin';
@@ -64,7 +65,9 @@ interface RolloutResult {
 
 function applyAction(dims: Record<Dim, number>, cls: ActionClass, strength = 1): Record<Dim, number> {
   const next = { ...dims };
-  const eff = ACTION_PRIORS[cls] || {};
+  // Learned dynamics override stated priors where real task→dim pairs
+  // exist; priors remain the fallback for unmeasured effects.
+  const eff = { ...(ACTION_PRIORS[cls] || {}), ...learnedEffects(cls) };
   for (const [d, v] of Object.entries(eff) as [Dim, number][]) {
     next[d] = Math.max(0, Math.min(1, next[d] + (v as number) * strength));
   }
@@ -83,11 +86,16 @@ function surpriseOfMove(from: Record<Dim, number>, to: Record<Dim, number>): num
   return s / DIMS.length;
 }
 
-function ambiguityOf(dims: Record<Dim, number>, evidence: Record<Dim, number>): number {
-  // Average evidence deficit across dims the action will move
+function ambiguityOf(dims: Record<Dim, number>, evidence: Record<Dim, number>, cls?: ActionClass): number {
+  // Evidence deficit across all dims
   let a = 0, n = 0;
   for (const d of DIMS) { a += 1 / (1 + evidence[d]); n++; }
-  return a / n;
+  const evidenceAmbiguity = a / n;
+  if (!cls) return evidenceAmbiguity;
+  // Dynamics uncertainty on the dims THIS action moves: learned effects
+  // lower ambiguity, still-assumed priors keep it high.
+  const dynU = dynamicsUncertainty(cls);
+  return evidenceAmbiguity * 0.5 + dynU * 0.5;
 }
 
 /** Expected free energy for one action from current state. */
@@ -98,7 +106,7 @@ function evaluateAction(state: WorldState, cls: ActionClass, dims: Record<Dim, n
   // Risk: negative valence dims moving up = bad (driftRisk, surprise, hostLoad up = risk)
   const riskDims: Dim[] = ['driftRisk', 'surprise', 'hostLoad', 'forecastRisk'];
   const risk = riskDims.reduce((a, d) => a + Math.max(0, next[d] - dims[d]), 0) / riskDims.length;
-  const ambiguity = ambiguityOf(next, state.evidence);
+  const ambiguity = ambiguityOf(next, state.evidence, cls);
   // Expected free energy: high utility lowers G; surprise/risk/ambiguity raise it
   const g = surprise * 0.4 + risk * 0.35 + ambiguity * 0.25 - utility * 0.5;
   return { g, utility, surprise, risk, ambiguity, next };
@@ -149,6 +157,8 @@ export interface PlanEvaluation {
   surprise: number;
   risk: number;
   ambiguity: number;
+  /** 0..1 — how much of this action's dynamics are learned vs assumed. */
+  dynamicsConfidence: number;
   rank: number;
   reason: string;
 }
@@ -178,6 +188,7 @@ export function planDispatches(candidates: DispatchCandidate[], state?: WorldSta
       surprise: Math.round(first.surprise * 1000) / 1000,
       risk: Math.round(first.risk * 1000) / 1000,
       ambiguity: Math.round(first.ambiguity * 1000) / 1000,
+      dynamicsConfidence: Math.round((1 - dynamicsUncertainty(cls)) * 100) / 100,
       rank: 0,
       reason: '',
     };

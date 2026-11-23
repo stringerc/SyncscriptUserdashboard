@@ -83,6 +83,9 @@ export function attend(candidates: AttentionCandidate[], now = Date.now()): Atte
     : `"${winner.text.slice(0, 60)}" won uncontested — score ${winner.score} (kind ${winner.kind})`;
   const decision: AttentionDecision = { ts: now, winner, reason, candidates: scored };
   appendTrace(decision);
+  // Meta-attention doesn't verbalize — prevents inner-speech recursion
+  // (monologue → candidate → winner → monologue → ...).
+  if (winner.kind === 'inner') return decision;
   try {
     speakInner({
       kind: 'attention', source: 'attention-schema',

@@ -1189,7 +1189,7 @@ const CORTEX_TOOLS = [
       parameters: {
         type: 'object',
         properties: {
-          action: { type: 'string', enum: ['proprioception', 'attention', 'libet', 'veto', 'world', 'self', 'plan', 'dream', 'social', 'monologue'], description: 'Which self-model surface to query' },
+          action: { type: 'string', enum: ['proprioception', 'attention', 'libet', 'veto', 'world', 'self', 'plan', 'dream', 'social', 'monologue', 'dynamics'], description: 'Which self-model surface to query' },
           id: { type: 'string', description: 'Veto intent id for action=veto (from libet pending)' },
           limit: { type: 'number', description: 'Max trace entries (default 10)' }
         },
@@ -2428,12 +2428,16 @@ function apiProxyPlugin(): Plugin {
       // a flush picks the winner and logs WHY it won (attention-trace).
       const attentionPending: AttentionCandidate[] = [];
       let lastMonologueDrain = 0;
+      const drainedMonologueIds = new Set<string>();
       const flushAttention = () => {
         // Inner speech joins the competition — self-talk can win awareness.
         try {
           if (Date.now() - lastMonologueDrain > 60_000) {
             lastMonologueDrain = Date.now();
-            for (const m of recentMonologue(5)) {
+            for (const m of recentMonologue(8)) {
+              if (drainedMonologueIds.has(m.id)) continue;
+              drainedMonologueIds.add(m.id);
+              if (drainedMonologueIds.size > 200) drainedMonologueIds.clear();
               attentionPending.push({ id: m.id, kind: 'inner', text: m.text, ts: m.ts, priority: 0.6, goalRelevance: 0.4 });
             }
           }
@@ -3880,6 +3884,15 @@ function apiProxyPlugin(): Plugin {
         if (req.method === 'OPTIONS') { res.writeHead(204); return res.end(); }
         const limit = Math.min(100, Math.max(1, Number(req.url?.split('limit=')[1]) || 30));
         return jsonRes(res, 200, { ok: true, entries: recentMonologue(limit), stats: monologueStats() });
+      });
+
+      // ── Empirical dynamics: learned action→dim transitions ──
+      server.middlewares.use('/api/cortex/dynamics', async (req: any, res: any) => {
+        if (!setCortexCors(req, res)) return jsonRes(res, 403, { ok: false, error: 'forbidden' });
+        if (req.method === 'OPTIONS') { res.writeHead(204); return res.end(); }
+        const { learnDynamics, dynamicsReport } = await import('./src/lib/cortex-agent/empirical-dynamics');
+        const learned = learnDynamics();
+        return jsonRes(res, 200, { ok: true, learned, report: dynamicsReport() });
       });
 
       // ── Selfhood: narrative self + metacognition + fleet ToM ──
@@ -5882,6 +5895,11 @@ end tell`;
                     trust: ts(),
                     durationMs: Date.now() - startMs,
                   }));
+                }
+                if (action === 'dynamics') {
+                  const { learnDynamics: ld, dynamicsReport: dr } = await import('./src/lib/cortex-agent/empirical-dynamics');
+                  const learned = ld();
+                  return res.end(JSON.stringify({ ok: true, tool, action, learned, report: dr(), durationMs: Date.now() - startMs }));
                 }
                 if (action === 'monologue') {
                   const { recentMonologue: rm, monologueStats: ms } = await import('./src/lib/cortex-agent/inner-speech');
