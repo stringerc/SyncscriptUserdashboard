@@ -646,6 +646,19 @@ async function execTool(tool: string, args: Record<string, any>, turnSignal?: Ab
           const n = parseInt(String(args?.index ?? args?.number ?? ''), 10);
           return Number.isFinite(n) && n >= 1 ? pending[n - 1]?.id || '' : pending[0]?.id || '';
         })();
+        // Governance gate: tier-2 / requiresApproval proposals are HUMAN
+        // decisions — the model must not self-approve its own proposals.
+        // Only the Initiative Inbox (typed ACCEPT) or explicit user
+        // instruction may execute those.
+        const gateTarget = init.getActiveProposals().find((p) => p.id === targetId)
+          || init.getPendingProposals().find((p) => p.id === targetId);
+        const tier = gateTarget?.autonomyTier ?? (gateTarget?.requiresApproval ? 2 : 1);
+        if (gateTarget && (tier >= 2 || gateTarget.requiresApproval)) {
+          return {
+            text: `"${gateTarget.title.slice(0, 60)}" is tier-${tier} and requires YOUR explicit approval — it stays in the Initiative Inbox for your accept/veto. I can't approve my own proposals.`,
+            artifacts: [],
+          };
+        }
         const ok = init.acceptProposal(targetId);
         const proposal = init.getActiveProposals().find((p) => p.id === targetId);
         return {

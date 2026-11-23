@@ -265,6 +265,7 @@ import { startGoalLinker, stampTaskGoal, goalProgressDelta } from './src/lib/cor
 import { startGoalDriftWatch } from './src/lib/cortex-agent/goal-drift';
 import { setPremortemNotifier } from './src/lib/cortex-agent/goal-premortem';
 import { setVerificationNotifier, handleCorrectiveResolution } from './src/lib/cortex-agent/goal-verification';
+import { startGoalForecastWatch, setForecastNotifier } from './src/lib/cortex-agent/goal-forecast';
 
 // Unhandled-rejection guard: Node crashes the ENTIRE process on any
 // unhandled rejection. AbortError rejections are routine cancellation
@@ -1788,6 +1789,13 @@ function apiProxyPlugin(): Plugin {
         setVerificationNotifier((msg) => {
           try { ambientPush('ambient', msg); } catch {}
         });
+        // Forecast alerts ("20% chance of hitting Dec 31") get a voice too.
+        setForecastNotifier((msg) => {
+          try { ambientPush('ambient', msg); } catch {}
+        });
+        // Trajectory watch: 10-min cadence, files pre-emptive proposals
+        // when a goal's hit-probability drops below threshold.
+        try { startGoalForecastWatch(); } catch {}
       } catch (e: any) {
         console.warn('[goal-drift] failed to arm:', e?.message || e);
       }

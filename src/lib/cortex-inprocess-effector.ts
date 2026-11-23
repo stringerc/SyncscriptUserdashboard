@@ -779,6 +779,22 @@ export async function executeInProcessDirect(tool: string, args: Record<string, 
       };
     }
     if (action === 'accept') {
+      // Governance gate: tier-2 / requiresApproval proposals are human
+      // decisions — the model must not self-approve its own proposals.
+      const gateTarget = init.getActiveProposals().find((p: any) => p.id === proposalId)
+        || init.getPendingProposals().find((p: any) => p.id === proposalId);
+      const gateTier = gateTarget?.autonomyTier ?? (gateTarget?.requiresApproval ? 2 : 1);
+      if (gateTarget && (gateTier >= 2 || gateTarget.requiresApproval)) {
+        return {
+          ok: false,
+          tool,
+          action,
+          error: `tier-${gateTier} proposal requires explicit human approval in the Initiative Inbox`,
+          inProcessDirectEffector: true,
+          offlineExecution: true,
+          durationMs: Date.now() - startMs,
+        };
+      }
       const accepted = init.acceptProposal(proposalId);
       const proposal = init.getActiveProposals().find((p: any) => p.id === proposalId) || null;
       return {

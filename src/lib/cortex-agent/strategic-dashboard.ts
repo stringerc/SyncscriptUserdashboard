@@ -18,6 +18,7 @@ import path from 'node:path';
 import { getCortexGoals, type LifeGoal } from '../cortex-goals';
 import { loadMission } from '../cortex-agents/mission';
 import { collectEffortEvents } from './goal-drift';
+import { computeGoalForecasts } from './goal-forecast';
 import type { GoalHealth, GoalTrendPoint, StrategicDashboard } from '../cortex-strategic-dashboard-types';
 
 const RUNTIME = path.resolve(process.cwd(), '.cortex-runtime');
@@ -107,6 +108,9 @@ export function getStrategicDashboard(nowMs: number = Date.now()): StrategicDash
       }
     }
   } catch {}
+
+  const forecasts = computeGoalForecasts(nowMs);
+  const forecastByGoal = new Map(forecasts.map((f) => [f.goalId, f]));
 
   const goals: GoalHealth[] = activeGoals.map((g: LifeGoal) => {
     const gid = g.id;
@@ -209,6 +213,7 @@ export function getStrategicDashboard(nowMs: number = Date.now()): StrategicDash
       lastVerification,
       correctives,
       escalations,
+      forecast: forecastByGoal.get(gid) || null,
     };
   });
 

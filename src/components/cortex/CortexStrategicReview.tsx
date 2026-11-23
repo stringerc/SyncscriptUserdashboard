@@ -95,6 +95,21 @@ function GoalCard({ g }: { g: GoalHealth }) {
         <span>EFFORT 7D <b style={{ color: C.text }}>{g.effort7d}</b></span>
       </div>
 
+      {/* Forecast — trajectory projection */}
+      {g.forecast && (
+        <div style={{ fontFamily: MONO, fontSize: 10 }}>
+          {g.forecast.probability != null ? (
+            <div style={{ color: g.forecast.probability < 0.5 ? C.red : g.forecast.probability < 0.75 ? C.amber : C.green }}>
+              🎯 P(hit {g.forecast.targetDate}) = <b>{Math.round(g.forecast.probability * 100)}%</b>
+              {' '}· pace {g.forecast.paceRatio}× · ETA {g.forecast.projectedFinish}
+              {g.forecast.momentum === 'down' ? ' · momentum ↓' : g.forecast.momentum === 'up' ? ' · momentum ↑' : ''}
+            </div>
+          ) : (
+            <div style={{ color: C.dim }}>🎯 forecast: insufficient data ({g.forecast.remainingOps} ops, {g.forecast.observations} observations)</div>
+          )}
+        </div>
+      )}
+
       {/* 30-day effort trend */}
       <div>
         <SectionLabel>EFFORT · 30D</SectionLabel>

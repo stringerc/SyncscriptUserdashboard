@@ -25,6 +25,23 @@ export interface GoalHealth {
   lastVerification: { outcome: 'resolved' | 'escalated'; correctiveKind: string; ts: number } | null;
   correctives: Array<{ id: string; title: string; status: string; agentId: string; createdAtMs: number }>;
   escalations: Array<{ id: string; title: string; status: string; createdAtMs: number }>;
+  forecast?: GoalForecast | null;
+}
+
+export interface GoalForecast {
+  goalId: string;
+  goalTitle: string;
+  targetDate: string | null;
+  daysLeft: number | null;
+  probability: number | null;
+  basis: 'ops-gamma' | 'insufficient-data' | 'no-target' | 'complete';
+  remainingOps: number;
+  weeklyRate: number;
+  requiredWeekly: number;
+  paceRatio: number | null;
+  projectedFinish: string | null;
+  observations: number;
+  momentum: 'up' | 'flat' | 'down' | null;
 }
 
 export interface StrategicDashboard {

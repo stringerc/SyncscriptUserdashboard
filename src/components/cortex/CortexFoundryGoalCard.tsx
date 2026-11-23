@@ -131,6 +131,12 @@ export function CortexFoundryGoalCard({ goal, health }: { goal: LifeGoal; health
                   }} />
                 ))}
               </div>
+              {health.forecast && health.forecast.probability != null && (
+                <div style={{ fontSize: 8.5, color: health.forecast.probability < 0.5 ? '#fb7185' : health.forecast.probability < 0.75 ? '#fbbf24' : '#34d399' }}>
+                  🎯 P(hit {health.forecast.targetDate}) = {Math.round(health.forecast.probability * 100)}% · pace {health.forecast.paceRatio}× · ETA {health.forecast.projectedFinish}
+                  {health.forecast.momentum === 'down' ? ' · momentum ↓' : ''}
+                </div>
+              )}
               {health.pendingVerification && (
                 <div style={{ fontSize: 8.5, color: '#fbbf24' }}>⏳ verifying {health.pendingVerification.kind} corrective — "{health.pendingVerification.correctiveTitle.slice(0, 60)}"</div>
               )}
