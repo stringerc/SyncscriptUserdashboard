@@ -3835,6 +3835,34 @@ function apiProxyPlugin(): Plugin {
         return jsonRes(res, 405, { ok: false, error: 'method not allowed' });
       });
 
+      // ── Voice-turn error beacon: the client catch-all posts the real
+      // exception here so remote failures are diagnosable, not just heard.
+      server.middlewares.use('/api/cortex/viz-turn-error', async (req: any, res: any) => {
+        if (!setCortexCors(req, res)) return jsonRes(res, 403, { ok: false, error: 'forbidden' });
+        if (req.method === 'OPTIONS') { res.writeHead(204); return res.end(); }
+        if (req.method !== 'POST') return jsonRes(res, 405, { ok: false, error: 'POST only' });
+        try {
+          const body = JSON.parse(await readBody(req) || '{}');
+          const file = path.join(process.cwd(), '.cortex-runtime', 'viz-turn-errors.jsonl');
+          fsSync.mkdirSync(path.dirname(file), { recursive: true });
+          fsSync.appendFileSync(file, JSON.stringify({
+            ts: Date.now(),
+            message: String(body?.message || '').slice(0, 500),
+            stack: String(body?.stack || '').slice(0, 2000),
+            turnText: String(body?.turnText || '').slice(0, 200),
+            url: String(body?.url || '').slice(0, 200),
+          }) + '\n');
+          // cap the log
+          try {
+            const lines = fsSync.readFileSync(file, 'utf8').split('\n').filter(Boolean);
+            if (lines.length > 300) fsSync.writeFileSync(file, lines.slice(-300).join('\n') + '\n');
+          } catch {}
+          return jsonRes(res, 200, { ok: true });
+        } catch (e: any) {
+          return jsonRes(res, 200, { ok: false, error: String(e?.message || e) });
+        }
+      });
+
       // ── Selfhood: narrative self + metacognition + fleet ToM ──
       server.middlewares.use('/api/cortex/selfhood', (req: any, res: any) => {
         if (!setCortexCors(req, res)) return jsonRes(res, 403, { ok: false, error: 'forbidden' });

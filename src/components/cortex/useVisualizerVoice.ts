@@ -2494,6 +2494,7 @@ MANDATORY: weave a 3-4 sentence spoken "state of being" answer citing at least o
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               message: String((e as any)?.message || e),
+              name: String((e as any)?.name || ''),
               stack: String((e as any)?.stack || ''),
               turnText: String(text || '').slice(0, 200),
               url: typeof window !== 'undefined' ? window.location.href : '',
@@ -2522,9 +2523,27 @@ MANDATORY: weave a 3-4 sentence spoken "state of being" answer citing at least o
               }),
             }).catch(() => {});
           }
+          // Distinguish the failure class before speaking: total provider
+          // exhaustion deserves an honest "my models are out" message, not
+          // a generic glitch that hides the real cause. Health check is
+          // best-effort with a short fuse — never delays the fallback.
+          let providersDown = false;
+          if (!state.turnTimedOut) {
+            try {
+              const hctl = new AbortController();
+              const ht = setTimeout(() => hctl.abort(), 2500);
+              const hres = await fetch('/api/cortex/models/health', { signal: hctl.signal });
+              clearTimeout(ht);
+              const hj: any = await hres.json();
+              const models = Array.isArray(hj?.models) ? hj.models : [];
+              providersDown = models.length > 0 && !models.some((m: any) => m?.status === 'healthy');
+            } catch { /* health probe failed — treat as normal glitch */ }
+          }
           const fallback = state.turnTimedOut
             ? 'Sorry, that took too long — try a simpler version or ask me to try again.'
-            : 'Sorry, something glitched on my end — try that again?';
+            : providersDown
+              ? 'My model providers are exhausted right now — that is why that turn failed, not a code glitch. Try me again once the fleet recovers.'
+              : 'Sorry, something glitched on my end — try that again?';
           historyRef.current.push({ role: 'assistant', content: fallback });
           speakSentence(fallback, true);
           toListening();
