@@ -22,6 +22,7 @@ import { computeGoalForecasts } from './goal-forecast';
 import { calibrationReport } from './goal-calibration';
 import { getInteroceptiveState } from './interoceptive';
 import { getPaceWatchSummaries } from './goal-pace-watch';
+import { getProprioception } from './proprioception';
 import type { CalibrationReport } from '../cortex-strategic-dashboard-types';
 import type { GoalHealth, GoalTrendPoint, StrategicDashboard } from '../cortex-strategic-dashboard-types';
 
@@ -228,5 +229,10 @@ export function getStrategicDashboard(nowMs: number = Date.now()): StrategicDash
   try { calibration = calibrationReport(); } catch {}
   let interoceptive: StrategicDashboard['interoceptive'];
   try { interoceptive = getInteroceptiveState(nowMs); } catch {}
-  return { generatedAt: nowMs, goals, hostEffort30d, calibration, interoceptive, paceWatch };
+  let body: StrategicDashboard['body'];
+  try {
+    const b = getProprioception(nowMs);
+    body = { readyCount: b.readyCount, totalCount: b.totalCount, limbs: b.limbs.map((l) => ({ id: l.id, name: l.name, state: l.state, detail: l.detail })) };
+  } catch {}
+  return { generatedAt: nowMs, goals, hostEffort30d, calibration, interoceptive, paceWatch, body };
 }

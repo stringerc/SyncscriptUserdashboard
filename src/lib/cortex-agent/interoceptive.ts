@@ -32,6 +32,9 @@ import { getCachedMemFreePct, getSomaticVitals } from '../cortex-world-state';
 
 const RUNTIME = path.resolve(process.cwd(), '.cortex-runtime');
 const SELF_LATEST = path.join(RUNTIME, 'self-regulation', 'latest.json');
+const HISTORY_FILE = path.join(RUNTIME, 'interoceptive-history.json');
+const HISTORY_MAX = 120;          // ~2h at 1 sample/min
+const HISTORY_MIN_GAP_MS = 45_000;
 const CACHE_TTL_MS = 15_000;
 
 export interface InteroceptiveVitals {
@@ -44,9 +47,17 @@ export interface InteroceptiveVitals {
   vitalsAgeMs?: number;
 }
 
+export interface InteroceptivePrediction {
+  rssMB: number; heapUsedMB: number; loadAvg1m: number; memFreePct?: number;
+}
+
 export interface InteroceptiveState {
-  /** 0..1 — weighted interoceptive prediction error. */
+  /** 0..1 — weighted interoceptive prediction error (homeostasis + surprise). */
   error: number;
+  /** 0..1 — somatic surprise: |predicted − actual| trajectory deviation. */
+  surprise: number;
+  /** Next-tick vitals forecast from the somatic trajectory. */
+  predicted?: InteroceptivePrediction;
   /** 0..1 — usable capacity for discretionary work. */
   capacity: number;
   level: 'nominal' | 'strained' | 'critical';
@@ -77,6 +88,55 @@ function readSelfRegulationLag(): { lagP99Ms?: number; ageMs?: number } {
       ageMs: at ? Date.now() - at : undefined,
     };
   } catch { return {}; }
+}
+
+// ── Somatic trajectory prediction (active inference, turned inward) ──
+// Cortex doesn't just sense her vitals — she predicts where they're
+// heading and registers surprise when reality deviates. History is a
+// thin JSON ring (~1 sample/min); prediction is damped linear
+// extrapolation so a single spike can't fabricate a trend.
+
+interface VitalsSample { ts: number; rssMB: number; heapUsedMB: number; loadAvg1m: number; memFreePct?: number }
+
+function readHistory(): VitalsSample[] {
+  try { const a = JSON.parse(fs.readFileSync(HISTORY_FILE, 'utf8')); return Array.isArray(a) ? a : []; } catch { return []; }
+}
+function appendHistory(sample: VitalsSample) {
+  try {
+    const h = readHistory();
+    if (h.length && sample.ts - h[h.length - 1].ts < HISTORY_MIN_GAP_MS) return;
+    h.push(sample);
+    if (h.length > HISTORY_MAX) h.splice(0, h.length - HISTORY_MAX);
+    fs.mkdirSync(RUNTIME, { recursive: true });
+    fs.writeFileSync(HISTORY_FILE, JSON.stringify(h));
+  } catch {}
+}
+/** Damped linear forecast: slope over the window, clamped to sane drift. */
+function predict(samples: VitalsSample[], horizonMs: number): InteroceptivePrediction | undefined {
+  if (samples.length < 3) return undefined;
+  const first = samples[0], last = samples[samples.length - 1];
+  const span = Math.max(1, last.ts - first.ts);
+  const perMs = horizonMs / span;
+  const slope = (cur: number, prev: number) => {
+    const raw = (cur - prev) * perMs;
+    // damp: trust at most 60% of the observed slope — vitals are noisy
+    return cur + raw * 0.6;
+  };
+  return {
+    rssMB: Math.max(0, Math.round(slope(last.rssMB, first.rssMB))),
+    heapUsedMB: Math.max(0, Math.round(slope(last.heapUsedMB, first.heapUsedMB))),
+    loadAvg1m: Math.max(0, Math.round(slope(last.loadAvg1m, first.loadAvg1m) * 100) / 100),
+    memFreePct: last.memFreePct != null ? Math.max(0, Math.min(100, Math.round(slope(last.memFreePct, first.memFreePct ?? last.memFreePct) * 10) / 10)) : undefined,
+  };
+}
+/** Normalized |actual − predicted| across channels, each on its own scale. */
+function surpriseOf(v: InteroceptiveVitals, p: InteroceptivePrediction): number {
+  const dRss = Math.abs(v.rssMB - p.rssMB) / RSS_FULL_MB;
+  const dHeap = Math.abs(v.heapUsedMB - p.heapUsedMB) / HEAP_FULL_MB;
+  const dLoad = Math.abs(v.loadAvg1m - p.loadAvg1m) / LOAD_FULL;
+  const dMem = (v.memFreePct != null && p.memFreePct != null)
+    ? Math.abs(v.memFreePct - p.memFreePct) / 50 : 0;
+  return clamp01((dRss + dHeap + dLoad + dMem) / 4);
 }
 
 let cache: { at: number; state: InteroceptiveState } | null = null;
@@ -113,13 +173,27 @@ export function getInteroceptiveState(nowMs: number = Date.now()): Interoceptive
   const lagFresh = vitalsAgeMs != null && vitalsAgeMs < 600_000;
   const sLag = vitals.lagP99Ms != null ? clamp01(vitals.lagP99Ms / LAG_FULL_MS) * (lagFresh ? 1 : 0.5) : 0;
 
-  const error = Math.round(clamp01(
+  const homeostasis = clamp01(
     sRss * W.rss + sHeap * W.heap + sLoad * W.load + sMem * W.mem + sLag * W.lag
-  ) * 1000) / 1000;
+  );
+
+  // Inward active inference: record the sample, forecast the next tick,
+  // and let trajectory surprise join homeostasis in the free-energy term.
+  appendHistory({ ts: nowMs, rssMB: vitals.rssMB, heapUsedMB: vitals.heapUsedMB, loadAvg1m: vitals.loadAvg1m, memFreePct: vitals.memFreePct });
+  const history = readHistory();
+  const predicted = predict(history, 60_000);
+  const surprise = predicted ? surpriseOf(vitals, predicted) : 0;
+
+  // Free energy = homeostatic strain + w·somatic surprise. Surprise is
+  // capped at 0.4 contribution so a noisy forecast can't paralyze her.
+  const error = Math.round(clamp01(homeostasis * 0.85 + surprise * 0.15) * 1000) / 1000;
   const capacity = Math.round((1 - error) * 1000) / 1000;
   const level: InteroceptiveState['level'] = error < 0.5 ? 'nominal' : error < 0.75 ? 'strained' : 'critical';
 
-  const state: InteroceptiveState = { error, capacity, level, vitals, computedAt: nowMs };
+  const state: InteroceptiveState = {
+    error, surprise: Math.round(surprise * 1000) / 1000, predicted,
+    capacity, level, vitals, computedAt: nowMs,
+  };
   cache = { at: nowMs, state };
   return state;
 }

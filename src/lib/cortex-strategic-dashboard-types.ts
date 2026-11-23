@@ -70,8 +70,9 @@ export interface StrategicDashboard {
   calibration?: CalibrationReport;
   paceWatch?: Array<{ goalId: string; proposalId: string; acceptedAt: number; elapsedDays: number; actual: number; expected: number; ratio: number | null; onPace: boolean }>;
   interoceptive?: {
-    error: number; capacity: number; level: 'nominal' | 'strained' | 'critical';
+    error: number; surprise?: number; capacity: number; level: 'nominal' | 'strained' | 'critical';
     vitals: { rssMB: number; heapUsedMB: number; loadAvg1m: number; cores: number; memFreePct?: number; lagP99Ms?: number };
     computedAt: number;
   };
+  body?: { readyCount: number; totalCount: number; limbs: Array<{ id: string; name: string; state: string; detail: string }> };
 }

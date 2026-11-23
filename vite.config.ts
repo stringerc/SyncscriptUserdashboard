@@ -268,6 +268,9 @@ import { setVerificationNotifier, handleCorrectiveResolution } from './src/lib/c
 import { startGoalForecastWatch, setForecastNotifier } from './src/lib/cortex-agent/goal-forecast';
 import { startGoalPaceWatch, setPaceWatchNotifier, notifyPaceRelevantEvent } from './src/lib/cortex-agent/goal-pace-watch';
 import { getInteroceptiveState, interoceptiveGate } from './src/lib/cortex-agent/interoceptive';
+import { armVeto, vetoLibet, listLibetPending, libetTrace, resumeLibetTimers } from './src/lib/cortex-agent/libet-veto';
+import { attend, attentionTrace, scoreCandidate, type AttentionCandidate } from './src/lib/cortex-agent/attention-schema';
+import { getProprioception } from './src/lib/cortex-agent/proprioception';
 
 // Unhandled-rejection guard: Node crashes the ENTIRE process on any
 // unhandled rejection. AbortError rejections are routine cancellation
@@ -1167,6 +1170,22 @@ const CORTEX_TOOLS = [
           constraintRule: { type: 'string', description: 'The constraint rule text for declare_constraint (e.g. "max 10h/week on side projects")' },
           constraintId: { type: 'string', description: 'Constraint id for remove_constraint' },
           opsId: { type: 'string', description: 'Mission ops item id for link_work/unlink_work' }
+        },
+        required: ['action']
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'cortex_body',
+      description: 'Self-model introspection: your body schema, attention competition, and volition veto window. Actions: proprioception (list limbs — interoceptive sense, attention, lights, surfaces, voice, agent hands, volition — with live states), attention (recent attention decisions and why each winner won), libet (pending dispatch intents in the veto window), veto (cancel a pending dispatch by id — you may veto your own about-to-fire autonomous dispatch).',
+      parameters: {
+        type: 'object',
+        properties: {
+          action: { type: 'string', enum: ['proprioception', 'attention', 'libet', 'veto'], description: 'Which self-model surface to query' },
+          id: { type: 'string', description: 'Veto intent id for action=veto (from libet pending)' },
+          limit: { type: 'number', description: 'Max trace entries (default 10)' }
         },
         required: ['action']
       }
@@ -2162,7 +2181,13 @@ function apiProxyPlugin(): Plugin {
             (t: any) => t.agentId === 'warden' && (t.status === 'queued' || t.status === 'running'),
           );
           if (wardenBusy) return;
-          agentRuntime.submitTask('warden', 'patrol', `Cortex patrol — ${reason}`, {});
+          armVeto({
+            agentId: 'warden', kind: 'patrol',
+            title: `Cortex patrol — ${reason}`,
+            reason: `autonomous patrol dispatch (${reason})`,
+            windowMs: 5_000,
+            fire: () => agentRuntime.submitTask('warden', 'patrol', `Cortex patrol — ${reason}`, {}),
+          });
         } catch { /* warden absent or runtime mid-restore — next tick retries */ }
       };
       const WARDEN_PATROL_MS = Math.max(60_000, Number(process.env.CORTEX_WARDEN_INTERVAL_MS || 10 * 60_000));
@@ -2170,6 +2195,7 @@ function apiProxyPlugin(): Plugin {
       wardenTimer.unref?.();
       const wardenBootTimer = setTimeout(() => submitWardenPatrol('boot sweep'), 20_000);
       wardenBootTimer.unref?.();
+      try { resumeLibetTimers(); } catch {}
 
       // ── Incident escalation sweeper ──
       // Every 60s: open incidents older than 1min file a deduped
@@ -2390,10 +2416,28 @@ function apiProxyPlugin(): Plugin {
           + '\nAlready noticed — weave in ONLY if relevant to what the user asked; never quote verbatim.';
       };
 
+      // Attention schema: every ambient signal registers as a candidate;
+      // a flush picks the winner and logs WHY it won (attention-trace).
+      const attentionPending: AttentionCandidate[] = [];
+      const flushAttention = () => {
+        if (!attentionPending.length) return;
+        const batch = attentionPending.splice(0, attentionPending.length);
+        try { attend(batch); } catch {}
+      };
+      const attentionFlushTimer = setInterval(flushAttention, 30_000);
+      attentionFlushTimer.unref?.();
+
       const ambientPush = (kind: string, text: string, opts?: { ping?: boolean; call?: boolean }) => {
         const clean = String(text || '').replace(/[\r\n]+/g, ' ').trim().slice(0, 240);
         if (clean.length < 4) return;
         recentAmbientEvents.push({ ts: Date.now(), kind, text: clean });
+        attentionPending.push({
+          id: `amb-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+          kind: kind === 'system' ? 'system' : 'ambient',
+          text: clean, ts: Date.now(),
+          priority: kind === 'system' ? 0.9 : 0.5,
+        });
+        if (attentionPending.length > 50) attentionPending.splice(0, attentionPending.length - 50);
         if (recentAmbientEvents.length > RECENT_AMBIENT_MAX) {
           recentAmbientEvents.splice(0, recentAmbientEvents.length - RECENT_AMBIENT_MAX);
         }
@@ -3619,6 +3663,40 @@ function apiProxyPlugin(): Plugin {
         if (!setCortexCors(req, res)) return jsonRes(res, 403, { ok: false, error: 'forbidden' });
         if (req.method === 'OPTIONS') { res.writeHead(204); return res.end(); }
         return jsonRes(res, 200, { ok: true, ...getInteroceptiveState() });
+      });
+
+      // ── Libet veto window: pending autonomous dispatches ──
+      server.middlewares.use('/api/cortex/libet', async (req: any, res: any) => {
+        if (!setCortexCors(req, res)) return jsonRes(res, 403, { ok: false, error: 'forbidden' });
+        if (req.method === 'OPTIONS') { res.writeHead(204); return res.end(); }
+        if (req.method === 'GET') {
+          return jsonRes(res, 200, { ok: true, pending: listLibetPending(), trace: libetTrace(15) });
+        }
+        if (req.method === 'POST') {
+          const body = JSON.parse(await readBody(req) || '{}');
+          const id = String(body?.id || '');
+          if (body?.action === 'veto' || body?.veto) {
+            const ok = vetoLibet(id, String(body?.by || 'api'));
+            return jsonRes(res, ok ? 200 : 404, { ok, vetoed: ok });
+          }
+          return jsonRes(res, 400, { ok: false, error: 'action must be veto' });
+        }
+        return jsonRes(res, 405, { ok: false, error: 'method not allowed' });
+      });
+
+      // ── Attention schema: why signals won conscious access ──
+      server.middlewares.use('/api/cortex/attention', (req: any, res: any) => {
+        if (!setCortexCors(req, res)) return jsonRes(res, 403, { ok: false, error: 'forbidden' });
+        if (req.method === 'OPTIONS') { res.writeHead(204); return res.end(); }
+        flushAttention();
+        return jsonRes(res, 200, { ok: true, pending: attentionPending.length, trace: attentionTrace(15) });
+      });
+
+      // ── Proprioception: the body map ──
+      server.middlewares.use('/api/cortex/proprioception', (req: any, res: any) => {
+        if (!setCortexCors(req, res)) return jsonRes(res, 403, { ok: false, error: 'forbidden' });
+        if (req.method === 'OPTIONS') { res.writeHead(204); return res.end(); }
+        return jsonRes(res, 200, { ok: true, ...getProprioception() });
       });
 
       // ── Fleet sidecar control (/api/cortex/fleet/*) ──
@@ -5561,6 +5639,32 @@ end tell`;
                 return res.end(JSON.stringify({ ok: true, tool, action, facts, durationMs: Date.now() - startMs }));
               } catch (e: any) {
                 res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+                return res.end(JSON.stringify({ ok: false, tool, error: String(e?.message || e) }));
+              }
+            }
+
+            // cortex_body — self-model: proprioception, attention schema, Libet veto
+            if (tool === 'cortex_body') {
+              try {
+                const action = String(args?.action || 'proprioception');
+                const limit = Math.min(30, Math.max(1, Number(args?.limit) || 10));
+                if (action === 'proprioception') {
+                  const snap = getProprioception();
+                  return res.end(JSON.stringify({ ok: true, tool, action, ...snap, durationMs: Date.now() - startMs }));
+                }
+                if (action === 'attention') {
+                  flushAttention();
+                  return res.end(JSON.stringify({ ok: true, tool, action, pending: attentionPending.length, trace: attentionTrace(limit), durationMs: Date.now() - startMs }));
+                }
+                if (action === 'libet') {
+                  return res.end(JSON.stringify({ ok: true, tool, action, pending: listLibetPending(), trace: libetTrace(limit), durationMs: Date.now() - startMs }));
+                }
+                if (action === 'veto') {
+                  const ok = vetoLibet(String(args?.id || ''), 'cortex');
+                  return res.end(JSON.stringify({ ok, tool, action, vetoed: ok, durationMs: Date.now() - startMs }));
+                }
+                return res.end(JSON.stringify({ ok: false, tool, error: `unknown action: ${action}` }));
+              } catch (e: any) {
                 return res.end(JSON.stringify({ ok: false, tool, error: String(e?.message || e) }));
               }
             }
