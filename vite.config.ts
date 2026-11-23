@@ -4056,6 +4056,110 @@ function apiProxyPlugin(): Plugin {
         return jsonRes(res, 405, { ok: false, error: 'method not allowed' });
       });
 
+      // ── Inbound bridge: channel messages → governed Cortex turn ──
+      // OpenClaw (the channel body) POSTs inbound messages here; Cortex
+      // runs the same governed agentic loop as voice/chat — real tools,
+      // provider chain, constitutional gates — and returns the reply
+      // synchronously for relay back to the channel. Auth is a dedicated
+      // CORTEX_BRIDGE_KEY shared only with the OpenClaw gateway; tenant
+      // keys are NOT accepted here (tenants get dispatches, not chat).
+      server.middlewares.use('/api/cortex/inbound', async (req: any, res: any) => {
+        if (!setCortexCors(req, res)) return jsonRes(res, 403, { ok: false, error: 'forbidden' });
+        if (req.method === 'OPTIONS') { res.writeHead(204); return res.end(); }
+        if (req.method === 'GET') {
+          return jsonRes(res, 200, { ok: true, configured: !!(process.env.CORTEX_BRIDGE_KEY || '') });
+        }
+        if (req.method !== 'POST') return jsonRes(res, 405, { ok: false, error: 'method not allowed' });
+        const bridgeKey = String(process.env.CORTEX_BRIDGE_KEY || '');
+        if (!bridgeKey) return jsonRes(res, 503, { ok: false, error: 'CORTEX_BRIDGE_KEY not configured' });
+        if (String(req.headers['x-cortex-key'] || '') !== bridgeKey) {
+          return jsonRes(res, 401, { ok: false, error: 'invalid bridge key' });
+        }
+        let body: any = {};
+        try { body = JSON.parse(await readBody(req) || '{}'); } catch {
+          return jsonRes(res, 400, { ok: false, error: 'invalid JSON' });
+        }
+        const message = String(body?.message || '').slice(0, 8000).trim();
+        if (!message) return jsonRes(res, 400, { ok: false, error: 'message required' });
+        const channel = String(body?.channel || 'web').slice(0, 40);
+        const sender = String(body?.sender || 'unknown').slice(0, 120);
+        const sessionId = String(body?.sessionId || `inbound:${channel}:${sender}`).slice(0, 80);
+        const audit = (rec: any) => {
+          try {
+            const file = path.join(process.cwd(), '.cortex-runtime', 'inbound-bridge.jsonl');
+            fsSync.appendFileSync(file, JSON.stringify({ ts: Date.now(), channel, sender, sessionId, ...rec }) + '\n', 'utf8');
+          } catch {}
+        };
+        try {
+          const WORKSPACE_NOTE = `\n\n[WORKSPACE] Host working directory: ${process.cwd()} — the SyncScript repository root. run_command, list_dir, read_file, search_code and create_document resolve relative paths here by default. Prefer relative paths; do NOT search /Users or $HOME for the project — you are already inside it.`;
+          const INBOUND_DIRECTIVE = `\n\n[INBOUND BRIDGE] This message arrived via the "${channel}" channel from sender "${sender}" through the OpenClaw gateway. You are Cortex — reply as yourself, concisely, in plain text (no markdown headers). If the request needs a governed multi-step action rather than a conversation, say so and offer to dispatch it.`;
+          const agentSysContent = `${NEXUS_SYSTEM_PROMPT}\n\nYou are Cortex, the governed cognitive core of SyncScript — deep, honest, and precise.${WORKSPACE_NOTE}${INBOUND_DIRECTIVE}`;
+          const agentMessages: AgentMessage[] = [{ role: 'user', content: message }];
+          const selfPort = process.env.PORT ? parseInt(process.env.PORT, 10) : 5173;
+          const executeTool = async (name: string, args: Record<string, unknown>) => {
+            const r = await fetch(`http://127.0.0.1:${selfPort}/api/cortex/tools/execute`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', 'x-cortex-key': 'sovereign-local' },
+              body: JSON.stringify({ tool: name, args }),
+              signal: AbortSignal.timeout(90000),
+            });
+            return r.json().catch(() => ({ ok: false, error: `tools/execute HTTP ${r.status}` }));
+          };
+          // Reason-tier chain first (tool-call compliance), full provider
+          // fallback after — same routing as the voice agentic path.
+          let providers: any[] = aiProviders;
+          try {
+            const reasonChain = agentRuntime.matrix.ordered('reason')
+              .map((c: any) => {
+                const base = aiProviders.find((p) => p.name === c.provider);
+                return base ? { ...base, model: c.model, name: `${base.name}#${c.model.split('/').pop()}` } : null;
+              })
+              .filter(Boolean) as any[];
+            if (reasonChain.length) {
+              const baseName = (n: string) => n.split('#')[0];
+              const seen = new Set(reasonChain.map((p: any) => `${baseName(p.name)}|${p.model}`));
+              providers = [...reasonChain, ...(aiProviders as any[]).filter((p: any) => !seen.has(`${p.name}|${p.model}`))];
+            }
+          } catch {}
+          const runTurn = () => runAgenticTurn(agentSysContent, agentMessages, {
+            providers,
+            executeTool,
+            tools: CORTEX_TOOLS,
+            maxSteps: 8,
+            maxTokens: 4096,
+            temperature: 0.2,
+            emit: () => {},
+          });
+          const started = Date.now();
+          let loopResult = await runTurn();
+          const unusable = (!loopResult.content || loopResult.error)
+            && loopResult.error !== 'loop deadline exceeded'
+            && loopResult.toolCalls.length === 0;
+          if (unusable) loopResult = await runTurn();
+          const reply = loopResult.content
+            || 'I hit a snag finishing that — the governed turn failed. Try again or dispatch it as a task.';
+          audit({
+            ok: !loopResult.error, replyLen: reply.length,
+            steps: loopResult.steps, tools: loopResult.toolCalls.map((t) => t.tool),
+            provider: loopResult.provider, durationMs: Date.now() - started,
+            error: loopResult.error ? String(loopResult.error).slice(0, 200) : undefined,
+          });
+          return jsonRes(res, 200, {
+            ok: !loopResult.error,
+            reply,
+            sessionId,
+            steps: loopResult.steps,
+            tools: loopResult.toolCalls.map((t) => t.tool),
+            provider: loopResult.provider,
+            durationMs: Date.now() - started,
+            error: loopResult.error ? String(loopResult.error).slice(0, 300) : undefined,
+          });
+        } catch (err: any) {
+          audit({ ok: false, error: String(err?.message || err).slice(0, 300) });
+          return jsonRes(res, 500, { ok: false, error: String(err?.message || err).slice(0, 300) });
+        }
+      });
+
       // ── Voice-turn error beacon: the client catch-all posts the real
       // exception here so remote failures are diagnosable, not just heard.
       server.middlewares.use('/api/cortex/viz-turn-error', async (req: any, res: any) => {
