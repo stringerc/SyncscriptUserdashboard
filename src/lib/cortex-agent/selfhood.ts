@@ -132,6 +132,14 @@ export interface Metacognition {
   somaticCI: { predicted: any; lower: any; upper: any; confidence: number } | null;
   attentionStability: { flipRate: number; verdict: string };
   vetoUncertainty: { pending: number; boundaryDistance: number; uncertain: boolean };
+  /** Workspace ignition calibration — how reliable her own
+   *  'contents of consciousness' claims are, measured not assumed. */
+  workspaceCalibration: {
+    ignited: number; contestedRate: number; consumptionRate: number;
+    /** 0..1 — calibrated confidence in broadcast contents. */
+    reliability: number;
+    verdict: string;
+  } | null;
   selfAssessment: string;
 }
 
@@ -189,13 +197,34 @@ export function getMetacognition(): Metacognition {
     uncertain: pending.length > 0 && boundaryDistance < 0.2,
   };
 
+  // Metacognitive loop closed: workspace ignition stats regulate her
+  // confidence in what she claims to be aware of. Reliability =
+  // ignition rate × (1 − contested rate) × consumption rate — a claim
+  // is only as good as its broadcast, its decisiveness, and whether
+  // any module actually used it.
+  let workspaceCalibration: Metacognition['workspaceCalibration'] = null;
+  try {
+    const ws = workspaceStats();
+    if (ws.ignited > 0) {
+      const reliability = Math.round(ws.ignitionRate * (1 - ws.contestedRate) * Math.max(0.3, ws.consumptionRate) * 100) / 100;
+      workspaceCalibration = {
+        ignited: ws.ignited, contestedRate: ws.contestedRate,
+        consumptionRate: ws.consumptionRate, reliability,
+        verdict: reliability > 0.6 ? 'broadcasts are reliable — contents of consciousness are well-supported'
+          : reliability > 0.35 ? 'broadcasts are usable but contested — discount confidence accordingly'
+          : 'broadcasts are noisy — treat conscious contents as hypotheses',
+      };
+    }
+  } catch {}
+
   const bits: string[] = [];
   if (somaticCI) bits.push(`somatic forecast ±${Math.round((1 - somaticCI.confidence) * 100)}% uncertainty`);
   bits.push(attentionStability.verdict);
   if (vetoUncertainty.uncertain) bits.push(`${pending.length} veto window(s) open near the capacity boundary — calls there are genuinely uncertain`);
+  if (workspaceCalibration) bits.push(`workspace reliability ${Math.round(workspaceCalibration.reliability * 100)}% — ${workspaceCalibration.verdict}`);
 
   return {
-    somaticCI, attentionStability, vetoUncertainty,
+    somaticCI, attentionStability, vetoUncertainty, workspaceCalibration,
     selfAssessment: bits.join('; ') + '.',
   };
 }

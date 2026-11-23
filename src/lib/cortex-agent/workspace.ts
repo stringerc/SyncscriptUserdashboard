@@ -70,6 +70,7 @@ export function broadcastAttention(decision: AttentionDecision) {
     consumedBy: [],
   };
   append(b);
+  invalidateWsCache();
   // Ignition speaks — the workspace announcing its own contents.
   if (ignited) {
     try {
@@ -90,12 +91,44 @@ function all(): Broadcast[] {
   } catch { return []; }
 }
 
-/** The current contents of consciousness — most recent IGNITED broadcast. */
+/** Adaptive hold: a decisive ignition on a goal/user signal holds
+ *  longer than a contested system alert. hold = 30s + margin·240s,
+ *  goal/user kinds +50%, clamped [30s, 300s]. */
+export function holdMs(b: Broadcast): number {
+  const base = 30_000 + Math.min(1, b.margin / 0.3) * 240_000;
+  const kindBoost = b.kind === 'goal' || b.kind === 'user' ? 1.5 : b.kind === 'system' ? 0.7 : 1;
+  return Math.min(300_000, Math.max(30_000, base * kindBoost));
+}
+
+let wsCache: { b: Broadcast | null; at: number } = { b: null, at: 0 };
+function invalidateWsCache() { wsCache.at = 0; }
+
+/** The current contents of consciousness — most recent IGNITED broadcast
+ *  still within its adaptive hold window. Cached 5s — callers in hot
+ *  loops (planner rollouts) must not re-read the file per eval. */
 export function currentWorkspace(now = Date.now()): Broadcast | null {
+  if (now - wsCache.at < 5_000) return wsCache.b;
   const recent = all().slice(-20).reverse();
-  // An ignition holds for ~90s unless displaced by a newer one
-  const fresh = recent.find((b) => b.ignited && now - b.ts < 90_000);
-  return fresh || null;
+  const fresh = recent.find((b) => b.ignited && now - b.ts < holdMs(b));
+  wsCache = { b: fresh || null, at: now };
+  return wsCache.b;
+}
+
+/** Top-down bias for the attention competition: how strongly the
+ *  current workspace contents should boost same-kind candidates.
+ *  Scaled by ignition confidence — a contested ignition biases less. */
+export function workspaceBias(kind: string): number {
+  const ws = currentWorkspace();
+  if (!ws) return 0;
+  const confidence = Math.min(1, ws.margin / 0.3); // 0.08 margin → ~0.27
+  if (ws.kind === kind) return 0.12 * confidence;
+  // Adjacent kinds inherit half the bias — system alerts prime
+  // interoceptive/proprioceptive candidates; goals prime inner speech.
+  const adjacent =
+    (ws.kind === 'system' && (kind === 'interoception' || kind === 'proprioception')) ||
+    (ws.kind === 'goal' && kind === 'inner') ||
+    (ws.kind === 'inner' && kind === 'goal');
+  return adjacent ? 0.06 * confidence : 0;
 }
 
 /** Recent broadcast history for surfaces. */
@@ -122,10 +155,14 @@ export function consumeBroadcast(id: string, module: string) {
 export function workspaceStats() {
   const all_b = all();
   const ignited = all_b.filter((b) => b.ignited);
+  const contested = ignited.filter((b) => b.margin < 0.15).length;
+  const consumed = ignited.filter((b) => b.consumedBy.length > 0).length;
   return {
     total: all_b.length,
     ignited: ignited.length,
     ignitionRate: all_b.length ? Math.round((ignited.length / all_b.length) * 100) / 100 : 0,
+    contestedRate: ignited.length ? Math.round((contested / ignited.length) * 100) / 100 : 0,
+    consumptionRate: ignited.length ? Math.round((consumed / ignited.length) * 100) / 100 : 0,
     current: currentWorkspace(),
     byKind: ignited.reduce((m, b) => { m[b.kind] = (m[b.kind] || 0) + 1; return m; }, {} as Record<string, number>),
   };

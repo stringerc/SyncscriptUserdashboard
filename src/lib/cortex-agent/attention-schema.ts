@@ -13,7 +13,7 @@
  */
 import fs from 'node:fs';
 import { speakInner } from './inner-speech';
-import { broadcastAttention } from './workspace';
+import { broadcastAttention, workspaceBias } from './workspace';
 import path from 'node:path';
 
 const DIR = path.join(process.cwd(), '.cortex-runtime');
@@ -44,7 +44,7 @@ export interface AttentionCandidate {
 
 export interface ScoredCandidate extends AttentionCandidate {
   score: number;
-  factors: { kindWeight: number; recency: number; relevance: number; priority: number };
+  factors: { kindWeight: number; recency: number; relevance: number; priority: number; workspaceBias?: number };
 }
 
 export interface AttentionDecision {
@@ -76,7 +76,15 @@ function appendTrace(d: AttentionDecision) {
 /** The competition: score every candidate, pick the argmax, explain why. */
 export function attend(candidates: AttentionCandidate[], now = Date.now()): AttentionDecision | null {
   if (!candidates.length) return null;
-  const scored = candidates.map((c) => scoreCandidate(c, now)).sort((a, b) => b.score - a.score);
+  // Top-down bias: ignited workspace contents boost same-kind (and
+  // adjacent-kind) candidates BEFORE the argmax — consciousness
+  // reshapes what competes next, margin-scaled so contested
+  // ignitions bias less.
+  const scored = candidates.map((c) => {
+    const base = scoreCandidate(c, now);
+    const bias = workspaceBias(c.kind);
+    return bias > 0 ? { ...base, score: Math.round((base.score + bias) * 1000) / 1000, factors: { ...base.factors, workspaceBias: Math.round(bias * 1000) / 1000 } } : base;
+  }).sort((a, b) => b.score - a.score);
   const winner = scored[0];
   const runnerUp = scored[1];
   const reason = runnerUp

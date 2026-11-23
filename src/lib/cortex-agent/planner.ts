@@ -82,9 +82,12 @@ function utilityOf(dims: Record<Dim, number>, weights: Record<Dim, number>): num
 }
 
 function surpriseOfMove(from: Record<Dim, number>, to: Record<Dim, number>, cls?: ActionClass): number {
-  // Precision-weighted: a move on a dim with confident learned dynamics
-  // is more surprising than the same move on an uncertain dim — the
-  // prediction error is weighted by how much we trust the model.
+  // Precision-weighted by TWO confidence sources:
+  //   1. dynamics precision — confident learned effects count more
+  //   2. ignition confidence — a contested workspace broadcast
+  //      (margin 0.08) discounts ALL precision vs a decisive one (0.5)
+  const ws = currentWorkspace();
+  const ignitionConfidence = ws ? (0.4 + 0.6 * Math.min(1, ws.margin / 0.3)) : 0.8;
   let s = 0, wsum = 0;
   for (const d of DIMS) {
     const delta = Math.abs(to[d] - from[d]);
@@ -94,6 +97,7 @@ function surpriseOfMove(from: Record<Dim, number>, to: Record<Dim, number>, cls?
       const p = effectPosterior(cls, d);
       precision = p.n > 0 ? Math.min(1, 1 - p.sd / 0.2) : 0.3;
     }
+    precision *= ignitionConfidence;
     s += delta * precision;
     wsum += precision;
   }
