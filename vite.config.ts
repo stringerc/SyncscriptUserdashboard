@@ -259,6 +259,7 @@ import {
   isSafeAutoProposal,
 } from './src/lib/cortex-initiative-ledger';
 import { getWorldState, formatWorldStateHeader, startWorldStateSampler, onHostMemoryPressure, onWorldStateSample } from './src/lib/cortex-world-state';
+import { startProcessWatch, getTopMemoryProcesses, processWatchStatus } from './src/lib/cortex-agent/process-watch';
 
 /** Short SHA for deploy verification (Vercel sets VERCEL_GIT_COMMIT_SHA at build time). */
 function resolveSyncscriptBuildSha(): string {
@@ -1529,6 +1530,37 @@ function apiProxyPlugin(): Plugin {
       } catch (e: any) {
         console.warn('[world-state] sampler failed to arm:', e?.message || e);
       }
+      // ── Process watch: deep process-layer awareness. ps snapshots every
+      // 15s diff for births/deaths/memory-growth of significant processes
+      // and push them as ambient events — she feels processes die and RAM
+      // get eaten without polling. Events batch to ≤1 push per tick.
+      try {
+        startProcessWatch(15_000, (events) => {
+          try {
+            const fmtMB = (mb: number) => mb >= 1024 ? `${(mb / 1024).toFixed(1)}GB` : `${mb}MB`;
+            const lines = events.slice(0, 6).map(e => {
+              const name = e.comm.split('/').pop() || e.comm;
+              if (e.kind === 'death') return `${name} exited (was ${fmtMB(e.rssMB)})`;
+              if (e.kind === 'birth') return `${name} launched using ${fmtMB(e.rssMB)}`;
+              return `${name} memory spiked ${fmtMB(e.prevMB || 0)}→${fmtMB(e.rssMB)}`;
+            });
+            const extra = events.length > 6 ? ` (+${events.length - 6} more)` : '';
+            ambientPush('ambient', `Process watch: ${lines.join('; ')}${extra}.`);
+          } catch {}
+        });
+      } catch (e: any) {
+        console.warn('[process-watch] failed to arm:', e?.message || e);
+      }
+      // ── /api/cortex/processes — process-watch snapshot for debugging ──
+      server.middlewares.use('/api/cortex/processes', (req: any, res: any) => {
+        agentCors(req, res);
+        res.setHeader('Content-Type', 'application/json');
+        res.end(JSON.stringify({
+          ok: true,
+          status: processWatchStatus(),
+          top: getTopMemoryProcesses(10),
+        }));
+      });
       // ── Host memory-pressure governor: the sampler already watches
       // memUsedPct every 3s — on threshold crossings, reclaim RAM BEFORE
       // the host OOMs (idle sidecars are the biggest safe lever; each is
@@ -1544,12 +1576,18 @@ function apiProxyPlugin(): Plugin {
             // can bounce — don't narrate more than once per 10min.
             if (Date.now() - lastPressurePushAt < 10 * 60_000) return;
             lastPressurePushAt = Date.now();
+            // Name the likely culprits — a pressure alert without the top
+            // consumers is a symptom; with them it's a diagnosis.
+            const topProcs = getTopMemoryProcesses(3)
+              .map(p => `${p.comm.split('/').pop()} ${(p.rssMB / 1024).toFixed(1)}GB`)
+              .join(', ');
+            const culprits = topProcs ? ` Top consumers: ${topProcs}.` : '';
             const freedMB = reaped.length ? ' Reclaimed idle sidecars: ' + reaped.join(', ') + '.' : '';
             ambientPush(
               level === 'critical' ? 'system' : 'ambient',
               level === 'critical'
-                ? `⚠️ Host memory critical — ${pct}% used. I swept idle fleet sidecars to make headroom before anything gets OOM-killed.${freedMB}`
-                : `Memory pressure — host at ${pct}% used. I swept idle sidecars to stay ahead of it.${freedMB}`,
+                ? `⚠️ Host memory critical — ${pct}% used.${culprits} I swept idle fleet sidecars to make headroom before anything gets OOM-killed.${freedMB}`
+                : `Memory pressure — host at ${pct}% used.${culprits} I swept idle sidecars to stay ahead of it.${freedMB}`,
             );
           } catch {}
         });
