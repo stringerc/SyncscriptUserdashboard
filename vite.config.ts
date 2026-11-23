@@ -261,6 +261,31 @@ import {
 import { getWorldState, formatWorldStateHeader, startWorldStateSampler, onHostMemoryPressure, onWorldStateSample, getCachedMemFreePct, probeMemorystatusFreePct } from './src/lib/cortex-world-state';
 import { startProcessWatch, getTopMemoryProcesses, processWatchStatus } from './src/lib/cortex-agent/process-watch';
 
+// Unhandled-rejection guard: Node crashes the ENTIRE process on any
+// unhandled rejection. AbortError rejections are routine cancellation
+// noise — a fetch killed mid-flight by a timeout, barge-in, or provider
+// failover — and one stray abort was observed taking down the whole dev
+// server, after which EVERY Cortex turn answered "something glitched."
+// Swallow AbortError only; everything else still crashes loudly.
+// globalThis-guarded: vite.config re-evaluates on every server restart
+// in-process, so a bare process.on would stack duplicate listeners.
+const gRejectionGuard = globalThis as any;
+if (!gRejectionGuard.__cortexRejectionGuard) {
+  gRejectionGuard.__cortexRejectionGuard = true;
+  process.on('unhandledRejection', (reason: any) => {
+    const name = String(reason?.name || '');
+    const msg = String(reason?.message || reason || '');
+    if (name === 'AbortError' || /aborted|aborterror/i.test(msg)) {
+      return; // cancellation noise — never fatal
+    }
+    // Registering this handler disables Node's default crash-on-reject —
+    // rethrow non-abort rejections so real bugs still take the server down
+    // loudly instead of being silently swallowed.
+    console.error('[unhandledRejection] non-abort rejection:', reason);
+    throw reason;
+  });
+}
+
 /** Short SHA for deploy verification (Vercel sets VERCEL_GIT_COMMIT_SHA at build time). */
 function resolveSyncscriptBuildSha(): string {
   const full =
