@@ -268,7 +268,7 @@ import { setVerificationNotifier, handleCorrectiveResolution } from './src/lib/c
 import { startGoalForecastWatch, setForecastNotifier } from './src/lib/cortex-agent/goal-forecast';
 import { startGoalPaceWatch, setPaceWatchNotifier, notifyPaceRelevantEvent } from './src/lib/cortex-agent/goal-pace-watch';
 import { getInteroceptiveState, interoceptiveGate } from './src/lib/cortex-agent/interoceptive';
-import { armVeto, vetoLibet, amendLibet, holdLibet, listLibetPending, libetTrace, resumeLibetTimers } from './src/lib/cortex-agent/libet-veto';
+import { armVeto, vetoLibet, amendLibet, holdLibet, releaseLibet, listLibetPending, libetTrace, resumeLibetTimers } from './src/lib/cortex-agent/libet-veto';
 import { attend, attentionTrace, scoreCandidate, metaAttentionCandidate, type AttentionCandidate } from './src/lib/cortex-agent/attention-schema';
 import { getProprioception } from './src/lib/cortex-agent/proprioception';
 import { observeWorld, queryWorldModel, topLeverage, scoreDispatch } from './src/lib/cortex-agent/world-model';
@@ -276,6 +276,7 @@ import { getSelfhood } from './src/lib/cortex-agent/selfhood';
 import { speakInner, recentMonologue, monologueStats } from './src/lib/cortex-agent/inner-speech';
 import { planDispatches, rolloutPlan } from './src/lib/cortex-agent/planner';
 import { runConsolidation, getDreamState } from './src/lib/cortex-agent/consolidation';
+import { runResilienceHarness, getResilienceReport } from './src/lib/cortex-agent/resilience';
 import { recordCommitment, reconcileCommitments, sweepOverdue, listCommitments, trustScores, resolveCommitment } from './src/lib/cortex-agent/commitments';
 
 // Unhandled-rejection guard: Node crashes the ENTIRE process on any
@@ -1189,7 +1190,7 @@ const CORTEX_TOOLS = [
       parameters: {
         type: 'object',
         properties: {
-          action: { type: 'string', enum: ['proprioception', 'attention', 'libet', 'veto', 'amend', 'hold', 'world', 'self', 'plan', 'dream', 'social', 'monologue', 'dynamics', 'workspace', 'simulate', 'valence', 'reaction', 'autobiography', 'meta', 'constitution', 'prospective', 'binding', 'tom', 'quantum', 'causal', 'selfmod'], description: 'Which self-model surface to query' },
+          action: { type: 'string', enum: ['proprioception', 'attention', 'libet', 'veto', 'amend', 'hold', 'release', 'world', 'self', 'plan', 'dream', 'social', 'monologue', 'dynamics', 'workspace', 'simulate', 'valence', 'reaction', 'autobiography', 'meta', 'constitution', 'prospective', 'binding', 'tom', 'quantum', 'causal', 'selfmod'], description: 'Which self-model surface to query' },
           id: { type: 'string', description: 'Veto intent id for action=veto (from libet pending)' },
           limit: { type: 'number', description: 'Max trace entries (default 10)' }
         },
@@ -3025,6 +3026,15 @@ function apiProxyPlugin(): Plugin {
           dailyState.selftest = date; saveDaily();
           runSelfTest();
         }
+        const resilienceHour = parseInt(process.env.CORTEX_RESILIENCE_HOUR || '5', 10);
+        if (hour === resilienceHour && dailyState.resilience !== date) {
+          dailyState.resilience = date; saveDaily();
+          runResilienceHarness().then((r) => {
+            if (!r.pass) {
+              ambientPush('system', `Resilience harness FAILED overnight — SLO regressions: ${r.slos.filter((x) => !x.pass).map((x) => `${x.name} (${x.actual})`).join('; ')}`, { ping: true });
+            }
+          }).catch(() => {});
+        }
       };
 
       const ambientTick = async () => {
@@ -3715,7 +3725,11 @@ function apiProxyPlugin(): Plugin {
             const ok = holdLibet(id, Number(body?.extraMs) || 10_000, String(body?.by || 'api'));
             return jsonRes(res, ok ? 200 : 404, { ok, held: ok });
           }
-          return jsonRes(res, 400, { ok: false, error: 'action must be veto|amend|hold' });
+          if (body?.action === 'release') {
+            const ok = releaseLibet(id, String(body?.by || 'api'));
+            return jsonRes(res, ok ? 200 : 404, { ok, released: ok });
+          }
+          return jsonRes(res, 400, { ok: false, error: 'action must be veto|amend|hold|release' });
         }
         return jsonRes(res, 405, { ok: false, error: 'method not allowed' });
       });
@@ -3831,6 +3845,35 @@ function apiProxyPlugin(): Plugin {
         } catch {}
       }, 30 * 60_000);
       dreamTimer.unref?.();
+
+      // ── Resilience harness: replay fault lines as controlled SLO
+      // experiments against the real stack. GET → last report; POST
+      // {run:true} → run now (~2s). Nightly via ambientDaily.
+      server.middlewares.use('/api/cortex/resilience', async (req: any, res: any) => {
+        if (!setCortexCors(req, res)) return jsonRes(res, 403, { ok: false, error: 'forbidden' });
+        if (req.method === 'OPTIONS') { res.writeHead(204); return res.end(); }
+        if (req.method === 'GET') {
+          const report = getResilienceReport();
+          return jsonRes(res, 200, { ok: true, report, stale: report ? Date.now() - report.ranAt > 26 * 3600_000 : true });
+        }
+        if (req.method === 'POST') {
+          const body = JSON.parse(await readBody(req) || '{}');
+          if (body?.run !== true && !body?.force) {
+            const report = getResilienceReport();
+            return jsonRes(res, 200, { ok: true, report, ran: false, hint: 'POST {run:true} to execute the harness' });
+          }
+          const report = await runResilienceHarness();
+          if (!report.pass) {
+            attentionPending.push({
+              id: `resilience-${Date.now()}`, kind: 'system',
+              text: `⚠ Resilience SLO regression: ${report.slos.filter((x) => !x.pass).map((x) => x.name).join(', ')}`,
+              ts: Date.now(), priority: 0.9, goalRelevance: 0.8,
+            });
+          }
+          return jsonRes(res, 200, { ok: true, ran: true, report });
+        }
+        return jsonRes(res, 405, { ok: false, error: 'method not allowed' });
+      });
 
       // ── Social ledger: commitments, trust, shared utility ──
       server.middlewares.use('/api/cortex/commitments', async (req: any, res: any) => {
@@ -6035,6 +6078,11 @@ end tell`;
                   const { holdLibet } = await import('./src/lib/cortex-agent/libet-veto');
                   const ok = holdLibet(String(args?.id || ''), Number(args?.extraMs) || 10_000, 'cortex');
                   return res.end(JSON.stringify({ ok, tool, action, held: ok, durationMs: Date.now() - startMs }));
+                }
+                if (action === 'release') {
+                  const { releaseLibet } = await import('./src/lib/cortex-agent/libet-veto');
+                  const ok = releaseLibet(String(args?.id || ''), 'cortex');
+                  return res.end(JSON.stringify({ ok, tool, action, released: ok, durationMs: Date.now() - startMs }));
                 }
                 if (action === 'self') {
                   const which = String(args?.which || 'all');

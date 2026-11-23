@@ -25,6 +25,7 @@ import { commitmentUtility } from './commitments';
 import { speakInner } from './inner-speech';
 import { learnedEffects, dynamicsUncertainty, effectPosterior } from './empirical-dynamics';
 import { currentWorkspace, consumeBroadcast } from './workspace';
+import { scoreAesthetic } from './aesthetic';
 
 // ── Action classes and their plausible effect priors ──────────────────
 // Priors are explicit assumptions, labeled as such; empirical estimates
@@ -246,6 +247,40 @@ export function rolloutFrom(state: WorldState, firstCls: ActionClass, horizon = 
     ambiguity: Math.round(totalAmbiguity * 1000) / 1000,
     saturation: Math.round(totalSaturation * 1000) / 1000,
     finalDims: current,
+  };
+}
+
+/** Pre-dispatch inspection: the evidence packet the veto window shows.
+ *  Single-step free energy + saturation + risk + aesthetic verdict for
+ *  ONE candidate — what the cockpit card displays before fire. */
+export function inspectDispatch(kind: string, title: string) {
+  const s = loadWorld();
+  s.dims = s.dims || {};
+  const cls = CLASS_OF(kind, title);
+  const e = evaluateAction(s, cls, s.dims);
+  let secondG = 0;
+  for (const c2 of Object.keys(ACTION_PRIORS) as ActionClass[]) {
+    const e2 = evaluateAction(s, c2, e.next);
+    secondG = Math.min(secondG || Infinity, e2.g);
+  }
+  const freeEnergy = e.g + (secondG === Infinity ? 0 : secondG * 0.85);
+  const traj = rolloutFrom(s, cls, 3);
+  const shifts = Object.keys(traj.finalDims)
+    .map((d) => ({ dim: d, delta: Math.round(((traj.finalDims as any)[d] - (s.dims as any)[d]) * 1000) / 1000 }))
+    .filter((x) => Math.abs(x.delta) > 0.01)
+    .sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta))
+    .slice(0, 3);
+  let aesthetic = null;
+  try { aesthetic = scoreAesthetic(traj.trajectory, shifts); } catch {}
+  return {
+    actionClass: cls,
+    freeEnergy: Math.round(freeEnergy * 1000) / 1000,
+    saturation: Math.round(e.saturation * 1000) / 1000,
+    risk: Math.round(e.risk * 1000) / 1000,
+    utility: Math.round(e.utility * 1000) / 1000,
+    aesthetic: aesthetic ? { score: aesthetic.score, verdict: aesthetic.verdict } : null,
+    trajectory: traj.sequence,
+    hostLoad: Math.round(((s.dims as any).hostLoad ?? 0) * 100) / 100,
   };
 }
 

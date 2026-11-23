@@ -15,6 +15,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { speakInner } from './inner-speech';
 import { getInteroceptiveState, interoceptiveGate } from './interoceptive';
+import { inspectDispatch } from './planner';
+import { constitutionCheckAction } from './constitution';
 
 const DIR = path.join(process.cwd(), '.cortex-runtime');
 const FILE = path.join(DIR, 'libet-veto.json');
@@ -37,6 +39,17 @@ export interface VetoIntent {
   armedCapacity?: number;
   /** Who armed this — 'self' (autonomous) vs 'external' (API/user). */
   origin?: 'self' | 'external';
+  /** Cockpit card: the evidence packet behind this dispatch — free
+   *  energy, saturation charge, aesthetic verdict, constitutional
+   *  weight. The operator reviews THIS, not just a title. */
+  inspection?: {
+    actionClass?: string; freeEnergy?: number; saturation?: number;
+    risk?: number; utility?: number; hostLoad?: number;
+    aesthetic?: { score: number; verdict: string } | null;
+    constitutionalVeto?: boolean; vetoReasons?: string[];
+    trajectory?: string[];
+    requiresReview?: boolean; reviewReasons?: string[];
+  };
   status: 'pending' | 'fired' | 'vetoed';
   resolvedAt?: number;
   resolvedBy?: string;
@@ -61,6 +74,16 @@ function log(entry: Record<string, unknown>) {
 }
 
 const timers = new Map<string, NodeJS.Timeout>();
+/** Fire callbacks live only in-process — release/veto resolve against
+ *  the live record; a restarted pending intent can never fire blind
+ *  (resumeLibetTimers vetoes them). */
+const fireCallbacks = new Map<string, (intent: VetoIntent) => unknown>();
+
+/** Evidence thresholds that force the cockpit: saturation charge,
+ *  constitutional veto, or elevated risk all earn a review window. */
+const REVIEW_SATURATION = 0.1;
+const REVIEW_RISK = 0.2;
+const REVIEW_WINDOW_MS = 15_000;
 
 /** Arm a dispatch intent. `fire` runs the real submitTask — only called
  *  if the window expires without a veto. Returns the intent id. */
@@ -86,13 +109,52 @@ export function armVeto(opts: {
     armedCapacity: armCapacity,
     origin: opts.origin || 'self',
   };
+  // Cockpit inspection: score the dispatch BEFORE the window opens so
+  // the operator sees free energy, saturation, aesthetics, and moral
+  // weight — not a bare title. Flagged intents get an extended window.
+  try {
+    const plan = inspectDispatch(opts.kind, opts.title);
+    const gate0 = interoceptiveGate(opts.kind, opts.title);
+    const con = constitutionCheckAction({
+      actionClass: plan.actionClass, title: opts.title,
+      freeEnergy: plan.freeEnergy,
+      somaticGate: { allow: gate0.allow, level: gate0.level },
+      socialUtility: 0,
+    });
+    const reviewReasons: string[] = [];
+    if ((plan.saturation ?? 0) > REVIEW_SATURATION) reviewReasons.push(`saturation ${plan.saturation} — predicted effects exceed dim headroom`);
+    if (con.vetoed) reviewReasons.push(`constitutional veto: ${con.verdicts.filter((v) => v.vetoed).map((v) => v.reason).join('; ')}`);
+    if ((plan.risk ?? 0) > REVIEW_RISK) reviewReasons.push(`elevated risk ${plan.risk}`);
+    const requiresReview = reviewReasons.length > 0;
+    intent.inspection = {
+      actionClass: plan.actionClass, freeEnergy: plan.freeEnergy,
+      saturation: plan.saturation, risk: plan.risk, utility: plan.utility,
+      hostLoad: plan.hostLoad, aesthetic: plan.aesthetic,
+      constitutionalVeto: con.vetoed,
+      vetoReasons: con.verdicts.filter((v) => v.vetoed).map((v) => `${v.ruleId}: ${v.reason}`),
+      trajectory: plan.trajectory,
+      requiresReview, reviewReasons,
+    };
+    if (requiresReview) {
+      // The window IS the review — flagged dispatches pause longer so a
+      // conscious operator (or Cortex's own meta-check) can intervene.
+      intent.fireAt = Math.min(intent.armedAt + 120_000, now + Math.max(windowMs, REVIEW_WINDOW_MS));
+      intent.vetoWindowMs = intent.fireAt - now;
+    }
+  } catch { /* inspection is advisory — never block arming */ }
+
   const state = load();
   state.pending = state.pending.filter((p) => p.status === 'pending' && now - p.armedAt < 120_000);
   state.pending.push(intent);
   if (state.pending.length > MAX_PENDING) state.pending.splice(0, state.pending.length - MAX_PENDING);
   save(state);
+  fireCallbacks.set(id, opts.fire);
+  const insp = intent.inspection;
   try {
-    speakInner({ kind: 'veto', source: 'libet', text: `About to dispatch ${opts.agentId}/${opts.kind}: "${opts.title.slice(0, 60)}" — ${windowMs}ms veto window open`, surprise: 0.2, valence: 0 });
+    const card = insp
+      ? ` [G=${insp.freeEnergy} sat=${insp.saturation} risk=${insp.risk} aesthetic=${insp.aesthetic?.verdict || 'n/a'}${insp.constitutionalVeto ? ' CONST-VETO' : ''}${insp.requiresReview ? ' REVIEW' : ''}]`
+      : '';
+    speakInner({ kind: 'veto', source: 'libet', text: `About to dispatch ${opts.agentId}/${opts.kind}: "${opts.title.slice(0, 60)}" — ${intent.vetoWindowMs}ms veto window open${card}`, surprise: insp?.requiresReview ? 0.5 : 0.2, valence: insp?.constitutionalVeto ? -0.3 : 0 });
   } catch {}
   const scheduleFire = () => {
     timers.set(id, setTimeout(() => {
@@ -114,6 +176,7 @@ export function armVeto(opts: {
         save(s);
         log({ event: 'somatic-veto', id, agentId: i.agentId, kind: i.kind, title: i.title, reason: gate.reason });
         try { speakInner({ kind: 'veto', source: 'somatic', text: `BODY VETOED ${i.agentId}/${i.kind}: "${i.title.slice(0, 50)}" — ${gate.reason}`, surprise: 0.7, valence: -0.5 }); } catch {}
+        fireCallbacks.delete(id);
         timers.delete(id);
         return;
       }
@@ -124,7 +187,9 @@ export function armVeto(opts: {
     save(s);
     log({ event: 'fired', id, agentId: i.agentId, kind: i.kind, title: i.title });
     try { speakInner({ kind: 'veto', source: 'libet', text: `Veto window expired — dispatching ${i.agentId}/${i.kind}: "${i.title.slice(0, 60)}"`, surprise: 0.1, valence: 0 }); } catch {}
-      try { opts.fire({ ...i }); } catch (e: any) { log({ event: 'fire-error', id, error: String(e?.message || e) }); }
+      const cb = fireCallbacks.get(id);
+      fireCallbacks.delete(id);
+      try { cb?.({ ...i }); } catch (e: any) { log({ event: 'fire-error', id, error: String(e?.message || e) }); }
       timers.delete(id);
     }, Math.max(50, i0fireAt() - Date.now())));
     timers.get(id)!.unref?.();
@@ -183,8 +248,31 @@ export function vetoLibet(id: string, by = 'cortex'): boolean {
   save(s);
   const t = timers.get(id);
   if (t) { clearTimeout(t); timers.delete(id); }
+  fireCallbacks.delete(id);
   log({ event: 'vetoed', id, by, agentId: i.agentId, kind: i.kind, title: i.title });
   try { speakInner({ kind: 'veto', source: 'libet', text: `VETOED ${i.agentId}/${i.kind}: "${i.title.slice(0, 60)}" — cancelled by ${by} before firing`, surprise: 0.5, valence: -0.2 }); } catch {}
+  return true;
+}
+
+/** Release a pending intent — the operator's explicit approval. Fires
+ *  immediately rather than waiting out the window; the decision gap
+ *  ends by choice, not by timeout. */
+export function releaseLibet(id: string, by = 'cortex'): boolean {
+  const s = load();
+  const i = s.pending.find((p) => p.id === id);
+  if (!i) return false;
+  i.status = 'fired'; i.resolvedAt = Date.now(); i.resolvedBy = `${by}:released`;
+  s.pending = s.pending.filter((p) => p.id !== id);
+  s.fired.push(i);
+  if (s.fired.length > 100) s.fired = s.fired.slice(-100);
+  save(s);
+  const t = timers.get(id);
+  if (t) { clearTimeout(t); timers.delete(id); }
+  const cb = fireCallbacks.get(id);
+  fireCallbacks.delete(id);
+  log({ event: 'released', id, by, agentId: i.agentId, kind: i.kind, title: i.title });
+  try { speakInner({ kind: 'veto', source: 'libet', text: `RELEASED ${i.agentId}/${i.kind}: "${i.title.slice(0, 60)}" — approved early by ${by}`, surprise: 0.4, valence: 0.2 }); } catch {}
+  try { cb?.({ ...i }); } catch (e: any) { log({ event: 'fire-error', id, error: String(e?.message || e) }); }
   return true;
 }
 

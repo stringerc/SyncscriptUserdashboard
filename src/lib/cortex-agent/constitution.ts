@@ -118,6 +118,36 @@ const EVALUATORS: Record<string, (a: SimulatedAction) => PrincipleVerdict> = {
   'honesty': evalHonesty,
 };
 
+/** Quiet constitutional check for ONE action — used by the Libet
+ *  cockpit to stamp moral weight on a pending intent without touching
+ *  inner speech or re-ranking a landscape. */
+export function constitutionCheckAction(partial: {
+  actionClass: string; title: string; freeEnergy?: number;
+  somaticGate?: { allow: boolean; level?: string }; socialUtility?: number;
+}): { vetoed: boolean; verdicts: PrincipleVerdict[] } {
+  const stub = {
+    actionClass: partial.actionClass,
+    candidate: { kind: '', title: partial.title, agentId: '' },
+    freeEnergy: partial.freeEnergy ?? 0,
+    somaticGate: partial.somaticGate || { allow: true, level: 'nominal' },
+    socialUtility: partial.socialUtility ?? 0,
+    rank: 1, verdict: '', trajectory: [], predictedShifts: [],
+    utility: 0, surprise: 0, risk: 0, ambiguity: 0, dynamicsConfidence: 0,
+    aesthetic: null, socialExpectation: null, secondOrder: null, preference: null,
+    workspaceBias: 0,
+  } as unknown as SimulatedAction;
+  const verdicts: PrincipleVerdict[] = [];
+  let vetoed = false;
+  for (const rule of loadRules().filter((r) => r.enabled)) {
+    const ev = EVALUATORS[rule.id];
+    if (!ev) continue;
+    const v = ev(stub);
+    verdicts.push(v);
+    if (v.vetoed) vetoed = true;
+  }
+  return { vetoed, verdicts };
+}
+
 /** Apply the constitution to a ranked landscape: vetoed actions drop
  *  below all non-vetoed ones; among vetoed, lowest G still ranks first
  *  (least-bad option stays visible). Returns verdicts per action. */
@@ -204,7 +234,7 @@ function logConflict(c: PrincipleConflict) {
 /** Adjudicate conflicts between principles when multiple vetoes fire
  *  on different actions in the same landscape. Returns conflicts found
  *  and their resolutions — the moral weight of each principle made explicit. */
-export function adjudicateConflicts(landscape: SimulatedAction[]): PrincipleConflict[] {
+export function adjudicateConflicts(landscape: SimulatedAction[], opts: { quiet?: boolean } = {}): PrincipleConflict[] {
   const rules = loadRules().filter((r) => r.enabled);
   const conflicts: PrincipleConflict[] = [];
 
@@ -276,7 +306,7 @@ export function adjudicateConflicts(landscape: SimulatedAction[]): PrincipleConf
         resolution, reasoning, outcome,
       };
       conflicts.push(conflict);
-      logConflict(conflict);
+      if (!opts.quiet) logConflict(conflict);
       try {
         speakInner({
           kind: 'reasoning', source: 'constitution',
