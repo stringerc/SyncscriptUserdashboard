@@ -3946,7 +3946,7 @@ function apiProxyPlugin(): Plugin {
         return jsonRes(res, 200, { ok: true, added, stats: vm.valenceStats() });
       });
 
-      // ── Quantum calibration: belief fidelity ──
+
       server.middlewares.use('/api/cortex/quantum', async (req: any, res: any) => {
         if (!setCortexCors(req, res)) return jsonRes(res, 403, { ok: false, error: 'forbidden' });
         if (req.method === 'OPTIONS') { res.writeHead(204); return res.end(); }

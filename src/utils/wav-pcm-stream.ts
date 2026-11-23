@@ -238,6 +238,12 @@ export async function pumpWavToPcm(
   body: ReadableStream<Uint8Array>,
   queue: PcmQueue,
   signal?: AbortSignal,
+  /** Expected spoken-text length + speed — enables a plausibility check:
+   *  a stream that ends far shorter than the text should take is a
+   *  silent mid-word truncation even when the socket closed cleanly
+   *  (the TTS engine itself stopped early — pocket-tts writes a 2GB
+   *  placeholder data size so header checks can't catch it). */
+  opts?: { textLen?: number; speed?: number; sampleRateHint?: number },
 ): Promise<void> {
   const reader = body.getReader();
   const onAbort = () => { try { reader.cancel(); } catch { } };
@@ -249,13 +255,36 @@ export async function pumpWavToPcm(
     const blockBytes = blockFrames * bytesPerFrame;
     let payloadBytes = 0;
     let abortedMidPayload = false;
+    let lastBlockRms = 0;
+    let lastBlockSecs = 0;
     for (;;) {
       if (signal?.aborted) { abortedMidPayload = payloadBytes > 0; break; }
       const block = await data.read(blockBytes);
       if (!block || block.byteLength === 0) break;
       payloadBytes += block.byteLength;
       const samples = pcmToFloat32(block, format.channels, format.bitsPerSample, format.audioFormat);
-      if (samples.length) queue.push({ samples, sampleRate: format.sampleRate });
+      if (samples.length) {
+        // RMS of the tail — a clean utterance ends in silence/fade; a
+        // truncated one ends mid-phonation with energy still present.
+        const tail = samples.subarray(Math.max(0, samples.length - 4800));
+        let sum = 0;
+        for (let i = 0; i < tail.length; i++) sum += tail[i] * tail[i];
+        lastBlockRms = Math.sqrt(sum / Math.max(1, tail.length));
+        lastBlockSecs = samples.length / format.sampleRate;
+        queue.push({ samples, sampleRate: format.sampleRate });
+      }
+    }
+    // Plausibility truncation check: expected bytes ≈ textLen/(15·speed)
+    // seconds × ~48KB/s (24kHz s16 mono). If we got <50% of expected AND
+    // the audio ends hot (not faded), the engine truncated generation.
+    if (opts?.textLen && opts.textLen > 20) {
+      const speed = Math.max(0.5, Math.min(2, opts.speed || 1));
+      const expectedSecs = opts.textLen / (15 * speed);
+      const expectedBytes = expectedSecs * (format.sampleRate * (format.bitsPerSample / 8) * format.channels);
+      const gotSecs = payloadBytes / (format.sampleRate * (format.bitsPerSample / 8) * format.channels);
+      if (expectedBytes > 0 && payloadBytes < expectedBytes * 0.5 && gotSecs > 0.5 && lastBlockRms > 0.015) {
+        queue.markTruncated();
+      }
     }
     // Abort mid-payload must mark truncation — previously it returned
     // cleanly, the queue closed unflagged, and schedulePcmQueue accepted

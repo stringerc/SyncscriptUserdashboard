@@ -1409,7 +1409,9 @@ export function useVoiceStream(options: UseVoiceStreamOptions = {}) {
           voice: res.headers.get('x-tts-voice'),
         };
         const queue = new PcmQueue();
-        void pumpWavToPcm(res.body, queue, streamTtsAbortRef.current?.signal)
+        void pumpWavToPcm(res.body, queue, streamTtsAbortRef.current?.signal, {
+          textLen: item.text.length, speed: item.speed || 1.0,
+        })
           .catch(() => queue.fail(new Error('pcm pump failed')))
           .finally(release);
         return queue;

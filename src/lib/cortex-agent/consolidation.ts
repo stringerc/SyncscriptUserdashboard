@@ -21,6 +21,7 @@
  * State: .cortex-runtime/dream-state.json + dream-insights.jsonl
  */
 import fs from 'node:fs';
+import { causalReport } from './causal-inference';
 import path from 'node:path';
 
 const RUNTIME = path.resolve(process.cwd(), '.cortex-runtime');
@@ -268,6 +269,66 @@ export function runConsolidation(now = Date.now(), force = false): Consolidation
     patterns: patterns.length, hypotheses: hyps.length,
     topHypothesis: hyps[0]?.claim,
   };
+}
+
+// ── Counterfactual replay: high-surprise episodes re-simulated offline ──
+// During idle consolidation cycles, replay the most surprising episodes
+// through the current world-model and record what a DIFFERENT choice
+// might have predicted — dream-time counterfactuals, no action taken.
+const REPLAY_LOG = path.join(RUNTIME, 'dream-replay.jsonl');
+
+export interface ReplayRecord {
+  ts: number;
+  episodeKind: string;
+  episodeText: string;
+  surprise: number;
+  /** What the actual outcome was. */
+  actualOutcome: string;
+  /** What the simulator predicts for the same context now. */
+  counterfactualPrediction: string;
+  /** Whether the counterfactual diverges meaningfully from actual. */
+  divergence: 'none' | 'moderate' | 'significant';
+}
+
+export function replayCounterfactuals(limit = 10): { replayed: number; records: ReplayRecord[] } {
+  const eps = extractEpisodes().slice(-limit * 3);
+  // Sort by surprise descending — replay the most surprising first
+  // Episodes carry kind/signal/valence — 'surprise' proxy: contested or
+  // negative-valence episodes are the surprising ones worth replaying.
+  const surprising = eps
+    .filter((e) => e.valence === 'negative' || e.kind === 'system' || e.kind === 'goal')
+    .slice(-limit);
+
+  const records: ReplayRecord[] = [];
+  for (const ep of surprising) {
+    const kind = String(ep.kind || 'unknown');
+    const text = String(ep.signal || '').slice(0, 120);
+    const surprise = ep.valence === 'negative' ? 0.7 : ep.kind === 'system' ? 0.5 : 0.3;
+    // Counterfactual: what would the planner do NOW with this context?
+    // We can't re-run history, but we CAN ask: given current dims,
+    // does the simulator predict a different outcome for this kind?
+    let prediction = 'no counterfactual model available';
+    let divergence: ReplayRecord['divergence'] = 'none';
+    try {
+      const causal = causalReport();
+      const relevant = causal.estimates.filter((e: any) => e.actionClass === kind || e.dim === kind).slice(0, 2);
+      if (relevant.length) {
+        prediction = relevant.map((e: any) => `${e.actionClass}→${e.dim}: ${e.verdict} (${e.controlledEffect >= 0 ? '+' : ''}${e.controlledEffect.toFixed(3)})`).join('; ');
+        divergence = relevant.some((e: any) => e.verdict === 'likely-causal') ? 'moderate' : 'significant';
+      }
+    } catch {}
+
+    const rec: ReplayRecord = {
+      ts: Date.now(), episodeKind: kind, episodeText: text,
+      surprise, actualOutcome: text || 'unknown',
+      counterfactualPrediction: prediction, divergence,
+    };
+    records.push(rec);
+    try {
+      fs.appendFileSync(REPLAY_LOG, JSON.stringify(rec) + '\n');
+    } catch {}
+  }
+  return { replayed: records.length, records };
 }
 
 export function getDreamState() {
