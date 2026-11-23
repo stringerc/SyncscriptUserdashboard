@@ -21,6 +21,7 @@
  *       veto window — the gate reviews the plan, not just the impulse.
  */
 import { loadWorld, DIMS, type Dim, type WorldState } from './world-model';
+import { commitmentUtility } from './commitments';
 
 // ── Action classes and their plausible effect priors ──────────────────
 // Priors are explicit assumptions, labeled as such; empirical estimates
@@ -165,7 +166,10 @@ export function planDispatches(candidates: DispatchCandidate[], state?: WorldSta
       const e2 = evaluateAction(s, c2, first.next);
       secondG = Math.min(secondG || Infinity, e2.g);
     }
-    const freeEnergy = first.g + (secondG === Infinity ? 0 : secondG * 0.85);
+    // Shared utility: keeping an open commitment is goal-positive —
+    // the planner optimizes the crew's word, not just her own.
+    const social = commitmentUtility(String(c.agentId || ''), c.kind, c.title);
+    const freeEnergy = first.g + (secondG === Infinity ? 0 : secondG * 0.85) - social * 0.5;
     return {
       candidate: c, actionClass: cls,
       freeEnergy: Math.round(freeEnergy * 1000) / 1000,

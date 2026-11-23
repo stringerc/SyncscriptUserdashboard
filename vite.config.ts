@@ -275,6 +275,7 @@ import { observeWorld, queryWorldModel, topLeverage, scoreDispatch } from './src
 import { getSelfhood } from './src/lib/cortex-agent/selfhood';
 import { planDispatches, rolloutPlan } from './src/lib/cortex-agent/planner';
 import { runConsolidation, getDreamState } from './src/lib/cortex-agent/consolidation';
+import { recordCommitment, reconcileCommitments, sweepOverdue, listCommitments, trustScores, resolveCommitment } from './src/lib/cortex-agent/commitments';
 
 // Unhandled-rejection guard: Node crashes the ENTIRE process on any
 // unhandled rejection. AbortError rejections are routine cancellation
@@ -1187,7 +1188,7 @@ const CORTEX_TOOLS = [
       parameters: {
         type: 'object',
         properties: {
-          action: { type: 'string', enum: ['proprioception', 'attention', 'libet', 'veto', 'world', 'self', 'plan', 'dream'], description: 'Which self-model surface to query' },
+          action: { type: 'string', enum: ['proprioception', 'attention', 'libet', 'veto', 'world', 'self', 'plan', 'dream', 'social'], description: 'Which self-model surface to query' },
           id: { type: 'string', description: 'Veto intent id for action=veto (from libet pending)' },
           limit: { type: 'number', description: 'Max trace entries (default 10)' }
         },
@@ -1952,6 +1953,8 @@ function apiProxyPlugin(): Plugin {
         // drift re-check (completed) or escalate immediately (failed).
         try { handleCorrectiveResolution(task as any); } catch {}
         try { notifyPaceRelevantEvent(); } catch {}
+        try { reconcileCommitments(task.id, task.status); } catch {}
+        try { sweepOverdue(); } catch {}
         // Incident ticket: every failure upserts the agent|class|kind ledger.
         if (task.status === 'failed') {
           recordIncidentFailure({
@@ -3797,6 +3800,40 @@ function apiProxyPlugin(): Plugin {
         } catch {}
       }, 30 * 60_000);
       dreamTimer.unref?.();
+
+      // ── Social ledger: commitments, trust, shared utility ──
+      server.middlewares.use('/api/cortex/commitments', async (req: any, res: any) => {
+        if (!setCortexCors(req, res)) return jsonRes(res, 403, { ok: false, error: 'forbidden' });
+        if (req.method === 'OPTIONS') { res.writeHead(204); return res.end(); }
+        if (req.method === 'GET') {
+          return jsonRes(res, 200, {
+            ok: true,
+            open: listCommitments({ status: 'open' }),
+            all: listCommitments(),
+            trust: trustScores(),
+          });
+        }
+        if (req.method === 'POST') {
+          const body = JSON.parse(await readBody(req) || '{}');
+          if (body?.action === 'record') {
+            const c = recordCommitment({
+              promiser: String(body.promiser || 'cortex'), promisee: String(body.promisee || 'user'),
+              text: String(body.text || ''), dueAt: Number(body.dueAt) || undefined,
+              taskId: body.taskId ? String(body.taskId) : undefined,
+            });
+            return jsonRes(res, 200, { ok: true, commitment: c });
+          }
+          if (body?.action === 'resolve') {
+            const c = resolveCommitment(String(body.id || ''), body.outcome === 'missed' ? 'missed' : body.outcome === 'renegotiated' ? 'renegotiated' : 'kept', String(body.note || ''));
+            return jsonRes(res, c ? 200 : 404, { ok: !!c, commitment: c });
+          }
+          if (body?.action === 'sweep') {
+            return jsonRes(res, 200, { ok: true, swept: sweepOverdue() });
+          }
+          return jsonRes(res, 400, { ok: false, error: 'action must be record|resolve|sweep' });
+        }
+        return jsonRes(res, 405, { ok: false, error: 'method not allowed' });
+      });
 
       // ── Selfhood: narrative self + metacognition + fleet ToM ──
       server.middlewares.use('/api/cortex/selfhood', (req: any, res: any) => {
@@ -5789,6 +5826,15 @@ end tell`;
                     return res.end(JSON.stringify({ ok: true, tool, action, ...r, durationMs: Date.now() - startMs }));
                   }
                   return res.end(JSON.stringify({ ok: true, tool, action, baseline: rp(state, 3), durationMs: Date.now() - startMs }));
+                }
+                if (action === 'social') {
+                  const { listCommitments: lc, trustScores: ts } = await import('./src/lib/cortex-agent/commitments');
+                  return res.end(JSON.stringify({
+                    ok: true, tool, action,
+                    open: lc({ status: 'open' }).slice(0, 10),
+                    trust: ts(),
+                    durationMs: Date.now() - startMs,
+                  }));
                 }
                 if (action === 'dream') {
                   const { runConsolidation: rc, getDreamState: gd } = await import('./src/lib/cortex-agent/consolidation');
@@ -14992,6 +15038,16 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
             }
             input.interoceptiveCapacity = iGate.capacity;
             const result = agentRuntime.submitTask(agentId as any, kind, title.slice(0, 200), input);
+            if (result.ok && result.task && (input.commitment || input.dueAt)) {
+              try {
+                recordCommitment({
+                  promiser: agentId, promisee: 'cortex',
+                  text: String(input.commitment || title).slice(0, 180),
+                  dueAt: Number(input.dueAt) || undefined,
+                  taskId: result.task.id,
+                });
+              } catch {}
+            }
             // Budget exhaustion is a governance event, not a silent dead end:
             // file an Inbox proposal (deduped per agent per day) so a human
             // can raise the cap instead of the work just disappearing.

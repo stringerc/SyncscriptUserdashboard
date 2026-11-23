@@ -29,6 +29,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { getInteroceptiveState } from './interoceptive';
+import { listCommitments, trustScores } from './commitments';
 
 const RUNTIME = path.resolve(process.cwd(), '.cortex-runtime');
 const readJsonl = (f: string, tail = 400) => {
@@ -209,6 +210,8 @@ interface AgentMind {
   predictedNext: string;
   /** Second-order: did recent behavior match her model? */
   modelError: number; // 0 = predicted right, 1 = surprised
+  /** Social prior: P(this agent keeps its word) — Beta kept/missed. */
+  trust: number | null;
   mentalModel: string;
 }
 
@@ -221,6 +224,7 @@ export function getFleetMinds(): AgentMind[] {
     if (!byAgent.has(id)) byAgent.set(id, []);
     byAgent.get(id)!.push(t);
   }
+  const trust = trustScores().agents;
   const minds: AgentMind[] = [];
   for (const [agentId, tasks] of byAgent) {
     const done = tasks.filter((t) => t.status === 'completed' || t.status === 'done');
@@ -241,6 +245,7 @@ export function getFleetMinds(): AgentMind[] {
       lastKind: String(last?.kind || ''),
       predictedNext,
       modelError: Math.round(modelError * 100) / 100,
+      trust: trust[agentId]?.trust ?? null,
       mentalModel: modelError > 0.5
         ? `${agentId} is behaving unpredictably — her model of them is weak; they know things she doesn't expect`
         : modelError > 0.3
@@ -253,10 +258,16 @@ export function getFleetMinds(): AgentMind[] {
 
 // ═══ Unified self-model readout ═════════════════════════════════════════
 export function getSelfhood() {
+  const openCommits = listCommitments({ status: 'open' });
   return {
     computedAt: Date.now(),
     narrative: getNarrative(),
     metacognition: getMetacognition(),
     fleetMinds: getFleetMinds(),
+    social: {
+      openCommitments: openCommits.length,
+      overdue: openCommits.filter((c) => c.dueAt && c.dueAt < Date.now()).length,
+      trust: trustScores(),
+    },
   };
 }
