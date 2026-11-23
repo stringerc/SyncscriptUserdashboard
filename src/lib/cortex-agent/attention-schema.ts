@@ -12,6 +12,7 @@
  * Trace: .cortex-runtime/attention-trace.jsonl (capped).
  */
 import fs from 'node:fs';
+import { speakInner } from './inner-speech';
 import path from 'node:path';
 
 const DIR = path.join(process.cwd(), '.cortex-runtime');
@@ -19,7 +20,7 @@ const TRACE = path.join(DIR, 'attention-trace.jsonl');
 const MAX_TRACE = 500;
 const HALF_LIFE_MS = 10 * 60_000; // salience halves every 10 min
 
-export type AttentionKind = 'system' | 'ambient' | 'goal' | 'user' | 'proprioception' | 'interoception';
+export type AttentionKind = 'system' | 'ambient' | 'goal' | 'user' | 'proprioception' | 'interoception' | 'inner';
 
 const KIND_WEIGHT: Record<AttentionKind, number> = {
   user: 1.0,           // direct address always wins
@@ -27,6 +28,7 @@ const KIND_WEIGHT: Record<AttentionKind, number> = {
   goal: 0.7,           // drift, forecasts, escalations
   interoception: 0.65, // somatic surprise
   proprioception: 0.4, // limb state changes
+  inner: 0.55,         // self-talk — salient but below system
   ambient: 0.35,       // observations, chatter
 };
 
@@ -81,6 +83,14 @@ export function attend(candidates: AttentionCandidate[], now = Date.now()): Atte
     : `"${winner.text.slice(0, 60)}" won uncontested — score ${winner.score} (kind ${winner.kind})`;
   const decision: AttentionDecision = { ts: now, winner, reason, candidates: scored };
   appendTrace(decision);
+  try {
+    speakInner({
+      kind: 'attention', source: 'attention-schema',
+      text: `Attention: ${reason}`,
+      surprise: Math.min(1, winner.score / (scored[1]?.score || winner.score || 1) - 1 > 0 ? 0.3 : 0.1),
+      valence: winner.kind === 'system' ? -0.3 : 0.1,
+    });
+  } catch {}
   return decision;
 }
 

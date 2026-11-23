@@ -22,6 +22,7 @@
  */
 import fs from 'node:fs';
 import path from 'node:path';
+import { speakInner } from './inner-speech';
 
 const RUNTIME = path.resolve(process.cwd(), '.cortex-runtime');
 const LEDGER = path.join(RUNTIME, 'commitments.jsonl');
@@ -97,6 +98,14 @@ export function resolveCommitment(id: string, outcome: 'kept' | 'missed' | 'rene
     const bucket = c.promiser === 'cortex' ? t.cortex : (t.agents[c.promiser] ||= { kept: 0, missed: 0 });
     bucket[outcome === 'kept' ? 'kept' : 'missed']++;
     saveTrust(t);
+    try {
+      speakInner({
+        kind: 'commitment', source: 'commitments',
+        text: `Social prediction error: ${c.promiser} ${outcome === 'kept' ? 'KEPT' : 'MISSED'} "${c.text.slice(0, 60)}" owed to ${c.promisee}`,
+        surprise: outcome === 'missed' ? 0.6 : 0.2,
+        valence: outcome === 'kept' ? 0.4 : -0.5,
+      });
+    } catch {}
     // Social prediction error record — the fleet learns who keeps word.
     append({
       ...c, id: `${c.id}-spe`, status: 'open',

@@ -30,6 +30,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { getInteroceptiveState } from './interoceptive';
 import { listCommitments, trustScores } from './commitments';
+import { recentMonologue } from './inner-speech';
 
 const RUNTIME = path.resolve(process.cwd(), '.cortex-runtime');
 const readJsonl = (f: string, tail = 400) => {
@@ -269,5 +270,6 @@ export function getSelfhood() {
       overdue: openCommits.filter((c) => c.dueAt && c.dueAt < Date.now()).length,
       trust: trustScores(),
     },
+    monologue: recentMonologue(5).map((m) => ({ ts: m.ts, kind: m.kind, text: m.text, surprise: m.surprise, valence: m.valence })),
   };
 }

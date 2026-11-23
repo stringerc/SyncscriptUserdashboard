@@ -22,6 +22,7 @@
  */
 import { loadWorld, DIMS, type Dim, type WorldState } from './world-model';
 import { commitmentUtility } from './commitments';
+import { speakInner } from './inner-speech';
 
 // ── Action classes and their plausible effect priors ──────────────────
 // Priors are explicit assumptions, labeled as such; empirical estimates
@@ -187,5 +188,15 @@ export function planDispatches(candidates: DispatchCandidate[], state?: WorldSta
       ? `lowest expected free energy (${e.freeEnergy}) — best predicted utility ${e.utility} with ${e.risk > 0.15 ? 'elevated' : 'manageable'} risk`
       : `free energy ${e.freeEnergy} vs best ${evals[0].freeEnergy} — ${e.freeEnergy - evals[0].freeEnergy > 0.2 ? 'clearly worse' : 'marginally worse'} path`;
   });
+  try {
+    if (evals[0]) {
+      speakInner({
+        kind: 'reasoning', source: 'planner',
+        text: `Plan: "${evals[0].candidate.title.slice(0, 50)}" wins — G=${evals[0].freeEnergy} (utility ${evals[0].utility}, risk ${evals[0].risk}, surprise ${evals[0].surprise})${evals[1] ? `; runner-up "${evals[1].candidate.title.slice(0, 40)}" G=${evals[1].freeEnergy}` : ''}`,
+        surprise: Math.min(1, Math.abs(evals[0].freeEnergy - (evals[1]?.freeEnergy ?? evals[0].freeEnergy)) * 2),
+        valence: evals[0].freeEnergy < 0 ? 0.3 : -0.1,
+      });
+    }
+  } catch {}
   return { plans: evals, recommended: evals[0] || null, baseline };
 }

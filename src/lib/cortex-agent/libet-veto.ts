@@ -13,6 +13,7 @@
  */
 import fs from 'node:fs';
 import path from 'node:path';
+import { speakInner } from './inner-speech';
 
 const DIR = path.join(process.cwd(), '.cortex-runtime');
 const FILE = path.join(DIR, 'libet-veto.json');
@@ -74,6 +75,9 @@ export function armVeto(opts: {
   state.pending.push(intent);
   if (state.pending.length > MAX_PENDING) state.pending.splice(0, state.pending.length - MAX_PENDING);
   save(state);
+  try {
+    speakInner({ kind: 'veto', source: 'libet', text: `About to dispatch ${opts.agentId}/${opts.kind}: "${opts.title.slice(0, 60)}" — ${windowMs}ms veto window open`, surprise: 0.2, valence: 0 });
+  } catch {}
   timers.set(id, setTimeout(() => {
     const s = load();
     const i = s.pending.find((p) => p.id === id);
@@ -84,6 +88,7 @@ export function armVeto(opts: {
     if (s.fired.length > 100) s.fired = s.fired.slice(-100);
     save(s);
     log({ event: 'fired', id, agentId: i.agentId, kind: i.kind, title: i.title });
+    try { speakInner({ kind: 'veto', source: 'libet', text: `Veto window expired — dispatching ${i.agentId}/${i.kind}: "${i.title.slice(0, 60)}"`, surprise: 0.1, valence: 0 }); } catch {}
     try { opts.fire(); } catch (e: any) { log({ event: 'fire-error', id, error: String(e?.message || e) }); }
     timers.delete(id);
   }, windowMs));
@@ -104,6 +109,7 @@ export function vetoLibet(id: string, by = 'cortex'): boolean {
   const t = timers.get(id);
   if (t) { clearTimeout(t); timers.delete(id); }
   log({ event: 'vetoed', id, by, agentId: i.agentId, kind: i.kind, title: i.title });
+  try { speakInner({ kind: 'veto', source: 'libet', text: `VETOED ${i.agentId}/${i.kind}: "${i.title.slice(0, 60)}" — cancelled by ${by} before firing`, surprise: 0.5, valence: -0.2 }); } catch {}
   return true;
 }
 

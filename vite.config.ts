@@ -273,6 +273,7 @@ import { attend, attentionTrace, scoreCandidate, type AttentionCandidate } from 
 import { getProprioception } from './src/lib/cortex-agent/proprioception';
 import { observeWorld, queryWorldModel, topLeverage, scoreDispatch } from './src/lib/cortex-agent/world-model';
 import { getSelfhood } from './src/lib/cortex-agent/selfhood';
+import { speakInner, recentMonologue, monologueStats } from './src/lib/cortex-agent/inner-speech';
 import { planDispatches, rolloutPlan } from './src/lib/cortex-agent/planner';
 import { runConsolidation, getDreamState } from './src/lib/cortex-agent/consolidation';
 import { recordCommitment, reconcileCommitments, sweepOverdue, listCommitments, trustScores, resolveCommitment } from './src/lib/cortex-agent/commitments';
@@ -1188,7 +1189,7 @@ const CORTEX_TOOLS = [
       parameters: {
         type: 'object',
         properties: {
-          action: { type: 'string', enum: ['proprioception', 'attention', 'libet', 'veto', 'world', 'self', 'plan', 'dream', 'social'], description: 'Which self-model surface to query' },
+          action: { type: 'string', enum: ['proprioception', 'attention', 'libet', 'veto', 'world', 'self', 'plan', 'dream', 'social', 'monologue'], description: 'Which self-model surface to query' },
           id: { type: 'string', description: 'Veto intent id for action=veto (from libet pending)' },
           limit: { type: 'number', description: 'Max trace entries (default 10)' }
         },
@@ -2426,7 +2427,17 @@ function apiProxyPlugin(): Plugin {
       // Attention schema: every ambient signal registers as a candidate;
       // a flush picks the winner and logs WHY it won (attention-trace).
       const attentionPending: AttentionCandidate[] = [];
+      let lastMonologueDrain = 0;
       const flushAttention = () => {
+        // Inner speech joins the competition — self-talk can win awareness.
+        try {
+          if (Date.now() - lastMonologueDrain > 60_000) {
+            lastMonologueDrain = Date.now();
+            for (const m of recentMonologue(5)) {
+              attentionPending.push({ id: m.id, kind: 'inner', text: m.text, ts: m.ts, priority: 0.6, goalRelevance: 0.4 });
+            }
+          }
+        } catch {}
         if (!attentionPending.length) return;
         const batch = attentionPending.splice(0, attentionPending.length);
         try { attend(batch); } catch {}
@@ -3861,6 +3872,14 @@ function apiProxyPlugin(): Plugin {
         } catch (e: any) {
           return jsonRes(res, 200, { ok: false, error: String(e?.message || e) });
         }
+      });
+
+      // ── Inner speech: the monologue buffer ──
+      server.middlewares.use('/api/cortex/monologue', (req: any, res: any) => {
+        if (!setCortexCors(req, res)) return jsonRes(res, 403, { ok: false, error: 'forbidden' });
+        if (req.method === 'OPTIONS') { res.writeHead(204); return res.end(); }
+        const limit = Math.min(100, Math.max(1, Number(req.url?.split('limit=')[1]) || 30));
+        return jsonRes(res, 200, { ok: true, entries: recentMonologue(limit), stats: monologueStats() });
       });
 
       // ── Selfhood: narrative self + metacognition + fleet ToM ──
@@ -5863,6 +5882,12 @@ end tell`;
                     trust: ts(),
                     durationMs: Date.now() - startMs,
                   }));
+                }
+                if (action === 'monologue') {
+                  const { recentMonologue: rm, monologueStats: ms } = await import('./src/lib/cortex-agent/inner-speech');
+                  const limit = Math.min(50, Math.max(1, Number(args?.limit) || 15));
+                  const kind = args?.kind ? String(args.kind) : undefined;
+                  return res.end(JSON.stringify({ ok: true, tool, action, entries: rm(limit, kind ? [kind as any] : undefined), stats: ms(), durationMs: Date.now() - startMs }));
                 }
                 if (action === 'dream') {
                   const { runConsolidation: rc, getDreamState: gd } = await import('./src/lib/cortex-agent/consolidation');
@@ -15061,6 +15086,9 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
             // (patrol/status/comms) always pass.
             const iGate = interoceptiveGate(kind, title);
             if (!iGate.allow) {
+              try {
+                speakInner({ kind: 'reasoning', source: 'interoceptive-gate', text: `Deferring ${agentId}/${kind}: "${title.slice(0, 60)}" — ${iGate.reason}`, surprise: 0.4, valence: -0.3 });
+              } catch {}
               agentCors(req, res);
               return res.end(JSON.stringify({ ok: false, error: iGate.reason, interoceptive: { level: iGate.level, capacity: iGate.capacity } }));
             }
