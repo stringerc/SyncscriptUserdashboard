@@ -24,6 +24,7 @@ import { learnValence, valencePrior } from './valence-memory';
 import { expectedReaction } from './selfhood';
 import { applyConstitution } from './constitution';
 import { socialStrategyCheck } from './second-order-tom';
+import { scoreAesthetic } from './aesthetic';
 
 export interface SimulatedAction {
   candidate: DispatchCandidate;
@@ -44,6 +45,8 @@ export interface SimulatedAction {
   somaticGate: { allow: boolean; reason?: string; level: string; capacity: number };
   /** Second-order ToM: how the target agent likely interprets this action. */
   secondOrder: { likelyReading: string; confidence: number; riskOfMisread: string } | null;
+  /** Aesthetic judgment: elegance/coherence of this trajectory. */
+  aesthetic: { score: number; verdict: string; reasoning: string } | null;
   /** Commitment-ledger pull on this action. */
   socialUtility: number;
   /** Global-workspace alignment discount applied. */
@@ -118,6 +121,7 @@ export function simulateDispatches(candidates: DispatchCandidate[], world?: Worl
       predictedShifts: shifts,
       somaticGate: { allow: gate.allow, reason: gate.reason, level: gate.level, capacity: gate.capacity },
       secondOrder: c.agentId ? (() => { try { const r = socialStrategyCheck(String(c.agentId), String(c.kind || 'task'), String(c.title || '')); return { likelyReading: r.interpretation.likelyReading, confidence: r.interpretation.confidence, riskOfMisread: r.interpretation.riskOfMisread }; } catch { return null; } })() : null,
+      aesthetic: (() => { try { return scoreAesthetic(traj.trajectory, shifts); } catch { return null; } })(),
       socialUtility: Math.round(social * 1000) / 1000,
       workspaceBias,
       preference: vp,

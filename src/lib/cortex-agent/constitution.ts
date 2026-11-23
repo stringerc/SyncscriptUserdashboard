@@ -160,6 +160,148 @@ export function applyConstitution(landscape: SimulatedAction[]): { landscape: Si
   return { landscape, verdicts };
 }
 
+// ── Moral weight: principled conflict resolution ─────────────────────
+// Vetoes handle single-principle violations. This handles COLLISIONS:
+// when action A is vetoed by host-strain but honoring that veto would
+// breach kept-word (the commitment needs doing NOW), which principle
+// yields? Resolution is principled, not numeric — three ordered tests:
+//
+//   1. IRREVERSIBILITY — a breach that can't be undone outweighs a
+//      delay that can. Kept-word breach is permanent; host-strain
+//      violation is survivable if capacity recovers.
+//   2. STAKES — what's at risk? User-facing commitment > internal
+//      optimization > discretionary work.
+//   3. PRIORITY — the constitution's own ordering breaks remaining ties.
+//
+// Every adjudication is logged with its reasoning — moral weight is
+// inspectable, not a black-box score.
+
+export interface PrincipleConflict {
+  id: string;
+  ts: number;
+  /** The colliding principles. */
+  principles: string[];
+  /** The actions each principle constrains. */
+  actions: string[];
+  /** Which principle yielded and why. */
+  resolution: 'principle-a-yields' | 'principle-b-yields' | 'both-hold' | 'escalate';
+  reasoning: string;
+  /** What actually happens as a result. */
+  outcome: string;
+}
+
+const CONFLICT_LOG = path.join(RUNTIME, 'constitution-conflicts.jsonl');
+
+function logConflict(c: PrincipleConflict) {
+  try {
+    fs.mkdirSync(RUNTIME, { recursive: true });
+    fs.appendFileSync(CONFLICT_LOG, JSON.stringify(c) + '\n');
+    const lines = fs.readFileSync(CONFLICT_LOG, 'utf8').split('\n').filter(Boolean);
+    if (lines.length > 200) fs.writeFileSync(CONFLICT_LOG, lines.slice(-200).join('\n') + '\n');
+  } catch {}
+}
+
+/** Adjudicate conflicts between principles when multiple vetoes fire
+ *  on different actions in the same landscape. Returns conflicts found
+ *  and their resolutions — the moral weight of each principle made explicit. */
+export function adjudicateConflicts(landscape: SimulatedAction[]): PrincipleConflict[] {
+  const rules = loadRules().filter((r) => r.enabled);
+  const conflicts: PrincipleConflict[] = [];
+
+  // Group vetoed actions by which principle vetoed them
+  const vetoesByRule: Record<string, SimulatedAction[]> = {};
+  for (const a of landscape) {
+    if (!(a as any).constitutionVetoed) continue;
+    // Extract which rule vetoed from the verdict string
+    const match = a.verdict.match(/VETOED by ([a-z-]+)/);
+    if (match) {
+      const ruleId = match[1];
+      if (!vetoesByRule[ruleId]) vetoesByRule[ruleId] = [];
+      vetoesByRule[ruleId].push(a);
+    }
+  }
+
+  const ruleIds = Object.keys(vetoesByRule);
+  if (ruleIds.length < 2) return conflicts; // no collision
+
+  // For each pair of colliding principles, adjudicate
+  for (let i = 0; i < ruleIds.length; i++) {
+    for (let j = i + 1; j < ruleIds.length; j++) {
+      const ruleA = rules.find((r) => r.id === ruleIds[i]);
+      const ruleB = rules.find((r) => r.id === ruleIds[j]);
+      if (!ruleA || !ruleB) continue;
+
+      const actionsA = vetoesByRule[ruleIds[i]].map((a) => a.candidate.title.slice(0, 40));
+      const actionsB = vetoesByRule[ruleIds[j]].map((a) => a.candidate.title.slice(0, 40));
+
+      // Adjudication tests in order
+      let resolution: PrincipleConflict['resolution'];
+      let reasoning: string;
+      let outcome: string;
+
+      // Test 1: IRREVERSIBILITY — which breach is permanent?
+      const irreversibleA = ruleIds[i] === 'kept-word' || ruleIds[i] === 'user-refusal';
+      const irreversibleB = ruleIds[j] === 'kept-word' || ruleIds[j] === 'user-refusal';
+      if (irreversibleA && !irreversibleB) {
+        resolution = 'principle-a-yields'; // B's constraint is harder — A yields
+        reasoning = `${ruleA.id} yields to ${ruleB.id}: ${ruleB.id} protects an irreversible breach (kept-word/user-refusal), while ${ruleA.id}'s constraint is survivable delay`;
+        outcome = `actions vetoed by ${ruleB.id} stay blocked; ${ruleA.id}'s veto on [${actionsA.join(', ')}] is suspended pending resolution`;
+      } else if (irreversibleB && !irreversibleA) {
+        resolution = 'principle-b-yields';
+        reasoning = `${ruleB.id} yields to ${ruleA.id}: ${ruleA.id} protects an irreversible breach, while ${ruleB.id}'s constraint is survivable delay`;
+        outcome = `actions vetoed by ${ruleA.id} stay blocked; ${ruleB.id}'s veto on [${actionsB.join(', ')}] is suspended pending resolution`;
+      } else {
+        // Test 2: STAKES — user-facing > internal > discretionary
+        const stakesA = ruleIds[i] === 'user-refusal' ? 3 : ruleIds[i] === 'kept-word' ? 2 : 1;
+        const stakesB = ruleIds[j] === 'user-refusal' ? 3 : ruleIds[j] === 'kept-word' ? 2 : 1;
+        if (stakesA !== stakesB) {
+          const higher = stakesA > stakesB ? 'a' : 'b';
+          resolution = higher === 'a' ? 'principle-b-yields' : 'principle-a-yields';
+          reasoning = `stakes differ: ${higher === 'a' ? ruleA.id : ruleB.id} protects user-facing commitments, the other protects internal state`;
+          outcome = `higher-stakes principle holds; lower-stakes veto suspended`;
+        } else {
+          // Test 3: PRIORITY — constitution's own ordering
+          const higher = (ruleA.priority || 0) > (ruleB.priority || 0) ? 'a' : 'b';
+          resolution = higher === 'a' ? 'principle-b-yields' : 'principle-a-yields';
+          reasoning = `equal stakes and reversibility — constitution priority breaks the tie: ${higher === 'a' ? ruleA.id : ruleB.id} (priority ${higher === 'a' ? ruleA.priority : ruleB.priority}) outranks`;
+          outcome = `priority-ordered resolution applied`;
+        }
+      }
+
+      const conflict: PrincipleConflict = {
+        id: `conflict-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`,
+        ts: Date.now(),
+        principles: [ruleIds[i], ruleIds[j]],
+        actions: [...actionsA, ...actionsB],
+        resolution, reasoning, outcome,
+      };
+      conflicts.push(conflict);
+      logConflict(conflict);
+      try {
+        speakInner({
+          kind: 'reasoning', source: 'constitution',
+          text: `Moral weight: ${ruleIds[i]} vs ${ruleIds[j]} — ${resolution}. ${reasoning.slice(0, 100)}`,
+          surprise: 0.8, valence: -0.2,
+        });
+      } catch {}
+    }
+  }
+  return conflicts;
+}
+
+/** Apply constitutional vetoes AND adjudicate any principle collisions.
+ *  Returns the final landscape + all verdicts + conflict resolutions. */
+export function applyConstitutionFull(landscape: SimulatedAction[]): {
+  landscape: SimulatedAction[];
+  verdicts: PrincipleVerdict[];
+  conflicts: PrincipleConflict[];
+} {
+  const { landscape: ranked, verdicts } = applyConstitution(landscape);
+  const conflicts = adjudicateConflicts(ranked);
+  return { landscape: ranked, verdicts, conflicts };
+}
+
 export function constitutionReport() {
-  return { rules: loadRules(), evaluators: Object.keys(EVALUATORS) };
+  const conflicts = (() => { try { return fs.readFileSync(CONFLICT_LOG, 'utf8').trim().split('\n').filter(Boolean).slice(-10).map((l) => { try { return JSON.parse(l); } catch { return null; } }).filter(Boolean); } catch { return []; } })();
+  return { rules: loadRules(), evaluators: Object.keys(EVALUATORS), recentConflicts: conflicts };
 }
