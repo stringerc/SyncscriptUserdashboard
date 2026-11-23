@@ -30,7 +30,7 @@ export function normalizeZone(z: string): SurfaceZone | null {
   return m ? (`${m[1]}-${m[2]}` as SurfaceZone) : null;
 }
 
-export type SurfacePanelKind = 'artifact' | 'map' | 'cctv' | 'telemetry' | 'document' | 'web' | 'sheet' | 'inbox' | 'email' | 'initiative';
+export type SurfacePanelKind = 'artifact' | 'map' | 'cctv' | 'telemetry' | 'document' | 'web' | 'sheet' | 'inbox' | 'email' | 'initiative' | 'strategic';
 
 export interface SurfacePanel {
   id: string;
@@ -139,7 +139,7 @@ function persist() {
   }
 }
 
-const VALID_KINDS = new Set<SurfacePanelKind>(['artifact', 'map', 'cctv', 'telemetry', 'document', 'web', 'sheet', 'inbox', 'email', 'initiative']);
+const VALID_KINDS = new Set<SurfacePanelKind>(['artifact', 'map', 'cctv', 'telemetry', 'document', 'web', 'sheet', 'inbox', 'email', 'initiative', 'strategic']);
 
 function hydrate() {
   try {

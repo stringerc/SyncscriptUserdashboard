@@ -49,7 +49,7 @@ const EVAL_INTERVAL_MS = 300_000; // 5 min
 const DAY_MS = 86400_000;
 const COOLDOWN_MS = 6 * 3600_000; // per goal+kind
 
-interface EffortEvent { ts: number; goalId: string | null }
+export interface EffortEvent { ts: number; goalId: string | null }
 interface DriftState { alerts: Record<string, number> } // "${goalId}:${kind}" -> lastAlertAt
 
 function loadState(): DriftState {
@@ -75,8 +75,9 @@ function appendDriftLog(entry: Record<string, unknown>): void {
   } catch {}
 }
 
-/** All effort events in the lookback window, tagged by goal. */
-function collectEffortEvents(sinceMs: number): EffortEvent[] {
+/** All effort events in the lookback window, tagged by goal. Exported
+ *  for the strategic dashboard's 30-day trend lines. */
+export function collectEffortEvents(sinceMs: number): EffortEvent[] {
   const events: EffortEvent[] = [];
   // 1) Agent tasks — terminal archive records carry input.goalId now.
   try {

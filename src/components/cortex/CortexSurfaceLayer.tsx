@@ -17,6 +17,7 @@ import {
 import { cortexSignalBus } from './CortexVisualizer';
 import { WeatherWidget } from './WeatherCard';
 import { CortexInitiativeInbox } from './CortexInitiativeInbox';
+import { CortexStrategicReview } from './CortexStrategicReview';
 import type { CortexArtifact } from '../../lib/cortex-artifacts';
 import { setGlobeMode } from '../../lib/cortex-globe';
 import { neuroAudio } from '../../lib/cortex-neuro-audio';
@@ -34,7 +35,7 @@ import type { NexusPixiePath } from '../nexus/NexusVoicePixieDust';
 const MONO = '"IBM Plex Mono", ui-monospace, monospace';
 
 const KIND_ICON: Record<string, string> = {
-  artifact: '◈', map: '◎', cctv: '◉', telemetry: '◬', document: '▤', web: '🌐', sheet: '📊', inbox: '✉', email: '✉', initiative: '◉',
+  artifact: '◈', map: '◎', cctv: '◉', telemetry: '◬', document: '▤', web: '🌐', sheet: '📊', inbox: '✉', email: '✉', initiative: '◉', strategic: '✦',
 };
 
 /** Camera feed cell — HLS (.m3u8) via lazy hls.js, everything else as <img>
@@ -1743,6 +1744,9 @@ function PanelBody({ panel, mediaFit, mediaSize }: {
   }
   if (panel.kind === 'initiative') {
     return <CortexInitiativeInbox />;
+  }
+  if (panel.kind === 'strategic') {
+    return <CortexStrategicReview />;
   }
   if (panel.kind === 'inbox') {
     return <InboxPanelBody panel={panel} />;

@@ -3551,6 +3551,23 @@ function apiProxyPlugin(): Plugin {
         }
       });
 
+      // ── Strategic dashboard (live Strategic Review surface) ──
+      // GET /api/cortex/strategic/dashboard → per-goal health: status,
+      // 30-day effort trend, drift findings, pre-mortems, verification
+      // outcomes, corrective/escalation proposals. Read-only assembly
+      // from the same records the drift watch writes.
+      server.middlewares.use('/api/cortex/strategic/dashboard', async (req: any, res: any) => {
+        if (!setCortexCors(req, res)) return jsonRes(res, 403, { ok: false, error: 'forbidden' });
+        if (req.method === 'OPTIONS') { res.writeHead(204); return res.end(); }
+        if (req.method !== 'GET') return jsonRes(res, 405, { ok: false, error: 'method not allowed' });
+        try {
+          const { getStrategicDashboard } = await import('./src/lib/cortex-agent/strategic-dashboard');
+          return jsonRes(res, 200, { ok: true, ...getStrategicDashboard() });
+        } catch (e: any) {
+          return jsonRes(res, 500, { ok: false, error: String(e?.message || e) });
+        }
+      });
+
       // ── Fleet sidecar control (/api/cortex/fleet/*) ──
       // Lazy nodes are dark by design (RAM conservation) — this is the
       // wake-on-demand surface: clients warm the voice stack on session

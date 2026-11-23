@@ -380,6 +380,26 @@ export async function runSurfaceCommand(text: string): Promise<string | null> {
     /\bwhat needs my attention\b/i.test(t)
   );
 
+  // Open Strategic Review: "open strategic review", "show goal health",
+  // "strategic dashboard", "how are my goals doing". Same length gate —
+  // long prose discussing reviews/goals must not hijack into a panel.
+  const strategicM = t.length <= 300 && (
+    /\b(?:open|show|display|bring up|pull up)\b[^.?!]{0,40}\b(?:strategic|strategy|goal health|goals dashboard|quarterly)\s*(?:review|dashboard|panel|surface|report)?\b/i.test(t) ||
+    /\b(?:strategic|goal health|goals?)\s+(?:review|dashboard|panel|report|status)\b[^.?!]{0,40}\b(?:open|show|display)\b/i.test(t) ||
+    /\bhow are my goals?\b[^.?!]{0,30}\b(?:doing|tracking|progress|health)\b/i.test(t)
+  );
+  if (strategicM) {
+    const newPanel = openSurfacePanel({
+      kind: 'strategic',
+      title: 'Strategic Review',
+      customSize: { w: 560, h: 640 },
+      pinned: true,
+    });
+    return newPanel
+      ? "Strategic Review is on the surface — every goal's health, drift, and corrective history in one live view."
+      : 'The surface is full — close a panel first.';
+  }
+
   if (initiativeM) {
     const newPanel = openSurfacePanel({
       kind: 'initiative',
