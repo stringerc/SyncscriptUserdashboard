@@ -277,7 +277,7 @@ import { speakInner, recentMonologue, monologueStats } from './src/lib/cortex-ag
 import { planDispatches, rolloutPlan } from './src/lib/cortex-agent/planner';
 import { runConsolidation, getDreamState } from './src/lib/cortex-agent/consolidation';
 import { runResilienceHarness, getResilienceReport } from './src/lib/cortex-agent/resilience';
-import { authenticateTenant, createTenant, listTenants, contractCheck, contractSummary, recordDispatch, tenantIntentLookup } from './src/lib/cortex-agent/tenants';
+import { authenticateTenant, createTenant, listTenants, updateTenant, contractCheck, contractSummary, recordDispatch, tenantIntentLookup } from './src/lib/cortex-agent/tenants';
 import { recordCommitment, reconcileCommitments, sweepOverdue, listCommitments, trustScores, resolveCommitment } from './src/lib/cortex-agent/commitments';
 
 // Unhandled-rejection guard: Node crashes the ENTIRE process on any
@@ -3898,7 +3898,26 @@ function apiProxyPlugin(): Plugin {
           if (!id) return jsonRes(res, 200, { ok: true, contract: contractSummary(tenant) });
           const intent = tenantIntentLookup(tenant.id, id);
           if (!intent) return jsonRes(res, 404, { ok: false, error: 'intent not found or not owned by this tenant' });
-          return jsonRes(res, 200, { ok: true, intent });
+          // Task-level progress: once fired, the intent maps to a real
+          // runtime task via input.tenantId + title — tenants see actual
+          // status/progress/telemetry, not just 'fired'.
+          let task: any = null;
+          if (intent.status === 'fired') {
+            const snap = agentRuntime.snapshot();
+            const candidates = snap.tasks
+              .filter((t: any) => t.input?.tenantId === tenant.id && t.title === intent.title)
+              .sort((a: any, b: any) => (b.createdAt || 0) - (a.createdAt || 0));
+            if (candidates[0]) {
+              const t = candidates[0];
+              task = {
+                taskId: t.id, status: t.status, progress: t.progress ?? null,
+                model: t.model, error: t.error,
+                telemetry: t.telemetry ? { llmCalls: t.telemetry.llmCalls, tokensIn: t.telemetry.tokensIn, tokensOut: t.telemetry.tokensOut, durationMs: t.telemetry.durationMs } : null,
+                resultPreview: t.result != null ? JSON.stringify(t.result).slice(0, 500) : null,
+              };
+            }
+          }
+          return jsonRes(res, 200, { ok: true, intent, task });
         }
 
         return jsonRes(res, 405, { ok: false, error: 'method not allowed' });
@@ -3939,6 +3958,16 @@ function apiProxyPlugin(): Plugin {
         if (req.method === 'POST') {
           const body = JSON.parse(await readBody(req) || '{}');
           if (!body?.name) return jsonRes(res, 400, { ok: false, error: 'name required' });
+          if (body?.tenantId) {
+            const updated = updateTenant(String(body.tenantId), {
+              plan: body.plan === 'growth' || body.plan === 'launch' ? body.plan : undefined,
+              status: body.status === 'suspended' || body.status === 'active' ? body.status : undefined,
+              dailyQuota: body.dailyQuota ? Number(body.dailyQuota) : undefined,
+            });
+            if (!updated) return jsonRes(res, 404, { ok: false, error: 'tenant not found' });
+            const { keyHash, ...pub } = updated;
+            return jsonRes(res, 200, { ok: true, tenant: pub });
+          }
           const { tenant, apiKey } = createTenant({
             name: String(body.name), plan: body.plan === 'growth' ? 'growth' : 'launch',
             allowedKinds: Array.isArray(body.allowedKinds) ? body.allowedKinds : undefined,

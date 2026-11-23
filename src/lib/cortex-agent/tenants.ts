@@ -91,6 +91,18 @@ export function listTenants(): Array<Omit<Tenant, 'keyHash'>> {
   return load().tenants.map(({ keyHash, ...t }) => t);
 }
 
+/** Admin plan management — upgrade/suspend without touching keys. */
+export function updateTenant(id: string, patch: { plan?: Tenant['plan']; status?: Tenant['status']; dailyQuota?: number }): Tenant | null {
+  const s = load();
+  const t = s.tenants.find((x) => x.id === id);
+  if (!t) return null;
+  if (patch.plan === 'launch' || patch.plan === 'growth') t.plan = patch.plan;
+  if (patch.status === 'active' || patch.status === 'suspended') t.status = patch.status;
+  if (patch.dailyQuota) t.dailyQuota = Math.max(1, Math.min(10_000, Number(patch.dailyQuota)));
+  save(s);
+  return t;
+}
+
 function logDispatch(entry: Record<string, unknown>) {
   try {
     fs.mkdirSync(RUNTIME, { recursive: true });
@@ -142,5 +154,9 @@ export function contractSummary(tenant: Tenant) {
     quota: { used, limit: tenant.dailyQuota, planNote: PLANS[tenant.plan].priceNote, resetsIn: 'rolling 24h' },
     allowedKinds: tenant.allowedKinds.length ? tenant.allowedKinds : 'all',
     dispatchesToday: used,
+    // Honest billing: launch customers are invoiced manually — no payment
+    // rail is wired, so the contract reports billing as manual rather
+    // than pretending a subscription exists.
+    billing: { rail: 'manual-invoice', status: 'current', note: 'Launch tier billed monthly by invoice; payment does not gate API access until a rail is configured' },
   };
 }

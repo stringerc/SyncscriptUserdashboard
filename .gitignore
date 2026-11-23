@@ -313,3 +313,20 @@ public/splats/gen-*.ply
 # dotenvx private keys — NEVER commit
 .env.keys
 .env.*.keys
+
+# Local eval/run debris — not source, kept on disk but out of the index
+/linger_eval/
+/runs/
+/episodic_memory/
+/ops.txt
+/ops_status.txt
+/cadence.txt
+/sprint_plan.json
+/sprint_plan.md
+/run_operation.sh
+/spladbg.tmp.mjs
+/.fc-smoke.ts
+/src/agents/
+/src/cortex/
+/libs/
+/syncscript/
