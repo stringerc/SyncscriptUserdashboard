@@ -3033,9 +3033,21 @@ const openclawWorker: WorkerHandler = async (ctx) => {
     } catch {}
 
     const gwResult = parsed?.result || {};
-    const replyText = String(gwResult.finalAssistantVisibleText || gwResult.finalAssistantRawText || parsed?.summary || '').trim();
-    const agentError = gwResult.error?.message || parsed?.error?.message || null;
-    const ok = parsed?.ok === true || (parsed?.status === 'ok') || (!!replyText && !agentError);
+    // Reply text lives in payloads[] on success (last non-error payload);
+    // finalAssistantVisibleText appears on the failure shape instead.
+    const payloads = Array.isArray(gwResult.payloads) ? gwResult.payloads : [];
+    const lastGood = [...payloads].reverse().find((p: any) => p && !p.isError && typeof p.text === 'string');
+    const replyText = String(
+      lastGood?.text
+      || gwResult.finalAssistantVisibleText
+      || gwResult.finalAssistantRawText
+      || parsed?.summary
+      || ''
+    ).trim();
+    const agentError = gwResult.error?.message || parsed?.error?.message
+      || (payloads.length && payloads.every((p: any) => p?.isError) ? payloads[payloads.length - 1]?.text : null);
+    const agentMeta = gwResult.meta?.agentMeta || gwResult.agentMeta || {};
+    const ok = parsed?.status === 'ok' || parsed?.ok === true || (!!replyText && !agentError);
 
     ctx.progress(1);
     const result = {
@@ -3047,12 +3059,12 @@ const openclawWorker: WorkerHandler = async (ctx) => {
       sessionId,
       reply: replyText.slice(0, 8000) || null,
       delivered: deliver || undefined,
-      provider: gwResult.agentMeta?.provider || undefined,
-      model: gwResult.agentMeta?.model || undefined,
+      provider: agentMeta.provider || undefined,
+      model: agentMeta.model || undefined,
       durationMs: gwResult.meta?.durationMs || undefined,
       error: ok ? undefined : (agentError || stderr.slice(0, 300) || 'openclaw agent turn failed'),
       summary: ok
-        ? `OpenClaw turn complete (${gwResult.agentMeta?.provider || 'gateway'}${gwResult.agentMeta?.model ? '/' + gwResult.agentMeta.model : ''}) — reply captured, ${replyText.length} chars`
+        ? `OpenClaw turn complete (${agentMeta.provider || 'gateway'}${agentMeta.model ? '/' + agentMeta.model : ''}) — reply captured, ${replyText.length} chars`
         : `OpenClaw turn failed: ${String(agentError || 'unknown').slice(0, 200)}`,
     };
     // A failed delegation is a FAILED task, not a completed one — throw so
