@@ -273,6 +273,19 @@ export function CortexStrategicReview() {
         </div>
       )}
 
+      {/* Living world model — top leverage dims */}
+      {data?.worldModel && data.worldModel.leverage.length > 0 && (
+        <div style={{ fontFamily: MONO, fontSize: 9, color: C.dim, border: `1px solid ${C.border}`, borderRadius: 4, padding: '6px 8px' }}>
+          <span style={{ color: C.cyan, letterSpacing: 1 }}>WORLD </span>
+          <span style={{ color: C.dim }}>{data.worldModel.observations} obs · </span>
+          {data.worldModel.leverage.map((l) => (
+            <span key={l.dim} style={{ color: Math.abs(l.weight) > 0.05 ? C.amber : C.dim }}>
+              {l.dim} {Math.round(l.value * 100)}%{Math.abs(l.weight) > 0.05 ? ` (w${l.weight > 0 ? '+' : ''}${l.weight})` : ''}
+            </span>
+          )).reduce((acc: any[], el: any, i: number) => i === 0 ? [el] : [...acc, ' · ', el], [])}
+        </div>
+      )}
+
       {/* Host effort context */}
       {data && (
         <div>

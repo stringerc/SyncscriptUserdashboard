@@ -23,6 +23,7 @@ import { calibrationReport } from './goal-calibration';
 import { getInteroceptiveState } from './interoceptive';
 import { getPaceWatchSummaries } from './goal-pace-watch';
 import { getProprioception } from './proprioception';
+import { observeWorld, topLeverage } from './world-model';
 import type { CalibrationReport } from '../cortex-strategic-dashboard-types';
 import type { GoalHealth, GoalTrendPoint, StrategicDashboard } from '../cortex-strategic-dashboard-types';
 
@@ -229,10 +230,15 @@ export function getStrategicDashboard(nowMs: number = Date.now()): StrategicDash
   try { calibration = calibrationReport(); } catch {}
   let interoceptive: StrategicDashboard['interoceptive'];
   try { interoceptive = getInteroceptiveState(nowMs); } catch {}
+  let worldModel: StrategicDashboard['worldModel'];
+  try {
+    const wm = observeWorld(nowMs);
+    worldModel = { observations: wm.observations, leverage: topLeverage(wm).map((l) => ({ dim: l.dim, value: l.value, weight: l.weight, evidence: l.evidence })) };
+  } catch {}
   let body: StrategicDashboard['body'];
   try {
     const b = getProprioception(nowMs);
     body = { readyCount: b.readyCount, totalCount: b.totalCount, limbs: b.limbs.map((l) => ({ id: l.id, name: l.name, state: l.state, detail: l.detail })) };
   } catch {}
-  return { generatedAt: nowMs, goals, hostEffort30d, calibration, interoceptive, paceWatch, body };
+  return { generatedAt: nowMs, goals, hostEffort30d, calibration, interoceptive, paceWatch, body, worldModel };
 }

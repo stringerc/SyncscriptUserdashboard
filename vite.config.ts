@@ -271,6 +271,7 @@ import { getInteroceptiveState, interoceptiveGate } from './src/lib/cortex-agent
 import { armVeto, vetoLibet, listLibetPending, libetTrace, resumeLibetTimers } from './src/lib/cortex-agent/libet-veto';
 import { attend, attentionTrace, scoreCandidate, type AttentionCandidate } from './src/lib/cortex-agent/attention-schema';
 import { getProprioception } from './src/lib/cortex-agent/proprioception';
+import { observeWorld, queryWorldModel, topLeverage, scoreDispatch } from './src/lib/cortex-agent/world-model';
 
 // Unhandled-rejection guard: Node crashes the ENTIRE process on any
 // unhandled rejection. AbortError rejections are routine cancellation
@@ -1183,7 +1184,7 @@ const CORTEX_TOOLS = [
       parameters: {
         type: 'object',
         properties: {
-          action: { type: 'string', enum: ['proprioception', 'attention', 'libet', 'veto'], description: 'Which self-model surface to query' },
+          action: { type: 'string', enum: ['proprioception', 'attention', 'libet', 'veto', 'world'], description: 'Which self-model surface to query' },
           id: { type: 'string', description: 'Veto intent id for action=veto (from libet pending)' },
           limit: { type: 'number', description: 'Max trace entries (default 10)' }
         },
@@ -3699,6 +3700,37 @@ function apiProxyPlugin(): Plugin {
         return jsonRes(res, 200, { ok: true, ...getProprioception() });
       });
 
+      // ── Living world model: latent strategic state ──
+      // GET → latent dims + weights + leverage. POST {q} → NL query.
+      // POST {kind,title} → governance advisory score for a dispatch.
+      server.middlewares.use('/api/cortex/world-model', async (req: any, res: any) => {
+        if (!setCortexCors(req, res)) return jsonRes(res, 403, { ok: false, error: 'forbidden' });
+        if (req.method === 'OPTIONS') { res.writeHead(204); return res.end(); }
+        if (req.method === 'GET') {
+          const state = observeWorld();
+          return jsonRes(res, 200, {
+            ok: true, observations: state.observations, lastUpdate: state.lastUpdate,
+            dims: state.dims, weights: state.weights, evidence: state.evidence,
+            outcomes: state.outcomes, leverage: topLeverage(state),
+          });
+        }
+        if (req.method === 'POST') {
+          const body = JSON.parse(await readBody(req) || '{}');
+          if (body?.q) return jsonRes(res, 200, { ok: true, ...queryWorldModel(String(body.q)) });
+          if (body?.kind || body?.title) {
+            return jsonRes(res, 200, { ok: true, ...scoreDispatch(String(body.kind || ''), String(body.title || '')) });
+          }
+          return jsonRes(res, 400, { ok: false, error: 'provide q (query) or kind+title (dispatch score)' });
+        }
+        return jsonRes(res, 405, { ok: false, error: 'method not allowed' });
+      });
+
+      // World model refresh: fold new telemetry into the latent state
+      // every 60s so "what matters right now" is never stale.
+      const worldModelTimer = setInterval(() => { try { observeWorld(); } catch {} }, 60_000);
+      worldModelTimer.unref?.();
+      try { observeWorld(); } catch {}
+
       // ── Fleet sidecar control (/api/cortex/fleet/*) ──
       // Lazy nodes are dark by design (RAM conservation) — this is the
       // wake-on-demand surface: clients warm the voice stack on session
@@ -5662,6 +5694,16 @@ end tell`;
                 if (action === 'veto') {
                   const ok = vetoLibet(String(args?.id || ''), 'cortex');
                   return res.end(JSON.stringify({ ok, tool, action, vetoed: ok, durationMs: Date.now() - startMs }));
+                }
+                if (action === 'world') {
+                  const { observeWorld: obs, queryWorldModel: qry, topLeverage: lev } = await import('./src/lib/cortex-agent/world-model');
+                  const q = String(args?.query || args?.q || '');
+                  const state = obs();
+                  return res.end(JSON.stringify({
+                    ok: true, tool, action,
+                    ...(q ? qry(q, state) : { leverage: lev(state), observations: state.observations, dims: state.dims, weights: state.weights }),
+                    durationMs: Date.now() - startMs,
+                  }));
                 }
                 return res.end(JSON.stringify({ ok: false, tool, error: `unknown action: ${action}` }));
               } catch (e: any) {

@@ -75,4 +75,5 @@ export interface StrategicDashboard {
     computedAt: number;
   };
   body?: { readyCount: number; totalCount: number; limbs: Array<{ id: string; name: string; state: string; detail: string }> };
+  worldModel?: { observations: number; leverage: Array<{ dim: string; value: number; weight: number; evidence: number }> };
 }
