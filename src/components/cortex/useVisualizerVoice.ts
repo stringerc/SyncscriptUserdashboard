@@ -906,6 +906,11 @@ export function cleanSpeech(text: string): string {
     .replace(/`(?:tool_call|json|tool)?/gi, '')
     .replace(/<(?:tool_call|function_call|invoke)[\s\S]*?(?:<\/(?:tool_call|function_call|invoke)[^>]*>|$)/gi, '')
     .replace(/\[[A-Z_]+\]/g, '')
+    // Bare tool/function identifiers are NEVER spoken — "cortex_observability"
+    // is a function name, not language. Targets tool-shaped tokens (cortex_*,
+    // *_search/_command/_file/_info/etc.) while sparing legit words like
+    // "check in" or "set up" that happen to contain underscores.
+    .replace(/\b(?:cortex_[a-z0-9_]+|[a-z][a-z0-9]*_(?:search|url|command|file|dir|code|info|control|memory|agents?|surface|lights?|observability|heal|bug|ide|dashboard|artifact|splat|project|documents?|spreadsheets?|homeostasis|consolidate|discovery|status|initiative|skills?|tools?))\b/gi, ' ')
     .replace(/^\s*\*[^*\n]{0,140}…\*?\s*$/gm, '')
     .replace(/^\s*\*?⚡[^\n]*\n?/gm, '')
     .replace(/\((?:music|upbeat|sad|cheerful|laughs?|sighs?|whispers?|applause|silence|pause|excited|calm|dramatic|thinking|hesitant)[^)]*\)/gi, '')
