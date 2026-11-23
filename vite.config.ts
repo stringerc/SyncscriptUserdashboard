@@ -277,6 +277,7 @@ import { speakInner, recentMonologue, monologueStats } from './src/lib/cortex-ag
 import { planDispatches, rolloutPlan } from './src/lib/cortex-agent/planner';
 import { runConsolidation, getDreamState } from './src/lib/cortex-agent/consolidation';
 import { runResilienceHarness, getResilienceReport } from './src/lib/cortex-agent/resilience';
+import { authenticateTenant, createTenant, listTenants, contractCheck, contractSummary, recordDispatch, tenantIntentLookup } from './src/lib/cortex-agent/tenants';
 import { recordCommitment, reconcileCommitments, sweepOverdue, listCommitments, trustScores, resolveCommitment } from './src/lib/cortex-agent/commitments';
 
 // Unhandled-rejection guard: Node crashes the ENTIRE process on any
@@ -3845,6 +3846,109 @@ function apiProxyPlugin(): Plugin {
         } catch {}
       }, 30 * 60_000);
       dreamTimer.unref?.();
+
+      // ── Customer dispatch API: paying tenants arm intents through the
+      // same Libet cockpit the operator uses. Contract enforced in code:
+      // quota, kind whitelist, inspection card, tenant-scoped control.
+      server.middlewares.use('/api/cortex/dispatch', async (req: any, res: any) => {
+        if (!setCortexCors(req, res)) return jsonRes(res, 403, { ok: false, error: 'forbidden' });
+        if (req.method === 'OPTIONS') { res.writeHead(204); return res.end(); }
+
+        // POST /api/cortex/dispatch — submit a dispatch intent
+        if (req.method === 'POST') {
+          const tenant = authenticateTenant(req);
+          if (!tenant) return jsonRes(res, 401, { ok: false, error: 'invalid or missing API key (x-cortex-key: cxk_...)' });
+          const body = JSON.parse(await readBody(req) || '{}');
+          const agentId = String(body?.agentId || '');
+          const kind = String(body?.kind || '');
+          const title = String(body?.title || '');
+          if (!agentId || !kind || !title) return jsonRes(res, 400, { ok: false, error: 'agentId, kind, title required' });
+
+          const check = contractCheck(tenant, kind);
+          if (!check.ok) {
+            recordDispatch(tenant.id, { event: 'rejected', reason: check.reason, kind, title: title.slice(0, 120) });
+            return jsonRes(res, 429, { ok: false, error: check.reason, quota: { used: check.quotaUsed, limit: check.quotaLimit } });
+          }
+
+          const id = armVeto({
+            agentId, kind, title: title.slice(0, 200),
+            reason: `tenant dispatch (${tenant.name})`,
+            windowMs: Number(body?.windowMs) || 5_000,
+            input: { ...(body?.input && typeof body.input === 'object' ? body.input : {}), tenantId: tenant.id },
+            origin: 'external', tenantId: tenant.id,
+            fire: (i) => agentRuntime.submitTask(i.agentId as any, i.kind, i.title, (i.input || {}) as any),
+          });
+          const pending = listLibetPending().find((p) => p.id === id);
+          recordDispatch(tenant.id, { event: 'accepted', vetoId: id, agentId, kind, title: title.slice(0, 120), inspection: pending?.inspection ?? null });
+          return jsonRes(res, 200, {
+            ok: true, accepted: true, vetoId: id,
+            firesInMs: pending?.msUntilFire ?? null,
+            inspection: pending?.inspection ?? null,
+            contract: contractSummary(tenant),
+            controls: { veto: 'POST /api/cortex/dispatch {id, action:"veto"}', amend: 'action:"amend" + patch', hold: 'action:"hold" + extraMs', release: 'action:"release"' },
+          });
+        }
+
+        // GET /api/cortex/dispatch?id=<vetoId> — status of own intent
+        if (req.method === 'GET') {
+          const tenant = authenticateTenant(req);
+          if (!tenant) return jsonRes(res, 401, { ok: false, error: 'invalid or missing API key' });
+          const url = new URL(req.url || '', 'http://localhost');
+          const id = url.searchParams.get('id') || '';
+          if (!id) return jsonRes(res, 200, { ok: true, contract: contractSummary(tenant) });
+          const intent = tenantIntentLookup(tenant.id, id);
+          if (!intent) return jsonRes(res, 404, { ok: false, error: 'intent not found or not owned by this tenant' });
+          return jsonRes(res, 200, { ok: true, intent });
+        }
+
+        return jsonRes(res, 405, { ok: false, error: 'method not allowed' });
+      });
+
+      // Tenant control shares the dispatch route via action field —
+      // implemented as a sub-path to keep the surface small.
+      server.middlewares.use('/api/cortex/dispatch/control', async (req: any, res: any) => {
+        if (!setCortexCors(req, res)) return jsonRes(res, 403, { ok: false, error: 'forbidden' });
+        if (req.method === 'OPTIONS') { res.writeHead(204); return res.end(); }
+        if (req.method !== 'POST') return jsonRes(res, 405, { ok: false, error: 'POST only' });
+        const tenant = authenticateTenant(req);
+        if (!tenant) return jsonRes(res, 401, { ok: false, error: 'invalid or missing API key' });
+        const body = JSON.parse(await readBody(req) || '{}');
+        const id = String(body?.id || '');
+        if (!tenantIntentLookup(tenant.id, id)) return jsonRes(res, 404, { ok: false, error: 'intent not found or not owned by this tenant' });
+        const action = String(body?.action || '');
+        let ok = false;
+        if (action === 'veto') ok = vetoLibet(id, `tenant:${tenant.id}`);
+        else if (action === 'release') ok = releaseLibet(id, `tenant:${tenant.id}`);
+        else if (action === 'hold') ok = holdLibet(id, Number(body?.extraMs) || 10_000, `tenant:${tenant.id}`);
+        else if (action === 'amend') ok = amendLibet(id, body?.patch || {}, `tenant:${tenant.id}`);
+        else return jsonRes(res, 400, { ok: false, error: 'action must be veto|release|hold|amend' });
+        recordDispatch(tenant.id, { event: `control-${action}`, vetoId: id, ok });
+        return jsonRes(res, ok ? 200 : 404, { ok, action });
+      });
+
+      // Tenant administration — requires CORTEX_ADMIN_KEY. Without the
+      // env var the surface is closed (honest 503, not silent open).
+      server.middlewares.use('/api/cortex/tenants', async (req: any, res: any) => {
+        if (!setCortexCors(req, res)) return jsonRes(res, 403, { ok: false, error: 'forbidden' });
+        if (req.method === 'OPTIONS') { res.writeHead(204); return res.end(); }
+        const adminKey = process.env.CORTEX_ADMIN_KEY || '';
+        if (!adminKey) return jsonRes(res, 503, { ok: false, error: 'tenant admin not configured — set CORTEX_ADMIN_KEY' });
+        const provided = String(req.headers?.['x-admin-key'] || '');
+        if (provided !== adminKey) return jsonRes(res, 401, { ok: false, error: 'admin key required (x-admin-key)' });
+        if (req.method === 'GET') return jsonRes(res, 200, { ok: true, tenants: listTenants() });
+        if (req.method === 'POST') {
+          const body = JSON.parse(await readBody(req) || '{}');
+          if (!body?.name) return jsonRes(res, 400, { ok: false, error: 'name required' });
+          const { tenant, apiKey } = createTenant({
+            name: String(body.name), plan: body.plan === 'growth' ? 'growth' : 'launch',
+            allowedKinds: Array.isArray(body.allowedKinds) ? body.allowedKinds : undefined,
+            dailyQuota: body.dailyQuota ? Number(body.dailyQuota) : undefined,
+          });
+          // Key returned exactly once — hash is all that persists.
+          return jsonRes(res, 200, { ok: true, tenant: { ...tenant, keyHash: undefined }, apiKey, warning: 'store this key — it is shown once' });
+        }
+        return jsonRes(res, 405, { ok: false, error: 'method not allowed' });
+      });
 
       // ── Resilience harness: replay fault lines as controlled SLO
       // experiments against the real stack. GET → last report; POST

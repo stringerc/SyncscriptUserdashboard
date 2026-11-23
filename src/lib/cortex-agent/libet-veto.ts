@@ -39,6 +39,8 @@ export interface VetoIntent {
   armedCapacity?: number;
   /** Who armed this — 'self' (autonomous) vs 'external' (API/user). */
   origin?: 'self' | 'external';
+  /** Owning tenant for customer dispatches — scopes control rights. */
+  tenantId?: string;
   /** Cockpit card: the evidence packet behind this dispatch — free
    *  energy, saturation charge, aesthetic verdict, constitutional
    *  weight. The operator reviews THIS, not just a title. */
@@ -92,6 +94,7 @@ export function armVeto(opts: {
   reason: string; windowMs?: number;
   input?: Record<string, unknown>;
   origin?: 'self' | 'external';
+  tenantId?: string;
   /** Receives the intent AT FIRE TIME — amendments made during the
    *  veto window are honored because fire reads the live record. */
   fire: (intent: VetoIntent) => unknown;
@@ -108,6 +111,7 @@ export function armVeto(opts: {
     input: opts.input ? { ...opts.input } : undefined,
     armedCapacity: armCapacity,
     origin: opts.origin || 'self',
+    tenantId: opts.tenantId,
   };
   // Cockpit inspection: score the dispatch BEFORE the window opens so
   // the operator sees free energy, saturation, aesthetics, and moral
