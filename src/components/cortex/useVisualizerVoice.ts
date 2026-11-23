@@ -1189,6 +1189,15 @@ export function useVisualizerVoice(enabled: boolean, onState: (speaking: boolean
     // to the chat store so /cortex/chat and the visualizer drawer stay in sync.
     const liveTurnRef = { aiId: null as string | null, userId: null as string | null, buf: '', artifacts: [] as CortexArtifact[] };
     const speechHistoryRef = { current: [] as string[] };
+    // Self-echo breaker for deterministic replies: canned surface responses
+    // literally contain their own trigger words ("Initiative Inbox …
+    // proposals … surface"), so when STT transcribes Cortex's own TTS
+    // AFTER the reverb window closes, the phantom transcript re-fires the
+    // same command → same reply → spoken again → infinite loop (observed:
+    // the inbox reply repeating forever). Suppress an identical surface
+    // reply within 90s — a genuinely repeated request is harmless to drop
+    // since the panel is already open.
+    const lastSurfaceReplyRef = { current: '' as string, at: 0 };
     const turnAbortRef = { current: null as AbortController | null };
     // Per-turn user emotion (text prosody) — set in runTurn, read by the
     // system-prompt suffix, TTS speed shaping, and the signal bus.
@@ -2164,6 +2173,17 @@ MANDATORY: weave a 3-4 sentence spoken "state of being" answer citing at least o
         // ── Surface-layer grammar (shared with /cortex/chat) ──
         const surfaceReply = await runSurfaceCommand(text);
         if (surfaceReply) {
+          // Self-echo suppression: identical canned reply inside 90s means
+          // STT fed Cortex's own spoken reply back as a "command". Drop the
+          // turn silently — do NOT speak, do NOT append a duplicate card.
+          if (surfaceReply === lastSurfaceReplyRef.current &&
+              Date.now() - lastSurfaceReplyRef.at < 90_000) {
+            console.info('[viz-voice] suppressed repeated surface reply (self-echo loop)');
+            toListening();
+            return;
+          }
+          lastSurfaceReplyRef.current = surfaceReply;
+          lastSurfaceReplyRef.at = Date.now();
           historyRef.current.push({ role: 'assistant', content: surfaceReply });
           appendCortexChatMessage({
             id: `viz-ai-${Date.now()}`, role: 'ai', content: surfaceReply,

@@ -1553,6 +1553,19 @@ export default function CortexDemo() {
     // panel store — never fall through to the LLM as file operations.
     const surfaceReply = await runSurfaceCommand(userContent);
     if (surfaceReply) {
+      // Self-echo suppression: canned replies contain their own trigger
+      // words, so STT transcribing Cortex's own TTS re-fires the command.
+      // An identical reply within 90s is a phantom retrigger — drop it.
+      const msgs = messagesRef.current;
+      const lastAi = msgs[msgs.length - 1];
+      const isEchoRepeat = lastAi?.role === 'ai' &&
+        lastAi.content === surfaceReply &&
+        Date.now() - (lastAi.timestamp || 0) < 90_000;
+      if (isEchoRepeat) {
+        console.info('[Cortex Voice] suppressed repeated surface reply (self-echo loop)');
+        setIsSending(false);
+        return;
+      }
       setMessages(prev => [...prev, {
         id: `user-${Date.now()}`, role: 'user', content: userContent, timestamp: Date.now(),
       }, {
