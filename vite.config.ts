@@ -226,6 +226,7 @@ import { instinctsBlock, listInstincts, promotableInstincts } from './src/lib/co
 import { listEvals, getEval, fileEvalDefinition, runEval, readRuns, evalScorecard, evalComparison, type GraderSpec, type EvalArm } from './src/lib/cortex-agents/evals';
 import { computeCounselScorecard } from './src/lib/cortex-agents/counsel-scorecard';
 import { initEventLog, readEvents, getEventLogStats, verifyEventLog } from './src/lib/cortex-agents/eventlog';
+import { tailModelHealthHistory } from './src/lib/cortex-agents/sentinel';
 import { recallCortexMemory, retainCortexMemory, fetchCortexMemoryGraph } from './src/lib/cortex-memory';
 import { runScenarioSimulation, getSimulationHistory } from './src/lib/cortex-simulation';
 import { probeCompetitorIntelligence, listCompetitorRadar } from './src/lib/cortex-competitor-recon';
@@ -15641,7 +15642,12 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
         }
         if (req.method !== 'GET') return next();
         agentCors(req, res);
-        res.end(JSON.stringify({ ok: true, models: agentRuntime.matrix.allHealth(), matrix: agentRuntime.matrix.snapshot() }));
+        res.end(JSON.stringify({
+          ok: true,
+          models: agentRuntime.matrix.allHealth(),
+          matrix: agentRuntime.matrix.snapshot(),
+          history: tailModelHealthHistory(100),
+        }));
       });
 
       // POST /api/cortex/agents/task — enqueue work. {agentId, kind, title, input?}

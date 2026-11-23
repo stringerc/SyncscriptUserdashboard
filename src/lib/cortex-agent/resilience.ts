@@ -338,6 +338,64 @@ function experimentGoalTracking(): { slos: SloResult[]; detail: Record<string, u
   return { slos, detail };
 }
 
+/** Experiment 7 — channel bridge readiness: the Cortex↔OpenClaw union
+ *  is only real if both ends answer. Probes the OpenClaw gateway health
+ *  endpoint and the inbound bridge's auth contract (bad key must 401,
+ *  missing config must 503 — never silent-pass). */
+async function experimentChannelBridge(): Promise<{ slos: SloResult[]; detail: Record<string, unknown> }> {
+  const slos: SloResult[] = [];
+  const detail: Record<string, unknown> = {};
+
+  // 1. OpenClaw gateway health — the channel body must be alive for the
+  //    union to function. Reported honestly: a down gateway fails the SLO
+  //    rather than being skipped.
+  const gwPort = Number(process.env.OPENCLAW_GATEWAY_PORT || 18789);
+  let gwStatus = 'unreachable';
+  let gwMs = 0;
+  try {
+    const t0 = performance.now();
+    const r = await fetch(`http://127.0.0.1:${gwPort}/health`, { signal: AbortSignal.timeout(4000) });
+    gwMs = performance.now() - t0;
+    const j: any = await r.json().catch(() => ({}));
+    gwStatus = r.ok && j?.ok === true ? `live (${j?.status || 'ok'})` : `http ${r.status}`;
+  } catch (e: any) {
+    gwStatus = `unreachable: ${String(e?.message || e).slice(0, 80)}`;
+  }
+  slos.push({
+    name: 'openclaw gateway reachable', target: 'GET /health 200 {ok:true} < 4000ms',
+    actual: `${gwStatus} in ${gwMs.toFixed(0)}ms`,
+    pass: gwStatus.startsWith('live'),
+  });
+  detail.gateway = { status: gwStatus, ms: Math.round(gwMs) };
+
+  // 2. Inbound bridge auth contract — wrong key must be rejected. This
+  //    exercises the real middleware on the self port.
+  const selfPort = Number(process.env.PORT || 5173);
+  let authStatus = 'unreachable';
+  try {
+    const r = await fetch(`http://127.0.0.1:${selfPort}/api/cortex/inbound`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-cortex-key': 'resilience-probe-invalid' },
+      body: JSON.stringify({ message: 'probe', channel: 'resilience', sender: 'harness' }),
+      signal: AbortSignal.timeout(5000),
+    });
+    const j: any = await r.json().catch(() => ({}));
+    authStatus = `${r.status} ${j?.error || ''}`.trim();
+  } catch (e: any) {
+    authStatus = `unreachable: ${String(e?.message || e).slice(0, 80)}`;
+  }
+  const authOk = authStatus.startsWith('401') || authStatus.startsWith('503');
+  slos.push({
+    name: 'inbound bridge rejects bad key', target: '401 invalid key or 503 unconfigured',
+    actual: authStatus,
+    pass: authOk,
+    detail: authOk ? undefined : 'bridge accepted an invalid key or is unreachable — governance hole',
+  });
+  detail.inboundAuth = authStatus;
+
+  return { slos, detail };
+}
+
 /** Run the full harness — every experiment against the real stack. */
 export async function runResilienceHarness(): Promise<ResilienceReport> {
   const experiments: Record<string, unknown> = {};
@@ -360,6 +418,9 @@ export async function runResilienceHarness(): Promise<ResilienceReport> {
 
   const goals = experimentGoalTracking();
   experiments.goalTracking = goals.detail; slos.push(...goals.slos);
+
+  const bridge = await experimentChannelBridge();
+  experiments.channelBridge = bridge.detail; slos.push(...bridge.slos);
 
   const report: ResilienceReport = {
     ranAt: Date.now(),
