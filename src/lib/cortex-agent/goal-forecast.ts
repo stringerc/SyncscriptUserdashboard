@@ -94,6 +94,105 @@ function effortMomentum(goalId: string, nowMs: number): GoalForecast['momentum']
   return 'flat';
 }
 
+/** Observed weekly completion rate λ for a goal (28d window, discounted
+ *  all-time fallback). Returns { lambda, observations } or null when there
+ *  isn't enough history to forecast honestly. */
+function baseWeeklyRate(g: LifeGoal, doneOps: any[], nowMs: number): { lambda: number; observations: number } | null {
+  const windowStart = nowMs - 28 * DAY_MS;
+  const recentCompletions = doneOps.filter((o: any) => Number(o.verifiedAt || 0) >= windowStart).length;
+  const lifetimeCompletions = doneOps.length;
+  const ageWeeks = Math.max(1, (nowMs - g.declaredAt) / WEEK_MS);
+  let lambda = recentCompletions / 4;
+  if (lambda <= 0 && lifetimeCompletions >= MIN_LIFETIME_COMPLETIONS) {
+    lambda = (lifetimeCompletions / ageWeeks) * 0.5;
+  }
+  if (lifetimeCompletions < MIN_LIFETIME_COMPLETIONS || lambda <= 0) return null;
+  return { lambda, observations: recentCompletions || lifetimeCompletions };
+}
+
+export interface ForecastLevers {
+  /** Override weekly completions rate (cadence lever). */
+  weeklyRate?: number;
+  /** Ops removed from remaining (descope lever). */
+  descopeOps?: number;
+  /** Temporary rate boost ops/week for the first N weeks (parallel sprint). */
+  sprintBoostWeekly?: number;
+  sprintWeeks?: number;
+}
+
+/**
+ * Project P(finish ≤ weeksLeft) for arbitrary remaining work / rate,
+ * optionally with a temporary sprint boost for the first `sprintWeeks`.
+ * Gamma→Normal approximation, same honesty gates as the base forecast.
+ */
+function projectHit(remainingOps: number, weeklyRate: number, weeksLeft: number, observations: number, sprintBoostWeekly = 0, sprintWeeks = 0): { probability: number; finishWeeks: number } {
+  const n = Math.max(observations, 1);
+  const inflate = Math.sqrt(1 + 2 / n);
+  if (sprintBoostWeekly > 0 && sprintWeeks > 0 && weeksLeft > 0) {
+    const boosted = weeklyRate + sprintBoostWeekly;
+    const sprintCapacity = boosted * Math.min(sprintWeeks, weeksLeft);
+    if (remainingOps <= sprintCapacity) {
+      // Finishes inside the sprint window — compress the clock.
+      const effWeeks = remainingOps / boosted;
+      const sigma = (Math.sqrt(Math.max(remainingOps, 1)) / boosted) * inflate;
+      const z = (Math.min(weeksLeft, effWeeks * 2) - effWeeks) / Math.max(sigma, 0.05);
+      return { probability: Math.round(Math.min(0.98, Math.max(0.02, phi(z))) * 100) / 100, finishWeeks: effWeeks };
+    }
+    // Sprint completes sprintCapacity ops; remainder at base rate.
+    const rest = remainingOps - sprintCapacity;
+    const mu = Math.min(sprintWeeks, weeksLeft) + rest / weeklyRate;
+    const sigma = (Math.sqrt(rest) / weeklyRate) * inflate;
+    const z = (weeksLeft - mu) / Math.max(sigma, 0.05);
+    return { probability: Math.round(Math.min(0.98, Math.max(0.02, phi(z))) * 100) / 100, finishWeeks: mu };
+  }
+  const mu = remainingOps / weeklyRate;
+  const sigma = (Math.sqrt(remainingOps) / weeklyRate) * inflate;
+  const z = (weeksLeft - mu) / Math.max(sigma, 0.05);
+  return { probability: Math.round(Math.min(0.98, Math.max(0.02, phi(z))) * 100) / 100, finishWeeks: mu };
+}
+
+/**
+ * What-if simulator: recompute a goal's forecast under lever overrides.
+ * Same model as computeGoalForecasts — this is the cockpit math, not a
+ * second model. Returns null when the goal can't be forecast honestly.
+ */
+export function simulateGoalForecast(goalId: string, levers: ForecastLevers, nowMs: number = Date.now()): (GoalForecast & { levers: ForecastLevers }) | null {
+  const g = getCortexGoals().get(goalId);
+  if (!g || !g.targetDate) return null;
+  const mission = loadMission();
+  const linked = (mission.opsItems || []).filter((o: any) => o.goalId === goalId);
+  const doneOps = linked.filter((o: any) => o.done);
+  const base = baseWeeklyRate(g, doneOps, nowMs);
+  const remainingOps = Math.max(0, linked.length - doneOps.length - Math.max(0, levers.descopeOps || 0));
+  const daysLeft = Math.max(0, (g.targetDate - nowMs) / DAY_MS);
+  const weeksLeft = daysLeft / 7;
+  const out: GoalForecast & { levers: ForecastLevers } = {
+    goalId, goalTitle: g.title,
+    targetDate: new Date(g.targetDate).toISOString().slice(0, 10),
+    daysLeft: Math.round(daysLeft),
+    probability: null, basis: 'insufficient-data',
+    remainingOps, weeklyRate: 0, requiredWeekly: 0,
+    paceRatio: null, projectedFinish: null, observations: base?.observations || 0,
+    momentum: effortMomentum(goalId, nowMs),
+    levers,
+  };
+  if (daysLeft <= 0) { out.basis = 'no-target'; return out; }
+  if (remainingOps === 0) { out.basis = 'complete'; out.probability = 1; return out; }
+  if (!linked.length || !base) return out;
+
+  const lambda = Math.max(0.05, levers.weeklyRate ?? base.lambda);
+  out.weeklyRate = Math.round(lambda * 10) / 10;
+  out.requiredWeekly = Math.round((remainingOps / Math.max(weeksLeft, 0.25)) * 10) / 10;
+  out.paceRatio = Math.round((lambda / Math.max(out.requiredWeekly, 0.01)) * 100) / 100;
+  const sprintBoost = Math.max(0, levers.sprintBoostWeekly || 0);
+  const sprintWeeks = Math.max(0, levers.sprintWeeks || 0);
+  const hit = projectHit(remainingOps, lambda, weeksLeft, base.observations, sprintBoost, sprintWeeks);
+  out.probability = hit.probability;
+  out.projectedFinish = new Date(nowMs + hit.finishWeeks * WEEK_MS).toISOString().slice(0, 10);
+  out.basis = 'ops-gamma';
+  return out;
+}
+
 /**
  * Compute the forecast for every active goal with a targetDate.
  * Pure read — the watch decides whether to propose.
@@ -225,7 +324,7 @@ export function runGoalForecastCheck(nowMs: number = Date.now()): { evaluated: n
           input: {
             goalId: f.goalId,
             notifyOnFinish: true,
-            forecastFor: { probability: f.probability, targetDate: f.targetDate, projectedFinish: f.projectedFinish },
+            forecastFor: { probability: f.probability, targetDate: f.targetDate, projectedFinish: f.projectedFinish, remainingOps: f.remainingOps, weeklyRate: f.weeklyRate, requiredWeekly: f.requiredWeekly, paceRatio: f.paceRatio, daysLeft: f.daysLeft },
             instruction: [
               `Forecast says goal "${f.goalTitle}" has only ${pct}% probability of hitting ${f.targetDate} at current pace.`,
               `Math: ${f.remainingOps} ops remain, pace ${f.weeklyRate}/wk vs required ${f.requiredWeekly}/wk.`,

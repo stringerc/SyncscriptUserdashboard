@@ -21,6 +21,8 @@ import {
   GRADUATION_CLEAN_REQUIRED,
   GRADUATION_TOTAL_REQUIRED,
 } from '../../lib/cortex-trust-ledger';
+import { CortexForecastSimulator } from './CortexForecastSimulator';
+import type { ForecastLevers } from '../../lib/cortex-agent/goal-forecast';
 
 const MONO = '"IBM Plex Mono", ui-monospace, monospace';
 
@@ -48,6 +50,14 @@ function ProposalCard({ p }: { p: ProactiveProposal }) {
   const engine = getCortexProactiveInitiative();
   const [confirmText, setConfirmText] = useState('');
   const [expanded, setExpanded] = useState(false);
+  const simLeversRef = React.useRef<Record<string, unknown>>({});
+  const fc = (p.suggestedArgs?.input?.forecastFor || null) as any;
+  const isForecast = (p.category as string) === 'goal_forecast' && !!fc && !!p.suggestedArgs?.input?.goalId;
+  const stampLevers = () => {
+    if (isForecast && Object.keys(simLeversRef.current).length && p.suggestedArgs?.input) {
+      p.suggestedArgs.input.simulatedLevers = { ...simLeversRef.current };
+    }
+  };
   const tier = p.autonomyTier ?? (p.requiresApproval ? 2 : 1);
   const meta = TIER_META[tier];
   const isTier2 = tier === 2;
@@ -96,6 +106,22 @@ function ProposalCard({ p }: { p: ProactiveProposal }) {
         ><X size={13} /></button>
       </div>
 
+      {isForecast && (
+        <CortexForecastSimulator
+          goalId={String(p.suggestedArgs.input.goalId)}
+          baseline={{
+            probability: fc.probability ?? null,
+            targetDate: fc.targetDate ?? null,
+            projectedFinish: fc.projectedFinish ?? null,
+            remainingOps: Number(fc.remainingOps || 0),
+            weeklyRate: Number(fc.weeklyRate || 0),
+            requiredWeekly: Number(fc.requiredWeekly || 0),
+            paceRatio: fc.paceRatio ?? null,
+          }}
+          onLevers={(l: ForecastLevers) => { simLeversRef.current = l as Record<string, unknown>; }}
+        />
+      )}
+
       {isTier2 && (
         <div style={{ marginTop: 8 }}>
           <button
@@ -121,7 +147,7 @@ function ProposalCard({ p }: { p: ProactiveProposal }) {
             />
             <button
               disabled={!confirmed}
-              onClick={() => { engine.acceptProposal(p.id); setConfirmText(''); }}
+              onClick={() => { stampLevers(); engine.acceptProposal(p.id); setConfirmText(''); }}
               style={{
                 background: confirmed ? C.amber : 'transparent', color: confirmed ? C.bg : C.dim,
                 border: `1px solid ${C.amber}`, borderRadius: 4, fontSize: 10, fontFamily: MONO,
@@ -135,7 +161,7 @@ function ProposalCard({ p }: { p: ProactiveProposal }) {
       {!isTier2 && (
         <div style={{ display: 'flex', gap: 6, marginTop: 8 }}>
           <button
-            onClick={() => engine.acceptProposal(p.id)}
+            onClick={() => { stampLevers(); engine.acceptProposal(p.id); }}
             style={{
               display: 'flex', alignItems: 'center', gap: 4,
               background: 'rgba(52,211,153,0.12)', color: C.green, border: `1px solid ${C.green}55`,

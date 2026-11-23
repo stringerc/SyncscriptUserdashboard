@@ -3576,6 +3576,33 @@ function apiProxyPlugin(): Plugin {
         }
       });
 
+      // ── Forecast what-if simulator ──
+      // POST /api/cortex/strategic/forecast-simulate {goalId, weeklyRate?,
+      // descopeOps?, sprintBoostWeekly?, sprintWeeks?} → recomputed
+      // probability + projected finish under lever overrides. Same model
+      // as the dashboard forecast — the decision cockpit math.
+      server.middlewares.use('/api/cortex/strategic/forecast-simulate', async (req: any, res: any) => {
+        if (!setCortexCors(req, res)) return jsonRes(res, 403, { ok: false, error: 'forbidden' });
+        if (req.method === 'OPTIONS') { res.writeHead(204); return res.end(); }
+        if (req.method !== 'POST') return jsonRes(res, 405, { ok: false, error: 'method not allowed' });
+        try {
+          let body = '';
+          req.on('data', (c: Buffer) => { body += c.toString(); if (body.length > 8192) req.destroy(); });
+          await new Promise<void>((resolve) => req.on('end', () => resolve()));
+          const parsed = JSON.parse(body || '{}');
+          const { simulateGoalForecast } = await import('./src/lib/cortex-agent/goal-forecast');
+          const result = simulateGoalForecast(String(parsed.goalId || ''), {
+            weeklyRate: Number.isFinite(Number(parsed.weeklyRate)) ? Number(parsed.weeklyRate) : undefined,
+            descopeOps: Number.isFinite(Number(parsed.descopeOps)) ? Number(parsed.descopeOps) : undefined,
+            sprintBoostWeekly: Number.isFinite(Number(parsed.sprintBoostWeekly)) ? Number(parsed.sprintBoostWeekly) : undefined,
+            sprintWeeks: Number.isFinite(Number(parsed.sprintWeeks)) ? Number(parsed.sprintWeeks) : undefined,
+          });
+          return jsonRes(res, result ? 200 : 404, { ok: !!result, forecast: result });
+        } catch (e: any) {
+          return jsonRes(res, 500, { ok: false, error: String(e?.message || e) });
+        }
+      });
+
       // ── Fleet sidecar control (/api/cortex/fleet/*) ──
       // Lazy nodes are dark by design (RAM conservation) — this is the
       // wake-on-demand surface: clients warm the voice stack on session
