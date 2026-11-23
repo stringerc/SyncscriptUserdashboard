@@ -261,6 +261,7 @@ import {
 import { getWorldState, formatWorldStateHeader, startWorldStateSampler, onHostMemoryPressure, onWorldStateSample, getCachedMemFreePct, probeMemorystatusFreePct } from './src/lib/cortex-world-state';
 import { startProcessWatch, getTopMemoryProcesses, processWatchStatus } from './src/lib/cortex-agent/process-watch';
 import { ambientReact, startSidecarReconciler } from './src/lib/cortex-agent/ambient-actions';
+import { startGoalLinker } from './src/lib/cortex-agent/goal-linker';
 
 // Unhandled-rejection guard: Node crashes the ENTIRE process on any
 // unhandled rejection. AbortError rejections are routine cancellation
@@ -1051,7 +1052,7 @@ const CORTEX_TOOLS = [
           agentId: { type: 'string', description: 'sentinel | scout | librarian | builder | warden | spawn-* (required for task)' },
           kind: { type: 'string', description: 'Task kind, e.g. research, summarize, code_patch, lights_status, lights_set (deterministic — no LLM)' },
           title: { type: 'string', description: 'Short task title' },
-          input: { type: 'object', description: 'Task input payload' },
+          input: { type: 'object', description: 'Task input payload. Set notifyOnFinish:true when you promise the user you will monitor/report back — the runtime then emits a spoken resolution notice on ANY terminal state (passed/failed/vetoed/cancelled). High-signal tasks (gates, patrols, invariants, launches) notify automatically.' },
           proposalId: { type: 'string', description: 'Spawn proposal id (approve_spawn/reject_spawn)' },
           spec: { type: 'object', description: 'SpawnSpec for propose_agent: {callSign, role, mission, tools[], modelPin{tier}, dailyBudget, ttlHours, systemBrief, doneCriteria}' },
           evidence: { type: 'array', description: 'Evidence items [{kind, refs[], summary}] proving recurring need' }
@@ -1722,6 +1723,20 @@ function apiProxyPlugin(): Plugin {
         });
       } catch (e: any) {
         console.warn('[sidecar-reconciler] failed to arm:', e?.message || e);
+      }
+      // ── Goal linker: every active mission op + every commit attributed
+      // to the primary life goal — "progressing toward the strategic
+      // outcome," not just working. 2min cadence, narrates the first
+      // auto-link once; steady state stays silent (review reads the
+      // attribution file directly).
+      try {
+        startGoalLinker((n, goalTitle) => {
+          try {
+            ambientPush('ambient', `Goal linker armed — auto-attributed ${n} mission ops item${n === 1 ? '' : 's'} to "${goalTitle}". Every commit and task now counts toward the quarter target.`);
+          } catch {}
+        });
+      } catch (e: any) {
+        console.warn('[goal-linker] failed to arm:', e?.message || e);
       }
       // ── /api/cortex/autonomy — sovereign autonomy mode (bypass-permissions).
       // GET returns the mode; POST {mode:'autonomous'|'confirm'} toggles it.

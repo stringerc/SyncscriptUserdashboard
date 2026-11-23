@@ -840,6 +840,39 @@ export class AgentRuntime {
         try { this.onTaskCompleted(task, agent); } catch { /* hook must never break runtime */ }
       }
     }
+    // ── Resolution notices: "I'll monitor X and report back" made real.
+    // Routine completions stay muted (the 'completed:' text above is
+    // filtered client-side as chatter), but a task explicitly flagged
+    // notifyOnFinish — or one in the high-signal class Cortex promises to
+    // watch (gates, patrols, invariants, launches) — gets a spoken
+    // resolution on ANY terminal state. Failed/vetoed used to be silent;
+    // a gate check that fails is the outcome most worth reporting.
+    // Text deliberately avoids the 'completed:' pattern so the routine
+    // filter doesn't eat it.
+    if (['completed', 'failed', 'vetoed', 'cancelled'].includes(status)) {
+      try {
+        const HIGH_SIGNAL_RE = /gate|invariant|patrol|warden|security|launch|paying|customer|mission|audit|review|deploy|release/i;
+        const flagged = task.input?.notifyOnFinish === true;
+        const highSignal = HIGH_SIGNAL_RE.test(`${task.kind} ${task.title}`);
+        if (flagged || highSignal) {
+          const ambientFile = path.join(process.cwd(), '.cache', 'cortex-ambient.jsonl');
+          const dir = path.dirname(ambientFile);
+          if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+          const outcome = status === 'completed' ? 'PASSED'
+            : status === 'failed' ? 'FAILED'
+            : status === 'vetoed' ? 'VETOED' : 'CANCELLED';
+          const errHint = (status === 'failed' || status === 'vetoed') && task.error
+            ? ` — ${String(task.error).slice(0, 120)}` : '';
+          const notice = {
+            id: `notice-resolve-${task.id}-${Date.now()}`,
+            kind: 'ambient',
+            text: `${agent ? agent.name : 'Agent'} reports: ${task.title.slice(0, 90)} — ${outcome}.${errHint}`,
+            ts: Date.now(),
+          };
+          fs.appendFileSync(ambientFile, JSON.stringify(notice) + '\n');
+        }
+      } catch {}
+    }
     if (['completed', 'failed', 'vetoed', 'cancelled'].includes(status) && this.onTaskFinished) {
       try { this.onTaskFinished(task, agent); } catch { /* hook must never break runtime */ }
     }

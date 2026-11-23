@@ -25,6 +25,7 @@ import path from 'node:path';
 import { getCortexGoals } from '../cortex-goals';
 import { listConstraints, constraintDigest } from './constraints';
 import { computeSignalFeeds, resolveGoalSignals } from './signal-feeds';
+import { recentAttributions } from './goal-linker';
 
 const RUNTIME = path.resolve(process.cwd(), '.cortex-runtime');
 const BRIEFS_DIR = path.join(RUNTIME, 'briefs');
@@ -166,6 +167,18 @@ export function compileStrategicState(): string {
       }
       sections.push(`## GOAL-LINKED WORK (ops items tagged to life goals)\n${[...byGoal.entries()].map(([g, c]) => `- "${g}": ${c.done}/${c.total} ops items done`).join('\n')}`);
     }
+    // Commit attribution — every commit on the branch counts toward the
+    // primary goal (goal-linker reconciler). This is the "every commit
+    // contributes to the quarter target" ledger.
+    try {
+      const cutoffMs = Date.now() - WEEK_MS;
+      const attr = recentAttributions(cutoffMs);
+      if (attr.length) {
+        const byGoal = new Map<string, number>();
+        for (const a of attr) byGoal.set(a.goalTitle, (byGoal.get(a.goalTitle) || 0) + 1);
+        sections.push(`## COMMIT ATTRIBUTION (this week)\n${[...byGoal.entries()].map(([g, n]) => `- "${g}": ${n} commit${n === 1 ? '' : 's'}`).join('\n')}`);
+      }
+    } catch {}
     const mGoals = (mission?.goals || []).filter((g: any) => g.status === 'active');
     if (mGoals.length) {
       sections.push(`## MISSION GOALS\n${mGoals.map((g: any) => `- ${g.title} (${g.horizon || 'ongoing'})`).join('\n')}`);
