@@ -230,6 +230,21 @@ export function appendEvent(e: AgentEvent): PersistedEvent | null {
     record.hash = hashRecord(lastHash, record);
     lastHash = record.hash;
     const targetFile = path.join(logDir, getDayFileName(new Date(e.at || Date.now())));
+    // Rotation: today's file hit ~98MB during the 2026-11-23 flood and
+    // every reader (readEvents/verify/stats) full-scans it — multi-second
+    // event-loop blocks that wedged the dev server. Cap each file at
+    // ~32MB; overflow rolls into .part-N siblings (still matched by the
+    // events-*.jsonl glob).
+    try {
+      const MAX_FILE = 32 * 1024 * 1024;
+      const st = fs.statSync(targetFile);
+      if (st.size > MAX_FILE) {
+        let n = 1;
+        let rolled = `${targetFile}.part-${n}`;
+        while (fs.existsSync(rolled)) { n++; rolled = `${targetFile}.part-${n}`; }
+        fs.renameSync(targetFile, rolled);
+      }
+    } catch { /* stat fails on first write — fine */ }
     fs.appendFileSync(targetFile, JSON.stringify(record) + '\n', 'utf8');
     try { maybeRetainEvent(record); } catch { /* memory is best-effort */ }
     return record;
@@ -276,7 +291,8 @@ export function readEvents(opts: ReadEventsOptions = {}): PersistedEvent[] {
     if (!fs.existsSync(logDir)) return [];
     const files = fs.readdirSync(logDir)
       .filter((f) => f.startsWith('events-') && f.endsWith('.jsonl'))
-      .sort();
+      .sort()
+      .reverse(); // newest day first — 'latest' queries hit recent files first
 
     const limit = Math.min(Math.max(1, opts.limit ?? 500), 5000);
     const since = opts.since;
@@ -286,7 +302,25 @@ export function readEvents(opts: ReadEventsOptions = {}): PersistedEvent[] {
 
     for (const file of files) {
       const fullPath = path.join(logDir, file);
-      const content = fs.readFileSync(fullPath, 'utf8');
+      // Tail-read: unfiltered queries only need recent events — reading a
+      // 98MB file line-by-line JSON.parses the whole thing per request.
+      // Keep last ~4MB (≈15k events) unless the caller needs deep history.
+      const deepScan = since !== undefined || until !== undefined || targetAgent || typeSet;
+      let content: string;
+      try {
+        const size = fs.statSync(fullPath).size;
+        if (!deepScan && size > 4 * 1024 * 1024) {
+          const fd = fs.openSync(fullPath, 'r');
+          const buf = Buffer.alloc(4 * 1024 * 1024);
+          fs.readSync(fd, buf, 0, buf.length, Math.max(0, size - buf.length));
+          fs.closeSync(fd);
+          content = buf.toString('utf8');
+          const nl = content.indexOf('\n');
+          if (nl >= 0) content = content.slice(nl + 1); // drop partial first line
+        } else {
+          content = fs.readFileSync(fullPath, 'utf8');
+        }
+      } catch { content = ''; }
       const lines = content.split('\n');
       for (const line of lines) {
         if (!line.trim()) continue;
@@ -352,7 +386,8 @@ export function verifyEventLog(): {
     if (!fs.existsSync(logDir)) return result;
     const files = fs.readdirSync(logDir)
       .filter((f) => f.startsWith('events-') && f.endsWith('.jsonl'))
-      .sort();
+      .sort()
+      .reverse(); // newest day first — 'latest' queries hit recent files first
     // Each writer boot forms its own chain epoch: expectedPrev is tracked per
     // writer id so interleaved appends from concurrent processes verify
     // independently. Unlabeled legacy-era chained records share '_unlabeled'.
