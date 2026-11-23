@@ -122,6 +122,16 @@ function GoalCard({ g }: { g: GoalHealth }) {
         </div>
       </div>
 
+      {/* Live pace watch — accepted trajectory vs actuals */}
+      {g.paceWatch && (
+        <div style={{ fontFamily: MONO, fontSize: 10 }}>
+          <span style={{ color: g.paceWatch.onPace ? C.green : C.red }}>
+            {g.paceWatch.onPace ? '▶' : '⚠'} PACE {g.paceWatch.ratio != null ? `${Math.round(g.paceWatch.ratio * 100)}% of trajectory` : 'warming up'}
+          </span>
+          <span style={{ color: C.dim }}> · {g.paceWatch.actual}/{g.paceWatch.expected} ops · day {g.paceWatch.elapsedDays}</span>
+        </div>
+      )}
+
       {/* Verification status */}
       {(g.pendingVerification || g.lastVerification) && (
         <div style={{ fontFamily: MONO, fontSize: 10 }}>

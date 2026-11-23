@@ -26,6 +26,10 @@ export interface GoalHealth {
   correctives: Array<{ id: string; title: string; status: string; agentId: string; createdAtMs: number }>;
   escalations: Array<{ id: string; title: string; status: string; createdAtMs: number }>;
   forecast?: GoalForecast | null;
+  paceWatch?: {
+    proposalId: string; acceptedAt: number; elapsedDays: number;
+    actual: number; expected: number; ratio: number | null; onPace: boolean;
+  } | null;
 }
 
 export interface GoalForecast {
@@ -64,6 +68,7 @@ export interface StrategicDashboard {
   goals: GoalHealth[];
   hostEffort30d: GoalTrendPoint[];
   calibration?: CalibrationReport;
+  paceWatch?: Array<{ goalId: string; proposalId: string; acceptedAt: number; elapsedDays: number; actual: number; expected: number; ratio: number | null; onPace: boolean }>;
   interoceptive?: {
     error: number; capacity: number; level: 'nominal' | 'strained' | 'critical';
     vitals: { rssMB: number; heapUsedMB: number; loadAvg1m: number; cores: number; memFreePct?: number; lagP99Ms?: number };

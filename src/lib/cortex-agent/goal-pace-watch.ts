@@ -213,6 +213,49 @@ export function runPaceWatchCheck(nowMs: number = Date.now()): { watches: number
   return { watches: Object.keys(state.watches).length, diverged };
 }
 
+export interface PaceWatchSummary {
+  goalId: string; proposalId: string; acceptedAt: number;
+  elapsedDays: number; actual: number; expected: number;
+  ratio: number | null; // actual/expected; null when not yet measurable
+  onPace: boolean;
+}
+
+/** Live per-goal pace telemetry for dashboards — the "see divergence
+ *  the moment it happens" readout. Computed fresh each call. */
+export function getPaceWatchSummaries(nowMs: number = Date.now()): PaceWatchSummary[] {
+  syncWatches(nowMs);
+  const state = loadState();
+  const out: PaceWatchSummary[] = [];
+  for (const w of Object.values(state.watches)) {
+    const elapsedMs = nowMs - w.acceptedAt;
+    if (elapsedMs > WATCH_TTL_MS) continue;
+    const { actual } = completionsSince(w.goalId, w.acceptedAt);
+    const expected = elapsedMs >= MIN_ELAPSED_MS ? expectedCompletions(w, elapsedMs / DAY_MS) : 0;
+    const measurable = expected >= 1;
+    const ratio = measurable ? Math.round((actual / expected) * 100) / 100 : null;
+    out.push({
+      goalId: w.goalId, proposalId: w.proposalId, acceptedAt: w.acceptedAt,
+      elapsedDays: Math.floor(elapsedMs / DAY_MS),
+      actual, expected: Math.round(expected * 10) / 10,
+      ratio, onPace: !measurable || actual >= expected * DIVERGENCE_RATIO,
+    });
+  }
+  return out;
+}
+
+// ── Event-driven acceleration ──────────────────────────────────────
+// The 10-min interval is the fallback; ops verifications and agent
+// task completions trigger an immediate (debounced) check so
+// divergence surfaces in seconds, not on the next tick.
+let lastEventCheck = 0;
+const EVENT_MIN_INTERVAL_MS = 30_000;
+export function notifyPaceRelevantEvent(): void {
+  const now = Date.now();
+  if (now - lastEventCheck < EVENT_MIN_INTERVAL_MS) return;
+  lastEventCheck = now;
+  try { runPaceWatchCheck(now); } catch {}
+}
+
 /** Arm the pace watch: check now, then every 10min. */
 export function startGoalPaceWatch(): void {
   const g = globalThis as any;

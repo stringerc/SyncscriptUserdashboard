@@ -137,6 +137,11 @@ export function CortexFoundryGoalCard({ goal, health }: { goal: LifeGoal; health
                   {health.forecast.momentum === 'down' ? ' · momentum ↓' : ''}
                 </div>
               )}
+              {health.paceWatch && (
+                <div style={{ fontSize: 8.5, color: health.paceWatch.onPace ? '#34d399' : '#fb7185' }}>
+                  {health.paceWatch.onPace ? '▶' : '⚠'} pace {health.paceWatch.ratio != null ? `${Math.round(health.paceWatch.ratio * 100)}% of trajectory` : 'warming up'} · {health.paceWatch.actual}/{health.paceWatch.expected} ops · day {health.paceWatch.elapsedDays}
+                </div>
+              )}
               {health.pendingVerification && (
                 <div style={{ fontSize: 8.5, color: '#fbbf24' }}>⏳ verifying {health.pendingVerification.kind} corrective — "{health.pendingVerification.correctiveTitle.slice(0, 60)}"</div>
               )}

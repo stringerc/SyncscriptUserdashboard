@@ -21,6 +21,7 @@ import { collectEffortEvents } from './goal-drift';
 import { computeGoalForecasts } from './goal-forecast';
 import { calibrationReport } from './goal-calibration';
 import { getInteroceptiveState } from './interoceptive';
+import { getPaceWatchSummaries } from './goal-pace-watch';
 import type { CalibrationReport } from '../cortex-strategic-dashboard-types';
 import type { GoalHealth, GoalTrendPoint, StrategicDashboard } from '../cortex-strategic-dashboard-types';
 
@@ -114,6 +115,8 @@ export function getStrategicDashboard(nowMs: number = Date.now()): StrategicDash
 
   const forecasts = computeGoalForecasts(nowMs);
   const forecastByGoal = new Map(forecasts.map((f) => [f.goalId, f]));
+  let paceWatch: ReturnType<typeof getPaceWatchSummaries> = [];
+  try { paceWatch = getPaceWatchSummaries(nowMs); } catch {}
 
   const goals: GoalHealth[] = activeGoals.map((g: LifeGoal) => {
     const gid = g.id;
@@ -217,6 +220,7 @@ export function getStrategicDashboard(nowMs: number = Date.now()): StrategicDash
       correctives,
       escalations,
       forecast: forecastByGoal.get(gid) || null,
+      paceWatch: paceWatch.find((w) => w.goalId === gid) || null,
     };
   });
 
@@ -224,5 +228,5 @@ export function getStrategicDashboard(nowMs: number = Date.now()): StrategicDash
   try { calibration = calibrationReport(); } catch {}
   let interoceptive: StrategicDashboard['interoceptive'];
   try { interoceptive = getInteroceptiveState(nowMs); } catch {}
-  return { generatedAt: nowMs, goals, hostEffort30d, calibration, interoceptive };
+  return { generatedAt: nowMs, goals, hostEffort30d, calibration, interoceptive, paceWatch };
 }

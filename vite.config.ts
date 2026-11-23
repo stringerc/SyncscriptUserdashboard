@@ -266,7 +266,7 @@ import { startGoalDriftWatch } from './src/lib/cortex-agent/goal-drift';
 import { setPremortemNotifier } from './src/lib/cortex-agent/goal-premortem';
 import { setVerificationNotifier, handleCorrectiveResolution } from './src/lib/cortex-agent/goal-verification';
 import { startGoalForecastWatch, setForecastNotifier } from './src/lib/cortex-agent/goal-forecast';
-import { startGoalPaceWatch, setPaceWatchNotifier } from './src/lib/cortex-agent/goal-pace-watch';
+import { startGoalPaceWatch, setPaceWatchNotifier, notifyPaceRelevantEvent } from './src/lib/cortex-agent/goal-pace-watch';
 import { getInteroceptiveState, interoceptiveGate } from './src/lib/cortex-agent/interoceptive';
 
 // Unhandled-rejection guard: Node crashes the ENTIRE process on any
@@ -1928,6 +1928,7 @@ function apiProxyPlugin(): Plugin {
         // input.correctiveFor just resolved — mark its goal+kind for
         // drift re-check (completed) or escalate immediately (failed).
         try { handleCorrectiveResolution(task as any); } catch {}
+        try { notifyPaceRelevantEvent(); } catch {}
         // Incident ticket: every failure upserts the agent|class|kind ledger.
         if (task.status === 'failed') {
           recordIncidentFailure({
@@ -13290,6 +13291,7 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
           const ms = loadMission();
           const msrc = missionSourcesSafe();
           verifyOps(ms, msrc);
+          try { notifyPaceRelevantEvent(); } catch {}
           const gp = goalProgress(ms, msrc.archive);
           mission = {
             goals: gp.filter((g) => g.status === 'active').map((g) => ({ id: g.goalId, title: g.title.slice(0, 80), progress: g.progress, orphaned: g.orphaned })),
@@ -15794,6 +15796,7 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
             const state = loadMission();
             const src = missionSources();
             verifyOps(state, src);
+            try { notifyPaceRelevantEvent(); } catch {}
             if (action === 'cadence') {
               const report = cadenceReport(state, false);
               saveMission(state);
@@ -15867,6 +15870,8 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
               }
               case 'verify_ops': {
                 verifyOps(state, src);
+                try { notifyPaceRelevantEvent(); } catch {}
+            try { notifyPaceRelevantEvent(); } catch {}
                 break;
               }
               case 'upsert_block': {
@@ -15973,6 +15978,7 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
                 return send(400, { ok: false, error: `unknown action '${p.action}'` });
             }
             verifyOps(state, src);
+            try { notifyPaceRelevantEvent(); } catch {}
             saveMission(state);
             return send(200, { ok: true, state: { goals: state.goals, opsItems: state.opsItems, blocks: state.blocks.slice(-50), cadence: state.cadence, goalProgress: goalProgress(state, src.archive) } });
           } catch (e: any) {
