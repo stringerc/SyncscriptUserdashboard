@@ -29,11 +29,11 @@ export interface ProcInfo {
 }
 
 export interface ProcEvent {
-  kind: 'death' | 'birth' | 'growth';
+  kind: 'death' | 'birth' | 'growth' | 'cluster';
   pid: number;
   comm: string;
   rssMB: number;
-  /** For growth: previous RSS in MB. */
+  /** For growth: previous RSS in MB. For cluster: number of exits. */
   prevMB?: number;
 }
 
@@ -130,12 +130,22 @@ async function tick(onEvents: (events: ProcEvent[]) => void): Promise<void> {
   const prev = pw.prev;
   pw.prev = curr;
 
-  // Deaths — only processes that mattered.
+  // Deaths — only processes that mattered. Sub-threshold exits are
+  // counted separately: a cluster of them in one tick means a parent
+  // app crashed or quit (Chrome losing 30 helpers at once is signal,
+  // not noise).
+  let insignificantDeaths = 0;
   for (const [pid, p] of prev) {
     if (curr.has(pid)) continue;
-    if (!significant(p)) continue;
+    if (!significant(p)) { insignificantDeaths++; continue; }
     if (!nameCooldownOk(p.comm, now)) continue;
     events.push({ kind: 'death', pid, comm: p.comm, rssMB: p.rssMB });
+  }
+  if (insignificantDeaths >= 5) {
+    events.push({
+      kind: 'cluster', pid: 0, comm: 'process cluster', rssMB: 0,
+      prevMB: insignificantDeaths,
+    });
   }
 
   // Births — big processes always; notable names only if they're already

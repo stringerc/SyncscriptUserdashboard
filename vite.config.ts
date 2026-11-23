@@ -1542,6 +1542,7 @@ function apiProxyPlugin(): Plugin {
               const name = e.comm.split('/').pop() || e.comm;
               if (e.kind === 'death') return `${name} exited (was ${fmtMB(e.rssMB)})`;
               if (e.kind === 'birth') return `${name} launched using ${fmtMB(e.rssMB)}`;
+              if (e.kind === 'cluster') return `${e.prevMB} processes exited together — likely a parent app quit or crashed`;
               return `${name} memory spiked ${fmtMB(e.prevMB || 0)}→${fmtMB(e.rssMB)}`;
             });
             const extra = events.length > 6 ? ` (+${events.length - 6} more)` : '';
@@ -1583,11 +1584,13 @@ function apiProxyPlugin(): Plugin {
               .join(', ');
             const culprits = topProcs ? ` Top consumers: ${topProcs}.` : '';
             const freedMB = reaped.length ? ' Reclaimed idle sidecars: ' + reaped.join(', ') + '.' : '';
+            // pct is kernel FREE percentage — invert for the human message.
+            const usedPct = Math.max(0, Math.min(100, 100 - pct));
             ambientPush(
               level === 'critical' ? 'system' : 'ambient',
               level === 'critical'
-                ? `⚠️ Host memory critical — ${pct}% used.${culprits} I swept idle fleet sidecars to make headroom before anything gets OOM-killed.${freedMB}`
-                : `Memory pressure — host at ${pct}% used.${culprits} I swept idle sidecars to stay ahead of it.${freedMB}`,
+                ? `⚠️ Host memory critical — ${usedPct}% used (${pct}% free by kernel accounting).${culprits} I swept idle fleet sidecars to make headroom before anything gets OOM-killed.${freedMB}`
+                : `Memory pressure — host at ${usedPct}% used.${culprits} I swept idle sidecars to stay ahead of it.${freedMB}`,
             );
           } catch {}
         });

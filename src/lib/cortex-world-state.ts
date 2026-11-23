@@ -41,8 +41,14 @@ export interface UserContextState {
 
 export interface HostSomaticState {
   loadAvg1m: number;
+  /** freemem-based used% — misleading on macOS (see probeMemorystatusFreePct);
+   *  prefer memFreePct when present. */
   memUsedPct: number;
-  /** Free RAM in MB — Cortex cites headroom in absolute terms, not just %. */
+  /** Kernel accounting: % of memory the system considers free
+   *  (kern.memorystatus_level). The honest pressure signal on macOS. */
+  memFreePct?: number;
+  /** Estimated truly-free MB derived from memFreePct — replaces the
+   *  misleading os.freemem() figure in the header. */
   memFreeMB?: number;
   uptimeHours: number;
   batteryPct?: number;
@@ -164,6 +170,36 @@ export async function probeBatteryPct(): Promise<number | undefined> {
   }
 }
 
+// macOS memory truth: os.freemem() is nearly ALWAYS ~0 because the kernel
+// uses idle RAM for cache/compressed/inactive pages — computing "used"
+// from it reports ~99% permanently and makes every pressure alert a false
+// positive (observed: governor fired "critical" while the kernel reported
+// 45% free). kern.memorystatus_level is the kernel's own accounting —
+// the same number `memory_pressure` prints as "System-wide memory free
+// percentage". This is the honest signal.
+let memLevelCache: { at: number; value: number | undefined } | null = null;
+const MEM_LEVEL_TTL_MS = 15_000;
+
+export async function probeMemorystatusFreePct(): Promise<number | undefined> {
+  if (process.platform !== 'darwin') return undefined;
+  const now = Date.now();
+  if (memLevelCache && now - memLevelCache.at < MEM_LEVEL_TTL_MS) {
+    return memLevelCache.value;
+  }
+  let value: number | undefined;
+  try {
+    // 1.5s timeout — under heavy load (load>20 observed) sysctl can take
+    // >400ms; a too-tight timeout made the probe silently return undefined
+    // and the honest metric never reached the header.
+    const { stdout } = await execFileAsync('sysctl', ['-n', 'kern.memorystatus_level'], { timeout: 1500 });
+    const n = parseInt(String(stdout).trim(), 10);
+    if (Number.isFinite(n) && n >= 0 && n <= 100) value = n;
+  } catch {}
+  // Only cache successes — a timed-out probe shouldn't blind us for 15s.
+  if (value !== undefined) memLevelCache = { at: now, value };
+  return value;
+}
+
 /** Determine host topology (Mac local vs. Oracle UTC cloud). */
 export function getTopology(): TopologyState {
   const hostname = os.hostname();
@@ -231,7 +267,6 @@ export function getSomaticVitals(): HostSomaticState {
   return {
     loadAvg1m,
     memUsedPct,
-    memFreeMB: Math.round(free / 1048576),
     uptimeHours,
   };
 }
@@ -341,17 +376,25 @@ async function refreshWorldState(): Promise<WorldState> {
   const battP = (!batteryCache || now - batteryCache.at >= BATTERY_TTL_MS)
     ? probeBatteryPct().then((v) => { batteryCache = { at: Date.now(), value: v }; return v; })
     : Promise.resolve(batteryCache.value);
+  const memLevelP = probeMemorystatusFreePct();
 
   // Run async probes in parallel with timeouts
-  const [user, git, batteryPct, oracleAlive] = await Promise.all([
+  const [user, git, batteryPct, oracleAlive, memFreePct] = await Promise.all([
     probeFrontmostApp(),
     gitP,
     battP,
     probeOracleAlive(topology.instance),
+    memLevelP,
   ]);
 
   if (batteryPct !== undefined) {
     host.batteryPct = batteryPct;
+  }
+  if (memFreePct !== undefined) {
+    host.memFreePct = memFreePct;
+    // Estimated absolute headroom from kernel accounting — honest "XGB
+    // free" instead of the ~140MB freemem artifact macOS always reports.
+    host.memFreeMB = Math.round((memFreePct / 100) * os.totalmem() / 1048576);
   }
 
   // Probe fleet status from local state files
@@ -471,9 +514,13 @@ export function formatWorldStateHeader(state: WorldState): string {
     ? ` | files: ${rc.slice(0, 3).map(c => `${c.path.split('/').pop()}(${Math.max(0, Math.round((Date.now() - c.at) / 1000))}s)`).join(' ')}`
     : '';
 
-  const memInfo = host.memFreeMB !== undefined
-    ? ` | Mem: ${host.memUsedPct}% (${host.memFreeMB}MB free)`
-    : ` | Mem: ${host.memUsedPct}%`;
+  // Kernel accounting (memFreePct) is authoritative on macOS — freemem
+  // reports ~0 permanently and would claim 99% used forever.
+  const memInfo = host.memFreePct !== undefined
+    ? ` | Mem: ${100 - host.memFreePct}% used (~${host.memFreeMB}MB free)`
+    : host.memFreeMB !== undefined
+      ? ` | Mem: ${host.memUsedPct}% (${host.memFreeMB}MB free)`
+      : ` | Mem: ${host.memUsedPct}%`;
 
   return `[WORLD-STATE: ${topology.localTime} | App: ${appInfo} | Git: ${gitInfo} | Host: ${hostNode} | Load: ${host.loadAvg1m}${memInfo}${battInfo}${fleetInfo}${editInfo}${fileInfo}]`;
 }
@@ -511,26 +558,29 @@ if (!gPressure[PRESSURE_KEY]) {
 }
 const pressure: PressureState = gPressure[PRESSURE_KEY];
 
-const PRESSURE_WARN_PCT = 90;
-const PRESSURE_CRITICAL_PCT = 96;
+// Thresholds are on FREE percentage (kern.memorystatus_level): lower =
+// worse. warn <25% free, critical <12% free, de-escalate only above 30% —
+// the 25→30 band is the hysteresis that prevents flapping.
+const PRESSURE_WARN_FREE_PCT = 25;
+const PRESSURE_CRITICAL_FREE_PCT = 12;
+const PRESSURE_EXIT_FREE_PCT = 30;
 
-function nextPressureLevel(pct: number): PressureLevel {
-  if (pressure.level === 'critical') {
-    return pct >= PRESSURE_CRITICAL_PCT - 3 ? 'critical' : pct >= PRESSURE_WARN_PCT - 3 ? 'warn' : 'ok';
+function nextPressureLevel(freePct: number): PressureLevel {
+  if (pressure.level === 'critical' || pressure.level === 'warn') {
+    return freePct < PRESSURE_CRITICAL_FREE_PCT ? 'critical'
+      : freePct < PRESSURE_EXIT_FREE_PCT ? 'warn' : 'ok';
   }
-  if (pressure.level === 'warn') {
-    return pct >= PRESSURE_CRITICAL_PCT ? 'critical' : pct >= PRESSURE_WARN_PCT - 3 ? 'warn' : 'ok';
-  }
-  return pct >= PRESSURE_CRITICAL_PCT ? 'critical' : pct >= PRESSURE_WARN_PCT ? 'warn' : 'ok';
+  return freePct < PRESSURE_CRITICAL_FREE_PCT ? 'critical'
+    : freePct < PRESSURE_WARN_FREE_PCT ? 'warn' : 'ok';
 }
 
-function checkHostMemoryPressure(pct: number): void {
-  if (!Number.isFinite(pct) || pct <= 0) return;
-  const next = nextPressureLevel(pct);
+function checkHostMemoryPressure(freePct: number): void {
+  if (!Number.isFinite(freePct) || freePct < 0 || freePct > 100) return;
+  const next = nextPressureLevel(freePct);
   if (next === pressure.level) return;
   pressure.level = next;
   for (const fn of [...pressure.listeners]) {
-    try { fn(next, pct); } catch {}
+    try { fn(next, freePct); } catch {}
   }
 }
 
@@ -578,7 +628,11 @@ export function startWorldStateSampler(intervalMs = 3000): void {
   const tick = () => {
     void refreshWorldState()
       .then((s) => {
-        checkHostMemoryPressure(s?.host?.memUsedPct ?? 0);
+        // Prefer kernel free% (honest); fall back to 100-freemem%-used
+        // only where sysctl doesn't exist (non-macOS hosts).
+        const freePct = s?.host?.memFreePct
+          ?? (s?.host?.memUsedPct !== undefined ? 100 - s.host.memUsedPct : NaN);
+        checkHostMemoryPressure(freePct);
         emitWorldSample(s);
       })
       .catch(() => {});
