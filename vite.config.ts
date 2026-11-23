@@ -273,6 +273,7 @@ import { attend, attentionTrace, scoreCandidate, type AttentionCandidate } from 
 import { getProprioception } from './src/lib/cortex-agent/proprioception';
 import { observeWorld, queryWorldModel, topLeverage, scoreDispatch } from './src/lib/cortex-agent/world-model';
 import { getSelfhood } from './src/lib/cortex-agent/selfhood';
+import { planDispatches, rolloutPlan } from './src/lib/cortex-agent/planner';
 
 // Unhandled-rejection guard: Node crashes the ENTIRE process on any
 // unhandled rejection. AbortError rejections are routine cancellation
@@ -1185,7 +1186,7 @@ const CORTEX_TOOLS = [
       parameters: {
         type: 'object',
         properties: {
-          action: { type: 'string', enum: ['proprioception', 'attention', 'libet', 'veto', 'world', 'self'], description: 'Which self-model surface to query' },
+          action: { type: 'string', enum: ['proprioception', 'attention', 'libet', 'veto', 'world', 'self', 'plan'], description: 'Which self-model surface to query' },
           id: { type: 'string', description: 'Veto intent id for action=veto (from libet pending)' },
           limit: { type: 'number', description: 'Max trace entries (default 10)' }
         },
@@ -3732,6 +3733,34 @@ function apiProxyPlugin(): Plugin {
       worldModelTimer.unref?.();
       try { observeWorld(); } catch {}
 
+      // ── Active inference planner: simulate → evaluate → commit ──
+      // POST {candidates:[{kind,title,agentId}]} → ranked plans by
+      // expected free energy. POST {commit:{agentId,kind,title}} →
+      // winning action enters the Libet veto window before dispatch.
+      server.middlewares.use('/api/cortex/plan', async (req: any, res: any) => {
+        if (!setCortexCors(req, res)) return jsonRes(res, 403, { ok: false, error: 'forbidden' });
+        if (req.method === 'OPTIONS') { res.writeHead(204); return res.end(); }
+        if (req.method !== 'POST') return jsonRes(res, 405, { ok: false, error: 'POST only' });
+        const body = JSON.parse(await readBody(req) || '{}');
+        const state = observeWorld();
+        if (Array.isArray(body?.candidates)) {
+          const { plans, recommended, baseline } = planDispatches(body.candidates.slice(0, 8), state);
+          return jsonRes(res, 200, { ok: true, recommended, plans, baseline });
+        }
+        if (body?.commit && body.commit.agentId && body.commit.kind) {
+          const c = body.commit;
+          const gate = interoceptiveGate(String(c.kind), String(c.title || ''));
+          if (!gate.allow) return jsonRes(res, 200, { ok: true, committed: false, gate, reason: gate.reason });
+          const id = armVeto({
+            agentId: String(c.agentId), kind: String(c.kind), title: String(c.title || 'planned dispatch'),
+            reason: 'active-inference plan commitment', windowMs: 5000,
+            fire: () => agentRuntime.submitTask(String(c.agentId) as any, String(c.kind), String(c.title || 'planned dispatch'), { ...(c.input || {}), planned: true }),
+          });
+          return jsonRes(res, 200, { ok: true, committed: true, vetoId: id, firesInMs: 5000 });
+        }
+        return jsonRes(res, 400, { ok: false, error: 'provide candidates[] or commit{agentId,kind,title}' });
+      });
+
       // ── Selfhood: narrative self + metacognition + fleet ToM ──
       server.middlewares.use('/api/cortex/selfhood', (req: any, res: any) => {
         if (!setCortexCors(req, res)) return jsonRes(res, 403, { ok: false, error: 'forbidden' });
@@ -5712,6 +5741,17 @@ end tell`;
                   if (which === 'all' || which === 'fleet' || which === 'tom') out.fleetMinds = sh.getFleetMinds();
                   out.durationMs = Date.now() - startMs;
                   return res.end(JSON.stringify(out));
+                }
+                if (action === 'plan') {
+                  const { observeWorld: obs } = await import('./src/lib/cortex-agent/world-model');
+                  const { planDispatches: pd, rolloutPlan: rp } = await import('./src/lib/cortex-agent/planner');
+                  const state = obs();
+                  const cands = Array.isArray(args?.candidates) ? args.candidates : null;
+                  if (cands) {
+                    const r = pd(cands.slice(0, 8).map((c: any) => ({ kind: String(c.kind || ''), title: String(c.title || ''), agentId: c.agentId })), state);
+                    return res.end(JSON.stringify({ ok: true, tool, action, ...r, durationMs: Date.now() - startMs }));
+                  }
+                  return res.end(JSON.stringify({ ok: true, tool, action, baseline: rp(state, 3), durationMs: Date.now() - startMs }));
                 }
                 if (action === 'world') {
                   const { observeWorld: obs, queryWorldModel: qry, topLeverage: lev } = await import('./src/lib/cortex-agent/world-model');

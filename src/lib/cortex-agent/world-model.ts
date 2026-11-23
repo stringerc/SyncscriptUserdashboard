@@ -51,7 +51,7 @@ export const DIMS = [
 ] as const;
 export type Dim = typeof DIMS[number];
 
-interface WorldState {
+export interface WorldState {
   dims: Record<Dim, number>;
   /** EMA counts — evidence mass behind each dim (epistemic proxy). */
   evidence: Record<Dim, number>;
@@ -61,6 +61,8 @@ interface WorldState {
   outcomes: { alpha: number; beta: number };
   /** Byte offsets per tailed file. */
   offsets: Record<string, number>;
+  /** Dim snapshots for dynamics learning — {ts, dims} ring. */
+  snapshots: Array<{ ts: number; dims: Record<Dim, number> }>;
   observations: number;
   lastUpdate: number;
 }
@@ -70,7 +72,7 @@ function freshState(): WorldState {
   const evidence = {} as Record<Dim, number>;
   const weights = {} as Record<Dim, number>;
   for (const d of DIMS) { dims[d] = 0.5; evidence[d] = 0; weights[d] = 0; }
-  return { dims, evidence, weights, outcomes: { alpha: 1, beta: 1 }, offsets: {}, observations: 0, lastUpdate: 0 };
+  return { dims, evidence, weights, outcomes: { alpha: 1, beta: 1 }, offsets: {}, snapshots: [], observations: 0, lastUpdate: 0 };
 }
 
 export function loadWorld(): WorldState {
@@ -84,6 +86,7 @@ export function loadWorld(): WorldState {
       weights: { ...base.weights, ...(raw.weights || {}) },
       outcomes: { ...(base.outcomes), ...(raw.outcomes || {}) },
       offsets: raw.offsets || {},
+      snapshots: Array.isArray(raw.snapshots) ? raw.snapshots.slice(-240) : [],
     };
   } catch { return freshState(); }
 }
@@ -195,6 +198,12 @@ export function observeWorld(now = Date.now()): WorldState {
     bump(state, 'capacity', i.capacity, 0.6);
     bump(state, 'surprise', i.surprise ?? 0, 0.6);
   } catch {}
+  // Snapshot ring — the dynamics learner pairs these with task events.
+  const lastSnap = state.snapshots[state.snapshots.length - 1];
+  if (!lastSnap || now - lastSnap.ts > 20_000) {
+    state.snapshots.push({ ts: now, dims: { ...state.dims } });
+    if (state.snapshots.length > 240) state.snapshots.splice(0, state.snapshots.length - 240);
+  }
   saveWorld(state);
   return state;
 }
