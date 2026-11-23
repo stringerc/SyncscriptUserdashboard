@@ -1189,7 +1189,7 @@ const CORTEX_TOOLS = [
       parameters: {
         type: 'object',
         properties: {
-          action: { type: 'string', enum: ['proprioception', 'attention', 'libet', 'veto', 'amend', 'hold', 'world', 'self', 'plan', 'dream', 'social', 'monologue', 'dynamics', 'workspace'], description: 'Which self-model surface to query' },
+          action: { type: 'string', enum: ['proprioception', 'attention', 'libet', 'veto', 'amend', 'hold', 'world', 'self', 'plan', 'dream', 'social', 'monologue', 'dynamics', 'workspace', 'simulate'], description: 'Which self-model surface to query' },
           id: { type: 'string', description: 'Veto intent id for action=veto (from libet pending)' },
           limit: { type: 'number', description: 'Max trace entries (default 10)' }
         },
@@ -3918,6 +3918,24 @@ function apiProxyPlugin(): Plugin {
         return jsonRes(res, 200, { ok: true, learned, report: dynamicsReport() });
       });
 
+      // ── Counterfactual simulation: the imagination engine ──
+      // GET → landscape over pending Libet intents. POST {candidates}
+      // → landscape over arbitrary dispatch options.
+      server.middlewares.use('/api/cortex/simulate', async (req: any, res: any) => {
+        if (!setCortexCors(req, res)) return jsonRes(res, 403, { ok: false, error: 'forbidden' });
+        if (req.method === 'OPTIONS') { res.writeHead(204); return res.end(); }
+        const sim = await import('./src/lib/cortex-agent/simulator');
+        if (req.method === 'POST') {
+          const body = JSON.parse(await readBody(req) || '{}');
+          const cands = Array.isArray(body?.candidates) ? body.candidates : null;
+          if (!cands?.length) return jsonRes(res, 400, { ok: false, error: 'provide candidates[{kind,title,agentId?}]' });
+          const out = sim.simulateDispatches(cands.slice(0, 8));
+          return jsonRes(res, 200, { ok: true, ...out });
+        }
+        const out = sim.simulatePendingLibet();
+        return jsonRes(res, 200, { ok: true, ...out });
+      });
+
       // ── Selfhood: narrative self + metacognition + fleet ToM ──
       server.middlewares.use('/api/cortex/selfhood', (req: any, res: any) => {
         if (!setCortexCors(req, res)) return jsonRes(res, 403, { ok: false, error: 'forbidden' });
@@ -5933,6 +5951,12 @@ end tell`;
                     trust: ts(),
                     durationMs: Date.now() - startMs,
                   }));
+                }
+                if (action === 'simulate') {
+                  const sim = await import('./src/lib/cortex-agent/simulator');
+                  const cands = Array.isArray(args?.candidates) ? args.candidates : null;
+                  const out = cands?.length ? sim.simulateDispatches(cands.slice(0, 8)) : sim.simulatePendingLibet();
+                  return res.end(JSON.stringify({ ok: true, tool, action, ...out, durationMs: Date.now() - startMs }));
                 }
                 if (action === 'workspace') {
                   const m = await import('./src/lib/cortex-agent/workspace');

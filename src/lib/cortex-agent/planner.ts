@@ -164,6 +164,43 @@ export function rolloutPlan(state: WorldState, horizon = 3): RolloutResult {
   };
 }
 
+/** Counterfactual rollout: force a specific action class first, then
+ *  greedily continue — "what happens if I fire THIS?" Returns the
+ *  per-step trajectory so the simulator can show the landscape, not
+ *  just the score. */
+export function rolloutFrom(state: WorldState, firstCls: ActionClass, horizon = 3): RolloutResult & { trajectory: Array<{ step: number; cls: ActionClass; g: number }> } {
+  const classes = Object.keys(ACTION_PRIORS) as ActionClass[];
+  let current = { ...state.dims };
+  const trajectory: Array<{ step: number; cls: ActionClass; g: number }> = [];
+  let totalG = 0, totalUtility = 0, totalSurprise = 0, totalRisk = 0, totalAmbiguity = 0;
+
+  for (let step = 0; step < horizon; step++) {
+    const cls = step === 0 ? firstCls : (() => {
+      let best: ActionClass = classes[0]; let bestG = Infinity;
+      for (const c of classes) {
+        const e = evaluateAction(state, c, current);
+        if (e.g < bestG) { bestG = e.g; best = c; }
+      }
+      return best;
+    })();
+    const e = evaluateAction(state, cls, current);
+    trajectory.push({ step, cls, g: Math.round(e.g * 1000) / 1000 });
+    totalG += e.g * Math.pow(0.85, step);
+    totalUtility += e.utility; totalSurprise += e.surprise; totalRisk += e.risk; totalAmbiguity += e.ambiguity;
+    current = e.next;
+  }
+  return {
+    sequence: trajectory.map((t) => t.cls),
+    trajectory,
+    expectedFreeEnergy: Math.round(totalG * 1000) / 1000,
+    predictedUtility: Math.round(totalUtility * 1000) / 1000,
+    predictedSurprise: Math.round(totalSurprise * 1000) / 1000,
+    risk: Math.round(totalRisk * 1000) / 1000,
+    ambiguity: Math.round(totalAmbiguity * 1000) / 1000,
+    finalDims: current,
+  };
+}
+
 // ── Plan dispatch candidates: rank concrete actions by rollout ────────
 export interface DispatchCandidate { kind: string; title: string; agentId?: string }
 
