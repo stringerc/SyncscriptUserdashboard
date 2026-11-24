@@ -70,7 +70,7 @@ const HUD_CSS = `
     to   { opacity: 1; transform: translateY(0) skewY(0); filter: blur(0); }
   }
   @keyframes cx-eq-breathe {
-    0%, 100% { transform: scaleY(0.55); }
+    0%, 100% { transform: scaleY(0.35); }
     50%      { transform: scaleY(1); }
   }
   @keyframes cx-blink {
@@ -1444,8 +1444,8 @@ export default function CortexVisualizerPage() {
                 <span
                   key={i}
                   style={{
-                    width: 2,
-                    height: `${3 + level * 9 * g}px`,
+                    width: 2.5,
+                    height: `${5 + level * 8 * g}px`,
                     borderRadius: 1,
                     background: '#38bdf8',
                     boxShadow: level > 0.05 ? '0 0 5px rgba(56,189,248,0.8)' : '0 0 4px rgba(56,189,248,0.5)',
