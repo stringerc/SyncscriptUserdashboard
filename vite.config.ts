@@ -4109,7 +4109,13 @@ function apiProxyPlugin(): Plugin {
         try {
           const WORKSPACE_NOTE = `\n\n[WORKSPACE] Host working directory: ${process.cwd()} — the SyncScript repository root. Sibling roots on this host: /Users/Apple/cortex-repos (Cortex packages + LAUNCH_PLAN.md + RELEASE_STRATEGY.md), /Users/Apple/openclaw-node (OpenClaw source), /Users/Apple/.openclaw (OpenClaw state, skills, config), and .cortex-runtime/ inside the repo (tenants.json, tenant1.key, model-health-history.jsonl, capability-map.jsonl, resilience-report.json, answer-cache.json — durable Cortex state lives HERE, not in /tmp). run_command, list_dir, read_file, search_code and create_document resolve relative paths here by default. RULES: (1) before claiming any file is missing or asking the user for on-disk data, check these roots with list_dir/read_file — never assert absence without a tool check; (2) before citing any live system number (port, SLO count, dirty files, memory %, model health) call system_vitals — never quote remembered telemetry. Prefer relative paths inside the repo; for launch plans, release strategy, or Cortex-package docs check cortex-repos FIRST — do NOT search /Users broadly or ask the user for files that live in a known sibling root.`;
           const INBOUND_DIRECTIVE = `\n\n[INBOUND BRIDGE] This message arrived via the "${channel}" channel from sender "${sender}" through the OpenClaw gateway. You are Cortex — reply as yourself, concisely, in plain text (no markdown headers). If the request needs a governed multi-step action rather than a conversation, say so and offer to dispatch it.`;
-          const agentSysContent = `${NEXUS_SYSTEM_PROMPT}\n\nYou are Cortex, the governed cognitive core of SyncScript — deep, honest, and precise.${WORKSPACE_NOTE}${INBOUND_DIRECTIVE}`;
+          // Cross-session continuity: inbound turns were cold starts —
+          // every message arrived with zero memory of prior exchanges, so
+          // references like "move it" had no antecedent. Inject the same
+          // durable brief the voice/chat path uses (clientMsgCount=0 forces
+          // the thin-history branch) and record the exchange afterward.
+          const inboundBrief = getContinuityBrief(sessionId, 0);
+          const agentSysContent = `${NEXUS_SYSTEM_PROMPT}\n\nYou are Cortex, the governed cognitive core of SyncScript — deep, honest, and precise.${WORKSPACE_NOTE}${INBOUND_DIRECTIVE}${inboundBrief ? `\n\n${inboundBrief}` : ''}`;
           const agentMessages: AgentMessage[] = [{ role: 'user', content: message }];
           const selfPort = process.env.PORT ? parseInt(process.env.PORT, 10) : 5173;
           const executeTool = async (name: string, args: Record<string, unknown>) => {
@@ -4154,6 +4160,7 @@ function apiProxyPlugin(): Plugin {
           const cacheHit = lookupAnswer(message, cacheScope);
           if (cacheHit) {
             audit({ ok: true, replyLen: cacheHit.reply.length, steps: 0, tools: [], provider: 'answer-cache', durationMs: Date.now() - started, cached: true, cacheExact: cacheHit.exact });
+            try { recordContinuityTurn(sessionId, message, cacheHit.reply); } catch {}
             return jsonRes(res, 200, {
               ok: true, reply: cacheHit.reply, sessionId,
               steps: 0, tools: [], provider: 'answer-cache',
@@ -4182,6 +4189,7 @@ function apiProxyPlugin(): Plugin {
             provider: loopResult.provider, durationMs: Date.now() - started,
             error: loopResult.error ? String(loopResult.error).slice(0, 200) : undefined,
           });
+          try { recordContinuityTurn(sessionId, message, reply); } catch {}
           return jsonRes(res, 200, {
             ok: !loopResult.error,
             reply,
@@ -12223,7 +12231,7 @@ Disposition consolidation (learned urgency/tier adjustments from proposal outcom
               m?.meta?.ambient === true || AMBIENT_MSG_SOURCES.has(String(m?.meta?.source || ''));
             const trimmedMsgs = (parsed.messages || [])
               .filter((m: any) => (m.role === 'user' || m.role === 'assistant') && !isAmbientMsg(m))
-              .slice(-10);
+              .slice(-14);
             const latestUserMessage =
               [...trimmedMsgs].reverse().find((m: any) => m.role === 'user')?.content || '';
 
@@ -12328,12 +12336,16 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
                   const activeGoals = getCortexGoals().list('active').slice(0, 6);
                   if (activeGoals.length) {
                     goalDigest = '\n\n[LIFE GOALS — strategic partnership context]\n'
-                      + activeGoals.map((g: any) =>
-                        `- ${g.title} (${g.horizon}${g.targetDate ? `, target ${new Date(g.targetDate).toISOString().slice(0, 10)}` : ''})`
-                        + (g.steps?.length ? ` — ${g.steps.filter((s: any) => !s.completed).length}/${g.steps.length} steps remaining` : '')
-                        + (g.driftScore && g.driftScore > 0.4 ? ` — drift ${Math.round(g.driftScore * 100)}%` : '')
-                      ).join('\n')
-                      + '\nConnect relevant work to these goals naturally. When the user declares a life-defining aim, persist it via the cortex_goals tool.';
+                      + activeGoals.map((g: any) => {
+                        const openSteps = (g.steps || []).filter((s: any) => !s.completed).slice(0, 3)
+                          .map((s: any) => `"${String(s.title || s.text || '').replace(/\s+/g, ' ').trim().slice(0, 60)}"`)
+                          .filter((t: string) => t !== '""');
+                        return `- ${g.title} (${g.horizon}${g.targetDate ? `, target ${new Date(g.targetDate).toISOString().slice(0, 10)}` : ''})`
+                          + (g.steps?.length ? ` — ${g.steps.filter((s: any) => !s.completed).length}/${g.steps.length} steps remaining` : '')
+                          + (openSteps.length ? ` — open steps: ${openSteps.join(', ')}` : '')
+                          + (g.driftScore && g.driftScore > 0.4 ? ` — drift ${Math.round(g.driftScore * 100)}%` : '');
+                      }).join('\n')
+                      + '\nConnect relevant work to these goals naturally. When the user declares a life-defining aim, persist it via the cortex_goals tool. When the user references "it"/"that step"/"the launch task", resolve the referent from these open step titles or the recent conversation — never guess at UI panels.';
                   }
                 } catch {}
               }

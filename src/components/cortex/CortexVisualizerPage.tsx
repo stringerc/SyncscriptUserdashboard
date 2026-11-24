@@ -2579,7 +2579,7 @@ export default function CortexVisualizerPage() {
             onClick={() => { setMissionExpanded(true); cortexSpeak('Expanding mission log.'); }}
             title="Click to expand the full mission log"
             style={{
-              position: 'absolute', left: narrow ? 16 : 64, bottom: narrow ? 112 : 40, zIndex: 20,
+              position: 'absolute', left: narrow ? 16 : 24, bottom: narrow ? 112 : 20, zIndex: 20,
               width: narrow ? '60vw' : missionW,
               fontFamily: "'IBM Plex Mono', monospace", fontSize: 8, letterSpacing: '0.1em',
               background: 'rgba(4,8,18,0.66)', border: '1px solid rgba(103,232,249,0.14)',
