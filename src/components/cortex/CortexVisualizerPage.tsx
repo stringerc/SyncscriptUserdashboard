@@ -2184,6 +2184,20 @@ export default function CortexVisualizerPage() {
               )}
             </>
           )}
+          {agentEvents.length > 0 && (
+            <div style={{ marginTop: 10, paddingTop: 6, borderTop: '1px solid rgba(103,232,249,0.12)', color: 'rgba(165,243,252,0.5)' }}>
+              {agentEvents.slice(-4).reverse().map((e, i) => {
+                const t = new Date(e.at).toLocaleTimeString('en-US', { hour12: false });
+                let msg = `${e.type}`;
+                if (e.type === 'agent.status') msg = `${String(e.agentId).toUpperCase()} → ${String(e.status).toUpperCase()}`;
+                else if (e.type === 'task.transition') { const tk = e.task as any; msg = `${String(tk?.agentId || '?').toUpperCase()} ${String(tk?.status || '').toUpperCase()} — ${String(tk?.title || '').slice(0, 30)}`; }
+                else if (e.type === 'model.health') { const m = e.model as any; msg = `MODEL ${String(m?.status || '?').toUpperCase()} ${String(m?.id || '').split('/').pop()?.slice(0, 24)}`; }
+                else if (e.type === 'model.discovered') { const m = e.model as any; msg = `DISCOVERED ${String(m?.id || '').split('/').pop()?.slice(0, 26)}`; }
+                else if (e.type === 'agent.spawned') msg = `SPAWNED ${(e.spec as any)?.callSign || String(e.agentId)}`;
+                return <div key={`${e.at}-${i}`} style={{ opacity: 1 - i * 0.22 }}>{t} {msg}</div>;
+              })}
+            </div>
+          )}
         </div>
       )}
 
@@ -2565,7 +2579,7 @@ export default function CortexVisualizerPage() {
             onClick={() => { setMissionExpanded(true); cortexSpeak('Expanding mission log.'); }}
             title="Click to expand the full mission log"
             style={{
-              position: 'absolute', left: narrow ? 16 : 64, bottom: 112, zIndex: 20,
+              position: 'absolute', left: narrow ? 16 : 64, bottom: narrow ? 112 : 72, zIndex: 20,
               width: narrow ? '60vw' : missionW,
               fontFamily: "'IBM Plex Mono', monospace", fontSize: 8, letterSpacing: '0.1em',
               background: 'rgba(4,8,18,0.66)', border: '1px solid rgba(103,232,249,0.14)',
@@ -2707,28 +2721,6 @@ export default function CortexVisualizerPage() {
               })}
             </div>
           </div>
-        </div>
-      )}
-
-      {/* Model/event ticker — sits to the left of LIVE TRANSMISSION */}
-      {!narrow && agentEvents.length > 0 && (
-        <div style={{
-          position: 'absolute', bottom: 44, left: '50%',
-          transform: 'translateX(calc(-50% - 345px))', width: 310, zIndex: 15,
-          fontFamily: "'IBM Plex Mono', monospace", fontSize: 8, letterSpacing: '0.1em',
-          color: 'rgba(165,243,252,0.5)', textAlign: 'right', lineHeight: 1.9,
-          pointerEvents: 'none',
-        }}>
-          {agentEvents.slice(-4).reverse().map((e, i) => {
-            const t = new Date(e.at).toLocaleTimeString('en-US', { hour12: false });
-            let msg = `${e.type}`;
-            if (e.type === 'agent.status') msg = `${String(e.agentId).toUpperCase()} → ${String(e.status).toUpperCase()}`;
-            else if (e.type === 'task.transition') { const tk = e.task as any; msg = `${String(tk?.agentId || '?').toUpperCase()} ${String(tk?.status || '').toUpperCase()} — ${String(tk?.title || '').slice(0, 30)}`; }
-            else if (e.type === 'model.health') { const m = e.model as any; msg = `MODEL ${String(m?.status || '?').toUpperCase()} ${String(m?.id || '').split('/').pop()?.slice(0, 24)}`; }
-            else if (e.type === 'model.discovered') { const m = e.model as any; msg = `DISCOVERED ${String(m?.id || '').split('/').pop()?.slice(0, 26)}`; }
-            else if (e.type === 'agent.spawned') msg = `SPAWNED ${(e.spec as any)?.callSign || String(e.agentId)}`;
-            return <div key={`${e.at}-${i}`} style={{ opacity: 1 - i * 0.22 }}>{t} {msg}</div>;
-          })}
         </div>
       )}
 
