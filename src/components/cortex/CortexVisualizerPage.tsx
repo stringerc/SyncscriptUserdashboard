@@ -1341,13 +1341,15 @@ export default function CortexVisualizerPage() {
       </div>
       )}
 
-      {/* Top-Right: Strategic Navigation Bar (Core, Foundry, Map, Chat, Voice) */}
+      {/* Top-center: Strategic Navigation Bar (Core, Foundry, Map, Chat, Voice)
+          — centered above the Neural Sanctum marquee strip */}
       <nav
         aria-label="Cortex Top Navigation"
         style={{
           position: 'absolute',
-          top: 20,
-          right: narrow ? 16 : 32,
+          top: narrow ? 10 : 14,
+          left: '50%',
+          transform: 'translateX(-50%)',
           zIndex: 50,
           display: 'flex',
           alignItems: 'center',
@@ -1358,7 +1360,7 @@ export default function CortexVisualizerPage() {
           border: '1px solid rgba(103,232,249,0.25)',
           backdropFilter: 'blur(16px)',
           boxShadow: '0 4px 24px rgba(0,0,0,0.55), 0 0 16px rgba(103,232,249,0.08)',
-          transition: 'right 0.25s ease, gap 0.3s ease, padding 0.3s ease',
+          transition: 'gap 0.3s ease, padding 0.3s ease',
         }}
       >
         {/* Nav expander — on the Core face the rail collapses to CORE + ◂;
