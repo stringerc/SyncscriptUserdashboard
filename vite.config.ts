@@ -227,7 +227,7 @@ import { listEvals, getEval, fileEvalDefinition, runEval, readRuns, evalScorecar
 import { computeCounselScorecard } from './src/lib/cortex-agents/counsel-scorecard';
 import { initEventLog, readEvents, getEventLogStats, verifyEventLog } from './src/lib/cortex-agents/eventlog';
 import { tailModelHealthHistory } from './src/lib/cortex-agents/sentinel';
-import { assessCoverage, assessGoal, fileCapabilityGaps } from './src/lib/cortex-agent/capability-map';
+import { assessCoverage, assessGoal, fileCapabilityGaps, recordCapabilityUse } from './src/lib/cortex-agent/capability-map';
 import { recallCortexMemory, retainCortexMemory, fetchCortexMemoryGraph } from './src/lib/cortex-memory';
 import { runScenarioSimulation, getSimulationHistory } from './src/lib/cortex-simulation';
 import { probeCompetitorIntelligence, listCompetitorRadar } from './src/lib/cortex-competitor-recon';
@@ -1958,6 +1958,7 @@ function apiProxyPlugin(): Plugin {
         // input.correctiveFor just resolved — mark its goal+kind for
         // drift re-check (completed) or escalate immediately (failed).
         try { handleCorrectiveResolution(task as any); } catch {}
+        try { recordCapabilityUse(task); } catch {}
         try { notifyPaceRelevantEvent(); } catch {}
         try { reconcileCommitments(task.id, task.status); } catch {}
         try { sweepOverdue(); } catch {}

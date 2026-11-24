@@ -1,9 +1,35 @@
-# Active task — observability + voice naturalness pass (2026-11-23)
-STATUS: DONE — four gap fixes shipped pending commit:
-1. TTS technical-token lexicon (src/utils/tts-lexicon.ts) wired into both sanitizeForTTS (voice) and sanitizeForNexusTTS (landing): dotenvx→"dotenv x", vite.config.ts→"vite dot config dot ts", snake_case/env vars→spaced, paths→"slash", acronyms spelled, IPv4/versions/ports spoken. Verified via tsx.
-2. WORKSPACE_NOTE now names sibling roots (cortex-repos + LAUNCH_PLAN.md, openclaw-node, ~/.openclaw) in both agentic + inbound paths — prevents filesystem-hunt deadline deaths.
-3. Model health persistence: sentinel writes .cortex-runtime/model-health-history.jsonl on failures + status transitions; probe contract returns {latencyMs,keyIndex}; 401/402/403 → permanent cooldown; tailModelHealthHistory() exported. Verified live: 66 records, NIM keyIndex:1, deepseek/openrouter 402s marked permanent.
-4. Tenant #1 key moved /tmp/tenant1.key → .cortex-runtime/tenant1.key (0600, gitignored).
+# Active task — capability-map utilization + custody-case-ops skill (2026-11-23)
+STATUS: DONE — pending commit of cortex-side diff.
 
-updated: 2026-11-23T18:55:00Z
+Utilization tracking (supply-chain measurement half):
+- recordCapabilityUse() wired into agentRuntime.setTaskFinishedHook —
+  every terminal task (completed/failed; vetoed/cancelled excluded)
+  with a goal-stamped input.goalId appends {ts,goalId,asset} to
+  .cortex-runtime/capability-usage.jsonl (512KB bounded rotation).
+- assessGoal now annotates each capability: measurable (has dispatchable
+  cortexAssets lane), uses30d, lastUsedAt, stale (covered+measurable+
+  unused 30d on goal declared >14d ago).
+- fileCapabilityGaps now also surfaces stale coverage as decay/prune
+  candidates in the same deduped proposal.
+- Verified via tsx: vetoed + ungoaled events correctly skipped;
+  openclaw:gateway_task use counted on external-comms (uses30d:1,
+  stale:false) while unmatched lanes stayed 0/stale:true. Live GET shows
+  utilization fields on all capabilities; stale:0 (goals <14d old —
+  grace period working). Resilience 13/13 pass.
+
+custody-case-ops skill (OpenClaw side, ~/.openclaw/skills/):
+- Operational layer for the custody goal: case-file notebook structure,
+  deadline/document/attorney-log/filing/evidence workflows, grounded in
+  real ready skills (himalaya, gog, apple-reminders/notes, nano-pdf,
+  libreoffice, evidence-hygiene). Hard rules: no legal advice, dates
+  require source docs, all sends route through cortex-bridge/Libet.
+- Verified: `openclaw skills list` shows it ready (85/102).
+
+Honest limits:
+- Utilization measurable ONLY for agent lanes — skill/tool invocations
+  aren't goal-attributed yet (measurable=false marks this).
+- Stale is a flag, not auto-prune — proposals mention decay candidates;
+  removal still goes through the approve-each ledger.
+
+updated: 2026-11-23T20:05:00Z
 cwd: /Users/Apple/syncscript

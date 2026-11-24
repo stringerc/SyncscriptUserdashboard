@@ -12,8 +12,9 @@
  * the same approve-each ledger every other governed change uses.
  *
  * Honest boundaries:
- *  - "covered" means an asset EXISTS, not that it has been exercised for
- *    this goal. Utilization tracking is a later iteration.
+ *  - "covered" means an asset EXISTS; utilization is measured only for
+ *    agent lanes (goal-stamped task finishes in capability-usage.jsonl).
+ *    Skill/tool invocations aren't goal-attributed yet — measurable=false.
  *  - Skill matching is keyword-based on name+description; a semantic
  *    matcher would be better but requires an embedding call per scan.
  */
@@ -26,6 +27,10 @@ import { fileStrategyProposals } from '../cortex-agents/strategy-proposals';
 
 const RUNTIME = path.resolve(process.cwd(), '.cortex-runtime');
 const SNAPSHOT = path.join(RUNTIME, 'capability-map.jsonl');
+const USAGE_PATH = path.join(RUNTIME, 'capability-usage.jsonl');
+const USAGE_MAX_LINES = 5000;
+const USAGE_WINDOW_MS = 30 * 24 * 3600_000;
+const STALE_AFTER_MS = 14 * 24 * 3600_000;
 
 export interface CapabilityDef {
   id: string;
@@ -200,6 +205,15 @@ export interface CapabilityStatus {
    *  missing = nothing backs it. */
   status: 'covered' | 'thin' | 'missing';
   via: string[];
+  /** Utilization (agent-lane tasks stamped to this goal, last 30d).
+   *  measurable=false means the capability has no dispatchable lane —
+   *  tool/skill usage isn't goal-attributed yet, so uses30d is unknown
+   *  rather than zero. stale = covered + measurable + unused 30d on a
+   *  goal declared >14d ago — decay/prune candidate. */
+  measurable?: boolean;
+  uses30d?: number;
+  lastUsedAt?: number | null;
+  stale?: boolean;
 }
 
 function goalText(g: LifeGoal): string {
@@ -231,6 +245,66 @@ function skillMatches(terms: string[] | undefined, corpus: SkillRecord[]): strin
   return [...new Set(hits)];
 }
 
+// ── Utilization ───────────────────────────────────────────────────────
+// Supply-chain measurement half: which backing lanes actually ran for
+// each goal. Recorded at task-finish (completed/failed — vetoed and
+// cancelled never fired, so they don't count as use). Asset strings are
+// 'agentId:kind', matched against each capability's cortexAssets specs.
+
+interface UsageEvent { ts: number; goalId: string; asset: string; }
+
+export function recordCapabilityUse(task: {
+  agentId?: string; kind?: string;
+  input?: Record<string, unknown> | null;
+  status?: string;
+}): void {
+  try {
+    if (task.status && !['completed', 'failed'].includes(task.status)) return;
+    const goalId = task.input?.goalId;
+    if (!goalId || typeof goalId !== 'string' || !task.agentId || !task.kind) return;
+    fs.mkdirSync(RUNTIME, { recursive: true });
+    fs.appendFileSync(USAGE_PATH, JSON.stringify({
+      ts: Date.now(), goalId, asset: `${task.agentId}:${task.kind}`,
+    } satisfies UsageEvent) + '\n', 'utf8');
+    // Bounded: rotate by truncating to the newest half when oversized.
+    try {
+      const st = fs.statSync(USAGE_PATH);
+      if (st.size > 512 * 1024) {
+        const lines = fs.readFileSync(USAGE_PATH, 'utf8').trim().split('\n');
+        fs.writeFileSync(USAGE_PATH, lines.slice(-Math.floor(lines.length / 2)).join('\n') + '\n');
+      }
+    } catch {}
+  } catch {}
+}
+
+let usageCache: { at: number; events: UsageEvent[] } | null = null;
+const USAGE_CACHE_MS = 30_000;
+
+function loadUsage(force = false): UsageEvent[] {
+  if (!force && usageCache && Date.now() - usageCache.at < USAGE_CACHE_MS) return usageCache.events;
+  const events: UsageEvent[] = [];
+  try {
+    const lines = fs.readFileSync(USAGE_PATH, 'utf8').trim().split('\n');
+    for (const l of lines.slice(-USAGE_MAX_LINES)) {
+      try {
+        const e = JSON.parse(l);
+        if (e && typeof e.ts === 'number' && typeof e.goalId === 'string' && typeof e.asset === 'string') events.push(e);
+      } catch {}
+    }
+  } catch {}
+  usageCache = { at: Date.now(), events };
+  return events;
+}
+
+/** Does a recorded 'agentId:kind' asset satisfy a catalog spec
+ *  ('agentId' or 'agentId:kind')? Mirrors agentAssetCovered semantics. */
+function assetMatchesSpec(asset: string, spec: string): boolean {
+  const [sAgent, sKind] = spec.split(':');
+  const [aAgent, aKind] = asset.split(':');
+  if (sAgent !== aAgent) return false;
+  return !sKind || sKind === aKind;
+}
+
 export function inferCapabilities(goal: LifeGoal): CapabilityDef[] {
   const text = goalText(goal);
   return CAPABILITY_CATALOG.filter((c) => c.infer.test(text));
@@ -240,6 +314,9 @@ export function assessGoal(goal: LifeGoal, corpus = loadSkillCorpus()): {
   goalId: string; title: string; horizon: string;
   capabilities: CapabilityStatus[]; missing: string[];
 } {
+  const usage = loadUsage();
+  const cutoff = Date.now() - USAGE_WINDOW_MS;
+  const goalUsage = usage.filter((e) => e.goalId === goal.id && e.ts >= cutoff);
   const capabilities: CapabilityStatus[] = inferCapabilities(goal).map((def) => {
     const strong: string[] = [];
     const thin: string[] = [];
@@ -251,7 +328,23 @@ export function assessGoal(goal: LifeGoal, corpus = loadSkillCorpus()): {
     for (const t of def.nativeTools || []) thin.push(`tool:${t}`);
     const via = [...new Set([...strong, ...thin])];
     const status = strong.length ? 'covered' : thin.length ? 'thin' : 'missing';
-    return { id: def.id, label: def.label, status, via };
+
+    // Utilization: only cortexAssets specs are measurable — recorded
+    // 'agentId:kind' task events matched against them.
+    const measurable = (def.cortexAssets || []).length > 0;
+    let uses30d = 0;
+    let lastUsedAt: number | null = null;
+    if (measurable) {
+      for (const e of goalUsage) {
+        if ((def.cortexAssets || []).some((spec) => assetMatchesSpec(e.asset, spec))) {
+          uses30d++;
+          if (!lastUsedAt || e.ts > lastUsedAt) lastUsedAt = e.ts;
+        }
+      }
+    }
+    const goalAge = goal.declaredAt ? Date.now() - goal.declaredAt : 0;
+    const stale = status === 'covered' && measurable && uses30d === 0 && goalAge > STALE_AFTER_MS;
+    return { id: def.id, label: def.label, status, via, measurable, uses30d, lastUsedAt, stale };
   });
   return {
     goalId: goal.id, title: goal.title, horizon: goal.horizon || '',
@@ -267,7 +360,7 @@ export interface GoalAssessment {
 export interface CoverageAssessment {
   assessedAt: number;
   goals: GoalAssessment[];
-  summary: { goals: number; covered: number; thin: number; missing: number; missingByCapability: Record<string, number> };
+  summary: { goals: number; covered: number; thin: number; missing: number; stale: number; missingByCapability: Record<string, number> };
   proposalsFiled?: number;
 }
 
@@ -275,18 +368,19 @@ export function assessCoverage(opts?: { fileGaps?: boolean }): CoverageAssessmen
   const corpus = loadSkillCorpus();
   const goals = getCortexGoals().list('active').map((g) => assessGoal(g, corpus));
   const missingByCapability: Record<string, number> = {};
-  let covered = 0, thin = 0, missing = 0;
+  let covered = 0, thin = 0, missing = 0, stale = 0;
   for (const g of goals) {
     for (const c of g.capabilities) {
       if (c.status === 'covered') covered++;
       else if (c.status === 'thin') thin++;
       else missing++;
+      if (c.stale) stale++;
       if (c.status !== 'covered') missingByCapability[c.id] = (missingByCapability[c.id] || 0) + 1;
     }
   }
   const result: CoverageAssessment = {
     assessedAt: Date.now(), goals,
-    summary: { goals: goals.length, covered, thin, missing, missingByCapability },
+    summary: { goals: goals.length, covered, thin, missing, stale, missingByCapability },
   };
   // Durable snapshot — coverage history is queryable across restarts.
   // Bounded: rotate at ~512KB so the audit log can't grow forever.
@@ -314,18 +408,24 @@ export function fileCapabilityGaps(goals?: ReturnType<typeof assessGoal>[]): num
   const assessed = goals || assessCoverage().goals;
   let filed = 0;
   for (const g of assessed) {
-    if (!g.missing.length) continue;
-    const caps = g.capabilities
-      .filter((c) => c.status !== 'covered')
+    const gaps = g.capabilities.filter((c) => c.status !== 'covered');
+    const staleCaps = g.capabilities.filter((c) => c.stale);
+    if (!gaps.length && !staleCaps.length) continue;
+    const caps = gaps
       .map((c) => {
         const def = CAPABILITY_CATALOG.find((d) => d.id === c.id);
         const depth = c.status === 'thin' ? 'thin coverage' : 'no coverage';
         return `${def?.label || c.id} [${depth}]${def?.skillTerms?.length ? ` (search skills for: ${def.skillTerms.slice(0, 3).join(', ')})` : ''}`;
       }).join('; ');
+    // Decay half of the supply chain: covered lanes that haven't run for
+    // this goal in 30d on a >14d-old goal are prune/exercise candidates.
+    const staleNote = staleCaps.length
+      ? ` Stale coverage (unused 30d, decay candidates): ${staleCaps.map((c) => c.label || c.id).join(', ')}.`
+      : '';
     const res = fileStrategyProposals({
       planNote: `capability-gap-${g.goalId}`,
       planTaskId: `capmap-${g.goalId}`,
-      actions: [`[process] Close capability gaps for goal "${g.title.slice(0, 80)}": ${caps} — acquire via cortex_skill_discovery install, strategist propose_skill, or a new agent lane; verify coverage with GET /api/cortex/capabilities`],
+      actions: [`[process] Close capability gaps for goal "${g.title.slice(0, 80)}": ${caps || 'none missing'}${staleNote} — acquire via cortex_skill_discovery install, strategist propose_skill, or a new agent lane; verify coverage with GET /api/cortex/capabilities`],
     });
     filed += res.filed;
   }
