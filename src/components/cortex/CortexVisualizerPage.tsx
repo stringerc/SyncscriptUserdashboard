@@ -1355,7 +1355,7 @@ export default function CortexVisualizerPage() {
           alignItems: 'center',
           gap: navCollapsed ? 4 : 6,
           background: 'rgba(6,10,24,0.85)',
-          padding: '5px 8px',
+          padding: '3px 8px',
           borderRadius: 20,
           border: '1px solid rgba(103,232,249,0.25)',
           backdropFilter: 'blur(16px)',
@@ -1371,7 +1371,7 @@ export default function CortexVisualizerPage() {
             title={navExpanded ? 'Collapse navigation' : 'Expand navigation'}
             aria-label={navExpanded ? 'Collapse navigation' : 'Expand navigation'}
             style={{
-              padding: '5px 9px',
+              padding: '3px 9px',
               borderRadius: 14,
               border: '1px solid rgba(148,233,255,0.18)',
               background: 'rgba(4,8,14,0.5)',
@@ -1414,7 +1414,7 @@ export default function CortexVisualizerPage() {
           }}
           title={faceMode === 'core' && !mapMode ? 'Sovereign Core — click again for core controls' : 'Switch to Sovereign Core'}
           style={{
-            padding: '5px 12px',
+            padding: '3px 12px',
             borderRadius: 14,
             border: faceMode === 'core' && !mapMode ? '1px solid #38bdf8' : '1px solid rgba(148,233,255,0.18)',
             background: faceMode === 'core' && !mapMode ? 'rgba(56,189,248,0.18)' : 'rgba(4,8,14,0.5)',
@@ -1450,7 +1450,7 @@ export default function CortexVisualizerPage() {
             title={chatOpen ? 'Cortex Uplink Chat Drawer open — click to close (Esc)' : 'Open Cortex Uplink Chat Drawer'}
             aria-label={chatOpen ? 'Close chat drawer' : 'Open chat drawer'}
             style={{
-              padding: '5px 12px',
+              padding: '3px 12px',
               borderRadius: 14,
               border: `1px solid ${chatOpen ? accent : 'rgba(148,233,255,0.18)'}`,
               background: chatOpen ? `${accent}22` : 'rgba(4,8,14,0.5)',
@@ -1492,7 +1492,7 @@ export default function CortexVisualizerPage() {
           }}
           title={faceMode === 'agents' && !mapMode ? 'Nexus Foundry — active tactical holodeck & fleet deck' : 'Switch to Nexus Foundry'}
           style={{
-            padding: '5px 12px',
+            padding: '3px 12px',
             borderRadius: 14,
             border: faceMode === 'agents' && !mapMode ? '1px solid #67e8f9' : '1px solid rgba(148,233,255,0.18)',
             background: faceMode === 'agents' && !mapMode ? 'rgba(103,232,249,0.18)' : 'rgba(4,8,14,0.5)',
@@ -1526,7 +1526,7 @@ export default function CortexVisualizerPage() {
             }}
             title="Planetary Mission Globe & Q-Map Replay"
             style={{
-              padding: '5px 12px',
+              padding: '3px 12px',
               borderRadius: 14,
               border: `1px solid ${mapMode ? '#e879f9' : 'rgba(148,233,255,0.18)'}`,
               background: mapMode ? 'rgba(232,121,249,0.18)' : 'rgba(4,8,14,0.5)',
@@ -1551,7 +1551,7 @@ export default function CortexVisualizerPage() {
             onClick={() => setChatOpen(v => !v)}
             title="Toggle Cortex Uplink Chat Drawer (Esc to close)"
             style={{
-              padding: '5px 12px',
+              padding: '3px 12px',
               borderRadius: 14,
               border: `1px solid ${chatOpen ? accent : 'rgba(148,233,255,0.18)'}`,
               background: chatOpen ? `${accent}22` : 'rgba(4,8,14,0.5)',
@@ -1581,7 +1581,7 @@ export default function CortexVisualizerPage() {
             }}
             title={!micOn ? 'Microphone muted — click to enable' : 'Voice listening active — click to mute'}
             style={{
-              padding: '5px 12px',
+              padding: '3px 12px',
               borderRadius: 14,
               border: `1px solid ${micLive ? '#c084fc' : micOn ? '#34d399' : 'rgba(148,233,255,0.18)'}`,
               background: micLive ? 'rgba(192,132,252,0.22)' : micOn ? 'rgba(52,211,153,0.18)' : 'rgba(4,8,14,0.5)',
