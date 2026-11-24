@@ -1,31 +1,32 @@
-# Active task — answer cache (semantic-ish turn cache) (2026-11-23)
+# Active task — tenant key rotation + grounding fixes (2026-11-24)
 STATUS: DONE — pending commit.
 
-src/lib/cortex-agent/answer-cache.ts — the "semantic cache" pattern from
-the WeBeeld reel, implemented with honest boundaries:
-- Only ZERO-TOOL, error-free agentic turns are cached — anything that
-  touched the host is context-bound and never replayed.
-- Key = scope + normalized question (lowercase, alnum tokens). Matching:
-  exact-normalized first, then token-Jaccard >= 0.85 for near-dupes.
-- TTL 15min, 500-entry bound, oldest-first eviction, hit counters.
-- Store: .cortex-runtime/answer-cache.json; expired entries dropped on load.
+SECURITY: tenant key rotated after Cortex printed the live cxk_ key in a
+chat reply (transcripts + possible Hindsight retention). Added
+rotateTenantKey() to tenants.ts; new key live-verified via
+/api/cortex/dispatch (contract+quota returned), old key returns
+"invalid or missing API key". Plaintext stored once at
+.cortex-runtime/tenant1.key (0600); /tmp/tenant-create.json deleted.
+NOTE: do NOT put tenant keys in .env — auth is SHA-256 hash lookup in
+tenants.json by design; env is for provider keys only.
 
-Wired at both agentic call sites:
-- Inbound bridge: scope `inbound:<channel>:<sender>` — per-sender isolation,
-  response carries cached:true + cacheAgeMs, audit logs provider=answer-cache.
-- Voice/chat SSE: scope 'voice', cache hit replays reply as token stream +
-  finishReason agentic.cached — client cannot tell the difference.
+Failure-mode fixes (both diagnosed from Cortex's stale/incorrect reply):
+1. Filesystem blindness → WORKSPACE_NOTE (both agentic + inbound paths)
+   now lists .cortex-runtime/ contents explicitly and adds RULES:
+   never claim a file missing without a list_dir/read_file check in the
+   named roots; never ask the user for on-disk data that lives there.
+2. Stale telemetry → new system_vitals tool (src/lib/cortex-agent/
+   system-vitals.ts): live port, uptime, git branch+dirty count,
+   resilience report freshness (pass/slos/age/stale), model fleet
+   byStatus, memory_pressure free% (os.freemem reads near-zero on
+   macOS — memory_pressure is the honest metric), workspaceRoots map.
+   Tool description instructs: call BEFORE citing any system number.
+   Verified live via tools/execute: port 5173, 13/13 SLOs age 7min,
+   mem 38%, models 8 healthy/5 degraded.
 
-Verified live E2E: first inbound call hit real provider
-(magpie#cortex-reason, reply "pineapple"), identical second call served
-provider=answer-cache in 1ms. Unit-verified: scope isolation, short-q
-rejection, hit counting, Jaccard strictness (only near-identical phrasing
-matches — honest, not oversold).
+Honest limits: prompt rules reduce but don't eliminate stale narration —
+the deterministic fix would be a metacog check that flags uncited numbers.
+system_vitals is opt-in per turn; the tool description carries the rule.
 
-Honest limits: matching is lexical not embedding-semantic; 15min TTL means
-fast-changing facts (deadlines, prices) can serve stale answers — mitigated
-by the tool-free-only rule since dynamic questions route through tools.
-Resilience 13/13 (one adjudication p95 flake on first run, clean on rerun).
-
-updated: 2026-11-23T20:40:00Z
+updated: 2026-11-24T02:50:00Z
 cwd: /Users/Apple/syncscript

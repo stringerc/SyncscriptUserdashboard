@@ -91,6 +91,19 @@ export function listTenants(): Array<Omit<Tenant, 'keyHash'>> {
   return load().tenants.map(({ keyHash, ...t }) => t);
 }
 
+/** Rotate a tenant's API key — old key dies immediately, new plaintext
+ *  returned ONCE (only its hash persists). Use on suspected exposure. */
+export function rotateTenantKey(id: string): { tenant: Tenant; apiKey: string } | null {
+  const s = load();
+  const t = s.tenants.find((x) => x.id === id);
+  if (!t) return null;
+  const apiKey = `cxk_${crypto.randomBytes(24).toString('hex')}`;
+  t.keyHash = hashKey(apiKey);
+  t.keyPrefix = apiKey.slice(0, 12);
+  save(s);
+  return { tenant: t, apiKey };
+}
+
 /** Admin plan management — upgrade/suspend without touching keys. */
 export function updateTenant(id: string, patch: { plan?: Tenant['plan']; status?: Tenant['status']; dailyQuota?: number }): Tenant | null {
   const s = load();

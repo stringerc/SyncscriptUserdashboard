@@ -902,6 +902,14 @@ const CORTEX_TOOLS = [
   {
     type: 'function',
     function: {
+      name: 'system_vitals',
+      description: 'Live measured host truth: server port/uptime, memory pressure, git branch+dirty count, latest resilience SLO report (pass count + freshness), model fleet health, and the workspace roots map. Call this BEFORE citing any system number (ports, SLOs, dirty files, memory) — never quote remembered telemetry. Also use it to locate files: check workspaceRoots paths with list_dir/read_file before claiming anything is missing.',
+      parameters: { type: 'object', properties: {} }
+    }
+  },
+  {
+    type: 'function',
+    function: {
       name: 'cortex_morning_trajectory',
       description: 'Generate a morning briefing',
       parameters: {
@@ -4098,7 +4106,7 @@ function apiProxyPlugin(): Plugin {
           } catch {}
         };
         try {
-          const WORKSPACE_NOTE = `\n\n[WORKSPACE] Host working directory: ${process.cwd()} — the SyncScript repository root. Sibling roots on this host: /Users/Apple/cortex-repos (Cortex packages + LAUNCH_PLAN.md + RELEASE_STRATEGY.md), /Users/Apple/openclaw-node (OpenClaw source), /Users/Apple/.openclaw (OpenClaw state, skills, config). run_command, list_dir, read_file, search_code and create_document resolve relative paths here by default. Prefer relative paths inside the repo; for launch plans, release strategy, or Cortex-package docs check cortex-repos FIRST — do NOT search /Users broadly or ask the user for files that live in a known sibling root.`;
+          const WORKSPACE_NOTE = `\n\n[WORKSPACE] Host working directory: ${process.cwd()} — the SyncScript repository root. Sibling roots on this host: /Users/Apple/cortex-repos (Cortex packages + LAUNCH_PLAN.md + RELEASE_STRATEGY.md), /Users/Apple/openclaw-node (OpenClaw source), /Users/Apple/.openclaw (OpenClaw state, skills, config), and .cortex-runtime/ inside the repo (tenants.json, tenant1.key, model-health-history.jsonl, capability-map.jsonl, resilience-report.json, answer-cache.json — durable Cortex state lives HERE, not in /tmp). run_command, list_dir, read_file, search_code and create_document resolve relative paths here by default. RULES: (1) before claiming any file is missing or asking the user for on-disk data, check these roots with list_dir/read_file — never assert absence without a tool check; (2) before citing any live system number (port, SLO count, dirty files, memory %, model health) call system_vitals — never quote remembered telemetry. Prefer relative paths inside the repo; for launch plans, release strategy, or Cortex-package docs check cortex-repos FIRST — do NOT search /Users broadly or ask the user for files that live in a known sibling root.`;
           const INBOUND_DIRECTIVE = `\n\n[INBOUND BRIDGE] This message arrived via the "${channel}" channel from sender "${sender}" through the OpenClaw gateway. You are Cortex — reply as yourself, concisely, in plain text (no markdown headers). If the request needs a governed multi-step action rather than a conversation, say so and offer to dispatch it.`;
           const agentSysContent = `${NEXUS_SYSTEM_PROMPT}\n\nYou are Cortex, the governed cognitive core of SyncScript — deep, honest, and precise.${WORKSPACE_NOTE}${INBOUND_DIRECTIVE}`;
           const agentMessages: AgentMessage[] = [{ role: 'user', content: message }];
@@ -8178,6 +8186,14 @@ end tell`;
                 return res.end(JSON.stringify({ ok: true, tool, streaming: false, durationMs: Date.now() - startMs }));
               }
               return res.end(JSON.stringify({ ok: true, tool, status: gazeService.getStatus(), durationMs: Date.now() - startMs }));
+            }
+
+            // 9l. system_vitals — live measured host truth. The antidote to
+            // stale narration: ports, SLO counts, dirty files, memory —
+            // all measured now, plus the workspace roots map for file hunts.
+            if (tool === 'system_vitals') {
+              const { getSystemVitals } = await import('./src/lib/cortex-agent/system-vitals');
+              return jsonRes(res, 200, { ok: true, tool, ...getSystemVitals(), durationMs: Date.now() - startMs });
             }
 
             // 9m. cortex_observability
@@ -12507,7 +12523,7 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
                   // Workspace grounding: without the absolute root the model
                   // burns its whole step budget hunting for the project dir
                   // (observed: 6/6 steps on list_dir/find before giving up).
-                  const WORKSPACE_NOTE = `\n\n[WORKSPACE] Host working directory: ${process.cwd()} — the SyncScript repository root. Sibling roots on this host: /Users/Apple/cortex-repos (Cortex packages + LAUNCH_PLAN.md + RELEASE_STRATEGY.md), /Users/Apple/openclaw-node (OpenClaw source), /Users/Apple/.openclaw (OpenClaw state, skills, config). run_command, list_dir, read_file, search_code and create_document resolve relative paths here by default. Prefer relative paths inside the repo; for launch plans, release strategy, or Cortex-package docs check cortex-repos FIRST — do NOT search /Users broadly or ask the user for files that live in a known sibling root.`;
+                  const WORKSPACE_NOTE = `\n\n[WORKSPACE] Host working directory: ${process.cwd()} — the SyncScript repository root. Sibling roots on this host: /Users/Apple/cortex-repos (Cortex packages + LAUNCH_PLAN.md + RELEASE_STRATEGY.md), /Users/Apple/openclaw-node (OpenClaw source), /Users/Apple/.openclaw (OpenClaw state, skills, config), and .cortex-runtime/ inside the repo (tenants.json, tenant1.key, model-health-history.jsonl, capability-map.jsonl, resilience-report.json, answer-cache.json — durable Cortex state lives HERE, not in /tmp). run_command, list_dir, read_file, search_code and create_document resolve relative paths here by default. RULES: (1) before claiming any file is missing or asking the user for on-disk data, check these roots with list_dir/read_file — never assert absence without a tool check; (2) before citing any live system number (port, SLO count, dirty files, memory %, model health) call system_vitals — never quote remembered telemetry. Prefer relative paths inside the repo; for launch plans, release strategy, or Cortex-package docs check cortex-repos FIRST — do NOT search /Users broadly or ask the user for files that live in a known sibling root.`;
                   const agentSysContent = autonomyMode === 'autonomous'
                     ? `${sysContentFull}${WORKSPACE_NOTE}${AUTONOMY_DIRECTIVE}`
                     : `${sysContentFull}${WORKSPACE_NOTE}`;
