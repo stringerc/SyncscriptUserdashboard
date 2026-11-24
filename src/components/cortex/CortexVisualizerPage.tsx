@@ -1355,7 +1355,7 @@ export default function CortexVisualizerPage() {
           alignItems: 'center',
           gap: navCollapsed ? 4 : 6,
           background: 'rgba(6,10,24,0.85)',
-          padding: navCollapsed ? '3px 5px' : '5px 8px',
+          padding: '5px 8px',
           borderRadius: 20,
           border: '1px solid rgba(103,232,249,0.25)',
           backdropFilter: 'blur(16px)',
@@ -1371,7 +1371,7 @@ export default function CortexVisualizerPage() {
             title={navExpanded ? 'Collapse navigation' : 'Expand navigation'}
             aria-label={navExpanded ? 'Collapse navigation' : 'Expand navigation'}
             style={{
-              padding: navCollapsed ? '3px 7px' : '5px 9px',
+              padding: '5px 9px',
               borderRadius: 14,
               border: '1px solid rgba(148,233,255,0.18)',
               background: 'rgba(4,8,14,0.5)',
@@ -1414,7 +1414,7 @@ export default function CortexVisualizerPage() {
           }}
           title={faceMode === 'core' && !mapMode ? 'Sovereign Core — click again for core controls' : 'Switch to Sovereign Core'}
           style={{
-            padding: navCollapsed ? '3px 9px' : '5px 12px',
+            padding: '5px 12px',
             borderRadius: 14,
             border: faceMode === 'core' && !mapMode ? '1px solid #38bdf8' : '1px solid rgba(148,233,255,0.18)',
             background: faceMode === 'core' && !mapMode ? 'rgba(56,189,248,0.18)' : 'rgba(4,8,14,0.5)',
@@ -1450,7 +1450,7 @@ export default function CortexVisualizerPage() {
             title={chatOpen ? 'Cortex Uplink Chat Drawer open — click to close (Esc)' : 'Open Cortex Uplink Chat Drawer'}
             aria-label={chatOpen ? 'Close chat drawer' : 'Open chat drawer'}
             style={{
-              padding: navCollapsed ? '3px 9px' : '5px 12px',
+              padding: '5px 12px',
               borderRadius: 14,
               border: `1px solid ${chatOpen ? accent : 'rgba(148,233,255,0.18)'}`,
               background: chatOpen ? `${accent}22` : 'rgba(4,8,14,0.5)',
