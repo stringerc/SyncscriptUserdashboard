@@ -30,7 +30,7 @@ const VERDICTS_LOG = path.join(RUNTIME, 'epistemic-verdicts.jsonl');
 
 export type EpistemicVerdictKind =
   | 'service' | 'fleet' | 'uptime' | 'date' | 'resilience' | 'superlative'
-  | 'provenance';
+  | 'provenance' | 'proposition';
 
 export interface EpistemicVerdict {
   ts: number;
@@ -104,11 +104,14 @@ function serviceForSubject(subject: string): ServiceDef | 'devserver' | null {
 // ── extraction + verification ─────────────────────────────────────────
 const WEEKDAYS = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
 
-interface RawClaim { kind: EpistemicVerdictKind; claim: string; subject?: string; value?: string; reason?: string }
+interface RawClaim { kind: EpistemicVerdictKind; claim: string; subject?: string; value?: string; reason?: string; span?: [number, number] }
 
 function extractClaims(text: string): RawClaim[] {
   const out: RawClaim[] = [];
   if (!text) return out;
+  const push = (kind: EpistemicVerdictKind, claim: string, m: RegExpExecArray, extra: Partial<RawClaim> = {}) => {
+    out.push({ kind, claim, span: [m.index, m.index + m[0].length], ...extra });
+  };
 
   // Service liveness — subject + copula + state.
   const svcRe = /([a-z][\w .'/+-]{0,48}?)\s+(?:is|are|'s|looks?|seems?|still)\s+(running|online|up|live|healthy|working|listening|responding|reachable|down|dead|offline|not responding|unreachable|crashed|hung)\b/gi;
@@ -117,53 +120,53 @@ function extractClaims(text: string): RawClaim[] {
     const subject = m[1].trim();
     // Skip subjects that are clearly not system services.
     if (/^(the\s+)?(plan|idea|feature|goal|task|step|option|question|answer|model|agent|reply|response|text|word|sentence|paragraph|code|file|document|list|table|chart|graph|story|poem|song|movie|game|app(lication)?(s)? logic|it|that|this|they|we|you|he|she|i)\b/i.test(subject)) continue;
-    out.push({ kind: 'service', claim: `${subject} is ${m[2]}`, subject, value: m[2].toLowerCase() });
+    push('service', `${subject} is ${m[2]}`, m, { subject, value: m[2].toLowerCase() });
   }
 
   // Fleet counts — "N models degraded/healthy", "all models healthy".
   const fleetCountRe = /(\d+)\s+models?\s+(?:are\s+|is\s+|currently\s+|still\s+)?(healthy|degraded|unknown|offline|down|failing)\b/gi;
   while ((m = fleetCountRe.exec(text))) {
-    out.push({ kind: 'fleet', claim: `${m[1]} models ${m[2]}`, value: m[2].toLowerCase() });
+    push('fleet', `${m[1]} models ${m[2]}`, m, { value: m[2].toLowerCase() });
   }
   const fleetAllRe = /\b(all|every)\s+models?\s+(?:are\s+|is\s+|currently\s+|still\s+)?(healthy|working|fine|green|up|degraded|down)\b/gi;
   while ((m = fleetAllRe.exec(text))) {
-    out.push({ kind: 'fleet', claim: `${m[1]} models ${m[2]}`, value: m[2].toLowerCase() });
+    push('fleet', `${m[1]} models ${m[2]}`, m, { value: m[2].toLowerCase() });
   }
 
   // Uptime — "up for N hours", subject must be host-ish.
   const upRe = /\b(server|cortex|vite|dev ?server|the app|the site|the host|the process|it)\s+(?:has\s+been\s+|been\s+)?up\s+for\s+(\d+)\s*(second|minute|hour|day|week)s?\b/gi;
   while ((m = upRe.exec(text))) {
-    out.push({ kind: 'uptime', claim: `${m[1]} up for ${m[2]} ${m[3]}s`, subject: m[1].toLowerCase(), value: `${m[2]} ${m[3]}s` });
+    push('uptime', `${m[1]} up for ${m[2]} ${m[3]}s`, m, { subject: m[1].toLowerCase(), value: `${m[2]} ${m[3]}s` });
   }
 
   // Dates — weekday assertions.
   const dayRe = /\b(today is|it's|it is|current day is|we are in|we're in)\s+(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/gi;
   while ((m = dayRe.exec(text))) {
-    out.push({ kind: 'date', claim: `${m[1]} ${m[2]}`, value: m[2].toLowerCase() });
+    push('date', `${m[1]} ${m[2]}`, m, { value: m[2].toLowerCase() });
   }
   const tmrRe = /\btomorrow is\s+(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/gi;
   while ((m = tmrRe.exec(text))) {
-    out.push({ kind: 'date', claim: `tomorrow is ${m[1]}`, value: `tomorrow:${m[1].toLowerCase()}` });
+    push('date', `tomorrow is ${m[1]}`, m, { value: `tomorrow:${m[1].toLowerCase()}` });
   }
 
   // Resilience pass/fail prose.
   const resRe = /\b(resilience|verify:cortex|the gate|slo gate|slo checks?|the slos?)\s+(?:gate\s+|check\s+|suite\s+)?(?:is|are|'s|looks?|seems?|remains?)\s+(green|passing|failing|red|broken|healthy|unhealthy|good|bad)\b/gi;
   while ((m = resRe.exec(text))) {
-    out.push({ kind: 'resilience', claim: `${m[1]} is ${m[2]}`, value: m[2].toLowerCase() });
+    push('resilience', `${m[1]} is ${m[2]}`, m, { value: m[2].toLowerCase() });
   }
 
   // Superlatives / absolutes about system state.
   const absRe = /\b(all|every|each)\s+(models?|services?|agents?|systems?|slos?|checks?|endpoints?|providers?)\s+(?:are|is|remain|look|seem|stay|all)\s*(healthy|green|working|fine|up|passing|good|ok|solid|degraded|down|broken)\b/gi;
   while ((m = absRe.exec(text))) {
-    out.push({ kind: 'superlative', claim: `${m[1]} ${m[2]} ${m[3]}`, value: `${m[2].toLowerCase()} ${m[3].toLowerCase()}` });
+    push('superlative', `${m[1]} ${m[2]} ${m[3]}`, m, { value: `${m[2].toLowerCase()} ${m[3].toLowerCase()}` });
   }
   const everythingRe = /\beverything\s+(?:is|looks|seems|feels|appears)?\s*(working|fine|ok|green|healthy|good|running|solid|broken|down)\b/gi;
   while ((m = everythingRe.exec(text))) {
-    out.push({ kind: 'superlative', claim: `everything ${m[1]}`, value: m[1].toLowerCase() });
+    push('superlative', `everything ${m[1]}`, m, { value: m[1].toLowerCase() });
   }
   const noIssueRe = /\b(no|zero|without|not a single)\s+(any\s+)?(issues?|problems?|errors?|failures?|bugs?|degraded\s+models?|anything\s+(?:broken|wrong|failing))\b/gi;
   while ((m = noIssueRe.exec(text))) {
-    out.push({ kind: 'superlative', claim: `${m[1]} ${m[3]}`, value: 'none-issues' });
+    push('superlative', `${m[1]} ${m[3]}`, m, { value: 'none-issues' });
   }
 
   // Provenance-dependent claims — she can only know these from history.
@@ -171,7 +174,7 @@ function extractClaims(text: string): RawClaim[] {
   while ((m = provRe.exec(text))) {
     const start = Math.max(0, m.index - 40);
     const snippet = text.slice(start, Math.min(text.length, m.index + m[0].length + 40)).replace(/\s+/g, ' ').trim();
-    out.push({ kind: 'provenance', claim: snippet.slice(0, 120), reason: 'conversation-provenance' });
+    push('provenance', snippet.slice(0, 120), m, { reason: 'conversation-provenance' });
   }
 
   // Dedupe on kind+claim
@@ -182,6 +185,48 @@ function extractClaims(text: string): RawClaim[] {
     seen.add(k);
     return true;
   });
+}
+
+// ── Layer 2: general proposition extraction ───────────────────────────
+// Sentence-level decomposition: any factual assertion about live system
+// state that NO typed oracle covers still gets a verdict — 'unverifiable'
+// — so coverage isn't limited to our regex kinds. Log-only (no user-
+// facing hedge): unverifiable ≠ wrong, and hedging every sentence would
+// be noise. The verdicts feed calibration + the RLVR dataset.
+
+const SENT_RE = /[^.!?\n]+[.!?]*/g;
+const SYSTEM_NOUN_RE = /\b(server|service|services|model|models|slo|slos|memory|mem|file|files|port|gateway|api|endpoint|endpoints|daemon|agent|agents|goal|goals|task|tasks|token|tokens|cost|latency|cpu|disk|gpu|provider|providers|database|db|process|uptime|health|status|version|branch|commit|repo|repository|tenant|tenants|key|keys|queue|worker|cron|schedule|deploy|build|test|tests|suite|resilience|verif\w+|registry|fleet|host|runtime|session|sessions|dispatch|dispatches|incident|incidents)\b/i;
+const ASSERTION_RE = /\b(is|are|was|were|has|have|had|does|do|did|shows?|reports?|currently|remains?|stands?|total(?:s|led|ing)?|counts?|runs?|listens?|responds?|fails?|passes?|degraded|healthy|down|up|online|offline|missing|exists?|present|absent|active|paused|stopped|running|working|green|red|broken|fine|ok|okay|good|bad|wrong|right|true|false|empty|full|loaded|ready|live|dead|idle|busy|slow|fast|high|low|low|old|new|recent|latest|current|previous|next|last|first|only|all|every|each|no|none|zero|some|many|few|several|multiple|single|double|half|quarter|third)\b/i;
+const HEDGE_OR_MODAL_RE = /\b(might|may|could|should|would|will|shall|can|cannot|can't|won't|don't|doesn't|didn't|isn't|aren't|wasn't|weren't|not|never|no|none|without|unless|if|whether|maybe|perhaps|probably|possibly|likely|unlikely|think|believe|guess|suspect|assume|hope|wish|want|need|plan|intend|going to|about to|try|attempt|try to|let me|i'?ll|i will|i'?m going|checking|one moment|give me|stand ?by|wait|hold on|suppose|imagine|consider|recommend|suggest|offer|propose)\b/i;
+
+function overlaps(a: [number, number], b: [number, number]): boolean {
+  return a[0] < b[1] && b[0] < a[1];
+}
+
+/** Factual sentences not covered by any typed claim → propositions.
+ *  Conservative: needs an assertion marker AND a system noun AND a
+ *  hard fact signal (digit, file token, or date word). */
+function extractPropositions(text: string, typed: RawClaim[]): string[] {
+  const covered = typed.map((c) => c.span).filter((s): s is [number, number] => !!s);
+  const out: string[] = [];
+  const re = new RegExp(SENT_RE.source, 'g');
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(text))) {
+    const sentence = m[0].trim();
+    if (sentence.length < 25 || sentence.length > 400) continue;
+    const span: [number, number] = [m.index, m.index + m[0].length];
+    if (covered.some((c) => overlaps(span, c))) continue;
+    if (/\?\s*$/.test(sentence)) continue;                    // questions aren't claims
+    if (/^\s*[\[\]>*#\-•]/.test(sentence)) continue;          // lists/meta — handled elsewhere
+    if (HEDGE_OR_MODAL_RE.test(sentence)) continue;            // hedged/modal — not asserted fact
+    const hasDigit = /\d/.test(sentence);
+    const hasFile = /[\w./~-]+\.(?:md|ts|tsx|js|mjs|json|jsonl|key|env|local|yaml|yml|plist|sh|py|toml|txt)\b/i.test(sentence);
+    const hasSystemNoun = SYSTEM_NOUN_RE.test(sentence) && ASSERTION_RE.test(sentence);
+    if (!(hasDigit || hasFile || hasSystemNoun)) continue;
+    out.push(sentence.replace(/\s+/g, ' ').slice(0, 160));
+    if (out.length >= 8) break;
+  }
+  return out;
 }
 
 // ── per-kind verification ─────────────────────────────────────────────
@@ -315,9 +360,28 @@ function logVerdict(v: EpistemicVerdict) {
  * Returns flags for correctionBlock() plus a hedge note for
  * unverifiable provenance claims. Async — service probes are TCP.
  */
+// ── Evidence binding (Layer 1b): which tool call could have produced
+//    each claim kind? A contradicted claim with NO matching tool call
+//    this turn was cited from memory/context — the correction says so.
+//    'ambient' kinds (date) need no tool — system clock is always live.
+const KIND_EVIDENCE: Record<string, string[]> = {
+  port: ['system_vitals'],
+  slos: ['system_vitals'],
+  'dirty-files': ['system_vitals'],
+  memory: ['system_vitals'],
+  fleet: ['system_vitals'],
+  resilience: ['system_vitals'],
+  uptime: ['system_vitals'],
+  superlative: ['system_vitals'],
+  service: ['run_command', 'system_vitals'],
+  'file-exists': ['list_dir', 'read_file', 'search_code', 'run_command'],
+  'file-missing': ['list_dir', 'read_file', 'search_code', 'run_command'],
+};
+const AMBIENT_KINDS = new Set(['date']);
+
 export async function epistemicGate(
   text: string,
-  ctx: { channel?: string; sender?: string; surface?: string } = {},
+  ctx: { channel?: string; sender?: string; surface?: string; toolCalls?: Array<{ tool: string; ok?: boolean }> } = {},
 ): Promise<EpistemicResult> {
   const surface = ctx.surface || ctx.channel || 'unknown';
   // Strip our own meta-annotations before scanning — the correction
@@ -328,7 +392,8 @@ export async function epistemicGate(
   const verdicts: EpistemicVerdict[] = [];
   const hedgeClaims: string[] = [];
 
-  for (const c of extractClaims(clean)) {
+  const typedClaims = extractClaims(clean);
+  for (const c of typedClaims) {
     const base: Omit<EpistemicVerdict, 'verdict'> = { ts: Date.now(), surface, kind: c.kind, claim: c.claim };
     try {
       if (c.kind === 'service') {
@@ -360,6 +425,16 @@ export async function epistemicGate(
     }
   }
 
+  // Layer 2: uncovered factual propositions → 'unverifiable' verdicts.
+  // Log-only — they expand coverage beyond the typed kinds without
+  // hedging every sentence (noise would itself be a dishonesty signal).
+  for (const p of extractPropositions(clean, typedClaims)) {
+    verdicts.push({
+      ts: Date.now(), surface, kind: 'proposition', claim: p,
+      verdict: 'unverifiable', reason: 'no oracle covers this claim type',
+    });
+  }
+
   for (const v of verdicts) logVerdict(v);
 
   // Dedupe flags (claim-check kinds can overlap with epistemic kinds).
@@ -370,6 +445,22 @@ export async function epistemicGate(
     seen.add(k);
     return true;
   });
+
+  // Evidence binding: annotate each flag with whether a measuring tool
+  // actually ran this turn. Corrections distinguish "cited stale from
+  // memory" (no tool) from "measured but misread" (tool ran).
+  const ranTools = new Set(
+    (ctx.toolCalls || []).filter((t) => t.ok !== false).map((t) => t.tool),
+  );
+  for (const f of deduped) {
+    if (AMBIENT_KINDS.has(f.kind)) { f.note = 'ambient truth — no tool needed'; continue; }
+    const req = KIND_EVIDENCE[f.kind];
+    if (!req) continue;
+    const measured = req.some((t) => ranTools.has(t));
+    f.note = measured
+      ? 'measured this turn — claim still contradicted measurement'
+      : 'no measuring tool ran — cited from memory/context';
+  }
 
   const hedge = hedgeClaims.length
     ? `\n\n[epistemic] Unverified — I asserted the following without a checkable source this turn: ${hedgeClaims.slice(0, 3).map((c) => `"${c.slice(0, 90)}"`).join('; ')}. Treat as uncertain — ask me to verify if it matters.`

@@ -233,6 +233,7 @@ import { correctionBlock } from './src/lib/cortex-agent/claim-check';
 import { epistemicGate } from './src/lib/cortex-agent/epistemic';
 import { scheduleEpistemicAudit } from './src/lib/cortex-agent/epistemic-audit';
 import { selfReliabilityDigest } from './src/lib/cortex-agent/calibration';
+import { runCanary, canaryReport } from './src/lib/cortex-agent/canary';
 import { recallCortexMemory, retainCortexMemory, fetchCortexMemoryGraph } from './src/lib/cortex-memory';
 import { runScenarioSimulation, getSimulationHistory } from './src/lib/cortex-simulation';
 import { probeCompetitorIntelligence, listCompetitorRadar } from './src/lib/cortex-competitor-recon';
@@ -564,7 +565,7 @@ const CORTEX_TOOLS = [
     type: 'function',
     function: {
       name: 'recall_facts',
-      description: 'Query Cortex\'s bi-temporal fact memory. Actions: active (current facts, optional subject), as_of (facts valid at an ISO timestamp — "what was true last Tuesday"), search (substring recall), history (full supersession chain for subject+predicate).',
+      description: 'Query Cortex\'s bi-temporal fact memory. Actions: active (current facts, optional subject), as_of (facts valid at an ISO timestamp — "what was true last Tuesday"), search (substring recall), history (full supersession chain for subject+predicate). Results carry recorded_at/source/confidence/age_days — when citing a fact older than ~1 day, say it is recalled memory and may be stale.',
       parameters: {
         type: 'object',
         properties: {
@@ -3278,6 +3279,18 @@ function apiProxyPlugin(): Plugin {
         console.info('[keep-warm] neural RAM keep-warm daemon active (10m interval) — Kokoro / VoiceStudio / Ollama / FCC');
       }
 
+      // Canary battery — standing red team measuring memory-vs-reality
+      // drift. First run 15min post-boot (lets providers warm), then
+      // every 6h. Disable with CORTEX_CANARY=0.
+      if (process.env.CORTEX_CANARY !== '0') {
+        const canaryPort = process.env.PORT ? parseInt(process.env.PORT, 10) : 5173;
+        const firstCanary = setTimeout(() => { runCanary(canaryPort).catch(() => { }); }, 15 * 60_000) as any;
+        firstCanary.unref?.();
+        const canaryTimer = setInterval(() => { runCanary(canaryPort).catch(() => { }); }, 6 * 3600_000) as any;
+        canaryTimer.unref?.();
+        console.info('[canary] epistemic drift probes armed — first run in 15m, then 6h cadence');
+      }
+
       const isAllowedOrigin = (origin: string | undefined, hostHeader: string | undefined): boolean => {
         if (!origin) return true; // Local server-to-server or non-browser client
         try {
@@ -3641,6 +3654,28 @@ function apiProxyPlugin(): Plugin {
           }
           writeChatHistory([...byId.values()]);
           return jsonRes(res, 200, { ok: true, appended: incoming.length });
+        } catch (e: any) {
+          return jsonRes(res, 500, { ok: false, error: String(e?.message || e) });
+        }
+      });
+
+      // ── Canary probes — standing red team for memory-vs-reality drift.
+      // GET → latest report; POST → run the battery now (async, ~9 probes).
+      server.middlewares.use('/api/cortex/canary', async (req: any, res: any) => {
+        if (!setCortexCors(req, res)) return jsonRes(res, 403, { ok: false, error: 'forbidden' });
+        if (req.method === 'OPTIONS') { res.writeHead(204); return res.end(); }
+        try {
+          if (req.method === 'GET') {
+            return jsonRes(res, 200, { ok: true, ...canaryReport() });
+          }
+          if (req.method === 'POST') {
+            const selfPort = process.env.PORT ? parseInt(process.env.PORT, 10) : 5173;
+            // Fire and stream progress — a full battery takes ~30-60s.
+            res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+            const result = await runCanary(selfPort);
+            return res.end(JSON.stringify(result));
+          }
+          return jsonRes(res, 405, { ok: false, error: 'method not allowed' });
         } catch (e: any) {
           return jsonRes(res, 500, { ok: false, error: String(e?.message || e) });
         }
@@ -4110,7 +4145,7 @@ function apiProxyPlugin(): Plugin {
           } catch {}
         };
         try {
-          const WORKSPACE_NOTE = `\n\n[WORKSPACE] Host working directory: ${process.cwd()} — the SyncScript repository root. Sibling roots on this host: /Users/Apple/cortex-repos (Cortex packages + LAUNCH_PLAN.md + RELEASE_STRATEGY.md), /Users/Apple/openclaw-node (OpenClaw source), /Users/Apple/.openclaw (OpenClaw state, skills, config), and .cortex-runtime/ inside the repo (tenants.json, tenant1.key, model-health-history.jsonl, capability-map.jsonl, resilience-report.json, answer-cache.json — durable Cortex state lives HERE, not in /tmp). run_command, list_dir, read_file, search_code and create_document resolve relative paths here by default. RULES: (1) before claiming any file is missing or asking the user for on-disk data, check these roots with list_dir/read_file — never assert absence without a tool check; (2) before citing any live system number (port, SLO count, dirty files, memory %, model health) call system_vitals — never quote remembered telemetry. Prefer relative paths inside the repo; for launch plans, release strategy, or Cortex-package docs check cortex-repos FIRST — do NOT search /Users broadly or ask the user for files that live in a known sibling root.`;
+          const WORKSPACE_NOTE = `\n\n[WORKSPACE] Host working directory: ${process.cwd()} — the SyncScript repository root. Sibling roots on this host: /Users/Apple/cortex-repos (Cortex packages + LAUNCH_PLAN.md + RELEASE_STRATEGY.md), /Users/Apple/openclaw-node (OpenClaw source), /Users/Apple/.openclaw (OpenClaw state, skills, config), and .cortex-runtime/ inside the repo (tenants.json, tenant1.key, model-health-history.jsonl, capability-map.jsonl, resilience-report.json, answer-cache.json — durable Cortex state lives HERE, not in /tmp). run_command, list_dir, read_file, search_code and create_document resolve relative paths here by default. RULES: (1) before claiming any file is missing or asking the user for on-disk data, check these roots with list_dir/read_file — never assert absence without a tool check; (2) before citing any live system number (port, SLO count, dirty files, memory %, model health) call system_vitals — never quote remembered telemetry. Prefer relative paths inside the repo; for launch plans, release strategy, or Cortex-package docs check cortex-repos FIRST — do NOT search /Users broadly or ask the user for files that live in a known sibling root. RULE 3: every live-state claim you make is cross-checked against the tools you ACTUALLY called this turn — claims with no measuring tool get publicly corrected as "cited from memory". Measure first, then speak.`;
           const INBOUND_DIRECTIVE = `\n\n[INBOUND BRIDGE] This message arrived via the "${channel}" channel from sender "${sender}" through the OpenClaw gateway. You are Cortex — reply as yourself, concisely, in plain text (no markdown headers). If the request needs a governed multi-step action rather than a conversation, say so and offer to dispatch it.`;
           // Cross-session continuity: inbound turns were cold starts —
           // every message arrived with zero memory of prior exchanges, so
@@ -4191,7 +4226,7 @@ function apiProxyPlugin(): Plugin {
           // kinds (ports, files, services, fleet, dates, superlatives,
           // provenance) get deterministic corrections; unverifiable
           // provenance claims get a hedge note. Cache stores corrected.
-          const gate = await epistemicGate(reply, { channel, sender, surface: 'inbound' });
+          const gate = await epistemicGate(reply, { channel, sender, surface: 'inbound', toolCalls: loopResult.toolCalls });
           if (gate.flags.length) reply += correctionBlock(gate.flags);
           reply += gate.hedge;
           scheduleEpistemicAudit({ shippedText: reply, ctx: { channel, sender, surface: 'inbound' }, port: selfPort });
@@ -5005,9 +5040,9 @@ function apiProxyPlugin(): Plugin {
             { name: 'kill_process', description: 'Kill process by PID', parameters: { pid: 'number' } },
             { name: 'get_env', description: 'Get environment variable', parameters: { key: 'string' } },
             { name: 'set_env', description: 'Set environment variable (session)', parameters: { key: 'string', value: 'string' } },
-            { name: 'cortex_memory', description: 'Obsidian vault memory actions (vault_status, vault_query, vault_write_note, vault_daily_log, read_hot, search, append, read_episodic, save_episodic, learn, recall). obsidian_* actions reach the real Obsidian app vault via Local REST API when OBSIDIAN_REST_API_KEY is set: obsidian_status, obsidian_list, obsidian_read (path), obsidian_write (path+content), obsidian_search (query)', parameters: { action: 'string', query: 'string?', path: 'string?', title: 'string?', folder: 'string?', filename: 'string?', content: 'string?', tags: 'string?', role: 'string?', limit: 'number?', contextLength: 'number?' } },
+            { name: 'cortex_memory', description: 'Obsidian vault memory actions (vault_status, vault_query, vault_write_note, vault_daily_log, read_hot, search, append, read_episodic, save_episodic, learn, recall — recall results carry recordedAt/age_days per hit; cite age when >1d). obsidian_* actions reach the real Obsidian app vault via Local REST API when OBSIDIAN_REST_API_KEY is set: obsidian_status, obsidian_list, obsidian_read (path), obsidian_write (path+content), obsidian_search (query)', parameters: { action: 'string', query: 'string?', path: 'string?', title: 'string?', folder: 'string?', filename: 'string?', content: 'string?', tags: 'string?', role: 'string?', limit: 'number?', contextLength: 'number?' } },
             { name: 'remember_fact', description: 'Store a durable bi-temporal fact (subject+predicate+object); supersedes prior value for the same key without deleting history', parameters: { subject: 'string', predicate: 'string', object: 'string', confidence: 'number?' } },
-            { name: 'recall_facts', description: 'Query bi-temporal fact memory: active | as_of (ISO time travel) | search | history (supersession chain)', parameters: { action: 'string', subject: 'string?', predicate: 'string?', query: 'string?', asOf: 'string?' } },
+            { name: 'recall_facts', description: 'Query bi-temporal fact memory: active | as_of (ISO time travel) | search | history (supersession chain). Facts carry recorded_at/source/confidence/age_days — cite age when stale (>1d)', parameters: { action: 'string', subject: 'string?', predicate: 'string?', query: 'string?', asOf: 'string?' } },
             { name: 'emit_surface', description: 'Emit a live A2UI generative surface panel: title + items of metric|badge|text|button components; buttons round-trip cortex.surface.* actions to the agent', parameters: { title: 'string', subtitle: 'string?', items: 'object[]' } },
             { name: 'fetch_url', description: 'Fetch a web page as clean markdown. Rungs: r.jina.ai reader → Firecrawl scrape (if key configured) → direct fetch. SSRF-guarded.', parameters: { url: 'string' } },
             { name: 'create_document', description: 'Create real document files (md/html always; pdf via Chrome; docx via textutil; csv)', parameters: { format: 'string?', title: 'string?', content: 'string?' } },
@@ -6348,8 +6383,23 @@ end tell`;
                 }
                 else if (action === 'history') facts = factHistory(String(args?.subject || ''), String(args?.predicate || ''));
                 else facts = activeFacts({ subject: args?.subject ? String(args.subject) : undefined, predicate: args?.predicate ? String(args.predicate) : undefined });
+                // Layer-3 provenance: surface fact lineage (recorded_at,
+                // source, confidence, validity window) + computed age so
+                // she can say "I learned this 5 days ago" instead of
+                // presenting stale memory as present truth.
+                const withAge = (facts: any) => Array.isArray(facts)
+                  ? facts.map((f: any) => {
+                      const rec = f?.recorded_at ? Date.parse(f.recorded_at) : NaN;
+                      return { ...f, age_days: Number.isNaN(rec) ? null : Math.round(((Date.now() - rec) / 86400000) * 10) / 10 };
+                    })
+                  : facts;
+                const aged = withAge(facts);
                 res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
-                return res.end(JSON.stringify({ ok: true, tool, action, facts, durationMs: Date.now() - startMs }));
+                return res.end(JSON.stringify({
+                  ok: true, tool, action, facts: aged,
+                  lineage: 'facts carry recorded_at (when learned), source, confidence, valid_from/valid_to, age_days — when you cite a fact with age_days > 1, say it is recalled memory and may be stale',
+                  durationMs: Date.now() - startMs,
+                }));
               } catch (e: any) {
                 res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
                 return res.end(JSON.stringify({ ok: false, tool, error: String(e?.message || e) }));
@@ -6837,7 +6887,7 @@ end tell`;
                 }
                 cortexObsidianMemory.ensureVaultInitialized();
                 const terms = rq.toLowerCase().split(/[^a-z0-9]+/).filter(t => t.length > 2);
-                const scored: Array<{ title: string; path: string; score: number; snippet: string }> = [];
+                const scored: Array<{ title: string; path: string; score: number; snippet: string; recordedAt?: string; age_days?: number }> = [];
                 const vaultRoot = (cortexObsidianMemory as any).vaultPath as string | undefined;
                 const scanRoots: Array<{ dir: string; prefix: string }> = [];
                 if (vaultRoot) scanRoots.push({ dir: vaultRoot, prefix: '' });
@@ -6869,6 +6919,8 @@ end tell`;
                             title: ent.name.replace(/\.md$/, ''),
                             path: rel,
                             score,
+                            recordedAt: stat.mtime.toISOString(),
+                            age_days: Math.round(((Date.now() - stat.mtime.getTime()) / 86400000) * 10) / 10,
                             snippet: text.slice(Math.max(0, idx - 80), idx + 320).replace(/\s+/g, ' ').trim(),
                           });
                         }
@@ -6879,11 +6931,18 @@ end tell`;
                 for (const root of scanRoots) {
                   if (root.prefix === 'MEMORY.md') {
                     try {
-                      const text = await fs.readFile(path.join(root.dir, 'MEMORY.md'), 'utf-8');
+                      const memPath = path.join(root.dir, 'MEMORY.md');
+                      const text = await fs.readFile(memPath, 'utf-8');
+                      const memStat = await fs.stat(memPath);
                       const lower = text.toLowerCase();
                       let score = 0;
                       for (const t of terms) score += Math.min(lower.split(t).length - 1, 10);
-                      if (score > 0) scored.push({ title: 'MEMORY', path: 'MEMORY.md', score, snippet: text.slice(0, 400).replace(/\s+/g, ' ') });
+                      if (score > 0) scored.push({
+                        title: 'MEMORY', path: 'MEMORY.md', score,
+                        recordedAt: memStat.mtime.toISOString(),
+                        age_days: Math.round(((Date.now() - memStat.mtime.getTime()) / 86400000) * 10) / 10,
+                        snippet: text.slice(0, 400).replace(/\s+/g, ' '),
+                      });
                     } catch { }
                   } else {
                     await walk(root.dir, root.prefix, 0);
@@ -6898,8 +6957,12 @@ end tell`;
                   for (const t of terms) score += Math.min(epText.split(t).length - 1, 10);
                   if (score > 0) {
                     const eps = Array.isArray(ep.episodes) ? ep.episodes.slice(-3) : [];
+                    let epMtime = Date.now();
+                    try { epMtime = (await fs.stat(epPath)).mtime.getTime(); } catch {}
                     scored.push({
                       title: 'Episodic Memory', path: '.cache/cortex-episodic-memory.json', score,
+                      recordedAt: new Date(epMtime).toISOString(),
+                      age_days: Math.round(((Date.now() - epMtime) / 86400000) * 10) / 10,
                       snippet: eps.map((e: any) => `${e.ts || ''}: ${(e.user || '').slice(0, 80)} → ${(e.reply || '').slice(0, 120)}`).join(' | ').slice(0, 380),
                     });
                   }
@@ -6909,6 +6972,7 @@ end tell`;
                   ok: true, tool, action, query: rq,
                   count: Math.min(scored.length, rlimit),
                   results: scored.slice(0, rlimit),
+                  lineage: 'each result carries recordedAt + age_days (file mtime = last write). When you cite a memory with age_days > 1, say it is recalled and may be stale — do not present it as present truth',
                   durationMs: Date.now() - startMs,
                 }));
               }
@@ -12554,7 +12618,7 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
                   // Workspace grounding: without the absolute root the model
                   // burns its whole step budget hunting for the project dir
                   // (observed: 6/6 steps on list_dir/find before giving up).
-                  const WORKSPACE_NOTE = `\n\n[WORKSPACE] Host working directory: ${process.cwd()} — the SyncScript repository root. Sibling roots on this host: /Users/Apple/cortex-repos (Cortex packages + LAUNCH_PLAN.md + RELEASE_STRATEGY.md), /Users/Apple/openclaw-node (OpenClaw source), /Users/Apple/.openclaw (OpenClaw state, skills, config), and .cortex-runtime/ inside the repo (tenants.json, tenant1.key, model-health-history.jsonl, capability-map.jsonl, resilience-report.json, answer-cache.json — durable Cortex state lives HERE, not in /tmp). run_command, list_dir, read_file, search_code and create_document resolve relative paths here by default. RULES: (1) before claiming any file is missing or asking the user for on-disk data, check these roots with list_dir/read_file — never assert absence without a tool check; (2) before citing any live system number (port, SLO count, dirty files, memory %, model health) call system_vitals — never quote remembered telemetry. Prefer relative paths inside the repo; for launch plans, release strategy, or Cortex-package docs check cortex-repos FIRST — do NOT search /Users broadly or ask the user for files that live in a known sibling root.`;
+                  const WORKSPACE_NOTE = `\n\n[WORKSPACE] Host working directory: ${process.cwd()} — the SyncScript repository root. Sibling roots on this host: /Users/Apple/cortex-repos (Cortex packages + LAUNCH_PLAN.md + RELEASE_STRATEGY.md), /Users/Apple/openclaw-node (OpenClaw source), /Users/Apple/.openclaw (OpenClaw state, skills, config), and .cortex-runtime/ inside the repo (tenants.json, tenant1.key, model-health-history.jsonl, capability-map.jsonl, resilience-report.json, answer-cache.json — durable Cortex state lives HERE, not in /tmp). run_command, list_dir, read_file, search_code and create_document resolve relative paths here by default. RULES: (1) before claiming any file is missing or asking the user for on-disk data, check these roots with list_dir/read_file — never assert absence without a tool check; (2) before citing any live system number (port, SLO count, dirty files, memory %, model health) call system_vitals — never quote remembered telemetry. Prefer relative paths inside the repo; for launch plans, release strategy, or Cortex-package docs check cortex-repos FIRST — do NOT search /Users broadly or ask the user for files that live in a known sibling root. RULE 3: every live-state claim you make is cross-checked against the tools you ACTUALLY called this turn — claims with no measuring tool get publicly corrected as "cited from memory". Measure first, then speak.`;
                   const agentSysContent = autonomyMode === 'autonomous'
                     ? `${sysContentFull}${WORKSPACE_NOTE}${selfReliabilityDigest() ? `\n\n${selfReliabilityDigest()}` : ''}${AUTONOMY_DIRECTIVE}`
                     : `${sysContentFull}${WORKSPACE_NOTE}${selfReliabilityDigest() ? `\n\n${selfReliabilityDigest()}` : ''}`;
@@ -12700,7 +12764,7 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
                   // before the user hears them; unverifiable provenance
                   // claims get an explicit hedge note.
                   let finalText = loopResult.content || 'I hit a snag finishing that — say "retry" and I will run it again.';
-                  const voiceGate = await epistemicGate(finalText, { channel: 'voice', surface: 'voice' });
+                  const voiceGate = await epistemicGate(finalText, { channel: 'voice', surface: 'voice', toolCalls: loopResult.toolCalls });
                   if (voiceGate.flags.length) finalText += correctionBlock(voiceGate.flags);
                   finalText += voiceGate.hedge;
                   // Skip audit-of-audit: internal calls (strategic review,

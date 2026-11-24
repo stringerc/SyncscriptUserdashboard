@@ -27,6 +27,9 @@ export interface ClaimFlag {
   claim: string;
   expected: string;
   actual: string;
+  /** Evidence-binding annotation — set by epistemicGate: whether a
+   *  measuring tool actually ran this turn. */
+  note?: string;
 }
 
 // Vitals are cached briefly — a reply scan shouldn't re-exec git/memory_pressure
@@ -217,7 +220,7 @@ export function verifyReplyClaims(text: string): ClaimFlag[] {
  *  mismatched claims. Returns '' when nothing was flagged. */
 export function correctionBlock(flags: ClaimFlag[]): string {
   if (!flags.length) return '';
-  const corrections = flags.map((f) => `${f.claim} → actual: ${f.actual}`).join('; ');
+  const corrections = flags.map((f) => `${f.claim} → actual: ${f.actual}${f.note ? ` (${f.note})` : ''}`).join('; ');
   return `\n\n[claim-check] Correction — I cited stale or wrong live values. Verified just now: ${corrections}.`;
 }
 
