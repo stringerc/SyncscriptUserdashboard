@@ -228,7 +228,7 @@ import { computeCounselScorecard } from './src/lib/cortex-agents/counsel-scoreca
 import { initEventLog, readEvents, getEventLogStats, verifyEventLog } from './src/lib/cortex-agents/eventlog';
 import { tailModelHealthHistory } from './src/lib/cortex-agents/sentinel';
 import { assessCoverage, assessGoal, fileCapabilityGaps, recordCapabilityUse } from './src/lib/cortex-agent/capability-map';
-import { lookupAnswer, storeAnswer, cacheStats } from './src/lib/cortex-agent/answer-cache';
+import { lookupAnswer, storeAnswer, cacheStats, isCacheableQuestion, stateEpoch } from './src/lib/cortex-agent/answer-cache';
 import { checkReply, correctionBlock } from './src/lib/cortex-agent/claim-check';
 import { recallCortexMemory, retainCortexMemory, fetchCortexMemoryGraph } from './src/lib/cortex-memory';
 import { runScenarioSimulation, getSimulationHistory } from './src/lib/cortex-simulation';
@@ -4152,17 +4152,24 @@ function apiProxyPlugin(): Plugin {
             temperature: 0.2,
             emit: () => {},
           });
-          // Semantic-ish cache: repeated informational questions with no
-          // tool use get the saved answer — skips the model bill. Scoped
-          // per sender+channel so answers never leak across identities.
-          const cacheScope = `inbound:${channel}:${sender}`;
+          // Semantic-ish cache: repeated self-contained informational
+          // questions with no tool use get the saved answer — skips the
+          // model bill. Scoped per sender+channel+goal-epoch so answers
+          // never leak across identities and retire when goals mutate;
+          // context-bound messages (anaphora, action intent) bypass both
+          // lookup and store — "move it" can never replay a stale answer.
+          const cacheScope = `inbound:${channel}:${sender}:${stateEpoch()}`;
+          const cacheable = isCacheableQuestion(message);
           const started = Date.now();
-          const cacheHit = lookupAnswer(message, cacheScope);
+          const cacheHit = cacheable ? lookupAnswer(message, cacheScope) : null;
           if (cacheHit) {
-            audit({ ok: true, replyLen: cacheHit.reply.length, steps: 0, tools: [], provider: 'answer-cache', durationMs: Date.now() - started, cached: true, cacheExact: cacheHit.exact });
-            try { recordContinuityTurn(sessionId, message, cacheHit.reply); } catch {}
+            let hitReply = cacheHit.reply;
+            const hitFlags = checkReply(hitReply, { channel, sender });
+            if (hitFlags.length) hitReply += correctionBlock(hitFlags);
+            audit({ ok: true, replyLen: hitReply.length, steps: 0, tools: [], provider: 'answer-cache', durationMs: Date.now() - started, cached: true, cacheExact: cacheHit.exact });
+            try { recordContinuityTurn(sessionId, message, hitReply); } catch {}
             return jsonRes(res, 200, {
-              ok: true, reply: cacheHit.reply, sessionId,
+              ok: true, reply: hitReply, sessionId,
               steps: 0, tools: [], provider: 'answer-cache',
               durationMs: Date.now() - started, cached: true,
               cacheAgeMs: cacheHit.ageMs,
@@ -4180,7 +4187,7 @@ function apiProxyPlugin(): Plugin {
           // silently. Cache stores the corrected text.
           const flags = checkReply(reply, { channel, sender });
           if (flags.length) reply += correctionBlock(flags);
-          if (!loopResult.error && loopResult.toolCalls.length === 0 && loopResult.content) {
+          if (!loopResult.error && loopResult.toolCalls.length === 0 && loopResult.content && cacheable) {
             storeAnswer(message, cacheScope, reply);
           }
           audit({
@@ -12635,12 +12642,22 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
                     emit: (ev) => { try { res.write(`data: ${JSON.stringify(ev)}\n\n`); } catch {} },
                     emitToken: (t) => { try { res.write(`data: ${JSON.stringify({ token: t })}\n\n`); } catch {} },
                   });
-                  // Answer cache: repeated tool-free questions replay the
-                  // saved reply — voice path streams it back as tokens so
-                  // the client can't tell the difference except provider.
-                  const voiceCacheHit = lookupAnswer(latestUserMessage || '', 'voice');
+                  // Answer cache: repeated self-contained questions replay
+                  // the saved reply — voice path streams it back as tokens
+                  // so the client can't tell the difference except provider.
+                  // Guards: never cache/bypass for tool-seeded turns
+                  // (affirmation/reflex), never for context-bound text
+                  // (anaphora/action intent), scope = session + goal-state
+                  // epoch so answers can't leak across conversations or
+                  // outlive the goals they may have referenced.
+                  const voiceCacheScope = `voice:${continuitySid}:${stateEpoch()}`;
+                  const voiceCacheHit = (!initialToolCall && isCacheableQuestion(latestUserMessage || ''))
+                    ? lookupAnswer(latestUserMessage || '', voiceCacheScope)
+                    : null;
                   if (voiceCacheHit) {
-                    const cachedText = voiceCacheHit.reply;
+                    let cachedText = voiceCacheHit.reply;
+                    const cachedFlags = checkReply(cachedText, { channel: 'voice' });
+                    if (cachedFlags.length) cachedText += correctionBlock(cachedFlags);
                     if (parsed.internal !== true) { try { recordContinuityTurn(continuitySid, latestUserMessage, cachedText); } catch {} }
                     try { const offer = detectOffer(cachedText); if (offer) recordOffer(sessionId, offer, cachedText); } catch {}
                     const toks = cachedText.match(/\S+|\s+/g) || [cachedText];
@@ -12672,8 +12689,8 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
                   let finalText = loopResult.content || 'I hit a snag finishing that — say "retry" and I will run it again.';
                   const voiceFlags = checkReply(finalText, { channel: 'voice' });
                   if (voiceFlags.length) finalText += correctionBlock(voiceFlags);
-                  if (!loopResult.error && loopResult.toolCalls.length === 0 && loopResult.content && latestUserMessage) {
-                    storeAnswer(latestUserMessage, 'voice', finalText);
+                  if (!loopResult.error && loopResult.toolCalls.length === 0 && loopResult.content && latestUserMessage && isCacheableQuestion(latestUserMessage)) {
+                    storeAnswer(latestUserMessage, voiceCacheScope, finalText);
                   }
                   if (parsed.internal !== true) { try { recordContinuityTurn(continuitySid, latestUserMessage, finalText); } catch {} }
                   // Streamed providers already emitted tokens live — only
