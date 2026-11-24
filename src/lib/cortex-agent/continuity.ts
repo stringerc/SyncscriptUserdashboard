@@ -142,9 +142,9 @@ export function getContinuityBrief(sessionId: string, clientMsgCount: number): s
   // This session's recent exchanges — the "where were we" answer.
   if (sess && sess.turns.length) {
     const recent = sess.turns.slice(-4);
-    lines.push(`Recent exchanges in this session (${sess.turns.length} recorded):`);
+    lines.push(`Recent exchanges in this session (${sess.turns.length} recorded; digests are clipped — treat details as approximate, age shown per turn):`);
     for (const t of recent) {
-      lines.push(`- user: "${t.user}" → cortex: "${t.ai}"`);
+      lines.push(`- [${ago(t.ts)}] user: "${t.user}" → cortex: "${t.ai}"`);
     }
   } else {
     // New identity — borrow the global tail so the model still has context.
@@ -155,9 +155,9 @@ export function getContinuityBrief(sessionId: string, clientMsgCount: number): s
     all.sort((a, b) => a.turn.ts - b.turn.ts);
     const tail = all.slice(-4);
     if (tail.length) {
-      lines.push('No prior turns recorded for this session identity — most recent exchanges elsewhere:');
+      lines.push('No prior turns recorded for this session identity — most recent exchanges elsewhere (digests clipped, ages shown):');
       for (const { turn: t } of tail) {
-        lines.push(`- user: "${t.user}" → cortex: "${t.ai}"`);
+        lines.push(`- [${ago(t.ts)}] user: "${t.user}" → cortex: "${t.ai}"`);
       }
     }
   }

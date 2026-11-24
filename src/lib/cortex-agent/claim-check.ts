@@ -22,7 +22,8 @@ const RUNTIME = path.resolve(process.cwd(), '.cortex-runtime');
 const LOG = path.join(RUNTIME, 'claim-check.jsonl');
 
 export interface ClaimFlag {
-  kind: 'port' | 'slos' | 'dirty-files' | 'memory' | 'file-exists' | 'file-missing';
+  kind: 'port' | 'slos' | 'dirty-files' | 'memory' | 'file-exists' | 'file-missing'
+    | 'service' | 'fleet' | 'uptime' | 'date' | 'resilience' | 'superlative';
   claim: string;
   expected: string;
   actual: string;

@@ -229,7 +229,10 @@ import { initEventLog, readEvents, getEventLogStats, verifyEventLog } from './sr
 import { tailModelHealthHistory } from './src/lib/cortex-agents/sentinel';
 import { assessCoverage, assessGoal, fileCapabilityGaps, recordCapabilityUse } from './src/lib/cortex-agent/capability-map';
 import { lookupAnswer, storeAnswer, cacheStats, isCacheableQuestion, stateEpoch } from './src/lib/cortex-agent/answer-cache';
-import { checkReply, correctionBlock } from './src/lib/cortex-agent/claim-check';
+import { correctionBlock } from './src/lib/cortex-agent/claim-check';
+import { epistemicGate } from './src/lib/cortex-agent/epistemic';
+import { scheduleEpistemicAudit } from './src/lib/cortex-agent/epistemic-audit';
+import { selfReliabilityDigest } from './src/lib/cortex-agent/calibration';
 import { recallCortexMemory, retainCortexMemory, fetchCortexMemoryGraph } from './src/lib/cortex-memory';
 import { runScenarioSimulation, getSimulationHistory } from './src/lib/cortex-simulation';
 import { probeCompetitorIntelligence, listCompetitorRadar } from './src/lib/cortex-competitor-recon';
@@ -4115,7 +4118,7 @@ function apiProxyPlugin(): Plugin {
           // durable brief the voice/chat path uses (clientMsgCount=0 forces
           // the thin-history branch) and record the exchange afterward.
           const inboundBrief = getContinuityBrief(sessionId, 0);
-          const agentSysContent = `${NEXUS_SYSTEM_PROMPT}\n\nYou are Cortex, the governed cognitive core of SyncScript — deep, honest, and precise.${WORKSPACE_NOTE}${INBOUND_DIRECTIVE}${inboundBrief ? `\n\n${inboundBrief}` : ''}`;
+          const agentSysContent = `${NEXUS_SYSTEM_PROMPT}\n\nYou are Cortex, the governed cognitive core of SyncScript — deep, honest, and precise.${WORKSPACE_NOTE}${selfReliabilityDigest() ? `\n\n${selfReliabilityDigest()}` : ''}${INBOUND_DIRECTIVE}${inboundBrief ? `\n\n${inboundBrief}` : ''}`;
           const agentMessages: AgentMessage[] = [{ role: 'user', content: message }];
           const selfPort = process.env.PORT ? parseInt(process.env.PORT, 10) : 5173;
           const executeTool = async (name: string, args: Record<string, unknown>) => {
@@ -4164,8 +4167,10 @@ function apiProxyPlugin(): Plugin {
           const cacheHit = cacheable ? lookupAnswer(message, cacheScope) : null;
           if (cacheHit) {
             let hitReply = cacheHit.reply;
-            const hitFlags = checkReply(hitReply, { channel, sender });
-            if (hitFlags.length) hitReply += correctionBlock(hitFlags);
+            const hitGate = await epistemicGate(hitReply, { channel, sender, surface: 'inbound-cache' });
+            if (hitGate.flags.length) hitReply += correctionBlock(hitGate.flags);
+            hitReply += hitGate.hedge;
+            scheduleEpistemicAudit({ shippedText: hitReply, ctx: { channel, sender, surface: 'inbound-cache' }, port: selfPort });
             audit({ ok: true, replyLen: hitReply.length, steps: 0, tools: [], provider: 'answer-cache', durationMs: Date.now() - started, cached: true, cacheExact: cacheHit.exact });
             try { recordContinuityTurn(sessionId, message, hitReply); } catch {}
             return jsonRes(res, 200, {
@@ -4182,11 +4187,14 @@ function apiProxyPlugin(): Plugin {
           if (unusable) loopResult = await runTurn();
           let reply = loopResult.content
             || 'I hit a snag finishing that — the governed turn failed. Try again or dispatch it as a task.';
-          // Claim-check gate: stale/invented live-state numbers get a
-          // deterministic correction appended — wrong claims never ship
-          // silently. Cache stores the corrected text.
-          const flags = checkReply(reply, { channel, sender });
-          if (flags.length) reply += correctionBlock(flags);
+          // Epistemic gate: stale/invented claims across ALL checkable
+          // kinds (ports, files, services, fleet, dates, superlatives,
+          // provenance) get deterministic corrections; unverifiable
+          // provenance claims get a hedge note. Cache stores corrected.
+          const gate = await epistemicGate(reply, { channel, sender, surface: 'inbound' });
+          if (gate.flags.length) reply += correctionBlock(gate.flags);
+          reply += gate.hedge;
+          scheduleEpistemicAudit({ shippedText: reply, ctx: { channel, sender, surface: 'inbound' }, port: selfPort });
           if (!loopResult.error && loopResult.toolCalls.length === 0 && loopResult.content && cacheable) {
             storeAnswer(message, cacheScope, reply);
           }
@@ -12548,8 +12556,8 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
                   // (observed: 6/6 steps on list_dir/find before giving up).
                   const WORKSPACE_NOTE = `\n\n[WORKSPACE] Host working directory: ${process.cwd()} — the SyncScript repository root. Sibling roots on this host: /Users/Apple/cortex-repos (Cortex packages + LAUNCH_PLAN.md + RELEASE_STRATEGY.md), /Users/Apple/openclaw-node (OpenClaw source), /Users/Apple/.openclaw (OpenClaw state, skills, config), and .cortex-runtime/ inside the repo (tenants.json, tenant1.key, model-health-history.jsonl, capability-map.jsonl, resilience-report.json, answer-cache.json — durable Cortex state lives HERE, not in /tmp). run_command, list_dir, read_file, search_code and create_document resolve relative paths here by default. RULES: (1) before claiming any file is missing or asking the user for on-disk data, check these roots with list_dir/read_file — never assert absence without a tool check; (2) before citing any live system number (port, SLO count, dirty files, memory %, model health) call system_vitals — never quote remembered telemetry. Prefer relative paths inside the repo; for launch plans, release strategy, or Cortex-package docs check cortex-repos FIRST — do NOT search /Users broadly or ask the user for files that live in a known sibling root.`;
                   const agentSysContent = autonomyMode === 'autonomous'
-                    ? `${sysContentFull}${WORKSPACE_NOTE}${AUTONOMY_DIRECTIVE}`
-                    : `${sysContentFull}${WORKSPACE_NOTE}`;
+                    ? `${sysContentFull}${WORKSPACE_NOTE}${selfReliabilityDigest() ? `\n\n${selfReliabilityDigest()}` : ''}${AUTONOMY_DIRECTIVE}`
+                    : `${sysContentFull}${WORKSPACE_NOTE}${selfReliabilityDigest() ? `\n\n${selfReliabilityDigest()}` : ''}`;
                   const agentMessages: AgentMessage[] = trimmedMsgs.map((m: any) => ({
                     role: m.role === 'assistant' ? 'assistant' : 'user',
                     content: String(m.content || ''),
@@ -12656,8 +12664,12 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
                     : null;
                   if (voiceCacheHit) {
                     let cachedText = voiceCacheHit.reply;
-                    const cachedFlags = checkReply(cachedText, { channel: 'voice' });
-                    if (cachedFlags.length) cachedText += correctionBlock(cachedFlags);
+                    const cachedGate = await epistemicGate(cachedText, { channel: 'voice', surface: 'voice-cache' });
+                    if (cachedGate.flags.length) cachedText += correctionBlock(cachedGate.flags);
+                    cachedText += cachedGate.hedge;
+                    if (parsed.internal !== true) {
+                      scheduleEpistemicAudit({ shippedText: cachedText, ctx: { channel: 'voice', surface: 'voice-cache' } });
+                    }
                     if (parsed.internal !== true) { try { recordContinuityTurn(continuitySid, latestUserMessage, cachedText); } catch {} }
                     try { const offer = detectOffer(cachedText); if (offer) recordOffer(sessionId, offer, cachedText); } catch {}
                     const toks = cachedText.match(/\S+|\s+/g) || [cachedText];
@@ -12683,12 +12695,19 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
                     if (offer) recordOffer(sessionId, offer, loopResult.content || '');
                   } catch {}
 
-                  // Claim-check gate before streaming: corrections ride
-                  // the same token stream, so wrong live-state claims are
-                  // fixed before the user hears them.
+                  // Epistemic gate before streaming: corrections ride
+                  // the same token stream, so wrong claims are fixed
+                  // before the user hears them; unverifiable provenance
+                  // claims get an explicit hedge note.
                   let finalText = loopResult.content || 'I hit a snag finishing that — say "retry" and I will run it again.';
-                  const voiceFlags = checkReply(finalText, { channel: 'voice' });
-                  if (voiceFlags.length) finalText += correctionBlock(voiceFlags);
+                  const voiceGate = await epistemicGate(finalText, { channel: 'voice', surface: 'voice' });
+                  if (voiceGate.flags.length) finalText += correctionBlock(voiceGate.flags);
+                  finalText += voiceGate.hedge;
+                  // Skip audit-of-audit: internal calls (strategic review,
+                  // the epistemic critic itself) don't spawn further audits.
+                  if (parsed.internal !== true) {
+                    scheduleEpistemicAudit({ shippedText: finalText, ctx: { channel: 'voice', surface: 'voice' } });
+                  }
                   if (!loopResult.error && loopResult.toolCalls.length === 0 && loopResult.content && latestUserMessage && isCacheableQuestion(latestUserMessage)) {
                     storeAnswer(latestUserMessage, voiceCacheScope, finalText);
                   }
