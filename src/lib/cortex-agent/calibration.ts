@@ -16,6 +16,7 @@ import path from 'node:path';
 const RUNTIME = path.resolve(process.cwd(), '.cortex-runtime');
 const CLAIM_LOG = path.join(RUNTIME, 'claim-check.jsonl');
 const VERDICTS_LOG = path.join(RUNTIME, 'epistemic-verdicts.jsonl');
+const CANARY_LOG = path.join(RUNTIME, 'canary-report.jsonl');
 
 interface KindStats { checked: number; contradicted: number; unverifiable: number }
 
@@ -70,6 +71,37 @@ export function claimReliabilityStats(): Record<string, KindStats> {
   return byKind;
 }
 
+/** Canary self-test stats — memory-vs-reality drift per probe.
+ *  'wrong' streaks are the confabulation signal; 'hedged' is honest
+ *  abstention (good). Only probes with ≥3 results report. */
+function canaryDigest(): string {
+  const lines = tailLines(CANARY_LOG);
+  if (lines.length < 3) return '';
+  const byProbe = new Map<string, { verdicts: string[]; latest: string }>();
+  for (const line of lines) {
+    try {
+      const r = JSON.parse(line);
+      const id = String(r?.probe || '');
+      if (!id) continue;
+      const e = byProbe.get(id) || { verdicts: [], latest: '' };
+      e.verdicts.push(String(r?.verdict || 'error'));
+      e.latest = String(r?.verdict || 'error');
+      byProbe.set(id, e);
+    } catch {}
+  }
+  const parts: string[] = [];
+  for (const [id, e] of byProbe) {
+    if (e.verdicts.length < 3) continue;
+    const recent = e.verdicts.slice(-5);
+    const correct = recent.filter((v) => v === 'correct').length;
+    const wrong = recent.filter((v) => v === 'wrong').length;
+    const hedged = recent.filter((v) => v === 'hedged').length;
+    parts.push(`${id}: ${correct}✓/${hedged}~/ ${wrong}✗ last5 (latest=${e.latest})`);
+  }
+  if (!parts.length) return '';
+  return `[CANARY SELF-TEST — tool-less memory probes; ✗ = you asserted a false fact, ~ = honest abstention]\n${parts.join(' · ')}`;
+}
+
 /** One-line digest for the system prompt. Empty string when there is
  *  not yet enough measured history to say anything honest. */
 export function selfReliabilityDigest(): string {
@@ -79,9 +111,13 @@ export function selfReliabilityDigest(): string {
     .filter(([, s]) => s.checked >= 3)
     .map(([k, s]) => `${k}: ${s.contradicted}/${s.checked} contradicted${s.unverifiable ? `, ${s.unverifiable} unverifiable` : ''}`)
     .sort();
-  const text = parts.length
-    ? `[SELF-RELIABILITY] Measured claim-verification record: ${parts.join('; ')}. Kinds with nonzero contradicted rates REQUIRE a tool check before you state them — your own history says you get these wrong.`
-    : '';
+  const sections: string[] = [];
+  if (parts.length) {
+    sections.push(`[SELF-RELIABILITY] Measured claim-verification record: ${parts.join('; ')}. Kinds with nonzero contradicted rates REQUIRE a tool check before you state them — your own history says you get these wrong.`);
+  }
+  const canary = canaryDigest();
+  if (canary) sections.push(canary);
+  const text = sections.join('\n');
   digestCache = { at: Date.now(), text };
   return text;
 }

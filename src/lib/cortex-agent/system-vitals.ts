@@ -95,3 +95,50 @@ export function getSystemVitals(): Record<string, unknown> {
     note: 'Live measured values — cite these instead of remembered numbers. For file existence checks use list_dir/read_file on the workspaceRoots paths.',
   };
 }
+
+// ── LIVE STATE digest ─────────────────────────────────────────────────
+// One compact line of measured truth injected into every agentic system
+// prompt. The canary probes proved she confabulates exactly these facts
+// (weekday, port, SLO counts) because nothing in context told her —
+// feeding truth at birth beats prosecuting lies after the fact.
+// Cached 30s: git status + memory_pressure execs are too heavy per-token.
+
+let liveDigestCache: { at: number; text: string } | null = null;
+
+export function liveStateDigest(): string {
+  if (liveDigestCache && Date.now() - liveDigestCache.at < 30_000) return liveDigestCache.text;
+  try {
+    const v = getSystemVitals();
+    const now = new Date();
+    const weekdays = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+    const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    const dateStr = `${weekdays[now.getDay()]} ${months[now.getMonth()]} ${now.getDate()} ${now.getFullYear()}`;
+
+    const parts: string[] = [`date=${dateStr}`];
+    const port = (v.server as any)?.port;
+    if (port) parts.push(`port=${port}`);
+    const up = (v.server as any)?.uptimeSec;
+    if (typeof up === 'number' && up > 0) {
+      parts.push(`uptime=${up >= 86400 ? `${(up / 86400).toFixed(1)}d` : up >= 3600 ? `${(up / 3600).toFixed(1)}h` : `${Math.round(up / 60)}m`}`);
+    }
+    const r = v.resilience as any;
+    if (typeof r?.slosPassing === 'number' && typeof r?.slosTotal === 'number') {
+      parts.push(`SLOs=${r.slosPassing}/${r.slosTotal}${r.pass ? ' pass' : ' FAIL'}${r.stale ? ' (stale)' : ''}`);
+    }
+    const g = v.git as any;
+    if (typeof g?.dirtyFiles === 'number') parts.push(`git=${g.branch}:${g.dirtyFiles}dirty`);
+    const mem = (v.host as any)?.freePct;
+    if (typeof mem === 'number') parts.push(`mem=${mem}%free`);
+    const by = (v.models as any)?.byStatus;
+    if (by && typeof by === 'object') {
+      const counts = Object.entries(by).map(([k, n]) => `${n}${String(k).slice(0, 4)}`).join('/');
+      parts.push(`models=${counts}`);
+    }
+
+    const text = `[LIVE STATE — measured ${new Date().toISOString().slice(11, 19)}Z; cite these instead of memory]\n${parts.join(' · ')}`;
+    liveDigestCache = { at: Date.now(), text };
+    return text;
+  } catch {
+    return '';
+  }
+}

@@ -234,6 +234,7 @@ import { epistemicGate } from './src/lib/cortex-agent/epistemic';
 import { scheduleEpistemicAudit } from './src/lib/cortex-agent/epistemic-audit';
 import { selfReliabilityDigest } from './src/lib/cortex-agent/calibration';
 import { runCanary, canaryReport } from './src/lib/cortex-agent/canary';
+import { liveStateDigest } from './src/lib/cortex-agent/system-vitals';
 import { recallCortexMemory, retainCortexMemory, fetchCortexMemoryGraph } from './src/lib/cortex-memory';
 import { runScenarioSimulation, getSimulationHistory } from './src/lib/cortex-simulation';
 import { probeCompetitorIntelligence, listCompetitorRadar } from './src/lib/cortex-competitor-recon';
@@ -4153,7 +4154,7 @@ function apiProxyPlugin(): Plugin {
           // durable brief the voice/chat path uses (clientMsgCount=0 forces
           // the thin-history branch) and record the exchange afterward.
           const inboundBrief = getContinuityBrief(sessionId, 0);
-          const agentSysContent = `${NEXUS_SYSTEM_PROMPT}\n\nYou are Cortex, the governed cognitive core of SyncScript — deep, honest, and precise.${WORKSPACE_NOTE}${selfReliabilityDigest() ? `\n\n${selfReliabilityDigest()}` : ''}${INBOUND_DIRECTIVE}${inboundBrief ? `\n\n${inboundBrief}` : ''}`;
+          const agentSysContent = `${NEXUS_SYSTEM_PROMPT}\n\nYou are Cortex, the governed cognitive core of SyncScript — deep, honest, and precise.${WORKSPACE_NOTE}${liveStateDigest() ? `\n\n${liveStateDigest()}` : ''}${selfReliabilityDigest() ? `\n\n${selfReliabilityDigest()}` : ''}${INBOUND_DIRECTIVE}${inboundBrief ? `\n\n${inboundBrief}` : ''}`;
           const agentMessages: AgentMessage[] = [{ role: 'user', content: message }];
           const selfPort = process.env.PORT ? parseInt(process.env.PORT, 10) : 5173;
           const executeTool = async (name: string, args: Record<string, unknown>) => {
@@ -12620,8 +12621,8 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
                   // (observed: 6/6 steps on list_dir/find before giving up).
                   const WORKSPACE_NOTE = `\n\n[WORKSPACE] Host working directory: ${process.cwd()} — the SyncScript repository root. Sibling roots on this host: /Users/Apple/cortex-repos (Cortex packages + LAUNCH_PLAN.md + RELEASE_STRATEGY.md), /Users/Apple/openclaw-node (OpenClaw source), /Users/Apple/.openclaw (OpenClaw state, skills, config), and .cortex-runtime/ inside the repo (tenants.json, tenant1.key, model-health-history.jsonl, capability-map.jsonl, resilience-report.json, answer-cache.json — durable Cortex state lives HERE, not in /tmp). run_command, list_dir, read_file, search_code and create_document resolve relative paths here by default. RULES: (1) before claiming any file is missing or asking the user for on-disk data, check these roots with list_dir/read_file — never assert absence without a tool check; (2) before citing any live system number (port, SLO count, dirty files, memory %, model health) call system_vitals — never quote remembered telemetry. Prefer relative paths inside the repo; for launch plans, release strategy, or Cortex-package docs check cortex-repos FIRST — do NOT search /Users broadly or ask the user for files that live in a known sibling root. RULE 3: every live-state claim you make is cross-checked against the tools you ACTUALLY called this turn — claims with no measuring tool get publicly corrected as "cited from memory". Measure first, then speak.`;
                   const agentSysContent = autonomyMode === 'autonomous'
-                    ? `${sysContentFull}${WORKSPACE_NOTE}${selfReliabilityDigest() ? `\n\n${selfReliabilityDigest()}` : ''}${AUTONOMY_DIRECTIVE}`
-                    : `${sysContentFull}${WORKSPACE_NOTE}${selfReliabilityDigest() ? `\n\n${selfReliabilityDigest()}` : ''}`;
+                    ? `${sysContentFull}${WORKSPACE_NOTE}${liveStateDigest() ? `\n\n${liveStateDigest()}` : ''}${selfReliabilityDigest() ? `\n\n${selfReliabilityDigest()}` : ''}${AUTONOMY_DIRECTIVE}`
+                    : `${sysContentFull}${WORKSPACE_NOTE}${liveStateDigest() ? `\n\n${liveStateDigest()}` : ''}${selfReliabilityDigest() ? `\n\n${selfReliabilityDigest()}` : ''}`;
                   const agentMessages: AgentMessage[] = trimmedMsgs.map((m: any) => ({
                     role: m.role === 'assistant' ? 'assistant' : 'user',
                     content: String(m.content || ''),
