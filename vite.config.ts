@@ -229,6 +229,7 @@ import { initEventLog, readEvents, getEventLogStats, verifyEventLog } from './sr
 import { tailModelHealthHistory } from './src/lib/cortex-agents/sentinel';
 import { assessCoverage, assessGoal, fileCapabilityGaps, recordCapabilityUse } from './src/lib/cortex-agent/capability-map';
 import { lookupAnswer, storeAnswer, cacheStats } from './src/lib/cortex-agent/answer-cache';
+import { checkReply, correctionBlock } from './src/lib/cortex-agent/claim-check';
 import { recallCortexMemory, retainCortexMemory, fetchCortexMemoryGraph } from './src/lib/cortex-memory';
 import { runScenarioSimulation, getSimulationHistory } from './src/lib/cortex-simulation';
 import { probeCompetitorIntelligence, listCompetitorRadar } from './src/lib/cortex-competitor-recon';
@@ -4165,13 +4166,16 @@ function apiProxyPlugin(): Plugin {
             && loopResult.error !== 'loop deadline exceeded'
             && loopResult.toolCalls.length === 0;
           if (unusable) loopResult = await runTurn();
-          // Only tool-free, error-free turns are cacheable — anything that
-          // touched the host is context-bound and must never be replayed.
-          if (!loopResult.error && loopResult.toolCalls.length === 0 && loopResult.content) {
-            storeAnswer(message, cacheScope, loopResult.content);
-          }
-          const reply = loopResult.content
+          let reply = loopResult.content
             || 'I hit a snag finishing that — the governed turn failed. Try again or dispatch it as a task.';
+          // Claim-check gate: stale/invented live-state numbers get a
+          // deterministic correction appended — wrong claims never ship
+          // silently. Cache stores the corrected text.
+          const flags = checkReply(reply, { channel, sender });
+          if (flags.length) reply += correctionBlock(flags);
+          if (!loopResult.error && loopResult.toolCalls.length === 0 && loopResult.content) {
+            storeAnswer(message, cacheScope, reply);
+          }
           audit({
             ok: !loopResult.error, replyLen: reply.length,
             steps: loopResult.steps, tools: loopResult.toolCalls.map((t) => t.tool),
@@ -12643,10 +12647,6 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
                     try { res.write(`data: ${JSON.stringify({ type: 'auto_retry', attempt: 2, reason: String(loopResult.error || 'empty response').slice(0, 120) })}\n\n`); } catch {}
                     loopResult = await runTurn();
                   }
-                  if (!loopResult.error && loopResult.toolCalls.length === 0 && loopResult.content && latestUserMessage) {
-                    storeAnswer(latestUserMessage, 'voice', loopResult.content);
-                  }
-
                   // Record a new pending offer from the final answer so the
                   // next affirmation resumes it — closes the "go ahead" loop.
                   try {
@@ -12654,7 +12654,15 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
                     if (offer) recordOffer(sessionId, offer, loopResult.content || '');
                   } catch {}
 
-                  const finalText = loopResult.content || 'I hit a snag finishing that — say "retry" and I will run it again.';
+                  // Claim-check gate before streaming: corrections ride
+                  // the same token stream, so wrong live-state claims are
+                  // fixed before the user hears them.
+                  let finalText = loopResult.content || 'I hit a snag finishing that — say "retry" and I will run it again.';
+                  const voiceFlags = checkReply(finalText, { channel: 'voice' });
+                  if (voiceFlags.length) finalText += correctionBlock(voiceFlags);
+                  if (!loopResult.error && loopResult.toolCalls.length === 0 && loopResult.content && latestUserMessage) {
+                    storeAnswer(latestUserMessage, 'voice', finalText);
+                  }
                   if (parsed.internal !== true) { try { recordContinuityTurn(continuitySid, latestUserMessage, finalText); } catch {} }
                   // Streamed providers already emitted tokens live — only
                   // replay for non-streaming (anthropic) final answers.
