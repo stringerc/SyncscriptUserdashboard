@@ -69,6 +69,10 @@ const HUD_CSS = `
     from { opacity: 0; transform: translateY(0.55em) skewY(4deg); filter: blur(6px); }
     to   { opacity: 1; transform: translateY(0) skewY(0); filter: blur(0); }
   }
+  @keyframes cx-eq-breathe {
+    0%, 100% { transform: scaleY(0.55); }
+    50%      { transform: scaleY(1); }
+  }
   @keyframes cx-blink {
     0%, 49% { opacity: 1; }
     50%, 100% { opacity: 0; }
@@ -1432,7 +1436,27 @@ export default function CortexVisualizerPage() {
           }}
         >
           {faceMode === 'core' && !mapMode ? (
-            <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#38bdf8', boxShadow: '0 0 6px #38bdf8' }} />
+            <span
+              title="Core voice link — live audio level"
+              style={{ display: 'inline-flex', alignItems: 'center', gap: 1.5, height: 12 }}
+            >
+              {[0.45, 0.75, 1, 0.75, 0.45].map((g, i) => (
+                <span
+                  key={i}
+                  style={{
+                    width: 2,
+                    height: `${3 + level * 9 * g}px`,
+                    borderRadius: 1,
+                    background: '#38bdf8',
+                    boxShadow: level > 0.05 ? '0 0 5px rgba(56,189,248,0.8)' : '0 0 4px rgba(56,189,248,0.5)',
+                    transition: 'height 80ms linear, box-shadow 200ms ease',
+                    animation: 'cx-eq-breathe 1.8s ease-in-out infinite',
+                    animationDelay: `${i * 0.14}s`,
+                    transformOrigin: 'bottom',
+                  }}
+                />
+              ))}
+            </span>
           ) : (
             <span style={{ color: '#38bdf8' }}>◈</span>
           )}
