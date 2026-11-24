@@ -228,6 +228,7 @@ import { computeCounselScorecard } from './src/lib/cortex-agents/counsel-scoreca
 import { initEventLog, readEvents, getEventLogStats, verifyEventLog } from './src/lib/cortex-agents/eventlog';
 import { tailModelHealthHistory } from './src/lib/cortex-agents/sentinel';
 import { assessCoverage, assessGoal, fileCapabilityGaps, recordCapabilityUse } from './src/lib/cortex-agent/capability-map';
+import { lookupAnswer, storeAnswer, cacheStats } from './src/lib/cortex-agent/answer-cache';
 import { recallCortexMemory, retainCortexMemory, fetchCortexMemoryGraph } from './src/lib/cortex-memory';
 import { runScenarioSimulation, getSimulationHistory } from './src/lib/cortex-simulation';
 import { probeCompetitorIntelligence, listCompetitorRadar } from './src/lib/cortex-competitor-recon';
@@ -4136,12 +4137,31 @@ function apiProxyPlugin(): Plugin {
             temperature: 0.2,
             emit: () => {},
           });
+          // Semantic-ish cache: repeated informational questions with no
+          // tool use get the saved answer — skips the model bill. Scoped
+          // per sender+channel so answers never leak across identities.
+          const cacheScope = `inbound:${channel}:${sender}`;
           const started = Date.now();
+          const cacheHit = lookupAnswer(message, cacheScope);
+          if (cacheHit) {
+            audit({ ok: true, replyLen: cacheHit.reply.length, steps: 0, tools: [], provider: 'answer-cache', durationMs: Date.now() - started, cached: true, cacheExact: cacheHit.exact });
+            return jsonRes(res, 200, {
+              ok: true, reply: cacheHit.reply, sessionId,
+              steps: 0, tools: [], provider: 'answer-cache',
+              durationMs: Date.now() - started, cached: true,
+              cacheAgeMs: cacheHit.ageMs,
+            });
+          }
           let loopResult = await runTurn();
           const unusable = (!loopResult.content || loopResult.error)
             && loopResult.error !== 'loop deadline exceeded'
             && loopResult.toolCalls.length === 0;
           if (unusable) loopResult = await runTurn();
+          // Only tool-free, error-free turns are cacheable — anything that
+          // touched the host is context-bound and must never be replayed.
+          if (!loopResult.error && loopResult.toolCalls.length === 0 && loopResult.content) {
+            storeAnswer(message, cacheScope, loopResult.content);
+          }
           const reply = loopResult.content
             || 'I hit a snag finishing that — the governed turn failed. Try again or dispatch it as a task.';
           audit({
@@ -12583,12 +12603,32 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
                     emit: (ev) => { try { res.write(`data: ${JSON.stringify(ev)}\n\n`); } catch {} },
                     emitToken: (t) => { try { res.write(`data: ${JSON.stringify({ token: t })}\n\n`); } catch {} },
                   });
+                  // Answer cache: repeated tool-free questions replay the
+                  // saved reply — voice path streams it back as tokens so
+                  // the client can't tell the difference except provider.
+                  const voiceCacheHit = lookupAnswer(latestUserMessage || '', 'voice');
+                  if (voiceCacheHit) {
+                    const cachedText = voiceCacheHit.reply;
+                    if (parsed.internal !== true) { try { recordContinuityTurn(continuitySid, latestUserMessage, cachedText); } catch {} }
+                    try { const offer = detectOffer(cachedText); if (offer) recordOffer(sessionId, offer, cachedText); } catch {}
+                    const toks = cachedText.match(/\S+|\s+/g) || [cachedText];
+                    for (const tok of toks) {
+                      res.write(`data: ${JSON.stringify({ token: tok })}\n\n`);
+                    }
+                    res.write(`data: ${JSON.stringify({ finishReason: 'stop', agentic: { steps: 0, tools: [], provider: 'answer-cache', cached: true, cacheAgeMs: voiceCacheHit.ageMs } })}\n\n`);
+                    res.write('data: [DONE]\n\n');
+                    res.end();
+                    return;
+                  }
                   let loopResult = await runTurn();
                   const unusable = (!loopResult.content || loopResult.error)
                     && loopResult.error !== 'loop deadline exceeded'; // a second 170s pass would blow the voice ceiling
                   if (unusable && loopResult.toolCalls.length === 0) {
                     try { res.write(`data: ${JSON.stringify({ type: 'auto_retry', attempt: 2, reason: String(loopResult.error || 'empty response').slice(0, 120) })}\n\n`); } catch {}
                     loopResult = await runTurn();
+                  }
+                  if (!loopResult.error && loopResult.toolCalls.length === 0 && loopResult.content && latestUserMessage) {
+                    storeAnswer(latestUserMessage, 'voice', loopResult.content);
                   }
 
                   // Record a new pending offer from the final answer so the
