@@ -7,6 +7,12 @@ import { normalizeTechnicalTokensForSpeech } from './tts-lexicon';
 
 export const NEXUS_LANDING_KOKORO_VOICE_ID = 'cortana';
 
+/** Emotional Cortana personas — cloned from the urgent/vulnerable Halo 2
+ *  stem on the second Pocket instance. Per-utterance choices (thinking
+ *  fillers, personas); sticky-voice pinning must never leak one into a
+ *  normal cortana sentence or vice versa. */
+export const NEXUS_EMOTION_TTS_VOICES = new Set(['cortana_tactical', 'cortana_curious', 'cortana_ce']);
+
 type SentenceKind = 'exclamation' | 'question' | 'statement';
 
 export interface NexusProsodySegment {
@@ -69,7 +75,19 @@ export function sanitizeForNexusTTS(raw: string, opts?: { thinking?: boolean }):
   s = s.replace(/\/day/gi, ' per day');
   s = s.replace(/\/hour/gi, ' per hour');
   s = s.replace(/\/week/gi, ' per week');
-  s = s.replace(/(\d+)\s*%/g, '$1 percent');
+  // normalizeTechnicalTokensForSpeech glues ".NN" onto the previous word
+  // ("tier .01%" → "tier.01%"). Handle the glued form first — a letter
+  // before the dot means it's prose, not a decimal ("3.14%" is digits).
+  s = s.replace(/([A-Za-z])\.(\d+)\s*%/g, '$1 0.$2 percent');
+  // Leading-dot percentages (".01%" → "0.01 percent") — the lookbehind
+  // keeps ".14" inside "3.14%" from matching; then the digit rule can't
+  // re-match the "01%" fragment the way it did before.
+  s = s.replace(/(?<!\S)(\.\d+)\s*%/g, '0$1 percent');
+  s = s.replace(/(\d+(?:\.\d+)?)\s*%/g, '$1 percent');
+  // Same glue without %: "score.5" → "score point 5". Lowercase letter
+  // only — "U.S.2"/"Ph.D.2" style abbreviations stay untouched, and
+  // "3.14" is safe because digits precede the dot.
+  s = s.replace(/([a-z])\.(\d)/g, '$1 point $2');
   s = s.replace(/\s*&\s*/g, ' and ');
   s = s.replace(/\s*\+\s*/g, ' and ');
   s = s.replace(/#(\d+)/g, 'number $1');
@@ -87,6 +105,40 @@ export function sanitizeForNexusTTS(raw: string, opts?: { thinking?: boolean }):
   s = s.replace(/\basap\b/gi, 'as soon as possible');
   s = s.replace(/\b24\/7\b/g, 'twenty-four seven');
   s = s.replace(/([A-Z]{2,})\/([A-Z]{2,})/g, '$1 or $2');
+
+  // Metric/symbol vocabulary Cortex's audits actually emit — raw '=', '→',
+  // '≈', 'Φ', 'q99', '595ms', '13/13', '~0.4' all reached the engine
+  // verbatim and garbled the delivery. Spoken forms only.
+  s = s.replace(/→|->|=>|⟶|➜/g, ' to ');
+  s = s.replace(/!=/g, ' not equal to ');
+  s = s.replace(/≤|<=/g, ' at most ').replace(/≥|>=/g, ' at least ');
+  s = s.replace(/=+/g, ' equals ');
+  s = s.replace(/≈/g, ' approximately ');
+  s = s.replace(/(\d+(?:\.\d+)?)\s*~/g, '$1 about ').replace(/\s~\s/g, ' about ');
+  s = s.replace(/~(?=\s*\d)/g, 'about ');
+  s = s.replace(/×/g, ' times ').replace(/±/g, ' plus or minus ');
+  s = s.replace(/°/g, ' degrees ').replace(/∞/g, ' infinity ');
+  s = s.replace(/[Φφ]/g, ' phi ').replace(/[Δδ]/g, ' delta ');
+  s = s.replace(/[Σσ]/g, ' sigma ').replace(/θ/g, ' theta ');
+  s = s.replace(/λ/g, ' lambda ').replace(/μ/g, ' mu ');
+  s = s.replace(/π/g, ' pi ').replace(/Ω/g, ' omega ');
+  s = s.replace(/[αβγ]/g, (ch) => (ch === 'α' ? ' alpha ' : ch === 'β' ? ' beta ' : ' gamma '));
+  s = s.replace(/\b(\d+(?:\.\d+)?)\s*ms\b/gi, '$1 milliseconds');
+  const TTS_UNIT_WORDS: Record<string, string> = {
+    s: 'seconds', m: 'minutes', h: 'hours',
+    min: 'minutes', mins: 'minutes', hr: 'hours', hrs: 'hours',
+  };
+  // \d{1,3} cap keeps decades like "the 1960s" intact (4+ digits can't match).
+  s = s.replace(/\b(\d{1,3}(?:\.\d+)?)\s*(s|m|h|min|mins|hr|hrs)\b/gi,
+    (_m, n, u) => `${n} ${TTS_UNIT_WORDS[String(u).toLowerCase()]}`);
+  const TTS_SMALL_NUMS: Record<string, string> = {
+    '50': 'fifty', '90': 'ninety', '95': 'ninety five',
+    '99': 'ninety nine', '999': 'nine ninety nine',
+  };
+  s = s.replace(/\b([qp])(\d{2,3})\b/g, (_m, p, n) => `${p} ${TTS_SMALL_NUMS[n] ?? n}`);
+  s = s.replace(/(\d+(?:\.\d+)?)\s*\/\s*(\d+(?:\.\d+)?)/g, '$1 out of $2');
+  s = s.replace(/(\d),(?=\d{3}(?:,\d{3})*\b)/g, '$1');
+  s = s.replace(/[\[\]]/g, '');
 
   // Conversational dialogue contractions (guarantees spoken warmth even if written formal)
   s = s.replace(/\bI am\b/g, "I'm");
@@ -192,8 +244,8 @@ export function buildNexusSpeechChunks(text: string): string[] {
   return chunks.length ? chunks : sentences;
 }
 
-export function sentenceToNexusProsodySegment(sentence: string): NexusProsodySegment {
-  const base = sanitizeForNexusTTS(sentence);
+export function sentenceToNexusProsodySegment(sentence: string, opts?: { thinking?: boolean }): NexusProsodySegment {
+  const base = sanitizeForNexusTTS(sentence, opts);
   const sanitized = /[.!?]$/.test(base) ? base : `${base}.`;
   const kind = classifySentence(sanitized);
   const { voice, speed } = PROSODY_MAP[kind];

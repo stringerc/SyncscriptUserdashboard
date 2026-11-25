@@ -4,7 +4,7 @@
  */
 import { disableTtsProxyForSession, isTtsProxyDisabled } from './tts-proxy-session';
 import type { NexusProsodySegment } from './nexus-tts-prosody';
-import { nexusKokoroVoiceCandidates } from './nexus-tts-prosody';
+import { nexusKokoroVoiceCandidates, NEXUS_EMOTION_TTS_VOICES } from './nexus-tts-prosody';
 
 const TTS_REQUEST_TIMEOUT_MS = 24_000;
 const TTS_MAX_RETRIES = 1;
@@ -33,6 +33,9 @@ function pinServedVoice(voiceId: string | null | undefined) {
 function orderedVoiceCandidates(primary: string): string[] {
   const base = nexusKokoroVoiceCandidates(primary);
   if (!stickyTtsVoice || Date.now() >= stickyTtsVoiceUntil) return base;
+  // Emotion personas are per-utterance choices — never let a pinned
+  // emotional voice leak into a normal request (or vice versa).
+  if (NEXUS_EMOTION_TTS_VOICES.has(stickyTtsVoice) !== NEXUS_EMOTION_TTS_VOICES.has(primary)) return base;
   return [stickyTtsVoice, ...base.filter((v) => v !== stickyTtsVoice)];
 }
 

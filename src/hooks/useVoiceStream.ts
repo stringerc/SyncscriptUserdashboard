@@ -16,7 +16,7 @@
 
 import { useState, useRef, useCallback, useEffect } from 'react';
 import { disableTtsProxyForSession, isTtsProxyDisabled } from '../utils/tts-proxy-session';
-import { NEXUS_LANDING_KOKORO_VOICE_ID } from '../utils/nexus-tts-prosody';
+import { NEXUS_LANDING_KOKORO_VOICE_ID, NEXUS_EMOTION_TTS_VOICES } from '../utils/nexus-tts-prosody';
 import { playNexusLandingKokoroTTS } from '../utils/nexus-kokoro-landing-playback';
 import { ensureKokoroOriginsLoaded, getKokoroDirectBases, fetchKokoroBufferForNexusSegment, getLastTtsMeta } from '../utils/nexus-kokoro-tts-fetch';
 import { sentenceToNexusProsodySegment } from '../utils/nexus-tts-prosody';
@@ -118,7 +118,12 @@ function pinStreamVoice(v: string | null | undefined) {
   if (v) { streamServedVoice = v; streamServedVoiceUntil = Date.now() + STREAM_VOICE_MS; }
 }
 function streamVoiceFor(requested: string): string {
-  return streamServedVoice && Date.now() < streamServedVoiceUntil ? streamServedVoice : requested;
+  if (!streamServedVoice || Date.now() >= streamServedVoiceUntil) return requested;
+  // Emotional personas are per-utterance choices (thinking fillers) — a
+  // pinned emotional voice must not leak into normal cortana sentences,
+  // and a pinned cortana must not mute a deliberate persona request.
+  if (NEXUS_EMOTION_TTS_VOICES.has(streamServedVoice) !== NEXUS_EMOTION_TTS_VOICES.has(requested)) return requested;
+  return streamServedVoice;
 }
 
 // Fire-and-forget TTS warmup: pocket-tts cold synthesis measured ~15-21s on a
@@ -1630,7 +1635,7 @@ export function useVoiceStream(options: UseVoiceStreamOptions = {}) {
   }, [playAudioBlob, scheduleStreamBlob, schedulePcmQueue, speakBrowserFallback, finalizeStreamSpeech, prefetchStreamTts, startStreamFetch, speechArbiter, logSpokenSentence]);
 
   /** Progressive streaming sentence playback: queues sentence chunks and starts playing in sub-600ms */
-  const speakStreamSentence = useCallback((sentence: string, isFinal = false, config?: { voice?: string; speed?: number; skipCartesia?: boolean }) => {
+  const speakStreamSentence = useCallback((sentence: string, isFinal = false, config?: { voice?: string; speed?: number; skipCartesia?: boolean; thinking?: boolean }) => {
     if (!sentence?.trim()) return;
     const clean = sentence.trim();
     const voicePreset = config?.voice || ttsVoice || 'cortana';
@@ -1661,7 +1666,7 @@ export function useVoiceStream(options: UseVoiceStreamOptions = {}) {
     // Null result → drainStreamQueue falls back to browser SpeechSynthesis,
     // so Cortex never goes mute on a full neural outage.
     // Fetch is lazy (startFetch) — prefetchStreamTts caps concurrency.
-    const seg = sentenceToNexusProsodySegment(clean);
+    const seg = sentenceToNexusProsodySegment(clean, { thinking: !!config?.thinking });
     const item: StreamSentenceItem = {
       id: Date.now(),
       text: clean,

@@ -266,20 +266,21 @@ const THINKING_INTENT: Array<[RegExp, string[]]> = [
 
 const THINKING_GENERIC = [
   'Hmmmm, gimme a moment…', 'Uhhh, still on it…', 'Ohh, one sec — thinking it through…',
-  'Hmmmm, hang tight, almoost there…', 'Uhhh, working through it now…',
+  'Hmmmm, hang tight, almost there…', 'Uhhh, working through it now…',
   'Oohh, gimme a beat to get this right…', 'Hmmmm, still piecing that together…',
-  'Uhhh, just a seecond — getting it right…', 'Ohh, bear with me — nearly there…',
+  'Uhhh, just a second — getting it right…', 'Ohh, bear with me — nearly there…',
 ];
 
 // Second dead-air beat (~11s): acknowledge the wait honestly — longer,
-// humbler, still short enough to speak. Stretched vowels carry the
-// "she's grinding" quality that '...' beats alone couldn't.
+// humbler, still short enough to speak. Elongated interjections carry the
+// "she's grinding" quality; content words stay clean because stretched
+// mid-word vowels render as metallic artifacts on the clone engine.
 const THINKING_LONG = [
-  'Hmmmm… almoost there — gimme a few more seconds…',
-  'Uhhh… still working on it — this one is taking a momennt…',
-  'Oohh… hang tight, getting cloooose now…',
+  'Hmmmm… almost there — gimme a few more seconds…',
+  'Uhhh… still working on it — this one is taking a moment…',
+  'Oohh… hang tight, getting close now…',
   'Hmmmm… still on it — deeper than it looks…',
-  'Uhhh… almoost—there… few more seconds…',
+  'Uhhh… almost—there… few more seconds…',
 ];
 
 function pickLine(pool: string[], avoid?: string): string {
@@ -1459,7 +1460,15 @@ export function useVisualizerVoice(enabled: boolean, onState: (speaking: boolean
         else if (emo.primary === 'confused') speechRate = 0.94;
       }
       if (think) speechRate = Math.max(0.88, speechRate * 0.94);
-      vsRef.current.speakStreamSentence(ttsText, isFinal, { voice: 'cortana', speed: speechRate });
+      // Thinking/meta utterances speak through the emotional Cortana clone
+      // (:8912, urgent/vulnerable stem) — fillers mutter, answers stay on
+      // the conversational :8911 voice. The sticky-voice guard in
+      // useVoiceStream keeps the persona from leaking into replies.
+      vsRef.current.speakStreamSentence(ttsText, isFinal, {
+        voice: think ? 'cortana_curious' : 'cortana',
+        speed: speechRate,
+        thinking: think,
+      });
     };
 
     const speakWhole = async (text: string) => {
