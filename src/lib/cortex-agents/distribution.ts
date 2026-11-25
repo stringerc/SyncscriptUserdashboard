@@ -279,6 +279,39 @@ async function runDreaminaCollect(ctx: AgentContext, payload: Record<string, unk
   return { jobId, ...status };
 }
 
+/** Extension-relay liveness — reddit tools only work while a tab stays
+ *  attached via the OpenClaw extension (badge ON). Surfaced in
+ *  distribution_status so "is the path still alive" is a measured fact,
+ *  not a surprise at the next 6h scan. */
+async function probeExtensionRelay(): Promise<{ connected: boolean; tabs: number; redditTab: boolean; port?: number }> {
+  try {
+    const secretPath = path.join(process.env.HOME || '', '.openclaw', 'credentials', 'browser-extension-relay.secret');
+    const token = fs.readFileSync(secretPath, 'utf8').trim();
+    if (!token) return { connected: false, tabs: 0, redditTab: false };
+    const auth = `Basic ${Buffer.from(`openclaw-internal:${token}`).toString('base64')}`;
+    for (const port of [18799, 18792]) {
+      try {
+        const ctrl = new AbortController();
+        const timer = setTimeout(() => ctrl.abort(), 1200);
+        const res = await fetch(`http://127.0.0.1:${port}/json/list`, { headers: { Authorization: auth }, signal: ctrl.signal });
+        clearTimeout(timer);
+        if (!res.ok) continue;
+        const targets = await res.json();
+        const pages = (Array.isArray(targets) ? targets : []).filter((t: any) => t.type === 'page');
+        return {
+          connected: true,
+          tabs: pages.length,
+          redditTab: pages.some((t: any) => /reddit\.com/.test(String(t.url || ''))),
+          port,
+        };
+      } catch { /* try next port */ }
+    }
+    return { connected: false, tabs: 0, redditTab: false };
+  } catch {
+    return { connected: false, tabs: 0, redditTab: false };
+  }
+}
+
 async function runDistributionStatus(ctx: AgentContext, _payload: Record<string, unknown>) {
   ctx.progress(0.3);
   const read = (p: string, max = 4000) => {
@@ -310,6 +343,7 @@ async function runDistributionStatus(ctx: AgentContext, _payload: Record<string,
     omniStagingReport: omniStaging ? JSON.parse(omniStaging) : null,
     launchLogTail: launchLog,
     browserShotAt: shotTs,
+    extensionRelay: await probeExtensionRelay(),
     checkedAt: new Date().toISOString(),
   };
 }
