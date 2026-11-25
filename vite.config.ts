@@ -14522,18 +14522,26 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
         const w24 = snap.runtime?.window24h || {};
         let w24Completed = 0, w24Failed = 0;
         const w24Worst: Array<{ agentId: string; failed: number; completed: number; byClass: Record<string, number> }> = [];
+        const w24PerAgent: Array<{ agentId: string; completed: number; failed: number; failureRate: number | null }> = [];
         for (const [aid, s] of Object.entries(w24)) {
           w24Completed += s.completed; w24Failed += s.failed;
+          const total = s.completed + s.failed;
+          w24PerAgent.push({ agentId: aid, completed: s.completed, failed: s.failed, failureRate: total > 0 ? +(s.failed / total).toFixed(3) : null });
           if (s.failed > 0) w24Worst.push({ agentId: aid, ...s });
         }
         w24Worst.sort((a, b) => b.failed - a.failed);
+        w24PerAgent.sort((a, b) => (b.failureRate ?? -1) - (a.failureRate ?? -1) || b.failed - a.failed);
         res.end(JSON.stringify({
           ok: true, ...snap, forecasts, mission,
           fleet24h: {
             completed: w24Completed, failed: w24Failed,
             failureRate: (w24Completed + w24Failed) > 0 ? +(w24Failed / (w24Completed + w24Failed)).toFixed(3) : null,
+            // Every agent's 24h record — quote THIS for per-agent rates.
+            // Lifetime tasksCompleted/tasksFailed on each agent are cumulative
+            // history, not current health.
+            perAgent: w24PerAgent,
             worst: w24Worst.slice(0, 6),
-            note: 'Rolling 24h window over retained tasks — use this, not lifetime tasksFailed counters, for current fleet health.',
+            note: 'Rolling 24h window over retained tasks — use fleet24h.perAgent for per-agent rates and this rollup for fleet health; lifetime tasksFailed counters are cumulative history, not current health.',
           },
         }));
       });
@@ -15948,14 +15956,21 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
             byStatusProbed[m.status] = (byStatusProbed[m.status] ?? 0) + 1;
           }
         }
+        // Headline-first honesty: auditors kept quoting "N healthy out of
+        // 476" — the raw catalog length — because the probed denominator was
+        // nested in summary. Put the routable truth in the payload headline.
+        const probedTotal = models.length - catalogTotal;
+        const headline = `${byStatusProbed.healthy ?? 0} healthy, ${byStatusProbed.degraded ?? 0} degraded, ${byStatusProbed.down ?? 0} down, ${byStatusProbed.unknown ?? 0} unprobed of ${probedTotal} routable models` +
+          (catalogTotal ? ` (+${catalogTotal} catalog probation: ${catalogTotal - catalogProbed} never probed — 'unknown' means unprobed, not unhealthy; do NOT count the ${models.length}-entry models array as fleet health)` : '');
         res.end(JSON.stringify({
           ok: true,
+          headline,
           models,
           summary: {
             total: models.length,
             byStatus,
             // The fleet that can actually route today: matrix + promoted probes.
-            probed: { total: models.length - catalogTotal, byStatus: byStatusProbed },
+            probed: { total: probedTotal, byStatus: byStatusProbed },
             // Catalog probation: discovered but unvetted — 'unknown' means
             // "not yet probed", not "failed". Sentinel rotates probes through.
             catalogProbation: { total: catalogTotal, probed: catalogProbed, unprobed: catalogTotal - catalogProbed },
