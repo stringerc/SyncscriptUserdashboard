@@ -12452,7 +12452,15 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
                 : (parsed.context === 'cortex'
                   ? `${sysPrefix}\n\nRespond with deep cognitive authenticity.`
                   : NEXUS_SYSTEM_PROMPT);
-              const sysContentFull = `${continuityBrief ? `${sysContent}\n\n${continuityBrief}` : sysContent}${goalDigest}${worldStateDigest}`;
+              // LIVE STATE on the legacy chat path too: non-agentic cortex
+              // turns previously had no measured truth in context — the
+              // canary-proven confabulation lane. internal:true calls
+              // (canary probes, audit critic) stay un-instrumented so they
+              // keep measuring the raw model.
+              const liveStateBlock = parsed.context === 'cortex' && parsed.internal !== true
+                ? (liveStateDigest() ? `\n\n${liveStateDigest()}` : '')
+                : '';
+              const sysContentFull = `${continuityBrief ? `${sysContent}\n\n${continuityBrief}` : sysContent}${goalDigest}${worldStateDigest}${liveStateBlock}`;
 
               const chatMessages = [
                 { role: 'system', content: sysContentFull },
@@ -13164,6 +13172,27 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
                       forwardedTokens++;
                       forwardedText += heldTail;
                       res.write(`data: ${JSON.stringify({ token: heldTail, finishReason: null })}\n\n`);
+                    }
+                    // Epistemic gate on the legacy path: non-agentic cortex
+                    // chat bypassed the loop's gate entirely, so live-number
+                    // claims shipped ungated. Gate the completed text and
+                    // stream corrections before DONE; internal calls
+                    // (canary probes, audit critic) stay un-gated.
+                    if (parsed.context === 'cortex' && parsed.internal !== true && forwardedText) {
+                      try {
+                        const gate = await epistemicGate(forwardedText, { surface: 'chat' });
+                        let correction = gate.flags.length ? correctionBlock(gate.flags) : '';
+                        correction += gate.hedge || '';
+                        if (correction.trim()) {
+                          forwardedText += correction;
+                          res.write(`data: ${JSON.stringify({ token: correction, finishReason: null })}\n\n`);
+                          scheduleEpistemicAudit({
+                            shippedText: forwardedText,
+                            ctx: { surface: 'chat' },
+                            port: process.env.PORT ? parseInt(process.env.PORT, 10) : 5173,
+                          });
+                        }
+                      } catch {}
                     }
                     // Intention Kernel: record unfulfilled offers so the next
                     // affirmation ("go ahead") resumes them — every cortex
