@@ -208,6 +208,91 @@ const GENERIC_FILLERS = [
   'Working on it now.',
 ];
 
+// ── Thinking-phase fillers (mid-turn dead-air narration) ──────────────
+// These fire while the model/tools actually work — unlike the openers
+// above, they can name real activity because the turn tracks executed
+// tools (turnTools). Two honesty rules, same contract as the epistemic
+// layer: only narrate work that truly ran, and keep lines speakable.
+
+const TOOL_NARRATION: Array<[RegExp, string[]]> = [
+  [/web_?search|search/i, ['Running the search now.', 'Searching — one moment.', 'Pulling results for you.']],
+  [/read_file|list_dir|read/i, ['Reading through the files.', 'Looking at the code now.', 'Reading that through.']],
+  [/search_code|grep|code_search/i, ['Searching the codebase.', 'Digging through the code.']],
+  [/run_command|exec|command|shell|terminal/i, ['Running that command.', 'Executing — should be quick.', 'On it.']],
+  [/write_file|edit_file|patch_file|write|edit/i, ['Making the changes now.', 'Writing that up.', 'Applying the edit.']],
+  [/memory|recall|remember/i, ['Checking memory on that.', 'Searching what I have stored.']],
+  [/map|globe|fly|geocode/i, ['Moving the map.', 'Flying you there now.']],
+  [/document|docx|pdf|artifact|surface|chart|table/i, ['Putting that together.', 'Compiling it for you.']],
+  [/delegate|handoff|agent|dispatch|spawn|task/i, ['Dispatching that to the fleet.', 'Handing it to the right agent.', 'Routing it now.']],
+];
+
+const THINKING_INTENT: Array<[RegExp, string[]]> = [
+  [/\b(status|system info|cpu|memory usage|ram|disk|battery|uptime|specs?|diagnostic|health|fleet|models?)\b/i, [
+    'Checking the fleet now.', 'Pulling live telemetry — one sec.', 'Reading system status.',
+  ]],
+  [/\b(search|look ?up|google|research|news|weather|find out|who is|latest|source)\b/i, [
+    'Digging into that now.', 'Pulling sources — give me a moment.', 'Looking into it.',
+  ]],
+  [/\b(remember|memory|recall|forgot|note that|save (this|that)|episodic)\b/i, [
+    'Searching memory.', 'Checking what I have stored.', 'Digging into memory.',
+  ]],
+  [/\b(file|folder|directory|read|write|document|spreadsheet|code|repo|git|commit|script|\.ts|\.py|\.js)\b/i, [
+    'Reading through that.', 'Working through the code.', 'Let me trace through it.',
+  ]],
+  [/\b(open|browse|website|url|tab|chrome|navigate|click|screenshot)\b/i, [
+    'Opening that up.', 'Pulling it up now.', 'On it — one moment.',
+  ]],
+  [/\b(call|phone|dial|facetime)\b/i, ['Getting that started.', 'One moment — dialing.']],
+  [/\b(bug|error|fix|heal|escalate|broken|exception|crash|regression|self[- ]heal|patch)\b/i, [
+    'Diagnosing that now.', 'Escalating — checking the gate.', 'Tracing the failure.',
+  ]],
+  [/\b(mission|schedule|remind|calendar|plan|task|todo|goal)\b/i, [
+    'Planning that out.', 'Setting that up — one moment.', 'Organizing it now.',
+  ]],
+  [/\b(run|execute|command|script|install|build|deploy|restart|stop|kill|process)\b/i, [
+    'Running that now.', 'Executing — give me a sec.', 'On it.',
+  ]],
+  [/\b(write|draft|compose|create|generate|make|resume|essay|email|letter|story|report)\b/i, [
+    'Composing that now.', 'Drafting it — one moment.', 'Putting it together.',
+  ]],
+];
+
+const THINKING_GENERIC = [
+  'Give me a moment.', 'Still on it.', 'One sec — thinking it through.',
+  'Hang tight, almost there.', 'Working through it now.',
+  'Give me a beat to get this right.', 'Still piecing that together.',
+  'Just a moment — getting it right.', 'Bear with me — nearly there.',
+];
+
+// Second dead-air beat (~11s): acknowledge the wait honestly instead of
+// repeating a filler — longer, humbler, still short enough to speak.
+const THINKING_LONG = [
+  'Still working on it — this one is taking a moment.',
+  'Almost there — give me a few more seconds.',
+  'Still on it — deeper than it looks.',
+  'Hang tight — getting close now.',
+];
+
+function pickLine(pool: string[], avoid?: string): string {
+  if (pool.length <= 1) return pool[0] ?? '';
+  let pick = pool[Math.floor(Math.random() * pool.length)];
+  let guard = 0;
+  while (pick === avoid && guard++ < 6) pick = pool[Math.floor(Math.random() * pool.length)];
+  return pick;
+}
+
+/** Mid-turn filler: real tool activity > utterance intent > generic. */
+function thinkingFillerLine(utterance: string, tools: string[], slot: number, avoid?: string): string {
+  if (slot === 1) return pickLine(THINKING_LONG, avoid);
+  if (tools.length) {
+    const last = tools[tools.length - 1];
+    const pool = TOOL_NARRATION.find(([re]) => re.test(last))?.[1];
+    return pool ? pickLine(pool, avoid) : `Working through ${last.replace(/_/g, ' ')} — one moment.`;
+  }
+  const pool = THINKING_INTENT.find(([re]) => re.test(utterance))?.[1] ?? THINKING_GENERIC;
+  return pickLine(pool, avoid);
+}
+
 let lastFiller = '';
 
 function looksLikeTask(text: string): boolean {
@@ -1403,6 +1488,11 @@ export function useVisualizerVoice(enabled: boolean, onState: (speaking: boolean
     const EMPTY_RESPONSE_RE = /upstream model returned an empty response/i;
     let lastProgressAt = Date.now();
     const touchProgress = () => { lastProgressAt = Date.now(); };
+    // Tools actually executed this turn — thinking fillers narrate real
+    // activity ("running the search") instead of generic stalling, and only
+    // ever name work that truly happened (same honesty contract as the
+    // epistemic layer: no unmeasured claims, even in filler speech).
+    const turnTools: string[] = [];
     const speakUnlessEmpty = (s: string, isFinal: boolean) => {
       touchProgress();
       if (!EMPTY_RESPONSE_RE.test(s)) speakSentence(s, isFinal);
@@ -1547,6 +1637,7 @@ MANDATORY: weave a 3-4 sentence spoken "state of being" answer citing at least o
               try { openWeatherModal(a as WeatherArtifact); } catch { }
             }
           }
+          turnTools.push(String(c.tool || 'tool'));
           records.push(`[Host Tool Execution Record: ${c.tool}(${JSON.stringify(c.args).slice(0, 200)})]\nResult: ${sanitizeToolResult(result)}`);
         }
         if (state.interruptRequested || cancelled) break;
@@ -2151,25 +2242,18 @@ MANDATORY: weave a 3-4 sentence spoken "state of being" answer citing at least o
 
       // ── Thinking filler ──
       // Long provider/tool waits are dead air — after ~2.8s of thinking
-      // with no speech, say a short human filler; one more at ~11s if the
-      // turn is still grinding. Never fires while Cortex is already
+      // with no speech, narrate what's actually happening (executed tools
+      // first, then utterance intent, then generic); one more at ~11s if
+      // the turn is still grinding. Never fires while Cortex is already
       // talking, after interrupt, or once the turn went stale.
-      const THINKING_FILLERS = [
-        'Give me a moment…',
-        'Still thinking…',
-        'One sec — digging into it…',
-        'Hang tight…',
-        'Working on it…',
-      ];
-      let lastFillerIdx = -1;
+      let lastFillerLine = '';
       const fillerAt = (delayMs: number, slot: number) => {
         setTimeout(() => {
           if (cancelled || stale() || state.interruptRequested || !state.turnInFlight) return;
           if (vsRef.current.isSpeaking) return; // already talking — no filler needed
-          let idx = Math.floor(Math.random() * THINKING_FILLERS.length);
-          if (idx === lastFillerIdx) idx = (idx + 1) % THINKING_FILLERS.length;
-          lastFillerIdx = idx;
-          speakSentence(THINKING_FILLERS[idx], false);
+          const line = thinkingFillerLine(text, turnTools, slot, lastFillerLine);
+          lastFillerLine = line;
+          speakSentence(line, false);
         }, delayMs);
       };
       fillerAt(2800, 0);

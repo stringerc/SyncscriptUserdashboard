@@ -56,8 +56,23 @@ function modelVitals(): Record<string, unknown> {
     const r = JSON.parse(fs.readFileSync(path.join(RUNTIME, 'model-registry.json'), 'utf8'));
     const models = Array.isArray(r?.models) ? r.models : [];
     const by: Record<string, number> = {};
-    for (const m of models) by[String(m?.status || 'unknown')] = (by[String(m?.status || 'unknown')] || 0) + 1;
-    return { total: models.length, byStatus: by, savedAt: r?.savedAt ?? null };
+    // Honest split: catalog entries are probation-only (discovered, mostly
+    // never probed, unroutable). Counting them as fleet health lies — the
+    // digest must show the routable-probed denominator separately.
+    const probedBy: Record<string, number> = {};
+    let catalogTotal = 0, catalogProbed = 0, probedTotal = 0;
+    for (const m of models) {
+      const st = String(m?.status || 'unknown');
+      by[st] = (by[st] || 0) + 1;
+      if (m?.source === 'catalog') {
+        catalogTotal++;
+        if (m?.lastCheckAt) catalogProbed++;
+      } else {
+        probedTotal++;
+        probedBy[st] = (probedBy[st] || 0) + 1;
+      }
+    }
+    return { total: models.length, byStatus: by, probed: { total: probedTotal, byStatus: probedBy }, catalogProbation: { total: catalogTotal, probed: catalogProbed }, savedAt: r?.savedAt ?? null };
   } catch {
     return { error: 'no model registry — sentinel has not run yet' };
   }
@@ -129,10 +144,21 @@ export function liveStateDigest(): string {
     if (typeof g?.dirtyFiles === 'number') parts.push(`git=${g.branch}:${g.dirtyFiles}dirty`);
     const mem = (v.host as any)?.freePct;
     if (typeof mem === 'number') parts.push(`mem=${mem}%free`);
-    const by = (v.models as any)?.byStatus;
+    const mv = v.models as any;
+    const by = mv?.byStatus;
     if (by && typeof by === 'object') {
       const counts = Object.entries(by).map(([k, n]) => `${n}${String(k).slice(0, 4)}`).join('/');
-      parts.push(`models=${counts}`);
+      // Lead with the honest denominator: probed/routable models only.
+      // The raw 476-count includes hundreds of unprobed catalog probation
+      // entries — quoting it as "fleet health" is the misread this fixes.
+      const pb = mv?.probed?.byStatus;
+      if (pb && typeof pb === 'object') {
+        const pcounts = Object.entries(pb).map(([k, n]) => `${n}${String(k).slice(0, 4)}`).join('/');
+        const catUnprobed = (mv?.catalogProbation?.total ?? 0) - (mv?.catalogProbation?.probed ?? 0);
+        parts.push(`models=${pcounts} of ${mv.probed.total} routable${catUnprobed > 0 ? ` (+${catUnprobed} catalog-unprobed)` : ''}`);
+      } else {
+        parts.push(`models=${counts}`);
+      }
     }
 
     const text = `[LIVE STATE — measured ${new Date().toISOString().slice(11, 19)}Z; cite these instead of memory]\n${parts.join(' · ')}`;

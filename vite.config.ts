@@ -14496,7 +14496,28 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
             experiments: ms.experiments.filter((e) => e.status === 'running').map((e) => ({ id: e.id, routineId: e.routineId, kind: e.kind, variantMin: e.variant.intervalMin })),
           };
         } catch { }
-        res.end(JSON.stringify({ ok: true, ...agentRuntime.snapshot(), forecasts, mission }));
+        const snap = agentRuntime.snapshot();
+        // Flattened 24h rollup at top level — auditors kept quoting lifetime
+        // failure counters (which accumulate old dependency outages) because
+        // the honest window was nested under runtime.window24h. This is the
+        // "how is the fleet doing right now" line, unmissable.
+        const w24 = snap.runtime?.window24h || {};
+        let w24Completed = 0, w24Failed = 0;
+        const w24Worst: Array<{ agentId: string; failed: number; completed: number; byClass: Record<string, number> }> = [];
+        for (const [aid, s] of Object.entries(w24)) {
+          w24Completed += s.completed; w24Failed += s.failed;
+          if (s.failed > 0) w24Worst.push({ agentId: aid, ...s });
+        }
+        w24Worst.sort((a, b) => b.failed - a.failed);
+        res.end(JSON.stringify({
+          ok: true, ...snap, forecasts, mission,
+          fleet24h: {
+            completed: w24Completed, failed: w24Failed,
+            failureRate: (w24Completed + w24Failed) > 0 ? +(w24Failed / (w24Completed + w24Failed)).toFixed(3) : null,
+            worst: w24Worst.slice(0, 6),
+            note: 'Rolling 24h window over retained tasks — use this, not lifetime tasksFailed counters, for current fleet health.',
+          },
+        }));
       });
 
       // GET /api/cortex/traces — LLM call trace tail (read-only observability).
