@@ -23,7 +23,8 @@ const LOG = path.join(RUNTIME, 'claim-check.jsonl');
 
 export interface ClaimFlag {
   kind: 'port' | 'slos' | 'dirty-files' | 'memory' | 'file-exists' | 'file-missing'
-    | 'service' | 'fleet' | 'uptime' | 'date' | 'resilience' | 'superlative';
+    | 'service' | 'fleet' | 'uptime' | 'date' | 'resilience' | 'superlative'
+    | 'selfreport';
   claim: string;
   expected: string;
   actual: string;

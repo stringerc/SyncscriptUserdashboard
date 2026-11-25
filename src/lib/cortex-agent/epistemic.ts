@@ -24,13 +24,14 @@ import net from 'node:net';
 import path from 'node:path';
 import { getSystemVitals } from './system-vitals';
 import { verifyReplyClaims, type ClaimFlag } from './claim-check';
+import { claimReliabilityStats } from './calibration';
 
 const RUNTIME = path.resolve(process.cwd(), '.cortex-runtime');
 const VERDICTS_LOG = path.join(RUNTIME, 'epistemic-verdicts.jsonl');
 
 export type EpistemicVerdictKind =
   | 'service' | 'fleet' | 'uptime' | 'date' | 'resilience' | 'superlative'
-  | 'provenance' | 'proposition';
+  | 'provenance' | 'selfreport' | 'proposition';
 
 export interface EpistemicVerdict {
   ts: number;
@@ -177,6 +178,38 @@ function extractClaims(text: string): RawClaim[] {
     push('provenance', snippet.slice(0, 120), m, { reason: 'conversation-provenance' });
   }
 
+  // Self-report claims — first-person assertions about her own measured
+  // reliability ("I always fail at fleet claims", "half my claims get
+  // contradicted"). The verdict ledgers ARE the oracle: her actual
+  // per-kind contradicted rates live in claimReliabilityStats(). This
+  // was the #1 unverifiable cluster in her own audit (~33%).
+  {
+    const sre = new RegExp(SENT_RE.source, 'g');
+    let sm: RegExpExecArray | null;
+    while ((sm = sre.exec(text))) {
+      const sent = sm[0].trim();
+      if (sent.length < 20 || sent.length > 300) continue;
+      if (!SELF_REF_RE.test(sent)) continue;
+      const freq = SELF_FREQ(sent);
+      if (!freq) continue;
+      const evalHit = SELF_EVAL(sent);
+      const rateM = sent.match(/(\d{1,3})\s?(?:%|percent)\b/i);
+      if (!evalHit && !rateM) continue;
+      const kind = SELF_KIND(sent);
+      // value: freq|polarity|kind|ratePct|direction
+      const ratePct = rateM ? rateM[1] : '';
+      const direction = /wrong|incorrect|contradict|fail|error|fabricat|confabulat|hallucinat|unverifiable/i.test(sent)
+        ? 'bad' : /right|correct|verified|accurate|reliable/i.test(sent) ? 'good' : '';
+      const polarity = evalHit === 'neg' ? (freq === 'never' || freq === 'rarely' ? 'success' : 'fail')
+        : evalHit === 'pos' ? 'success' : '';
+      if (!polarity && !ratePct) continue;
+      push('selfreport', sent.replace(/\s+/g, ' ').slice(0, 140), sm, {
+        value: `${freq}|${polarity}|${kind}|${ratePct}|${direction}`,
+      });
+      if (out.length > 60) break;
+    }
+  }
+
   // Dedupe on kind+claim
   const seen = new Set<string>();
   return out.filter((c) => {
@@ -199,8 +232,45 @@ const SYSTEM_NOUN_RE = /\b(server|service|services|model|models|slo|slos|memory|
 const ASSERTION_RE = /\b(is|are|was|were|has|have|had|does|do|did|shows?|reports?|currently|remains?|stands?|total(?:s|led|ing)?|counts?|runs?|listens?|responds?|fails?|passes?|degraded|healthy|down|up|online|offline|missing|exists?|present|absent|active|paused|stopped|running|working|green|red|broken|fine|ok|okay|good|bad|wrong|right|true|false|empty|full|loaded|ready|live|dead|idle|busy|slow|fast|high|low|low|old|new|recent|latest|current|previous|next|last|first|only|all|every|each|no|none|zero|some|many|few|several|multiple|single|double|half|quarter|third)\b/i;
 const HEDGE_OR_MODAL_RE = /\b(might|may|could|should|would|will|shall|can|cannot|can't|won't|don't|doesn't|didn't|isn't|aren't|wasn't|weren't|not|never|no|none|without|unless|if|whether|maybe|perhaps|probably|possibly|likely|unlikely|think|believe|guess|suspect|assume|hope|wish|want|need|plan|intend|going to|about to|try|attempt|try to|let me|i'?ll|i will|i'?m going|checking|one moment|give me|stand ?by|wait|hold on|suppose|imagine|consider|recommend|suggest|offer|propose)\b/i;
 
-function overlaps(a: [number, number], b: [number, number]): boolean {
-  return a[0] < b[1] && b[0] < a[1];
+const overlaps = (a: [number, number], b: [number, number]): boolean => a[0] < b[1] && b[0] < a[1];
+
+// ── self-report detection helpers ─────────────────────────────────────
+const SELF_REF_RE = /\b(i|cortex|my|mine)\b/i;
+const SELF_ABS_RE = /\b(always|never|invariably|every time|all the time|constantly)\b/i;
+const SELF_TEND_RE = /\b(usually|keep|keeps|tend to|often|routinely|frequently|most of the time)\b/i;
+const SELF_WEAK_RE = /\b(sometimes|rarely|seldom|half the time|occasionally)\b/i;
+const SELF_NEG_RE = /\b(wrong|incorrect|fail|fails|failing|err|errs|error|errors|miss|misses|confabulate|confabulates|confabulation|contradict|contradicted|misremember|misstate|hallucinate|inaccurate|unreliable|fabricat\w+|made up|made-up)\b/i;
+const SELF_POS_RE = /\b(accurate|correct|reliable|right|verified|trustworthy|solid)\b/i;
+
+function SELF_FREQ(sent: string): 'absolute' | 'tendency' | 'weak' | 'never' | 'rarely' | null {
+  if (/\bnever\b/i.test(sent)) return 'never';
+  if (/\brarely|seldom\b/i.test(sent)) return 'rarely';
+  if (SELF_ABS_RE.test(sent)) return 'absolute';
+  if (SELF_TEND_RE.test(sent)) return 'tendency';
+  if (SELF_WEAK_RE.test(sent)) return 'weak';
+  return null;
+}
+function SELF_EVAL(sent: string): 'neg' | 'pos' | null {
+  if (SELF_NEG_RE.test(sent)) return 'neg';
+  if (SELF_POS_RE.test(sent)) return 'pos';
+  return null;
+}
+const SELF_KIND_MAP: Array<[RegExp, string]> = [
+  [/\bports?\b|port\s*\d{2,5}|localhost:\d/i, 'port'],
+  [/\bslo|resilience|the gate\b/i, 'slos'],
+  [/\bdirty|git status|uncommitted|untracked/i, 'dirty-files'],
+  [/\bmemory|\bmem\b|\bram\b|memory.free/i, 'memory'],
+  [/\bfleet|model health|models? claims?|model counts?/i, 'fleet'],
+  [/\bdate|weekday|day of the week|calendar|\btoday\b|\btomorrow\b/i, 'date'],
+  [/\bfile exists?|files? exist/i, 'file-exists'],
+  [/\bfile missing|files? missing|missing files?/i, 'file-missing'],
+  [/\bservice|services|kokoro|dev ?server|gateway|tts|stt|daemon/i, 'service'],
+  [/\buptime|up for\b/i, 'uptime'],
+  [/\bsuperlative|everything (?:is|works|fine|healthy)|all healthy|no issues/i, 'superlative'],
+];
+function SELF_KIND(sent: string): string {
+  for (const [re, k] of SELF_KIND_MAP) if (re.test(sent)) return k;
+  return 'aggregate';
 }
 
 /** Factual sentences not covered by any typed claim → propositions.
@@ -342,6 +412,74 @@ async function verifyService(claim: RawClaim): Promise<{ verdict: 'verified' | '
   return { verdict: ok ? 'verified' : 'contradicted', actual: `${name} probe=${open ? 'open' : 'closed'}` };
 }
 
+/** Self-report oracle: her own verdict ledgers. value encodes
+ *  freq|polarity|kind|ratePct|direction. Abstains on weak frequencies,
+ *  thin samples, and ambiguous middle rates — a false correction is
+ *  its own lie. */
+function verifySelfReport(claim: RawClaim): { verdict: 'verified' | 'contradicted'; actual: string } | null {
+  const stats = claimReliabilityStats();
+  const parts = (claim.value || '').split('|');
+  const [freq, polarity, kind, ratePct, direction] = parts;
+  if (freq === 'weak') return null;
+
+  const agg = () => {
+    let checked = 0, contradicted = 0, unverifiable = 0;
+    for (const s of Object.values(stats)) {
+      checked += s.checked; contradicted += s.contradicted; unverifiable += s.unverifiable;
+    }
+    return { checked, contradicted, unverifiable };
+  };
+
+  // Numeric rate claims — "N% of my claims are wrong/right".
+  if (ratePct) {
+    const claimed = Number(ratePct);
+    if (!Number.isFinite(claimed)) return null;
+    let actualPct: number | null = null;
+    let label = '';
+    if (kind === 'aggregate' || !stats[kind] || stats[kind].checked < 3) {
+      const a = agg();
+      if (a.checked < 5) return null;
+      actualPct = direction === 'good'
+        ? (a.checked - a.contradicted - a.unverifiable) / a.checked * 100
+        : a.contradicted / a.checked * 100;
+      label = `aggregate ${direction === 'good' ? 'verified' : 'contradicted'} rate ${actualPct.toFixed(0)}% (${a.contradicted} contradicted / ${a.checked} checked)`;
+    } else {
+      const s = stats[kind];
+      actualPct = direction === 'good'
+        ? (s.checked - s.contradicted - s.unverifiable) / s.checked * 100
+        : s.contradicted / s.checked * 100;
+      label = `${kind} ${direction === 'good' ? 'verified' : 'contradicted'} rate ${actualPct.toFixed(0)}% (${s.contradicted} contradicted / ${s.checked} checked)`;
+    }
+    return { verdict: Math.abs(claimed - actualPct) <= 15 ? 'verified' : 'contradicted', actual: label };
+  }
+
+  // Tendency claims — "I always/never fail at X".
+  const s = kind === 'aggregate' ? agg() : stats[kind];
+  if (!s || s.checked < 3) return null;
+  const rate = s.contradicted / s.checked;
+  const absolute = freq === 'absolute' || freq === 'never';
+  let ok: boolean | null = null;
+  if (polarity === 'fail') {
+    // She claims failures are common (or, for never/rarely freq, rare).
+    const claimsFrequent = !(freq === 'never' || freq === 'rarely');
+    if (claimsFrequent) {
+      ok = absolute ? (rate >= 0.6 ? true : rate <= 0.2 ? false : null)
+                    : (rate >= 0.4 ? true : rate <= 0.15 ? false : null);
+    } else {
+      ok = absolute ? (rate <= 0.15 ? true : rate >= 0.5 ? false : null)
+                    : (rate <= 0.3 ? true : rate >= 0.6 ? false : null);
+    }
+  } else if (polarity === 'success') {
+    ok = absolute ? (rate <= 0.15 ? true : rate >= 0.5 ? false : null)
+                  : (rate <= 0.3 ? true : rate >= 0.6 ? false : null);
+  }
+  if (ok === null) return null;
+  return {
+    verdict: ok ? 'verified' : 'contradicted',
+    actual: `${kind} contradicted ${s.contradicted}/${s.checked} (${(rate * 100).toFixed(0)}%)`,
+  };
+}
+
 function logVerdict(v: EpistemicVerdict) {
   try {
     fs.mkdirSync(RUNTIME, { recursive: true });
@@ -377,7 +515,7 @@ const KIND_EVIDENCE: Record<string, string[]> = {
   'file-exists': ['list_dir', 'read_file', 'search_code', 'run_command'],
   'file-missing': ['list_dir', 'read_file', 'search_code', 'run_command'],
 };
-const AMBIENT_KINDS = new Set(['date']);
+const AMBIENT_KINDS = new Set(['date', 'selfreport']);
 
 export async function epistemicGate(
   text: string,
@@ -413,6 +551,7 @@ export async function epistemicGate(
           : c.kind === 'date' ? verifyDate(c)
           : c.kind === 'resilience' ? verifyResilience(c)
           : c.kind === 'superlative' ? verifySuperlative(c)
+          : c.kind === 'selfreport' ? verifySelfReport(c)
           : null;
         if (!r) continue; // oracle unavailable — abstain, don't guess
         verdicts.push({ ...base, verdict: r.verdict, actual: r.actual });
