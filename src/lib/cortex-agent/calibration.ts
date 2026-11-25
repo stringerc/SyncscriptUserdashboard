@@ -102,6 +102,35 @@ function canaryDigest(): string {
   return `[CANARY SELF-TEST — tool-less memory probes; ✗ = you asserted a false fact, ~ = honest abstention]\n${parts.join(' · ')}`;
 }
 
+/** Few-shot correction recall — the broken feedback loop fix.
+ *  Abstract rates tell her IF she fails; concrete wrong→right pairs
+ *  show her WHAT she said vs what was measured. Her own red-team
+ *  audit found corrections never reach the generator — this is the
+ *  channel that carries them into every prompt. */
+function correctionRecall(): string {
+  const lines = tailLines(VERDICTS_LOG);
+  const seen = new Set<string>();
+  const items: string[] = [];
+  // Newest-first; the audit rescan duplicates each verdict under
+  // surface:audit — dedup on kind+claim so she sees each mistake once.
+  for (let i = lines.length - 1; i >= 0 && items.length < 5; i--) {
+    try {
+      const v = JSON.parse(lines[i]);
+      if (v?.verdict !== 'contradicted') continue;
+      const kind = String(v?.kind || '?');
+      const claim = String(v?.claim || '').replace(/\s+/g, ' ').trim().slice(0, 110);
+      const actual = String(v?.actual || '').replace(/\s+/g, ' ').trim().slice(0, 110);
+      if (!claim || !actual) continue;
+      const key = `${kind}:${claim.slice(0, 40).toLowerCase()}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      items.push(`- ${kind}: you said "${claim}" → measured: ${actual}`);
+    } catch {}
+  }
+  if (!items.length) return '';
+  return `[YOUR RECENT CORRECTIONS — measured wrong→right pairs from your own verdict ledger. Do not repeat the left side; when unsure, measure first.]\n${items.join('\n')}`;
+}
+
 /** One-line digest for the system prompt. Empty string when there is
  *  not yet enough measured history to say anything honest. */
 export function selfReliabilityDigest(): string {
@@ -117,6 +146,8 @@ export function selfReliabilityDigest(): string {
   }
   const canary = canaryDigest();
   if (canary) sections.push(canary);
+  const recall = correctionRecall();
+  if (recall) sections.push(recall);
   const text = sections.join('\n');
   digestCache = { at: Date.now(), text };
   return text;

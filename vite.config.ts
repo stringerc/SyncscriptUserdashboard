@@ -12458,7 +12458,7 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
               // (canary probes, audit critic) stay un-instrumented so they
               // keep measuring the raw model.
               const liveStateBlock = parsed.context === 'cortex' && parsed.internal !== true
-                ? (liveStateDigest() ? `\n\n${liveStateDigest()}` : '')
+                ? `${liveStateDigest() ? `\n\n${liveStateDigest()}` : ''}${selfReliabilityDigest() ? `\n\n${selfReliabilityDigest()}` : ''}`
                 : '';
               const sysContentFull = `${continuityBrief ? `${sysContent}\n\n${continuityBrief}` : sysContent}${goalDigest}${worldStateDigest}${liveStateBlock}`;
 
