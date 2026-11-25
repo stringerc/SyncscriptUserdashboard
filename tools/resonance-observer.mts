@@ -197,6 +197,11 @@ function computeMetrics() {
     // real outages — uptimeRatio alone makes idle-by-design look broken.
     lazyDark: lazyDown,
     infraDown,
+    // Unmissable one-liner for auditors that read nodes.up raw: dark lazy
+    // sidecars are asleep BY DESIGN (RAM conservation), not outages.
+    capacityLine: infraDown.length === 0
+      ? `infra ${infraUp}/${infraNodes.length} up · ${lazyDown.length ? `${lazyDown.length} lazy sidecar(s) asleep by design (${lazyDown.join(', ')}) — expected, not down` : 'all nodes up'}`
+      : `INFRA DEGRADED: ${infraDown.join(', ')} down · lazy asleep: ${lazyDown.join(', ') || 'none'}`,
     nodes: Object.fromEntries(FLEET.map(n => {
       const s = state.get(n.name)!;
       return [n.name, { up: s.lastUp, latencyMs: s.lastLatencyMs, samples: s.latencies.length }];
