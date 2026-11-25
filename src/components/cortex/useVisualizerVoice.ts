@@ -1119,6 +1119,8 @@ async function streamLLM(history: ChatMsg[], opts: StreamOpts = {}): Promise<str
   if (!reader) throw new Error('llm no stream');
   const dec = new TextDecoder();
   let buf = '', content = '', voiceBuf = '';
+  const TOKEN_DEADLINE_MS = 50000;
+  let lastTokenAt = Date.now();
   const toolCallEvents: any[] = [];
   let tailTimer: ReturnType<typeof setTimeout> | null = null;
   const dispatch = (sentence: string, isFinal: boolean, isStreamEnd = false) => {
@@ -1145,14 +1147,20 @@ async function streamLLM(history: ChatMsg[], opts: StreamOpts = {}): Promise<str
     }
   };
   for (;;) {
-    // 12s token silence watchdog: abort cleanly if upstream stream stalls
+    // 12s chunk-silence watchdog + 50s token deadline: SSE heartbeat comments
+    // (`: cortex-routing`) resolve read() every 8s, so chunk silence alone
+    // never accumulates on a heartbeat-only stream — a provider that sent
+    // headers then stalled would ride heartbeats until the 90s turn deadline.
+    // lastTokenAt only moves on real `data:` payloads; exceeding the token
+    // deadline cancels the read and ends the stream honestly.
     const readPromise = reader.read();
     let silenceTimer: ReturnType<typeof setTimeout> | null = null;
+    const waitMs = Math.min(12000, Math.max(500, TOKEN_DEADLINE_MS - (Date.now() - lastTokenAt)));
     const timeoutPromise = new Promise<{ done: true; value: undefined }>((resolve) => {
       silenceTimer = setTimeout(() => {
         try { reader.cancel(); } catch {}
         resolve({ done: true, value: undefined });
-      }, 12000);
+      }, waitMs);
     });
     const { done, value } = await Promise.race([readPromise, timeoutPromise]);
     if (silenceTimer) clearTimeout(silenceTimer);
@@ -1163,6 +1171,7 @@ async function streamLLM(history: ChatMsg[], opts: StreamOpts = {}): Promise<str
     for (const line of lines) {
       const t = line.trim();
       if (!t.startsWith('data:')) continue;
+      lastTokenAt = Date.now();
       const payload = t.slice(5).trim();
       if (payload === '[DONE]') continue;
       let token = '';

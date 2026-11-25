@@ -12861,6 +12861,7 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
               // dies before emitting ANY token gets skipped for the next
               // candidate. Once real tokens flow we commit — they can't be
               // unsent. Headers go out on the first attempt only.
+              console.info(`[dev-proxy] nexus-guest → provider scan (${activeChain.length} candidates, first=${activeChain[0]?.name || 'none'})`);
               let provCursor = 0;
               for (; ;) {
                 let aiRes: any = null;
@@ -13084,7 +13085,24 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
 
                   try {
                     while (true) {
-                      const { done, value } = await reader.read();
+                      // Idle guard: headers already arrived (trace recorded),
+                      // but a provider that then stalls mid-stream would pend
+                      // reader.read() forever — SSE heartbeats keep the client
+                      // alive, so nothing downstream ever notices. 45s of zero
+                      // upstream bytes = dead stream; bail into the
+                      // zero-content failover decision below.
+                      let idleTimer: ReturnType<typeof setTimeout> | null = null;
+                      const idlePromise = new Promise<{ done: true; value: undefined; idle: true }>((resolve) => {
+                        idleTimer = setTimeout(() => resolve({ done: true, value: undefined, idle: true }), 45000);
+                      });
+                      const readResult = await Promise.race([reader.read(), idlePromise]);
+                      if (idleTimer) clearTimeout(idleTimer);
+                      if ((readResult as any).idle) {
+                        try { (reader as any).cancel?.(); } catch { }
+                        streamError = new Error('provider stream idle >45s');
+                        break;
+                      }
+                      const { done, value } = readResult;
                       if (done) break;
                       sseBuffer += decoder.decode(value, { stream: true });
                       const lines = sseBuffer.split('\n');
