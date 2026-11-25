@@ -146,6 +146,17 @@ export interface SendResult {
   deduped?: boolean;
 }
 
+/** Post-send observers (verification pipeline, mission control). Called
+ *  synchronously after a successful non-deduped send; must not throw. */
+let onMessageSentHook: ((msg: AgentMessage) => void) | null = null;
+export function setOnMessageSentHook(hook: ((msg: AgentMessage) => void) | null): void {
+  onMessageSentHook = hook;
+}
+function notifyMessageSent(msg: AgentMessage) {
+  if (!onMessageSentHook) return;
+  try { onMessageSentHook(msg); } catch { /* observers are best-effort */ }
+}
+
 /**
  * Send a typed message. Validation is strict: known sender/recipient,
  * allowlisted type, bounded payload, per-sender rate + pending caps.
@@ -245,6 +256,7 @@ export function sendMessage(opts: {
       });
     } catch { /* proposal filing is best-effort; message is still durable */ }
   }
+  notifyMessageSent(msg);
   return { ok: true, message: msg };
 }
 

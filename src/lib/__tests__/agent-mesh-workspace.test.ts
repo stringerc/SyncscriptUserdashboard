@@ -10,11 +10,17 @@ process.env.CORTEX_AGENTS_STATE_DIR = TMP;
 let ws: typeof import('../cortex-agents/agent-workspace');
 let messages: typeof import('../cortex-agents/messages');
 let mesh: typeof import('../cortex-agents/mesh');
+let verification: typeof import('../cortex-agents/verification');
 
 beforeAll(async () => {
+  // Seed a registered-agent roster so meshSend's knownAgents() admits them.
+  fs.writeFileSync(path.join(TMP, 'agents-state.json'), JSON.stringify({
+    agents: ['reviewer', 'sentinel', 'scout', 'builder', 'warden'].map((id) => ({ id })),
+  }));
   ws = await import('../cortex-agents/agent-workspace');
   messages = await import('../cortex-agents/messages');
   mesh = await import('../cortex-agents/mesh');
+  verification = await import('../cortex-agents/verification');
 });
 
 describe('agent-workspace', () => {
@@ -112,4 +118,61 @@ describe('agent-mesh', () => {
     expect(res.timedOut).toBe(true);
     expect(res.request?.requiresAck).toBe(true);
   }, 10_000);
+});
+
+describe('verification pipeline', () => {
+  function vote(verifierId: string, verifId: string, vote: string, rationale = '') {
+    return messages.sendMessage({
+      from: verifierId, to: 'crew', type: 'signal', channel: 'verdict.request',
+      payload: JSON.stringify({ vote, rationale }), correlationId: verifId,
+    });
+  }
+
+  it('dispatches verdict.request envelopes and resolves on unanimous approve', () => {
+    const r = verification.openVerification({
+      subject: 'code review: auth refactor', claim: 'migration is safe to merge',
+      evidence: 'diff attached', requestedBy: 'crew', verifierIds: ['reviewer', 'sentinel'],
+    });
+    expect(r.ok).toBe(true);
+    expect(r.dispatched).toBe(2);
+    const v = r.verification!;
+    expect(v.status).toBe('open');
+
+    // Dispatch envelopes are visible pending traffic to the verifiers.
+    const inbox = verification.listVerifications({ limit: 10 }).find((x) => x.id === v.id);
+    expect(inbox?.verifierIds).toEqual(['reviewer', 'sentinel']);
+
+    expect(vote('reviewer', v.id, 'approve', 'diff clean').ok).toBe(true);
+    expect(verification.getVerification(v.id)?.status).toBe('open'); // waiting on sentinel
+    expect(vote('sentinel', v.id, 'approve').ok).toBe(true);
+    const done = verification.getVerification(v.id);
+    expect(done?.status).toBe('approved');
+    expect(done?.votes).toHaveLength(2);
+  });
+
+  it('escalates a split verdict to the Initiative Inbox', () => {
+    const r = verification.openVerification({
+      subject: 'infra change', claim: 'restart is safe',
+      requestedBy: 'crew', verifierIds: ['reviewer', 'sentinel'],
+    });
+    const v = r.verification!;
+    vote('reviewer', v.id, 'approve');
+    vote('sentinel', v.id, 'contest', 'downtime risk');
+    const done = verification.getVerification(v.id);
+    expect(done?.status).toBe('escalated');
+    expect(done?.resolution).toContain('no consensus');
+  });
+
+  it('ignores votes from non-verifiers and duplicate votes', () => {
+    const r = verification.openVerification({
+      subject: 'default', claim: 'test', requestedBy: 'crew', verifierIds: ['reviewer', 'sentinel'],
+    });
+    const v = r.verification!;
+    vote('scout', v.id, 'approve'); // not a verifier — ignored
+    vote('reviewer', v.id, 'approve');
+    vote('reviewer', v.id, 'contest'); // duplicate — ignored
+    const cur = verification.getVerification(v.id);
+    expect(cur?.votes).toHaveLength(1);
+    expect(cur?.status).toBe('open');
+  });
 });

@@ -209,6 +209,7 @@ import { recordIncidentFailure, resolveIncidentsOnSuccess, listIncidents, escala
 import { issueDirective, listDirectives, ackDirective, cancelDirective } from './src/lib/cortex-agents/directives';
 import { listMessages, sendMessage, meshStats, deadLetters, MESH_CHANNELS } from './src/lib/cortex-agents/messages';
 import { wsRead, wsWrite, wsDelete, wsList, workspaceStats, archiveMission, isValidNamespace } from './src/lib/cortex-agents/agent-workspace';
+import { openVerification, listVerifications, getVerification, verificationStats } from './src/lib/cortex-agents/verification';
 import { loadMission, saveMission, upsertGoal, verifyOps, goalProgress, routineYield, suggestCadence, planBlocks, startExperiment, reportExperiments, ventureYieldBreakdown, type OpsItem, type MissionGoal, type CadenceEntry } from './src/lib/cortex-agents/mission';
 import { listVentures, isValidVenture, ventureFromQueueType, updateVenture, dueVentures, markVentureRan, recordVentureCycle, ventureCyclesToday, listPlanItems, upsertPlanItem, deletePlanItem } from './src/lib/cortex-ventures';
 import { maybeFileAdoptionFollowup } from './src/lib/cortex-agents/adoption';
@@ -16596,6 +16597,57 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
             return json(400, { ok: false, error: `unknown op: ${op}` });
           } catch (e: any) {
             return json(400, { ok: false, error: e?.message || 'bad request' });
+          }
+        });
+      });
+
+      // ── Verification Pipeline (/api/cortex/agents/verifications) ──
+      // Fleet spec §5: peer-review requests dispatched over the mesh;
+      // votes arrive as correlated verdict.request replies; consensus
+      // resolves or escalates to the Initiative Inbox.
+      server.middlewares.use('/api/cortex/agents/verifications', (req: any, res: any, next: any) => {
+        const origin = req.headers.origin;
+        const isAllowed = isAllowedOrigin(origin, req.headers.host);
+        if (req.method === 'OPTIONS') {
+          res.writeHead(204, { 'Access-Control-Allow-Origin': origin || '*', 'Access-Control-Allow-Methods': 'GET, POST, OPTIONS', 'Access-Control-Allow-Headers': 'Content-Type' });
+          return res.end();
+        }
+        if (!isAllowed) return next();
+        agentCors(req, res);
+        const json = (code: number, body: any) => {
+          res.writeHead(code, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify(body));
+        };
+        if (req.method === 'GET') {
+          try {
+            const url = new URL(req.url || '/', 'http://localhost');
+            const id = url.searchParams.get('id') || '';
+            if (id) return json(200, { ok: true, verification: getVerification(id) ?? null });
+            if (url.searchParams.get('stats')) return json(200, { ok: true, ...verificationStats() });
+            const status = url.searchParams.get('status') || undefined;
+            const limit = Math.min(Number(url.searchParams.get('limit')) || 50, 100);
+            return json(200, { ok: true, verifications: listVerifications({ status: status as any, limit }) });
+          } catch (e: any) {
+            return json(500, { ok: false, error: e?.message || 'verifications read failed' });
+          }
+        }
+        if (req.method !== 'POST') return next();
+        let body = '';
+        req.on('data', (c: Buffer) => { body += c.toString(); });
+        req.on('end', () => {
+          try {
+            const p = JSON.parse(body || '{}');
+            const r = openVerification({
+              subject: String(p.subject || ''),
+              claim: String(p.claim || ''),
+              evidence: p.evidence ? String(p.evidence) : undefined,
+              requestedBy: p.requestedBy ? String(p.requestedBy) : 'crew',
+              verifierIds: Array.isArray(p.verifierIds) ? p.verifierIds.map(String) : undefined,
+              windowMs: p.windowMs ? Number(p.windowMs) : undefined,
+            });
+            json(r.ok ? 201 : 400, r);
+          } catch (e: any) {
+            json(400, { ok: false, error: e?.message || 'bad request' });
           }
         });
       });

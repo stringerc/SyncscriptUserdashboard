@@ -18,6 +18,7 @@ import { DETERMINISTIC_TASKS } from './lights';
 import { ackMentioned, directivesBlock, markDelivered } from './directives';
 import { consumeMentioned, extractAndSendMessages, markMessagesDelivered, messagesBlock } from './messages';
 import { extractWorkspaceOps, workspaceBlock } from './agent-workspace';
+import './verification'; // registers the verdict.request vote hook on the message bus
 import { isValidVenture, listVentures } from '../cortex-ventures';
 import type {
   AgentEvent, AgentId, AgentRoutine, AgentState, AgentStatus, AgentTask, AgentsSnapshot, SpawnProposal, SpawnSpec, TaskFailureClass, TaskStatus, TaskTelemetry,
