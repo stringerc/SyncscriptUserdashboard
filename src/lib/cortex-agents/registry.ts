@@ -14,6 +14,9 @@ import type { ModelHealth, RouteTier } from './types';
 export interface ModelCandidate {
   provider: string;
   model: string;
+  /** Capability prior (higher = stronger model). Deep lane sorts by this
+   *  before latency — the lane exists for quality, not speed. */
+  weight?: number;
 }
 
 export interface AgentPin {
@@ -43,17 +46,31 @@ export const SEED_MATRIX: Record<RouteTier, ModelCandidate[]> = {
     { provider: 'openrouter', model: 'meta-llama/llama-3.3-70b-instruct' },
   ],
   deep: [
-    { provider: 'magpie', model: 'group/cortex-deep' },
-    { provider: 'nvidia-nim-550b', model: 'nvidia/nemotron-3-ultra-550b-a55b' },
-    { provider: 'deepseek', model: 'deepseek-chat' },
-    { provider: 'nvidia-nim', model: 'mistralai/mistral-large-4-1t-a52b' },
-    { provider: 'nvidia-nim', model: 'deepseek-ai/deepseek-v4.1-flash' },
+    { provider: 'magpie', model: 'group/cortex-deep', weight: 5 },
+    { provider: 'nvidia-nim-550b', model: 'nvidia/nemotron-3-ultra-550b-a55b', weight: 6 },
+    { provider: 'deepseek', model: 'deepseek-chat', weight: 4 },
+    { provider: 'nvidia-nim', model: 'mistralai/mistral-large-4-1t-a52b', weight: 6 },
+    { provider: 'nvidia-nim', model: 'deepseek-ai/deepseek-v4.1-flash', weight: 3 },
     // Redundancy: same working NVIDIA provider, different model family —
     // the lane previously had only ~3 live candidates and a single
     // provider cooldown could zero it out (heal_anomaly storm, Oct 2025).
-    { provider: 'nvidia-nim', model: 'nvidia/nemotron-3-nano-omni-30b-a3b-reasoning' },
+    { provider: 'nvidia-nim', model: 'nvidia/nemotron-3-nano-omni-30b-a3b-reasoning', weight: 2 },
   ],
 };
+
+/** Capability prior inferred from the model id — used for catalog-
+ *  promoted candidates that carry no explicit weight. Size markers
+ *  dominate; 'reasoning' is a small bonus (thinking models punch above
+ *  their parameter count on analysis tasks). */
+export function inferWeight(modelId: string): number {
+  const m = modelId.toLowerCase();
+  if (NON_CHAT_RE.test(m)) return 0;
+  if (/ultra|1t\b|405b|253b|480b|235b/.test(m)) return 6;
+  if (/large|120b|110b|104b|72b|70b|671b/.test(m)) return 4;
+  if (/32b|30b|reasoning|think|qwq|r1\b/.test(m)) return 3;
+  if (/20b|14b|8b|7b|4b|nano|mini|lite|flash|small|bolt|edge|tiny/.test(m)) return 1;
+  return 3; // unknown mid-size default
+}
 
 const key = (c: ModelCandidate) => `${c.provider}:${c.model}`;
 
@@ -215,12 +232,24 @@ export class ModelMatrix {
       if (!isChatModel(c.model)) return false;
       return this.isUsable(this.healthOf(c.provider, c.model), now);
     });
-    const score = (c: ModelCandidate) => {
-      const h = this.healthOf(c.provider, c.model);
-      const statusPenalty = h?.status === 'healthy' ? 0 : h?.status === 'unknown' ? 1 : 2;
-      const latency = h?.latencyMsP50 ?? 60_000;
-      return statusPenalty * 1_000_000 + latency;
+    const statusPenalty = (c: ModelCandidate) => {
+      const s = this.healthOf(c.provider, c.model)?.status;
+      return s === 'healthy' ? 0 : s === 'unknown' ? 1 : 2;
     };
+    const latency = (c: ModelCandidate) => this.healthOf(c.provider, c.model)?.latencyMsP50 ?? 60_000;
+    const weight = (c: ModelCandidate) => c.weight ?? inferWeight(c.model);
+    if (tier === 'deep') {
+      // Deep lane = quality lane: healthy beats degraded, then strongest
+      // model wins, latency only breaks ties. A fast 30B reasoner must
+      // never outrank a healthy 500B+ on analysis work — that was the
+      // consult-truncation bug (nano-omni serving deep-tier replies).
+      return usable.sort((a, b) =>
+        statusPenalty(a) - statusPenalty(b) ||
+        weight(b) - weight(a) ||
+        latency(a) - latency(b),
+      );
+    }
+    const score = (c: ModelCandidate) => statusPenalty(c) * 1_000_000 + latency(c);
     return usable.sort((a, b) => score(a) - score(b));
   }
 
