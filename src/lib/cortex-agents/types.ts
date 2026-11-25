@@ -34,7 +34,7 @@ export type TaskStatus =
 
 export type RouteTier = 'fast' | 'reason' | 'deep';
 
-export type TaskFailureClass = 'provider' | 'timeout' | 'budget' | 'policy' | 'worker' | 'unknown';
+export type TaskFailureClass = 'provider' | 'timeout' | 'budget' | 'policy' | 'dependency' | 'worker' | 'unknown';
 
 /**
  * Per-task instrumentation (agent-eval discipline): every completed or
@@ -229,5 +229,9 @@ export interface AgentsSnapshot {
       tasks: number; completed: number; failed: number;
       tokensIn: number; tokensOut: number; toolCalls: number;
     };
+    /** Per-agent terminal-task counts inside a rolling window — the honest
+     *  "how is the fleet doing *now*" view, unlike lifetime counters which
+     *  accumulate old dependency outages forever. */
+    window24h?: Record<string, { completed: number; failed: number; byClass: Record<string, number> }>;
   };
 }

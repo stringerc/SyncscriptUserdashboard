@@ -76,10 +76,13 @@ async function tick() {
     ];
     $('stats').innerHTML = cards.map(c =>
       '<div class="card"><h3>'+esc(c[0])+'</h3><div class="big" style="color:'+(c[2]||'var(--txt)')+'">'+esc(c[1])+'</div></div>').join('');
-    $('agents').innerHTML = (d.agents || []).map(a =>
-      '<div class="agent'+(selected===a.id?' sel':'')+'" data-id="'+esc(a.id)+'">'+
+    $('agents').innerHTML = (d.agents || []).map(a => {
+      const w = (d.window24h || {})[a.id];
+      const w24 = w ? ' · 24h ' + w.completed + '✓/' + w.failed + '✗' + (w.failed ? ' (' + Object.entries(w.byClass).map(([k,v])=>k+':'+v).join(',') + ')' : '') : '';
+      return '<div class="agent'+(selected===a.id?' sel':'')+'" data-id="'+esc(a.id)+'">'+
       '<div class="nm"><span class="dot st-'+esc(a.status)+'"></span>'+esc(a.name || a.id)+'</div>'+
-      '<div class="rl">'+esc(a.status)+' · ✓'+a.tasksCompleted+' ✗'+a.tasksFailed+(a.currentTaskId?' · working':'')+'</div></div>').join('');
+      '<div class="rl">'+esc(a.status)+' · ✓'+a.tasksCompleted+' ✗'+a.tasksFailed+w24+(a.currentTaskId?' · working':'')+'</div></div>';
+    }).join('');
     document.querySelectorAll('.agent').forEach(el => el.onclick = () => {
       selected = el.dataset.id;
       const a = d.agents.find(x => x.id === selected);

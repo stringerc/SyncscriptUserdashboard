@@ -283,6 +283,10 @@ function classifyFailure(msg: string): TaskFailureClass {
   if (/timed?\s?out|timeout|deadline/i.test(msg)) return 'timeout';
   if (/http \d|provider|empty content|no usable|bridge|econn|enotfound|fetch failed|rate.?limit/i.test(msg)) return 'provider';
   if (/veto|scope|not allowed|permission|forbidden|policy/i.test(msg)) return 'policy';
+  // External-dependency outages (chrome debug port, logged-in sessions,
+  // third-party scrapes) are infrastructure failures, not agent failures —
+  // kept distinct so fleet health metrics don't blame the worker.
+  if (/returned no|unreachable|not reachable|connection refused|econnrefused|chrome on|logged into|no threads|dependency/i.test(msg)) return 'dependency';
   return 'worker';
 }
 
@@ -1220,6 +1224,22 @@ export class AgentRuntime {
             t.toolCalls += task.telemetry?.toolCalls ?? 0;
           }
           return t;
+        })(),
+        window24h: (() => {
+          const cutoff = Date.now() - 24 * 60 * 60 * 1000;
+          const out: Record<string, { completed: number; failed: number; byClass: Record<string, number> }> = {};
+          for (const task of this.tasks.values()) {
+            if ((task.finishedAt ?? task.createdAt) < cutoff) continue;
+            if (task.status !== 'completed' && task.status !== 'failed') continue;
+            const slot = (out[task.agentId] ??= { completed: 0, failed: 0, byClass: {} });
+            if (task.status === 'completed') slot.completed++;
+            else {
+              slot.failed++;
+              const cls = task.telemetry?.failureClass ?? 'unknown';
+              slot.byClass[cls] = (slot.byClass[cls] ?? 0) + 1;
+            }
+          }
+          return out;
         })(),
       },
     };

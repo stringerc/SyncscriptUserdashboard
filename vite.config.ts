@@ -15892,9 +15892,34 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
         }
         if (req.method !== 'GET') return next();
         agentCors(req, res);
+        const models = agentRuntime.matrix.allHealth();
+        // Coverage-honest summary: catalog entries are probation-only and
+        // most have never been probed — counting them as "unhealthy" lies.
+        // Report routable-probed health and probation coverage separately.
+        const byStatus: Record<string, number> = {};
+        const byStatusProbed: Record<string, number> = {};
+        let catalogTotal = 0, catalogProbed = 0;
+        for (const m of models) {
+          byStatus[m.status] = (byStatus[m.status] ?? 0) + 1;
+          if (m.source === 'catalog') {
+            catalogTotal++;
+            if (m.lastCheckAt) catalogProbed++;
+          } else {
+            byStatusProbed[m.status] = (byStatusProbed[m.status] ?? 0) + 1;
+          }
+        }
         res.end(JSON.stringify({
           ok: true,
-          models: agentRuntime.matrix.allHealth(),
+          models,
+          summary: {
+            total: models.length,
+            byStatus,
+            // The fleet that can actually route today: matrix + promoted probes.
+            probed: { total: models.length - catalogTotal, byStatus: byStatusProbed },
+            // Catalog probation: discovered but unvetted — 'unknown' means
+            // "not yet probed", not "failed". Sentinel rotates probes through.
+            catalogProbation: { total: catalogTotal, probed: catalogProbed, unprobed: catalogTotal - catalogProbed },
+          },
           matrix: agentRuntime.matrix.snapshot(),
           history: tailModelHealthHistory(100),
         }));
@@ -16763,6 +16788,9 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
               currentTaskId: a.currentTaskId ?? null,
             })),
             tasks: { queued: (snap.tasks || []).filter((t: any) => t.status === 'queued').length, running: (snap.tasks || []).filter((t: any) => t.status === 'running').length },
+            // Honest recent window — lifetime counters accumulate old
+            // dependency outages; this is the "right now" failure view.
+            window24h: snap.runtime?.window24h ?? {},
             mesh: meshBusStats(),
             workspace: wsStoreStats(),
             skills: skillStats(),
