@@ -52,6 +52,14 @@ export interface AgentsSnapshotClient {
     upcomingBlocks?: { id: string; title: string; start: number; end: number; agentId?: string; kind?: string; goalId?: string; taskId?: string; ventureId?: string }[];
     experiments: { id: string; routineId: string; kind: string; variantMin: number }[];
   } | null;
+  /** Hermes executor journal reputation — per-tool reliability stats. */
+  hermesReputation?: {
+    ok: boolean;
+    source?: string;
+    scanned?: number;
+    tools?: { tool: string; cls: string; invokes: number; failures: number; failureRate: number; avgMs: number; lastError: string | null }[];
+    worst?: { tool: string; failureRate: number; invokes: number }[];
+  } | null;
   offline?: boolean;
 }
 

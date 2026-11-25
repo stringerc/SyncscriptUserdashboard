@@ -766,6 +766,24 @@ const AgentDossierPanel: React.FC<{ agent: AgentClient; snap: AgentsSnapshotClie
               </>
             )}
           </div>
+          {a.id === 'hermes' && snap.hermesReputation?.ok && (snap.hermesReputation.tools?.length ?? 0) > 0 && (
+            <div style={{ marginTop: 8 }}>
+              <div style={{ color: 'rgba(203,213,225,0.85)', marginBottom: 2 }}>
+                TOOL RELIABILITY — journal-scored · {snap.hermesReputation.scanned} runs · via {snap.hermesReputation.source}
+              </div>
+              {snap.hermesReputation.tools!.slice(0, 8).map((t) => (
+                <div key={t.tool} style={{ display: 'flex', gap: 8, paddingLeft: 6 }}>
+                  <span style={{ color: t.failureRate > 0.2 ? '#f87171' : t.failureRate > 0 ? '#fbbf24' : '#34d399', minWidth: 76 }}>{t.tool}</span>
+                  <span style={{ color: DIM }}>{t.invokes}× · {Math.round(t.failureRate * 100)}% fail · {t.avgMs}ms avg</span>
+                </div>
+              ))}
+              {(snap.hermesReputation.worst?.length ?? 0) > 0 && (
+                <div style={{ color: '#f87171', paddingLeft: 6, marginTop: 2 }}>
+                  attention: {snap.hermesReputation.worst!.map((w) => `${w.tool} (${Math.round(w.failureRate * 100)}%)`).join(', ')}
+                </div>
+              )}
+            </div>
+          )}
         </div>
       )}
 

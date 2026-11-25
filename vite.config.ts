@@ -14471,6 +14471,18 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
         };
       };
 
+      // Hermes tool reputation — cached 60s, refreshed in background so the
+      // state poll never blocks on the Edge→VM journal round-trip.
+      let hermesRepCache: { at: number; data: unknown } = { at: 0, data: null };
+      const refreshHermesReputation = () => {
+        import('./src/lib/cortex-agents/hermes-reputation')
+          .then((m) => m.computeHermesReputation())
+          .then((rep) => { hermesRepCache = { at: Date.now(), data: rep }; })
+          .catch(() => {});
+      };
+      setInterval(() => { if (Date.now() - hermesRepCache.at > 60_000) refreshHermesReputation(); }, 30_000).unref?.();
+      refreshHermesReputation();
+
       // GET /api/cortex/agents/state — full snapshot for the Agents tab.
       server.middlewares.use('/api/cortex/agents/state', (req: any, res: any, next: any) => {
         if (req.method === 'OPTIONS') {
@@ -14532,7 +14544,7 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
         w24Worst.sort((a, b) => b.failed - a.failed);
         w24PerAgent.sort((a, b) => (b.failureRate ?? -1) - (a.failureRate ?? -1) || b.failed - a.failed);
         res.end(JSON.stringify({
-          ok: true, ...snap, forecasts, mission,
+          ok: true, ...snap, forecasts, mission, hermesReputation: hermesRepCache.data,
           fleet24h: {
             completed: w24Completed, failed: w24Failed,
             failureRate: (w24Completed + w24Failed) > 0 ? +(w24Failed / (w24Completed + w24Failed)).toFixed(3) : null,
@@ -17986,6 +17998,27 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
           },
           timestamp: Date.now(),
         }));
+      });
+
+      // GET /api/cortex/hermes/reputation — tool-level reliability from the
+      // executor invoke journal (edge bridge → VM, or direct executor).
+      server.middlewares.use('/api/cortex/hermes/reputation', async (req: any, res: any, next: any) => {
+        if (req.method === 'OPTIONS') {
+          agentCors(req, res);
+          res.statusCode = 204;
+          return res.end();
+        }
+        agentCors(req, res);
+        if (req.method !== 'GET') return next();
+        try {
+          const { computeHermesReputation } = await import('./src/lib/cortex-agents/hermes-reputation');
+          const rep = await computeHermesReputation();
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify(rep));
+        } catch (e: any) {
+          res.writeHead(500, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ ok: false, error: String(e?.message || e) }));
+        }
       });
 
       // ── Cortex Fleet Standup REST Endpoints (/api/cortex/standup/*) ──

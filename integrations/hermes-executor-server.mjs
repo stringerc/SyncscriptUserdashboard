@@ -854,6 +854,10 @@ const server = http.createServer((req, res) => {
   }
 
   if (req.method === "GET" && pathOnly === "/v1/runs") {
+    if (!authHeader.startsWith("Bearer ")) {
+      json(res, 401, { ok: false, error: "Authorization Bearer required" });
+      return;
+    }
     const limit = Math.min(Number(u.searchParams.get("limit")) || 50, 500);
     const toolFilter = u.searchParams.get("tool");
     const callerFilter = u.searchParams.get("caller");
@@ -874,6 +878,10 @@ const server = http.createServer((req, res) => {
 
   const runMatch = pathOnly.match(/^\/v1\/runs\/([A-Za-z0-9-]+)$/);
   if (req.method === "GET" && runMatch) {
+    if (!authHeader.startsWith("Bearer ")) {
+      json(res, 401, { ok: false, error: "Authorization Bearer required" });
+      return;
+    }
     const id = runMatch[1];
     (async () => {
       for await (const e of journalLines()) {

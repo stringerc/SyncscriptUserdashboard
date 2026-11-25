@@ -303,6 +303,45 @@ hermesBridge.post("/invoke", async (c) => {
 });
 
 /**
+ * GET /runs — proxy to executor journal (GET /v1/runs). Powers fleet
+ * reputation scoring and forensic queries. Same auth as /tools.
+ */
+hermesBridge.get("/runs", async (c) => {
+  const requestId = getRequestId(c);
+  const baseUrl = await resolveHermesBaseUrl();
+  if (!baseUrl) {
+    return jsonWithRequestId(c, { error: "Hermes not configured", code: "HERMES_UNCONFIGURED" }, 503, requestId);
+  }
+  const gate = await requireSignedInUser(c, requestId);
+  if (!gate.ok) return gate.response;
+
+  const qs = new URL(c.req.url).search;
+  const upstream = `${baseUrl}/v1/runs${qs}`;
+  const authz = c.req.header("Authorization")?.trim();
+  try {
+    const r = await fetch(upstream, {
+      method: "GET",
+      headers: {
+        Accept: "application/json",
+        "X-Request-ID": requestId,
+        "X-Hermes-Caller": gate.caller,
+        ...(authz && authz.startsWith("Bearer ") ? { Authorization: authz } : {}),
+      },
+      signal: AbortSignal.timeout(TIMEOUT_MS.get),
+    });
+    const text = await r.text();
+    const ct = r.headers.get("content-type") || "application/json";
+    return new Response(text, {
+      status: r.status,
+      headers: { "Content-Type": ct, "X-Request-ID": requestId },
+    });
+  } catch (e) {
+    console.error("[Hermes Bridge] runs failed:", { requestId, err: String(e) });
+    return jsonWithRequestId(c, { error: "Hermes upstream error", code: "HERMES_UPSTREAM" }, 502, requestId);
+  }
+});
+
+/**
  * POST /tunnel-url — self-healing quick-tunnel registration.
  * The VM's hermes-tunnel.service publishes its current trycloudflare URL here
  * on every (re)start; resolveHermesBaseUrl prefers it over the static env.
