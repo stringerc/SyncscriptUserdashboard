@@ -285,6 +285,16 @@ export function autoVerifyIncident(
     }
 
     const targetKind = inc.agentId === 'warden' ? 'patrol' : inc.kind;
+    // Runner probes can only verify kinds that self-contain a safe command:
+    // 'incident-verify' gets the echo marker below, 'test' defaults to
+    // npm test. Every other runner kind (task/exec/calendar_create) requires
+    // input.command — a probe without it is a guaranteed re-fail that just
+    // inflates the incident (observed: 47-count runner|worker|task ledger).
+    // Those failures need a corrective fix, not re-execution — a real
+    // runner task completing resolves the incident via resolveIncidentsOnSuccess.
+    if (inc.agentId === 'runner' && inc.kind !== 'incident-verify' && inc.kind !== 'test') {
+      return { ok: false, error: `runner ${inc.kind} probes require input.command — needs corrective fix, not re-execution` };
+    }
     // Runner probes never inherit the original command — re-executing an
     // arbitrary failed shell command as a "probe" can repeat real side
     // effects. incident-verify keeps its safe echo; other runner kinds

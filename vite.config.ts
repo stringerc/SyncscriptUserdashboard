@@ -1991,7 +1991,7 @@ function apiProxyPlugin(): Plugin {
           recordIncidentFailure({
             taskId: task.id, agentId: task.agentId, agentName: agent?.name,
             kind: task.kind, title: task.title,
-            failureClass: String(task.telemetry?.failureClass || 'worker'),
+            failureClass: String(task.telemetry?.failureClass || 'unknown'),
             error: task.error,
           });
         }

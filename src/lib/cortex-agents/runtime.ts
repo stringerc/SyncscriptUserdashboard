@@ -324,7 +324,10 @@ const newTaskId = () => `task-${Date.now().toString(36)}-${(++taskCounter).toStr
  * patterns before the generic 'worker' catch-all.
  */
 function classifyFailure(msg: string): TaskFailureClass {
-  if (/cancel|abort/i.test(msg)) return 'unknown'; // cancellations never reach 'failed'
+  // "The operation was aborted due to timeout" is a TIMEOUT, not a cancel —
+  // the abort pattern must yield to timeout phrasing or vault_sync-style
+  // stalls get misclassified 'unknown' (observed: 20 failures).
+  if (/cancel|abort/i.test(msg) && !/timed?\s?out|timeout|deadline/i.test(msg)) return 'unknown'; // cancellations never reach 'failed'
   if (/budget|daily limit/i.test(msg)) return 'budget';
   if (/timed?\s?out|timeout|deadline/i.test(msg)) return 'timeout';
   if (/http \d|provider|empty content|no usable|bridge|econn|enotfound|fetch failed|rate.?limit/i.test(msg)) return 'provider';
@@ -1370,6 +1373,14 @@ export class AgentRuntime {
           t.status = 'failed';
           t.error = `runtime restart — ${wasRunning ? 'interrupted mid-flight' : 'queued task never dispatched'} (process reboot)`;
           t.finishedAt = Date.now();
+          // Honest class: a process reboot is infrastructure, not an agent
+          // fault — without this the task counted as 'unknown' in fleet24h
+          // and as 'worker' in the incident ledger (blaming the agent).
+          t.telemetry = {
+            llmCalls: 0, tokensIn: 0, tokensOut: 0, llmMs: 0, toolCalls: 0, toolFailures: 0,
+            ...(t.telemetry || {}),
+            failureClass: 'infra',
+          };
           this.tasks.set(t.id, t);
         }
       }

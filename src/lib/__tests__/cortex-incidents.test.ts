@@ -199,9 +199,9 @@ describe('incident auto-verify probe', () => {
 
   it('runner probes never inherit the original command', () => {
     fs.rmSync(path.join(tmp, 'task-archive.jsonl'), { force: true });
-    writeArchiveRecord({ id: 'task-cmd-1', agentId: 'runner', kind: 'shell', input: { command: 'rm -rf /tmp/x' } });
+    writeArchiveRecord({ id: 'task-cmd-1', agentId: 'runner', kind: 'incident-verify', input: { command: 'rm -rf /tmp/x' } });
     const inc = recordIncidentFailure({
-      taskId: 'task-cmd-1', agentId: 'runner', kind: 'shell',
+      taskId: 'task-cmd-1', agentId: 'runner', kind: 'incident-verify',
       title: 'shell failed', failureClass: 'exec', error: 'exit 1',
     })!;
     let captured: any;
@@ -211,7 +211,25 @@ describe('incident auto-verify probe', () => {
       },
     };
     autoVerifyIncident(fakeRuntime, inc.id);
-    expect(captured.command).toBeUndefined();
+    // Safe echo marker — never the archived 'rm -rf' command.
+    expect(captured.command).toBe('echo "incident verification probe"');
     expect(captured.autoVerifyIncidentId).toBe(inc.id);
+  });
+
+  it('runner command-requiring kinds are not probed — they need a corrective fix', () => {
+    fs.rmSync(path.join(tmp, 'task-archive.jsonl'), { force: true });
+    writeArchiveRecord({ id: 'task-cmd-2', agentId: 'runner', kind: 'task', input: { instruction: 'evaluate library X' } });
+    const inc = recordIncidentFailure({
+      taskId: 'task-cmd-2', agentId: 'runner', kind: 'task',
+      title: 'runner task failed', failureClass: 'worker', error: 'runner task requires input.command',
+    })!;
+    let dispatched = false;
+    const fakeRuntime = {
+      submitTask: () => { dispatched = true; return { ok: true, task: { id: 'probe-x' } }; },
+    };
+    const res = autoVerifyIncident(fakeRuntime, inc.id);
+    // A probe without input.command is a guaranteed re-fail — skip it.
+    expect(res.ok).toBe(false);
+    expect(dispatched).toBe(false);
   });
 });

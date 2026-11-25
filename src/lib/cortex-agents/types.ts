@@ -34,7 +34,7 @@ export type TaskStatus =
 
 export type RouteTier = 'fast' | 'reason' | 'deep';
 
-export type TaskFailureClass = 'provider' | 'timeout' | 'budget' | 'policy' | 'dependency' | 'worker' | 'unknown';
+export type TaskFailureClass = 'provider' | 'timeout' | 'budget' | 'policy' | 'dependency' | 'worker' | 'infra' | 'unknown';
 
 /**
  * Per-task instrumentation (agent-eval discipline): every completed or

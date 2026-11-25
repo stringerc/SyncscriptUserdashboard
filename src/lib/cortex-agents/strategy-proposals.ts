@@ -98,7 +98,11 @@ function notifyProposalFiled(proposal: StrategyProposal): void {
  *  so BUILDER is never a single-threaded bottleneck for the whole fleet. */
 export function agentForClass(cls: string): string {
   const c = String(cls || '').toLowerCase();
-  if (c === 'eval' || c === 'test') return 'runner';
+  // 'eval' is analysis work (review findings, pick an approach, file steps)
+  // — runner is exec-only and rejects instruction tasks with "requires
+  // input.command" (observed: 47-count runner|worker|task incident).
+  if (c === 'eval') return 'builder';
+  if (c === 'test') return 'runner';
   if (c === 'rule' || c === 'memory') return 'librarian';
   if (c === 'review' || c === 'audit') return 'reviewer';
   if (c === 'web' || c === 'portal' || c === 'scrape') return 'openclaw';
@@ -149,6 +153,11 @@ export function fileStrategyProposals(opts: {
     }
     const title = raw.replace(/\[[^\]]+\]/, '').split('—')[0].split('–')[0].trim().slice(0, 140) || `Strategy action ${i + 1}`;
     const evidence = (raw.match(/evidence:\s*([^—]+)/i)?.[1] || '').split(',').map((s) => s.trim()).filter(Boolean).slice(0, 6);
+    const agentId = agentForClass(actionClass);
+    // Runner only executes command-bearing kinds — a 'test' proposal must
+    // arrive as kind 'test' (runner defaults it to `npm test`) or it dies
+    // on "requires input.command" like the eval misroutes did.
+    const kind = agentId === 'runner' && actionClass === 'test' ? 'test' : 'task';
     const proposal: StrategyProposal = {
       id: dedupeId,
       planNote: opts.planNote || '',
@@ -156,8 +165,8 @@ export function fileStrategyProposals(opts: {
       actionIndex: i,
       title,
       actionClass,
-      agentId: agentForClass(actionClass),
-      kind: 'task',
+      agentId,
+      kind,
       instruction: `[STRATEGIST plan ${opts.planNote || opts.planTaskId}] ${raw.slice(0, 1200)}`,
       evidence,
       status: 'pending',

@@ -34,7 +34,9 @@ describe('Initiative Acceleration & Strategy Proposal Auto-Drain', () => {
   });
 
   it('agentForClass routes work dynamically across fleet specialists', () => {
-    expect(agentForClass('eval')).toBe('runner');
+    // 'eval' is analysis work — runner is exec-only and rejects
+    // instruction tasks ("requires input.command"); it goes to builder.
+    expect(agentForClass('eval')).toBe('builder');
     expect(agentForClass('test')).toBe('runner');
     expect(agentForClass('rule')).toBe('librarian');
     expect(agentForClass('memory')).toBe('librarian');
@@ -115,7 +117,7 @@ describe('Initiative Acceleration & Strategy Proposal Auto-Drain', () => {
     // 2 safe proposals were approved and dispatched
     expect(result.approved.length).toBe(2);
     expect(submitted.length).toBe(2);
-    expect(submitted[0].agentId).toBe('runner'); // eval routed to runner
+    expect(submitted[0].agentId).toBe('builder'); // eval routed to builder (runner is exec-only)
     expect(submitted[1].agentId).toBe('librarian'); // rule routed to librarian
 
     // Devin task was skipped and remains pending for operator
@@ -176,7 +178,7 @@ describe('Initiative Acceleration & Strategy Proposal Auto-Drain', () => {
 
     expect(capturedProposal).not.toBeNull();
     expect(capturedProposal.title).toContain('Run fast test suite');
-    expect(capturedProposal.agentId).toBe('runner');
+    expect(capturedProposal.agentId).toBe('builder'); // [eval] → builder, not exec-only runner
 
     setOnProposalFiledHook(null);
   });
