@@ -108,6 +108,7 @@ scripts/*
 !scripts/report-external-tooling-versions.mjs
 !scripts/push-nexus-e2e-secrets-to-github.mjs
 !scripts/guard-ci-script-refs.mjs
+!scripts/cortex-ledger-cook.mjs
 !scripts/verify-agent-runner-live.mjs
 !scripts/smoke-agent-run-e2e.mjs
 !scripts/smoke-agent-live-screencast.mjs
