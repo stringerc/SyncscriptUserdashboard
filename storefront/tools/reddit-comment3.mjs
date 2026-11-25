@@ -1,9 +1,9 @@
 import { chromium } from 'playwright-core';
-import { resolveCdpUrl } from './cdp-url.mjs';
+import { resolveExtensionCdpUrl } from './cdp-url.mjs';
 import { readFileSync } from 'fs';
 const [link, file] = process.argv.slice(2);
 const text = readFileSync(file, 'utf8').trim();
-const browser = await chromium.connectOverCDP(await resolveCdpUrl());
+const browser = await chromium.connectOverCDP(await resolveExtensionCdpUrl());
 const page = browser.contexts()[0].pages().find(p => p.url().includes('reddit.com'));
 if (!page.url().includes(link.split('/comments/')[1]?.split('/')[0] || '___')) {
   await page.goto('https://www.reddit.com' + link, {waitUntil:'domcontentloaded'});

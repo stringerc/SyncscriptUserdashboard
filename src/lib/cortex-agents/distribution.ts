@@ -152,10 +152,10 @@ async function runRedditScan(ctx: AgentContext, payload: Record<string, unknown>
   const stderr = String(out?.stderr || '');
   ctx.progress(1);
   if (/REDDIT_BLOCKED/.test(stderr)) {
-    throw new Error(`reddit_scan unreachable: reddit network-security block on this IP — log in to reddit in the automation Chrome or use a developer token (${stderr.trim().slice(0, 160)})`);
+    throw new Error(`reddit_scan blocked: reddit network-security block even via the logged-in extension Chrome — re-login or check the account (${stderr.trim().slice(0, 160)})`);
   }
   const threads = stdout.split('\n').filter((l) => /^\d+c \|/.test(l)).length;
-  if (!threads) throw new Error(`reddit_scan returned no threads (chrome on :9225 reachable? logged into reddit? stderr: ${stderr.trim().slice(0, 160) || 'none'})`);
+  if (!threads) throw new Error(`reddit_scan returned no threads via openclaw extension relay (is a tab attached? badge ON?) stderr: ${stderr.trim().slice(0, 160) || 'none'}`);
   return { subs, threads, output: stdout.slice(0, 4000) };
 }
 

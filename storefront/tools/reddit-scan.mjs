@@ -1,7 +1,7 @@
 import { chromium } from 'playwright-core';
-import { resolveCdpUrl } from './cdp-url.mjs';
+import { resolveExtensionCdpUrl, recordVerifiedBackend } from './cdp-url.mjs';
 const subs = process.argv.slice(2);
-const browser = await chromium.connectOverCDP(await resolveCdpUrl());
+const browser = await chromium.connectOverCDP(await resolveExtensionCdpUrl());
 const ctx = browser.contexts()[0];
 // No reddit tab? Reuse any open page as the vehicle — goto() navigates it
 // anyway. Only open a new tab when the browser has zero pages (fresh VM
@@ -32,4 +32,5 @@ for (const sub of subs) {
   console.log(`=== r/${sub}`);
   for (const p of posts) console.log(`${p.c}c | ${p.t.slice(0,95)} | ${p.l}`);
 }
+recordVerifiedBackend('reddit_scan', 'openclaw-extension-relay');
 await browser.close();

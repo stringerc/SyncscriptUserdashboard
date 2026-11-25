@@ -1,7 +1,7 @@
 import { chromium } from 'playwright-core';
-import { resolveCdpUrl } from './cdp-url.mjs';
+import { resolveExtensionCdpUrl } from './cdp-url.mjs';
 const link = process.argv[2];
-const browser = await chromium.connectOverCDP(await resolveCdpUrl());
+const browser = await chromium.connectOverCDP(await resolveExtensionCdpUrl());
 const page = browser.contexts()[0].pages().find(p => p.url().includes('reddit.com'));
 await page.goto('https://www.reddit.com'+link, {waitUntil:'domcontentloaded'});
 await page.waitForTimeout(4000);

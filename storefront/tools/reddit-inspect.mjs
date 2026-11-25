@@ -1,6 +1,6 @@
 import { chromium } from 'playwright-core';
-import { resolveCdpUrl } from './cdp-url.mjs';
-const browser = await chromium.connectOverCDP(await resolveCdpUrl());
+import { resolveExtensionCdpUrl } from './cdp-url.mjs';
+const browser = await chromium.connectOverCDP(await resolveExtensionCdpUrl());
 const page = browser.contexts()[0].pages().find(p => p.url().includes('reddit.com'));
 const info = await page.evaluate(() => {
   const cands = [...document.querySelectorAll('button, [role=button], faceplate-tracker, shreddit-async-loader')].map(e => ({

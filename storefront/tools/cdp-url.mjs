@@ -80,3 +80,38 @@ export async function resolveCdpUrl() {
 export function cdpUrl() {
   return staticCdpUrl();
 }
+
+const VERIFIED_FILE = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '.verified-backends.json');
+
+/** Persist which backend a tool last verified working — once a path proves
+ *  itself, callers should keep using it instead of re-trying broken ones. */
+export function recordVerifiedBackend(tool, backend) {
+  try {
+    let data = {};
+    try { data = JSON.parse(fs.readFileSync(VERIFIED_FILE, 'utf8')); } catch {}
+    data[tool] = { backend, verifiedAt: Date.now() };
+    fs.writeFileSync(VERIFIED_FILE, JSON.stringify(data, null, 2));
+  } catch { /* best-effort */ }
+}
+
+/** Last verified backend for a tool, if any. */
+export function verifiedBackend(tool) {
+  try {
+    const data = JSON.parse(fs.readFileSync(VERIFIED_FILE, 'utf8'));
+    return data?.[tool]?.backend || null;
+  } catch { return null; }
+}
+
+/** Reddit-class tools: the OpenClaw extension relay (user's real logged-in
+ *  Chrome) is the ONLY verified path — the :9225 VM Chrome is IP-blocked by
+ *  Reddit and every fallback just burns a guaranteed failure. Throws with an
+ *  actionable message when the relay isn't attached. */
+export async function resolveExtensionCdpUrl() {
+  const relay = await probeExtensionRelay();
+  if (!relay) {
+    throw new Error(
+      'openclaw extension relay not connected — open Chrome, click the OpenClaw extension icon on a tab (badge ON), then retry',
+    );
+  }
+  return relay;
+}

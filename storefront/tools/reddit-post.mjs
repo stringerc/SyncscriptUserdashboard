@@ -1,5 +1,5 @@
 import { chromium } from 'playwright-core';
-import { resolveCdpUrl } from './cdp-url.mjs';
+import { resolveExtensionCdpUrl, recordVerifiedBackend } from './cdp-url.mjs';
 import { readFileSync, writeFileSync, copyFileSync, existsSync, mkdirSync } from 'fs';
 import path from 'path';
 
@@ -43,12 +43,13 @@ const snap = async () => {
 const done = async (posted, reason) => {
   const shot = await snap();
   console.log(`POSTED: ${posted} | reason: ${reason} | screenshot: ${shot} | url: ${page?.url?.() || 'n/a'}`);
+  if (posted) recordVerifiedBackend('reddit_post', 'openclaw-extension-relay');
   try { await browser?.close(); } catch { }
   process.exit(posted ? 0 : 1);
 };
 
 try {
-  browser = await chromium.connectOverCDP(await resolveCdpUrl());
+  browser = await chromium.connectOverCDP(await resolveExtensionCdpUrl());
   const ctx = browser.contexts()[0];
   page = ctx.pages().find(p => p.url().includes('reddit.com')) || await ctx.newPage();
 
