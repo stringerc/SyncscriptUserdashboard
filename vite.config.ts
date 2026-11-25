@@ -210,7 +210,7 @@ import { issueDirective, listDirectives, ackDirective, cancelDirective } from '.
 import { listMessages, sendMessage, meshStats, deadLetters, MESH_CHANNELS } from './src/lib/cortex-agents/messages';
 import { wsRead, wsWrite, wsDelete, wsList, workspaceStats, archiveMission, isValidNamespace } from './src/lib/cortex-agents/agent-workspace';
 import { MISSION_CONTROL_HTML } from './src/lib/cortex-agents/mission-control-page';
-import { openVerification, listVerifications, getVerification, verificationStats } from './src/lib/cortex-agents/verification';
+import { openVerification, listVerifications, getVerification, verificationStats, setVerificationRuntime } from './src/lib/cortex-agents/verification';
 import { listPatrolSpecs, patrolState, startPatrolMesh } from './src/lib/cortex-agents/patrols';
 import { registerSkill, getSkill, listSkills, acquireSkill, releaseSkill, composeSkills, recordSkillOutcome, skillStats, setSkillsRuntime } from './src/lib/cortex-agents/skills';
 import { selectPolicy, policyStats, startLearningLayer, POLICY_ARMS } from './src/lib/cortex-agents/learning';
@@ -2117,6 +2117,7 @@ function apiProxyPlugin(): Plugin {
         startLearningLayer(agentRuntime);
         console.log('[learning] bandit layer armed — rewards record off task transitions');
         setSkillsRuntime(agentRuntime);
+        setVerificationRuntime(agentRuntime);
       } catch (e: any) {
         console.warn('[patrols] mesh failed to arm:', e?.message || e);
       }

@@ -181,6 +181,8 @@ function computeMetrics() {
         { wC: 1, wT: 1, wTiming: 0.0001 }) // ~2-component aggregate
     : coherenceScore;
 
+  const lazyDown = FLEET.filter(n => n.lazy && !state.get(n.name)!.lastUp).map(n => n.name);
+  const infraDown = infraNodes.filter(n => !state.get(n.name)!.lastUp).map(n => n.name);
   return {
     ts: new Date().toISOString(),
     cycle,
@@ -190,6 +192,11 @@ function computeMetrics() {
     infraUp,
     infraTotal: infraNodes.length,
     infraUptimeRatio: +infraUptimeRatio.toFixed(3),
+    // Honest capacity view: lazy sidecars dark by design (RAM conservation)
+    // are expected-dark, not failures. Consumers must read infraDown for
+    // real outages — uptimeRatio alone makes idle-by-design look broken.
+    lazyDark: lazyDown,
+    infraDown,
     nodes: Object.fromEntries(FLEET.map(n => {
       const s = state.get(n.name)!;
       return [n.name, { up: s.lastUp, latencyMs: s.lastLatencyMs, samples: s.latencies.length }];

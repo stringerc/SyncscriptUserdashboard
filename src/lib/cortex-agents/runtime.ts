@@ -16,7 +16,7 @@ import { ModelMatrix, type AgentPin } from './registry';
 import { ModelSentinel } from './sentinel';
 import { DETERMINISTIC_TASKS } from './lights';
 import { ackMentioned, directivesBlock, markDelivered } from './directives';
-import { consumeMentioned, extractAndSendMessages, markMessagesDelivered, messagesBlock } from './messages';
+import { consumeMentioned, extractAndSendMessages, markMessagesDelivered, messagesBlock, sendMessage } from './messages';
 import { extractWorkspaceOps, workspaceBlock } from './agent-workspace';
 import './verification'; // registers the verdict.request vote hook on the message bus
 import { extractVerifyRequests } from './verification';
@@ -56,6 +56,52 @@ const messageFlushHandler: WorkerHandler = async (ctx) => {
     }],
   });
   return { flushed: true, pendingSeen: pending, reply: String(text).slice(0, 1200) };
+};
+
+/** Reserved kind: peer-review wake. verification.ts submits this to each
+ *  verifier so an open verification gets votes inside its window instead
+ *  of expiring unseen. The handler asks for a strict JSON vote, then emits
+ *  a fenced agent_message on verdict.request — the bus hook records it. */
+export const PEER_VERDICT_KIND = 'peer_verdict';
+const peerVerdictHandler: WorkerHandler = async (ctx) => {
+  const inp = (ctx.task.input || {}) as Record<string, unknown>;
+  const verificationId = String(inp.verificationId || '');
+  const subject = String(inp.subject || '');
+  const claim = String(inp.claim || '');
+  const evidence = String(inp.evidence || '');
+  const to = String(inp.requestedBy || 'cortex');
+  if (!verificationId) throw new Error('peer_verdict requires input.verificationId');
+
+  const text = await ctx.llm({
+    tier: 'fast',
+    maxTokens: 300,
+    messages: [{
+      role: 'user',
+      content: `You are ${ctx.task.agentId}, asked to peer-review a fleet claim before it is acted on.\n\nSUBJECT: ${subject}\nCLAIM: ${claim}\nEVIDENCE: ${evidence || '(none provided)'}\n\nJudge only whether the claim is supported by the evidence. Reply with STRICT JSON only: {"vote":"approve|contest|abstain","rationale":"one sentence"}. approve = evidence supports the claim; contest = evidence contradicts it or claim is unsupported; abstain = genuinely cannot judge.`,
+    }],
+  });
+  let vote = 'abstain';
+  let rationale = '';
+  try {
+    const m = String(text).match(/\{[\s\S]*\}/);
+    const obj = m ? JSON.parse(m[0]) : {};
+    const raw = String(obj.vote ?? obj.verdict ?? '').toLowerCase();
+    vote = /approve|agree|confirm|verified/.test(raw) ? 'approve'
+      : /contest|reject|disagree|false|wrong/.test(raw) ? 'contest' : 'abstain';
+    rationale = String(obj.rationale || '').slice(0, 300);
+  } catch { /* unparseable → abstain, still recorded */ }
+
+  // Direct bus send — result text gets JSON.stringify'd downstream, which
+  // would escape a fenced block's newlines/quotes and silently drop it.
+  const r = sendMessage({
+    from: ctx.task.agentId,
+    to,
+    type: 'signal',
+    channel: 'verdict.request',
+    payload: JSON.stringify({ vote, rationale: rationale || 'no rationale parsed' }),
+    correlationId: verificationId,
+  });
+  return { voted: vote, sent: r.ok, deduped: r.deduped === true, rationale };
 };
 
 export interface AgentSpec {
@@ -1023,6 +1069,8 @@ export class AgentRuntime {
       const preAssetFiles = scopedVid && isValidVenture(scopedVid) ? this.assetDirFiles(scopedVid) : null;
       const run = task.kind === MESSAGE_FLUSH_KIND
         ? messageFlushHandler
+        : task.kind === PEER_VERDICT_KIND
+        ? peerVerdictHandler
         : (DETERMINISTIC_TASKS[task.kind] ?? (() => handler(ctx)));
       run(ctx)
         .then((result) => {

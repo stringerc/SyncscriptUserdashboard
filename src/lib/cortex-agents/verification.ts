@@ -32,6 +32,14 @@ const MAX_VERIFICATIONS = 100;
 const DEFAULT_WINDOW_MS = 5 * 60 * 1000; // spec: verify-or-contest within 5 min
 const MAX_EVIDENCE_CHARS = 4_000;
 
+/** Runtime hook — set by vite so openVerification can wake verifiers with
+ *  real tasks. Without it, verdict.request messages only surface on a
+ *  verifier's next routine and every verification expires unseen. */
+let verificationRuntime: {
+  submitTask(agentId: any, kind: string, title: string, input?: Record<string, unknown>): { ok: boolean; error?: string };
+} | null = null;
+export function setVerificationRuntime(rt: typeof verificationRuntime) { verificationRuntime = rt; }
+
 export type Verdict = 'approve' | 'contest' | 'abstain';
 export type VerificationStatus = 'open' | 'approved' | 'contested' | 'escalated' | 'expired';
 
@@ -224,6 +232,23 @@ export function openVerification(opts: {
       ttlMs: v.deadline - now + 60_000,
     });
     if (r.ok) dispatched++;
+  }
+  // Wake each verifier: a peer_verdict task runs one llm() vote and posts
+  // the verdict.request reply directly — closes the loop inside the window
+  // instead of expiring while verifiers sleep. Best-effort: bus messages
+  // still deliver passively if the runtime hook is absent or a submit fails.
+  if (verificationRuntime) {
+    for (const vid of verifierIds) {
+      try {
+        verificationRuntime.submitTask(vid, 'peer_verdict', `Peer review ${v.id}`, {
+          verificationId: v.id,
+          subject: v.subject,
+          claim: v.claim,
+          evidence: v.evidence,
+          requestedBy,
+        });
+      } catch { /* one bad verifier must not sink the review */ }
+    }
   }
   return { ok: true, verification: v, dispatched };
 }

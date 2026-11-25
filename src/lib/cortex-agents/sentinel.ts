@@ -182,11 +182,12 @@ export class ModelSentinel {
             });
           }
         } catch (e: any) {
-          // Auth/billing failures (401/402/403) can't self-heal in seconds —
-          // mark permanent so the matrix cools the model down hard instead
-          // of retrying every minute against a dead key tier.
+          // Auth/billing failures (401/402/403) and retired upstream models
+          // (410 Gone, e.g. deepseek-v4.1-flash pulled from NIM) can't
+          // self-heal — mark permanent so the matrix cools the model down
+          // hard instead of retrying every minute against a dead endpoint.
           const httpStatus = typeof e?.status === 'number' ? e.status : undefined;
-          const permanent = httpStatus != null && [401, 402, 403].includes(httpStatus);
+          const permanent = httpStatus != null && [401, 402, 403, 410].includes(httpStatus);
           const h = this.matrix.recordProbe(t.provider, t.model, false, undefined, permanent);
           this.emit({ type: 'model.health', model: h, at: Date.now() });
           this.lastLoggedStatus.set(key, h.status);
