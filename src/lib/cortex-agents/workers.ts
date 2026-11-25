@@ -3196,7 +3196,10 @@ const hermesWorker: WorkerHandler = async (ctx) => {
   const toolName = String(input.tool || ctx.task.kind || 'ping');
   const args = (input.arguments || input.args || {}) as Record<string, unknown>;
   const idempotencyKey = input.idempotency_key ? String(input.idempotency_key) : undefined;
-  const targetUrl = (input.targetUrl as string) || process.env.HERMES_BASE_URL_TARGET || process.env.HERMES_EXECUTOR_URL || 'http://127.0.0.1:18880';
+  // Default = Edge bridge (authenticated + audited). HERMES_EXECUTOR_URL /
+  // input.targetUrl are explicit escapes for local executor dev only — the old
+  // 127.0.0.1:18880 default bypassed Edge auth and hit a dead port.
+  const targetUrl = (input.targetUrl as string) || process.env.HERMES_BASE_URL_TARGET || process.env.HERMES_EXECUTOR_URL || undefined;
 
   ctx.progress(0.2);
   if (toolName === 'hermes_ping' || toolName === 'ping') {
@@ -3207,7 +3210,9 @@ const hermesWorker: WorkerHandler = async (ctx) => {
   ctx.progress(0.5);
   try {
     const { invokeHermesTool } = await import('../../utils/hermes-client');
-    const token = process.env.HERMES_TOKEN || 'sovereign-local-token';
+    // Fleet calls authenticate to the Edge bridge as a service caller;
+    // HERMES_TOKEN remains for direct local-executor dev.
+    const token = process.env.HERMES_SERVICE_TOKEN || process.env.HERMES_TOKEN || 'sovereign-local-token';
     const res = await invokeHermesTool(
       token,
       { tool: toolName, arguments: args, idempotency_key: idempotencyKey },

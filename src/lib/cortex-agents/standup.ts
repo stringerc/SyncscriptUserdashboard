@@ -80,25 +80,48 @@ function getTodayKey(): string {
  * Deterministic probe of Hermes local sovereign tool host (:18880).
  */
 export async function probeHermesDaemon(
-  url = 'http://127.0.0.1:18880/health',
+  url = process.env.HERMES_EXECUTOR_URL || 'http://127.0.0.1:18880/health',
   timeoutMs = 800,
 ): Promise<ProbeTelemetry> {
+  // Production path first: Edge bridge → executor. Fleet invokes route
+  // through the bridge, so local :18880 alone is not the health signal.
+  const supabaseBase = process.env.VITE_SUPABASE_URL || 'https://kwhnrlzibgfedtxpkbgb.supabase.co';
+  const anonKey = process.env.VITE_SUPABASE_ANON_KEY || process.env.SUPABASE_ANON_KEY || '';
+  try {
+    const r = await fetch(`${supabaseBase}/functions/v1/make-server-57781ad9/hermes/health`, {
+      headers: { Accept: 'application/json', ...(anonKey ? { apikey: anonKey, Authorization: `Bearer ${anonKey}` } : {}) },
+      signal: AbortSignal.timeout(4000),
+    });
+    const j: any = await r.json().catch(() => ({}));
+    if (r.ok && j?.hermesStatus === 'connected') {
+      return {
+        status: 'healthy',
+        evidence: `Hermes executor reachable via Edge bridge (${j?.httpStatus || 'ok'}).`,
+      };
+    }
+    if (r.ok) {
+      return {
+        status: 'degraded',
+        evidence: `Edge bridge reachable but executor ${j?.hermesStatus || 'unknown'} (http ${j?.httpStatus}).`,
+      };
+    }
+  } catch { /* fall through to local probe */ }
   try {
     const res = await fetch(url, { signal: AbortSignal.timeout(timeoutMs) });
     if (res.ok) {
       return {
-        status: 'healthy',
-        evidence: `Sovereign tool host on ${url} responsive (HTTP ${res.status}).`,
+        status: 'degraded',
+        evidence: `Local executor on ${url} responsive but Edge path unhealthy — fleet invokes will fail.`,
       };
     }
     return {
       status: 'degraded',
-      evidence: `Sovereign tool host on ${url} returned HTTP ${res.status}.`,
+      evidence: `Sovereign tool host on ${url} returned HTTP ${res.status}; Edge path also unhealthy.`,
     };
   } catch (err: any) {
     return {
       status: 'degraded',
-      evidence: `Sovereign tool host offline on ${url} (${err?.message || 'connection failed'}). Daemon ready to spawn.`,
+      evidence: `Sovereign tool host offline on ${url} (${err?.message || 'connection failed'}) and Edge path unhealthy.`,
     };
   }
 }

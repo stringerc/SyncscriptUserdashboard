@@ -475,17 +475,19 @@ export class CortexOpenClawAdapter {
 
     // Mutating tools route ONLY via Hermes /v1/invoke (Phase 2 Collapse Gate)
     if (policyDef.isMutating) {
+      // Default = Edge bridge (authenticated + audited). Env overrides are
+      // explicit escapes for a local executor; no silent localhost fallback.
       const targetUrl =
         options?.hermesBaseUrl ||
         (typeof process !== 'undefined'
           ? process.env.HERMES_BASE_URL_TARGET || process.env.HERMES_EXECUTOR_URL
-          : undefined) ||
-        'http://127.0.0.1:18880';
+          : undefined);
 
       const token =
         options?.accessToken ||
         (typeof process !== 'undefined'
-          ? process.env.HERMES_AUTH_TOKEN ||
+          ? process.env.HERMES_SERVICE_TOKEN ||
+            process.env.HERMES_AUTH_TOKEN ||
             process.env.VITE_SUPABASE_ANON_KEY ||
             process.env.SUPABASE_ANON_KEY
           : undefined) ||

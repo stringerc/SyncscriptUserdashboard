@@ -98,6 +98,7 @@ scripts/*
 !scripts/ifixai-when-ready.sh
 !scripts/engram-public-supabase-url.mjs
 !scripts/bringup-hermes-tunnel-supabase.sh
+!scripts/hermes-tunnel-supervisor.sh
 !scripts/suggest-compact.mjs
 !scripts/verify-hermes-edge-live.mjs
 !scripts/verify-cortex-resilience.ts

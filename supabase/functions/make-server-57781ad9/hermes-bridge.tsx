@@ -11,10 +11,32 @@ import { Hono } from "npm:hono";
 import { cors } from "npm:hono/cors";
 import type { Context } from "npm:hono";
 import { authenticateUser } from "./openclaw-security.tsx";
+import * as kv from "./kv_store.tsx";
 
 const hermesBridge = new Hono();
 
-const HERMES_BASE_URL = (Deno.env.get("HERMES_BASE_URL") || "").replace(/\/$/, "");
+const ENV_BASE_URL = (Deno.env.get("HERMES_BASE_URL") || "").replace(/\/$/, "");
+const TUNNEL_SECRET = Deno.env.get("HERMES_TUNNEL_SECRET") || "";
+const KV_TUNNEL_KEY = "hermes:tunnel_url";
+const KV_TTL_MS = 24 * 60 * 60 * 1000;
+
+// Resolution order: fresh kv-registered tunnel URL (self-healing quick tunnel)
+// → HERMES_BASE_URL env → "" (unconfigured). Cached per isolate for 60s.
+let urlCache: { url: string; at: number } | null = null;
+
+async function resolveHermesBaseUrl(): Promise<string> {
+  if (urlCache && Date.now() - urlCache.at < 60_000) return urlCache.url;
+  let url = "";
+  try {
+    const row = (await kv.get(KV_TUNNEL_KEY)) as { url?: string; ts?: number } | null;
+    if (row?.url && typeof row.ts === "number" && Date.now() - row.ts < KV_TTL_MS) {
+      url = String(row.url).replace(/\/$/, "");
+    }
+  } catch { /* kv unavailable — fall through to env */ }
+  if (!url) url = ENV_BASE_URL;
+  urlCache = { url, at: Date.now() };
+  return url;
+}
 
 const TIMEOUT_MS = {
   health: 8000,
@@ -65,8 +87,21 @@ async function probeHermesHealth(baseUrl: string, requestId: string): Promise<{
   return { ok: false, pathUsed: lastPath, httpStatus: lastStatus };
 }
 
+const HERMES_SERVICE_TOKEN = Deno.env.get("HERMES_SERVICE_TOKEN") || "";
+
+function isServiceToken(authHeader: string | undefined): boolean {
+  if (!HERMES_SERVICE_TOKEN || !authHeader) return false;
+  const token = authHeader.startsWith("Bearer ") ? authHeader.slice(7).trim() : "";
+  return token.length > 0 && token === HERMES_SERVICE_TOKEN;
+}
+
 async function requireSignedInUser(c: Context, requestId: string) {
   const authHeader = c.req.header("Authorization");
+  // Fleet/agent service path: shared secret for unattended callers (Cortex
+  // agents, workers). User-scoped tools are still policy-gated downstream.
+  if (isServiceToken(authHeader)) {
+    return { ok: true as const, caller: "service" as const };
+  }
   const auth = await authenticateUser(authHeader);
   if (!auth.success || !auth.user) {
     return {
@@ -91,7 +126,7 @@ async function requireSignedInUser(c: Context, requestId: string) {
       ),
     };
   }
-  return { ok: true as const };
+  return { ok: true as const, caller: "user" as const };
 }
 
 hermesBridge.use(
@@ -119,7 +154,8 @@ hermesBridge.use(
 
 hermesBridge.get("/health", async (c) => {
   const requestId = getRequestId(c);
-  if (!HERMES_BASE_URL) {
+  const baseUrl = await resolveHermesBaseUrl();
+  if (!baseUrl) {
     return jsonWithRequestId(
       c,
       {
@@ -132,7 +168,7 @@ hermesBridge.get("/health", async (c) => {
     );
   }
   try {
-    const probe = await probeHermesHealth(HERMES_BASE_URL, requestId);
+    const probe = await probeHermesHealth(baseUrl, requestId);
     return c.json(
       {
         success: probe.ok,
@@ -156,7 +192,8 @@ hermesBridge.get("/health", async (c) => {
 /** GET /tools — proxy to Hermes tool catalog (SyncScript contract: GET /v1/tools). */
 hermesBridge.get("/tools", async (c) => {
   const requestId = getRequestId(c);
-  if (!HERMES_BASE_URL) {
+  const baseUrl = await resolveHermesBaseUrl();
+  if (!baseUrl) {
     return jsonWithRequestId(
       c,
       { error: "Hermes not configured", code: "HERMES_UNCONFIGURED" },
@@ -167,7 +204,7 @@ hermesBridge.get("/tools", async (c) => {
   const gate = await requireSignedInUser(c, requestId);
   if (!gate.ok) return gate.response;
 
-  const upstream = `${HERMES_BASE_URL}/v1/tools`;
+  const upstream = `${baseUrl}/v1/tools`;
   const authz = c.req.header("Authorization")?.trim();
   try {
     const r = await fetch(upstream, {
@@ -175,6 +212,7 @@ hermesBridge.get("/tools", async (c) => {
       headers: {
         Accept: "application/json",
         "X-Request-ID": requestId,
+        "X-Hermes-Caller": gate.caller,
         ...(authz && authz.startsWith("Bearer ") ? { Authorization: authz } : {}),
       },
       signal: AbortSignal.timeout(TIMEOUT_MS.get),
@@ -202,7 +240,8 @@ hermesBridge.get("/tools", async (c) => {
  */
 hermesBridge.post("/invoke", async (c) => {
   const requestId = getRequestId(c);
-  if (!HERMES_BASE_URL) {
+  const baseUrl = await resolveHermesBaseUrl();
+  if (!baseUrl) {
     return jsonWithRequestId(
       c,
       { error: "Hermes not configured", code: "HERMES_UNCONFIGURED" },
@@ -231,7 +270,7 @@ hermesBridge.post("/invoke", async (c) => {
     return jsonWithRequestId(c, { error: "Invalid JSON body", code: "INVALID_JSON" }, 400, requestId);
   }
 
-  const upstream = `${HERMES_BASE_URL}/v1/invoke`;
+  const upstream = `${baseUrl}/v1/invoke`;
   const authz = c.req.header("Authorization")?.trim();
   try {
     const r = await fetch(upstream, {
@@ -240,6 +279,7 @@ hermesBridge.post("/invoke", async (c) => {
         Accept: "application/json",
         "Content-Type": "application/json",
         "X-Request-ID": requestId,
+        "X-Hermes-Caller": gate.caller,
         ...(authz && authz.startsWith("Bearer ") ? { Authorization: authz } : {}),
       },
       body: raw,
@@ -259,6 +299,41 @@ hermesBridge.post("/invoke", async (c) => {
       502,
       requestId,
     );
+  }
+});
+
+/**
+ * POST /tunnel-url — self-healing quick-tunnel registration.
+ * The VM's hermes-tunnel.service publishes its current trycloudflare URL here
+ * on every (re)start; resolveHermesBaseUrl prefers it over the static env.
+ * Auth: X-Hermes-Tunnel-Secret === HERMES_TUNNEL_SECRET.
+ * Body: { "url": "https://<tunnel>.trycloudflare.com" }
+ */
+hermesBridge.post("/tunnel-url", async (c) => {
+  const requestId = getRequestId(c);
+  if (!TUNNEL_SECRET) {
+    return jsonWithRequestId(c, { error: "tunnel registration disabled", code: "TUNNEL_DISABLED" }, 503, requestId);
+  }
+  const provided = c.req.header("X-Hermes-Tunnel-Secret") || "";
+  if (provided !== TUNNEL_SECRET) {
+    return jsonWithRequestId(c, { error: "Forbidden", code: "FORBIDDEN" }, 403, requestId);
+  }
+  let body: { url?: string };
+  try {
+    body = await c.req.json();
+  } catch {
+    return jsonWithRequestId(c, { error: "Invalid JSON", code: "INVALID_JSON" }, 400, requestId);
+  }
+  const url = String(body?.url || "").trim().replace(/\/$/, "");
+  if (!/^https:\/\/[a-z0-9-]+(\.[a-z0-9-]+)*\.(trycloudflare\.com|cloudflare\.com|syncscript\.app)$/.test(url)) {
+    return jsonWithRequestId(c, { error: "url must be an https tunnel hostname", code: "BAD_URL" }, 400, requestId);
+  }
+  try {
+    await kv.set(KV_TUNNEL_KEY, { url, ts: Date.now() });
+    urlCache = null; // force re-resolve on next request
+    return jsonWithRequestId(c, { ok: true, registered: url }, 200, requestId);
+  } catch (e) {
+    return jsonWithRequestId(c, { error: String(e), code: "KV_WRITE_FAILED" }, 500, requestId);
   }
 });
 

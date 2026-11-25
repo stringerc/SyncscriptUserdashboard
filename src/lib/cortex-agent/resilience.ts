@@ -415,6 +415,41 @@ async function experimentChannelBridge(): Promise<{ slos: SloResult[]; detail: R
   return { slos, detail };
 }
 
+/** Experiment 8 — Hermes gateway readiness: the mutating-tool chokepoint
+ *  must answer through the production path (Edge bridge → executor).
+ *  A dead Hermes silently disables every gated write in the fleet, so
+ *  this is an SLO, not a nice-to-have. Probes Edge /hermes/health —
+ *  the same path all invoke traffic takes. */
+async function experimentHermesGateway(): Promise<{ slos: SloResult[]; detail: Record<string, unknown> }> {
+  const { supabaseUrl, publicAnonKey } = await import('../../utils/supabase/info');
+  let status = 'unreachable';
+  let http = 0;
+  let ms = 0;
+  try {
+    const t0 = performance.now();
+    const r = await fetch(`${supabaseUrl}/functions/v1/make-server-57781ad9/hermes/health`, {
+      headers: { Accept: 'application/json', apikey: publicAnonKey, Authorization: `Bearer ${publicAnonKey}` },
+      signal: AbortSignal.timeout(8000),
+    });
+    ms = performance.now() - t0;
+    http = r.status;
+    const j: any = await r.json().catch(() => ({}));
+    status = j?.hermesStatus || `http ${r.status}`;
+  } catch (e: any) {
+    status = `unreachable: ${String(e?.message || e).slice(0, 80)}`;
+  }
+  const connected = status === 'connected';
+  return {
+    slos: [{
+      name: 'hermes gateway connected', target: 'Edge /hermes/health → connected < 8000ms',
+      actual: `${status} (http ${http}) in ${ms.toFixed(0)}ms`,
+      pass: connected,
+      detail: connected ? undefined : 'mutating tool gateway down — all gated writes will fail',
+    }],
+    detail: { status, http, ms: Math.round(ms) },
+  };
+}
+
 /** Run the full harness — every experiment against the real stack. */
 export async function runResilienceHarness(): Promise<ResilienceReport> {
   const experiments: Record<string, unknown> = {};
@@ -440,6 +475,9 @@ export async function runResilienceHarness(): Promise<ResilienceReport> {
 
   const bridge = await experimentChannelBridge();
   experiments.channelBridge = bridge.detail; slos.push(...bridge.slos);
+
+  const hermes = await experimentHermesGateway();
+  experiments.hermesGateway = hermes.detail; slos.push(...hermes.slos);
 
   const report: ResilienceReport = {
     ranAt: Date.now(),

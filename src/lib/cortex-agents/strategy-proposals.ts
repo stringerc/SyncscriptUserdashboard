@@ -106,6 +106,7 @@ export function agentForClass(cls: string): string {
   if (c === 'rule' || c === 'memory') return 'librarian';
   if (c === 'review' || c === 'audit') return 'reviewer';
   if (c === 'web' || c === 'portal' || c === 'scrape') return 'openclaw';
+  if (c === 'mutate' || c === 'tool' || c === 'exec_tool') return 'hermes';
   if (c === 'refactor' || c === 'deep_code') return 'claudecode';
   return 'builder';
 }

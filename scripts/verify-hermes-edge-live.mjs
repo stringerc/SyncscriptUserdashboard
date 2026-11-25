@@ -81,6 +81,53 @@ async function main() {
     hermesStatus: body.hermesStatus,
     probePath: body.probePath,
   });
+
+  // Stage 2 — service-caller path: fleet invokes authenticate with
+  // HERMES_SERVICE_TOKEN (not a user JWT). Verify tools catalog + a
+  // read-class invoke round-trip when the token is available.
+  const serviceToken = process.env.HERMES_SERVICE_TOKEN || "";
+  if (serviceToken) {
+    const svcHeaders = {
+      Accept: "application/json",
+      apikey: anonKey,
+      Authorization: `Bearer ${serviceToken}`,
+    };
+    const toolsRes = await fetch(`${baseUrl}/functions/v1/make-server-57781ad9/hermes/tools`, {
+      method: "GET",
+      headers: svcHeaders,
+    });
+    const toolsBody = await toolsRes.json().catch(() => ({}));
+    const names = (toolsBody?.tools || []).map((t) => t?.name || t);
+    const hasV2 = names.includes("fs_read") && names.includes("shell_exec");
+    console.error("verify-hermes-edge-live: service tools", {
+      http: toolsRes.status,
+      count: names.length,
+      v2: hasV2,
+    });
+    if (toolsRes.status === 401 || toolsRes.status === 403) {
+      console.error("verify-hermes-edge-live: service token rejected by bridge");
+      process.exit(1);
+    }
+    if (process.env.HERMES_VERIFY_INVOKE === "1") {
+      const invRes = await fetch(`${baseUrl}/functions/v1/make-server-57781ad9/hermes/invoke`, {
+        method: "POST",
+        headers: { ...svcHeaders, "Content-Type": "application/json" },
+        body: JSON.stringify({ tool: "list_tools", arguments: {} }),
+      });
+      const invBody = await invRes.json().catch(() => ({}));
+      console.error("verify-hermes-edge-live: service invoke", {
+        http: invRes.status,
+        ok: invBody?.ok,
+        run_id: invBody?.run_id,
+      });
+      if (!invRes.ok || invBody?.ok !== true) {
+        console.error("verify-hermes-edge-live: invoke round-trip failed", invBody);
+        process.exit(1);
+      }
+    }
+  } else {
+    console.error("verify-hermes-edge-live: HERMES_SERVICE_TOKEN unset — service-path stage skipped");
+  }
   process.exit(0);
 }
 

@@ -17912,17 +17912,48 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
           openclawHealthy = false;
         }
 
-        // 2. Probe Hermes (:18880)
-        let hermesHealthy = false;
-        let hermesLatency = 0;
+        // 2. Probe Hermes — production path is Edge bridge → VM executor (:18880).
+        //    Localhost :18880 is only a dev convenience; reporting it alone produced
+        //    false "down" while Edge→VM was healthy. Probe both, report layers.
+        let hermesLocalHealthy = false;
+        let hermesLocalLatency = 0;
         try {
           const t0 = Date.now();
           const r = await fetch('http://127.0.0.1:18880/health', { signal: AbortSignal.timeout(1200) });
-          hermesLatency = Date.now() - t0;
-          hermesHealthy = r.ok;
+          hermesLocalLatency = Date.now() - t0;
+          hermesLocalHealthy = r.ok;
         } catch {
-          hermesHealthy = false;
+          hermesLocalHealthy = false;
         }
+
+        let hermesEdgeStatus = 'unreachable';
+        let hermesEdgeHttp = 0;
+        let hermesEdgeLatency = 0;
+        try {
+          const t0 = Date.now();
+          const supabaseBase = process.env.VITE_SUPABASE_URL || 'https://kwhnrlzibgfedtxpkbgb.supabase.co';
+          const anonKey = process.env.VITE_SUPABASE_ANON_KEY || process.env.SUPABASE_ANON_KEY || '';
+          const r = await fetch(`${supabaseBase}/functions/v1/make-server-57781ad9/hermes/health`, {
+            signal: AbortSignal.timeout(5000),
+            headers: {
+              Accept: 'application/json',
+              ...(anonKey ? { apikey: anonKey, Authorization: `Bearer ${anonKey}` } : {}),
+            },
+          });
+          hermesEdgeLatency = Date.now() - t0;
+          hermesEdgeHttp = r.status;
+          const body = await r.json().catch(() => ({}));
+          hermesEdgeStatus = body?.hermesStatus || (r.ok ? 'unknown' : `http_${r.status}`);
+        } catch {
+          hermesEdgeStatus = 'unreachable';
+        }
+
+        const hermesEdgeConnected = hermesEdgeStatus === 'connected';
+        const hermesStatus = hermesEdgeConnected
+          ? 'running'
+          : hermesLocalHealthy
+            ? 'degraded'
+            : 'down';
 
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({
@@ -17939,10 +17970,18 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
             hermes: {
               id: 'hermes',
               name: 'Hermes Sovereign Host',
-              status: hermesHealthy ? 'running' : 'down',
+              status: hermesStatus,
               port: 18880,
               url: 'http://127.0.0.1:18880',
-              latencyMs: hermesLatency,
+              edge: {
+                status: hermesEdgeStatus,
+                httpStatus: hermesEdgeHttp,
+                latencyMs: hermesEdgeLatency,
+              },
+              local: {
+                status: hermesLocalHealthy ? 'running' : 'down',
+                latencyMs: hermesLocalLatency,
+              },
             },
           },
           timestamp: Date.now(),
