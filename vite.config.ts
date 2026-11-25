@@ -201,6 +201,7 @@ import { recordForecastOutcome, loadCalibration } from './src/lib/cortex-agents/
 import { getAutonomousVigilance } from './src/lib/cortex-autonomous-vigilance';
 import { deriveSomaticState, type SomaticSample } from './src/lib/cortex-somatic';
 import { getAgentRuntime } from './src/lib/cortex-agents/runtime';
+import { inferWeight } from './src/lib/cortex-agents/registry';
 import { recordAgentOutcome } from './src/lib/cortex-agents/outcomes';
 import { archiveTask, readArchive } from './src/lib/cortex-agents/archive';
 import { listStrategyProposals, decideStrategyProposal, reconcileStrategyProposals, fileBudgetProposal, fileStrategyProposals, autoApproveSafeStrategyProposals, setOnProposalFiledHook } from './src/lib/cortex-agents/strategy-proposals';
@@ -12685,7 +12686,14 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
                     const reasonChain = agentRuntime.matrix.ordered('reason')
                       .map((c: any) => {
                         const base = aiProviders.find((p) => p.name === c.provider);
-                        return base ? { ...base, model: c.model, name: `${base.name}#${c.model.split('/').pop()}` } : null;
+                        // Big reasoners need room to finish: the 30s default
+                        // aborts mid-generation on 500B+ models, fails over,
+                        // and the next provider restarts the same slow
+                        // generation — pure churn. Scale timeout by the
+                        // same capability weight the deep lane sorts on.
+                        const w = c.weight ?? inferWeight(c.model);
+                        const timeoutMs = w >= 5 ? 120_000 : w >= 3 ? 75_000 : 45_000;
+                        return base ? { ...base, model: c.model, name: `${base.name}#${c.model.split('/').pop()}`, timeoutMs } : null;
                       })
                       .filter(Boolean) as any[];
                     if (reasonChain.length) {
@@ -12711,6 +12719,11 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
                     maxSteps: 8,
                     maxTokens: 4096,
                     temperature: 0.2,
+                    // Chat/SSE turns have no client deadline — the 170s
+                    // default exists for the ~200s voice ceiling. Give
+                    // deep-tier multi-step analysis room to finish; voice
+                    // clients still self-abort at their own watchdog.
+                    maxLoopMs: 360_000,
                     initialToolCall,
                     emit: (ev) => { try { res.write(`data: ${JSON.stringify(ev)}\n\n`); } catch {} },
                     emitToken: (t) => { try { res.write(`data: ${JSON.stringify({ token: t })}\n\n`); } catch {} },

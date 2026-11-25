@@ -26,6 +26,11 @@ export interface AgentProvider {
   keys?: string[];
   backupKey?: string;
   protocol?: 'openai' | 'anthropic';
+  /** Per-attempt request timeout override. Big reasoning models need
+   *  longer than the 30s default — aborting mid-generation just burns
+   *  the attempt and fails over to the next provider, which repeats
+   *  the same slow generation from scratch. */
+  timeoutMs?: number;
 }
 
 export interface AgentToolCall {
@@ -57,6 +62,10 @@ export interface AgentLoopDeps {
   maxSteps?: number;
   maxTokens?: number;
   temperature?: number;
+  /** Whole-loop wall-clock override. Default stays under the voice-turn
+   *  ceiling; chat/SSE surfaces may pass a larger budget for deep-tier
+   *  multi-step turns. */
+  maxLoopMs?: number;
   /** Deterministic first action — pending intention resumed on affirmation. */
   initialToolCall?: { name: string; args: Record<string, unknown>; kind?: 'intention' | 'reflex' } | null;
 }
@@ -221,7 +230,7 @@ async function callProviderOnce(
   for (let ki = 0; ki < keys.length; ki++) {
     try {
       const ctrl = new AbortController();
-      const timer = setTimeout(() => ctrl.abort(), REQUEST_TIMEOUT_MS);
+      const timer = setTimeout(() => ctrl.abort(), prov.timeoutMs ?? REQUEST_TIMEOUT_MS);
       let res: Response;
       if (protocol === 'anthropic') {
         // Convert OpenAI-shaped history into Anthropic content blocks.
@@ -359,7 +368,7 @@ async function callProviderOnceStreaming(
   for (let ki = 0; ki < keys.length; ki++) {
     try {
       const ctrl = new AbortController();
-      const timer = setTimeout(() => ctrl.abort(), REQUEST_TIMEOUT_MS);
+      const timer = setTimeout(() => ctrl.abort(), prov.timeoutMs ?? REQUEST_TIMEOUT_MS);
       const res = await fetch(prov.url, {
         method: 'POST',
         headers: {
@@ -610,7 +619,7 @@ export async function runAgenticTurn(
   const loopStart = Date.now();
   for (; steps < maxSteps; steps++) {
     // Whole-loop deadline: bail gracefully before the client turn timeout.
-    if (Date.now() - loopStart > MAX_LOOP_MS) {
+    if (Date.now() - loopStart > (deps.maxLoopMs ?? MAX_LOOP_MS)) {
       return {
         content: finalContent || 'That took longer than I like — the provider chain is degraded right now. Say "retry" and I will run it again.',
         steps, toolCalls: executed, provider: lastProvider,
