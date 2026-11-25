@@ -176,9 +176,40 @@ function parseDdgLite(html: string, maxResults: number) {
 /** Web search with backend failover. Distinguishes backend failure (throws,
  *  so telemetry.failureClass records the real cause) from genuinely empty
  *  results (returns []). Order: DDG html → DDG lite → Mojeek. */
+function parseBingResults(html: string, maxResults: number) {
+  const out: Array<{ title: string; url: string; snippet: string }> = [];
+  for (const block of html.split(/<li class="b_algo"/i).slice(1)) {
+    const m = block.match(/<h2[^>]*>\s*<a[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/i);
+    if (!m) continue;
+    // Bing wraps results in /ck/a redirect links carrying the real URL in a
+    // base64url 'u' param (prefixed 'a1'). Unwrap; skip unparseable links.
+    let url = m[1].replace(/&amp;/g, '&');
+    if (/bing\.com\/ck\//.test(url)) {
+      const u = url.match(/[?&]u=([^&]+)/)?.[1];
+      if (u && u.startsWith('a1')) {
+        try {
+          const b64 = u.slice(2).replace(/-/g, '+').replace(/_/g, '/');
+          url = Buffer.from(b64 + '='.repeat((4 - (b64.length % 4)) % 4), 'base64').toString('utf8');
+        } catch { continue; }
+      } else continue;
+    }
+    if (!/^https?:/.test(url)) continue;
+    const title = m[2].replace(/<[^>]+>/g, '').replace(/&amp;/g, '&').trim();
+    const snip = (block.match(/<p[^>]*>([\s\S]*?)<\/p>/i)?.[1] || block.match(/class="b_caption"[\s\S]*?<p[^>]*>([\s\S]*?)<\/p>/i)?.[1] || '')
+      .replace(/<[^>]+>/g, '').replace(/&amp;/g, '&').trim();
+    if (title) out.push({ title: title.slice(0, 200), url, snippet: snip.slice(0, 300) });
+    if (out.length >= maxResults) break;
+  }
+  return out;
+}
+
 async function webSearch(query: string, maxResults = 6): Promise<Array<{ title: string; url: string; snippet: string }>> {
   const q = encodeURIComponent(query);
   const attempts: Array<{ name: string; url: string; parse: (h: string, n: number) => ReturnType<typeof parseDdgResults> }> = [
+    // Bing first: DDG html/lite and Mojeek currently serve bot-challenge
+    // pages (HTTP 202 anomaly / Captcha) that parse empty — Bing still
+    // returns real b_algo results for plain UA fetches.
+    { name: 'bing', url: `https://www.bing.com/search?q=${q}&count=${maxResults}`, parse: parseBingResults },
     { name: 'ddg-html', url: `https://html.duckduckgo.com/html/?q=${q}`, parse: parseDdgResults },
     { name: 'ddg-lite', url: `https://lite.duckduckgo.com/lite/?q=${q}`, parse: parseDdgLite },
     { name: 'mojeek', url: `https://www.mojeek.com/search?q=${q}`, parse: (h, n) => {
@@ -202,9 +233,17 @@ async function webSearch(query: string, maxResults = 6): Promise<Array<{ title: 
     try {
       const res = await fetch(a.url, { headers: { 'User-Agent': UA }, signal: AbortSignal.timeout(10_000) });
       if (!res.ok) { errors.push(`${a.name} HTTP ${res.status}`); continue; }
+      const html = await res.text();
+      const results = a.parse(html, maxResults);
+      if (results.length) { anyBackendOk = true; return results; }
+      // Bot-challenge pages (DDG anomaly, Mojeek captcha) answer 200/202
+      // with zero parseable results — that's a backend failure, not an
+      // honest empty result set.
+      if (/anomaly|captcha|challenge|are you a robot|unusual traffic/i.test(html)) {
+        errors.push(`${a.name} bot-challenge`);
+        continue;
+      }
       anyBackendOk = true;
-      const results = a.parse(await res.text(), maxResults);
-      if (results.length) return results;
       errors.push(`${a.name} empty`);
     } catch (e) {
       errors.push(`${a.name} ${String((e as Error)?.message || e).slice(0, 60)}`);
