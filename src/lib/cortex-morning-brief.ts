@@ -169,6 +169,82 @@ function eventLine(e: BriefEvent): string {
   return `${time} — ${e.title}${att}${prep}`;
 }
 
+function normalizeWatchText(s: string): string {
+  return s.toLowerCase().replace(/\s+/g, ' ').trim();
+}
+
+function dedupeWatchItems(items: BriefWatchItem[]): BriefWatchItem[] {
+  const seen = new Set<string>();
+  const out: BriefWatchItem[] = [];
+  for (const item of items) {
+    const key = `${item.severity}:${normalizeWatchText(item.text)}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(item);
+  }
+  return out;
+}
+
+function formatPhoneLine(sectionKey: string, line: string, index: number): string {
+  const trimmed = line.trim();
+  if (!trimmed) return '';
+  if (sectionKey === 'signoff') return trimmed;
+  if (sectionKey === 'shape' && trimmed === 'PERSONAL / FAMILY (equal billing):') return trimmed;
+  if (sectionKey === 'accomplishments' && !trimmed.startsWith('✗')) return trimmed;
+
+  let text = trimmed.replace(/^•\s+/, '');
+  let prefix = '';
+  const severity = text.match(/^\[(info|warn|crit)\]\s+/i);
+  if (severity) {
+    prefix = `${severity[1]?.toUpperCase() ?? 'INFO'} — `;
+    text = text.slice(severity[0].length);
+  }
+  if (text.startsWith('✗')) {
+    text = `FAILED — ${text.slice(1).trim()}`;
+    prefix = '';
+  }
+  text = text
+    .replace(/_\((.*?)\)_/g, '($1)')
+    .replace(/\[prep✓\]/g, '· prep')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  if (sectionKey === 'accomplishments') return text;
+  if (sectionKey === 'watch' || sectionKey === 'radar') return `${index + 1}. ${prefix}${text}`;
+  return `- ${prefix}${text}`;
+}
+
+function renderPhoneText(header: string, sections: ComposedBrief['sections'], footer: string): { text: string; dropped: number } {
+  const protectedKeys = new Set(['decisions', 'shape', 'accomplishments', 'signoff']);
+  const blocks = sections.map((sec) => ({
+    key: sec.key,
+    text: [sec.title, ...sec.lines.map((line, i) => formatPhoneLine(sec.key, line, i)).filter(Boolean)].join('\n'),
+  }));
+  const assemble = (list: typeof blocks) => `${header}\n\n${list.map((b) => b.text).join('\n\n')}${footer}`;
+  const full = assemble(blocks);
+  let kept = blocks.slice();
+  let text = full;
+
+  if (text.length > PHONE_CAP) {
+    for (let i = kept.length - 1; i >= 0 && text.length > PHONE_CAP; i--) {
+      const block = kept[i];
+      if (!block || protectedKeys.has(block.key)) continue;
+      kept.splice(i, 1);
+      text = assemble(kept);
+    }
+  }
+
+  if (text.length > PHONE_CAP) {
+    const limit = Math.max(header.length + 40, PHONE_CAP - footer.length - 120);
+    const cut = text.lastIndexOf('\n', limit);
+    const trimmed = cut > header.length ? text.slice(0, cut) : text.slice(0, limit);
+    const removed = Math.max(0, text.length - trimmed.length - footer.length);
+    text = `${trimmed}\n\n…(+${removed} chars trimmed — full edition in print)${footer}`;
+  }
+
+  return { text, dropped: Math.max(0, full.length - text.length) };
+}
+
 /** Compose the fixed-order brief. Sections render only when non-empty. */
 export function composeBrief(d: BriefData): ComposedBrief {
   const sections: ComposedBrief['sections'] = [];
@@ -220,11 +296,12 @@ export function composeBrief(d: BriefData): ComposedBrief {
   sections.push({ key: 'accomplishments', title: 'OVERNIGHT ACCOMPLISHMENTS', lines: accLines });
 
   // 6. WATCH ITEMS
-  if (d.watchItems.length) {
+  const watchItems = dedupeWatchItems(d.watchItems);
+  if (watchItems.length) {
     sections.push({
       key: 'watch',
       title: 'WATCH ITEMS',
-      lines: d.watchItems.slice(0, MAX_WATCH).map((w) => `• [${w.severity}] ${w.text}`),
+      lines: watchItems.slice(0, MAX_WATCH).map((w) => `• [${w.severity}] ${w.text}`),
     });
   }
 
@@ -254,20 +331,14 @@ export function composeBrief(d: BriefData): ComposedBrief {
 
   // ── Renderings ──────────────────────────────────────────────────
   const header = `${d.greeting}\n${d.longDate} — CORTEX CHIEF'S BRIEF`;
-  const bodyLines = sections.flatMap((sec) => [`\n■ ${sec.title}`, ...sec.lines]);
-  const footer = `\n—\nGenerated ${new Date(d.generatedAt).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })} · sources: ${d.coverage.filter(c => c.ok).map(c => c.source).join(', ') || 'none'}${d.coverage.some(c => !c.ok) ? ' · degraded: ' + d.coverage.filter(c => !c.ok).map(c => c.source).join(', ') : ''}`;
-
-  let phoneText = `${header}${bodyLines.join('\n')}${footer}`;
-  let droppedForCap = 0;
-  if (phoneText.length > PHONE_CAP) {
-    // Trim from the bottom (spotlight/signoff survive; radar/watch shrink first)
-    const overflow = phoneText.length - PHONE_CAP;
-    const cut = phoneText.lastIndexOf('\n■ ', phoneText.length - overflow - 200);
-    if (cut > 0) {
-      droppedForCap = (phoneText.length - cut);
-      phoneText = phoneText.slice(0, cut) + `\n\n…(+${Math.round(droppedForCap / 10) * 10} chars trimmed — full brief in print/Discord)` + footer;
-    }
-  }
+  const okSources = d.coverage.filter((c) => c.ok).map((c) => c.source).join(', ') || 'none';
+  const badSources = d.coverage.filter((c) => !c.ok).map((c) => c.source).join(', ');
+  const footerNote = `Generated ${new Date(d.generatedAt).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })} · sources OK: ${okSources}${badSources ? ` · degraded: ${badSources}` : ''}`;
+  const footer = `\n—\n${footerNote}`;
+  const phoneHeader = `CORTEX GAZETTE — ${d.longDate}\n${d.greeting}`;
+  const phone = renderPhoneText(phoneHeader, sections, `\n\n${footerNote}`);
+  const phoneText = phone.text;
+  const droppedForCap = phone.dropped;
 
   const markdown = [
     `# ${header.replace(/\n/g, ' — ')}`,

@@ -91,6 +91,45 @@ describe('composeBrief', () => {
     expect(b.printHtml).toContain('DECISIONS NEEDED');
     expect(b.printHtml).toContain('PERSONAL');
   });
+
+  it('keeps phone text plain and free of glyph/markdown noise', () => {
+    const b = composeBrief(baseData());
+    expect(b.phoneText).not.toContain('■');
+    expect(b.phoneText).not.toContain('•');
+    expect(b.phoneText).not.toContain('✗');
+    expect(b.phoneText).not.toContain('_(');
+    expect(b.phoneText).toContain('DECISIONS NEEDED');
+    expect(b.phoneText).toContain('OVERNIGHT ACCOMPLISHMENTS');
+  });
+
+  it('dedupes watch items by severity and normalized text', () => {
+    const b = composeBrief(baseData({
+      watchItems: [
+        { text: '10 distribution queue item(s) failed', severity: 'warn' },
+        { text: '  10   DISTRIBUTION queue item(s) failed ', severity: 'warn' },
+        { text: '10 distribution queue item(s) failed', severity: 'info' },
+      ],
+    }));
+    const watch = b.sections.find((s) => s.key === 'watch');
+    expect(watch?.lines).toHaveLength(2);
+    expect(watch?.lines.join('\n')).toContain('[warn]');
+    expect(watch?.lines.join('\n')).toContain('[info]');
+  });
+
+  it('stays under phone cap with oversized watch and radar input', () => {
+    const many = Array.from({ length: 40 }, (_, i) => ({
+      text: `watch item ${i} `.repeat(8),
+      severity: 'warn' as const,
+    }));
+    const radar = Array.from({ length: 30 }, (_, i) => ({
+      id: `r${i}`,
+      text: `radar item ${i} `.repeat(8),
+      needsApproval: true,
+    }));
+    const b = composeBrief(baseData({ watchItems: many, radarHits: radar }));
+    expect(b.phoneText.length).toBeLessThanOrEqual(3800);
+    expect(b.phoneText).toContain('sources OK:');
+  });
 });
 
 describe('life radar normalize', () => {
