@@ -1460,12 +1460,13 @@ export function useVisualizerVoice(enabled: boolean, onState: (speaking: boolean
         else if (emo.primary === 'confused') speechRate = 0.94;
       }
       if (think) speechRate = Math.max(0.88, speechRate * 0.94);
-      // Thinking/meta utterances speak through the emotional Cortana clone
-      // (:8912, urgent/vulnerable stem) — fillers mutter, answers stay on
-      // the conversational :8911 voice. The sticky-voice guard in
-      // useVoiceStream keeps the persona from leaking into replies.
+      // Thinking/meta utterances keep the conversational cortana voice —
+      // the :8912 emotional clone (cortana_curious) tested as a persona
+      // mismatch for fillers. The '...' beats + slower rate carry the
+      // thinking quality; emotion-class pinning in useVoiceStream still
+      // guards persona voices if they're ever used deliberately.
       vsRef.current.speakStreamSentence(ttsText, isFinal, {
-        voice: think ? 'cortana_curious' : 'cortana',
+        voice: 'cortana',
         speed: speechRate,
         thinking: think,
       });
