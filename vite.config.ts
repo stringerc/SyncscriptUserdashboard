@@ -210,6 +210,7 @@ import { issueDirective, listDirectives, ackDirective, cancelDirective } from '.
 import { listMessages, sendMessage, meshStats, deadLetters, MESH_CHANNELS } from './src/lib/cortex-agents/messages';
 import { wsRead, wsWrite, wsDelete, wsList, workspaceStats, archiveMission, isValidNamespace } from './src/lib/cortex-agents/agent-workspace';
 import { openVerification, listVerifications, getVerification, verificationStats } from './src/lib/cortex-agents/verification';
+import { listPatrolSpecs, patrolState, startPatrolMesh } from './src/lib/cortex-agents/patrols';
 import { loadMission, saveMission, upsertGoal, verifyOps, goalProgress, routineYield, suggestCadence, planBlocks, startExperiment, reportExperiments, ventureYieldBreakdown, type OpsItem, type MissionGoal, type CadenceEntry } from './src/lib/cortex-agents/mission';
 import { listVentures, isValidVenture, ventureFromQueueType, updateVenture, dueVentures, markVentureRan, recordVentureCycle, ventureCyclesToday, listPlanItems, upsertPlanItem, deletePlanItem } from './src/lib/cortex-ventures';
 import { maybeFileAdoptionFollowup } from './src/lib/cortex-agents/adoption';
@@ -2101,6 +2102,16 @@ function apiProxyPlugin(): Plugin {
         // executable install/eval instructions. Fire-and-forget, never throws.
         try { void maybeFileAdoptionFollowup(task); } catch { }
       });
+
+      // Fleet spec §3: patrol mesh — warden anomaly findings route through
+      // peer verification before heal dispatch; patrol specs register as
+      // routines and their ```patrol_finding blocks open verifications.
+      try {
+        const armed = startPatrolMesh(agentRuntime);
+        console.log(`[patrols] mesh armed — ${armed.armed} patrol spec(s) registered, heal gate active`);
+      } catch (e: any) {
+        console.warn('[patrols] mesh failed to arm:', e?.message || e);
+      }
 
       // Provider lookup by candidate provider name → live credentials/endpoint.
       const providerFor = (name: string) => aiProviders.find((p) => p.name === name) || null;
@@ -16650,6 +16661,16 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
             json(400, { ok: false, error: e?.message || 'bad request' });
           }
         });
+      });
+
+      // ── Patrols (/api/cortex/agents/patrols) ──
+      // Fleet spec §3: patrol specs + verification-gate state.
+      server.middlewares.use('/api/cortex/agents/patrols', (req: any, res: any, next: any) => {
+        const origin = req.headers.origin;
+        if (!isAllowedOrigin(origin, req.headers.host)) return next();
+        agentCors(req, res);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: true, state: patrolState(), specs: listPatrolSpecs() }));
       });
 
       // ── Venture plan items (/api/cortex/ventures/plan) ──

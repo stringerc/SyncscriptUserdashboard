@@ -103,10 +103,12 @@ function evidencePacket(v: Verification): string {
   ].join('\n');
 }
 
-function escalate(v: Verification) {
-  v.status = 'escalated';
+function escalate(v: Verification, finalStatus: 'escalated' | 'expired' = 'escalated') {
+  v.status = finalStatus;
   v.resolvedAt = Date.now();
-  v.resolution = 'no consensus — escalated to Initiative Inbox';
+  v.resolution = finalStatus === 'expired'
+    ? 'verification window closed without consensus — escalated to Initiative Inbox'
+    : 'no consensus — escalated to Initiative Inbox';
   try {
     fileStrategyProposals({
       planNote: `verification ${v.id} escalated`,
@@ -119,6 +121,11 @@ function escalate(v: Verification) {
 /** Resolve if consensus is reached or the window has closed. */
 function maybeResolve(v: Verification) {
   if (v.status !== 'open') return;
+  resolveOpen(v);
+  if (v.status !== 'open') notifyResolved(v);
+}
+
+function resolveOpen(v: Verification) {
   const votes = v.votes.filter((vote) => vote.verdict !== 'abstain');
   const allVoted = v.verifierIds.every((id) => v.votes.some((vote) => vote.verifierId === id));
 
@@ -143,9 +150,19 @@ function maybeResolve(v: Verification) {
     return;
   }
   if (Date.now() >= v.deadline) {
-    v.status = 'expired';
-    escalate(v);
+    escalate(v, 'expired');
   }
+}
+
+/** Resolution observers (patrol heal-gate, mission control). Fired once when
+ *  an open verification reaches any terminal status. */
+let onResolvedHook: ((v: Verification) => void) | null = null;
+export function setOnVerificationResolvedHook(fn: ((v: Verification) => void) | null): void {
+  onResolvedHook = fn;
+}
+function notifyResolved(v: Verification) {
+  if (!onResolvedHook) return;
+  try { onResolvedHook(v); } catch { /* observers are best-effort */ }
 }
 
 /** Open a peer review and dispatch verdict.request envelopes to verifiers. */
@@ -244,13 +261,9 @@ setOnMessageSentHook(onMessageSent);
 function sweep(list: Verification[]): boolean {
   let dirty = false;
   for (const v of list) {
-    if (v.status === 'open' && Date.now() >= v.deadline) {
-      v.status = 'expired';
-      escalate(v);
-      dirty = true;
-    } else if (v.status === 'open') {
+    if (v.status === 'open') {
       const before = v.status;
-      maybeResolve(v);
+      maybeResolve(v); // handles deadline expiry internally now
       if (v.status !== before) dirty = true;
     }
   }

@@ -19,6 +19,7 @@ import { rulesBlock } from './rules';
 import { listIncidents, recordIncidentFailure, resolveIncidentsOnSuccess } from './incidents';
 import { readArchive } from './archive';
 import { runCounselPosition } from './counsel-position';
+import { patrolHealGateEnabled } from './patrols';
 
 const PORT = process.env.PORT ? parseInt(process.env.PORT) : 5173;
 const BASE = `http://127.0.0.1:${PORT}`;
@@ -638,7 +639,9 @@ const wardenWorker: WorkerHandler = async (ctx) => {
   // fresh heal_anomaly submission (198-count incident storm in ~22h).
   // Cooldown + in-flight check bound the burn; real failures still land
   // in the incident ledger.
-  if (!report.healthy && report.anomalies.length > 0) {
+  // Patrol gate (fleet spec §3): while patrols.ts is armed, anomaly findings
+  // route through peer verification first — heal dispatch is owned there.
+  if (!report.healthy && report.anomalies.length > 0 && !patrolHealGateEnabled()) {
     const now = Date.now();
     let inFlight = false;
     try {

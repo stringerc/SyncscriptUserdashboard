@@ -1,0 +1,13 @@
+{
+  "id": "dep-freshness",
+  "name": "Dependency freshness patrol",
+  "agentId": "librarian",
+  "kind": "vault_sync",
+  "title": "Librarian: dependency freshness check",
+  "input": {
+    "instruction": "Check package.json dependencies against known-vulnerable or severely outdated versions. If you find actionable issues, end your result with a fenced block: ```patrol_finding\n{\"claim\":\"...\",\"evidence\":\"...\",\"severity\":\"low|medium|high\"}\n``` — one block per finding. If everything is fresh, emit no patrol_finding blocks."
+  },
+  "everyMinutes": 720,
+  "verify": { "verifierIds": ["reviewer", "sentinel"], "windowMs": 300000 },
+  "remediate": { "agentId": "builder", "kind": "verify_gate", "title": "Builder: dependency remediation" }
+}
