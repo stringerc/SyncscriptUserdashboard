@@ -207,7 +207,8 @@ import { archiveTask, readArchive } from './src/lib/cortex-agents/archive';
 import { listStrategyProposals, decideStrategyProposal, reconcileStrategyProposals, fileBudgetProposal, fileStrategyProposals, autoApproveSafeStrategyProposals, setOnProposalFiledHook } from './src/lib/cortex-agents/strategy-proposals';
 import { recordIncidentFailure, resolveIncidentsOnSuccess, listIncidents, escalateStaleIncidents, sweepIncidentTtl, dismissIncident, dismissAllIncidents, autoVerifyIncident } from './src/lib/cortex-agents/incidents';
 import { issueDirective, listDirectives, ackDirective, cancelDirective } from './src/lib/cortex-agents/directives';
-import { listMessages, sendMessage } from './src/lib/cortex-agents/messages';
+import { listMessages, sendMessage, meshStats, deadLetters, MESH_CHANNELS } from './src/lib/cortex-agents/messages';
+import { wsRead, wsWrite, wsDelete, wsList, workspaceStats, archiveMission, isValidNamespace } from './src/lib/cortex-agents/agent-workspace';
 import { loadMission, saveMission, upsertGoal, verifyOps, goalProgress, routineYield, suggestCadence, planBlocks, startExperiment, reportExperiments, ventureYieldBreakdown, type OpsItem, type MissionGoal, type CadenceEntry } from './src/lib/cortex-agents/mission';
 import { listVentures, isValidVenture, ventureFromQueueType, updateVenture, dueVentures, markVentureRan, recordVentureCycle, ventureCyclesToday, listPlanItems, upsertPlanItem, deletePlanItem } from './src/lib/cortex-ventures';
 import { maybeFileAdoptionFollowup } from './src/lib/cortex-agents/adoption';
@@ -16501,6 +16502,9 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
               type: String(parsed.type || ''),
               payload: String(parsed.payload || parsed.message || ''),
               correlationId: parsed.correlationId ? String(parsed.correlationId) : undefined,
+              causationId: parsed.causationId ? String(parsed.causationId) : undefined,
+              channel: parsed.channel ? String(parsed.channel) : undefined,
+              requiresAck: parsed.requiresAck === true || undefined,
               evidenceRefs: Array.isArray(parsed.evidenceRefs) ? parsed.evidenceRefs.map(String) : undefined,
               priority: parsed.priority === 'urgent' ? 'urgent' : undefined,
               ventureId: parsed.ventureId ? String(parsed.ventureId) : undefined,
@@ -16529,6 +16533,69 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
             agentCors(req, res);
             res.writeHead(400);
             res.end(JSON.stringify({ ok: false, error: e?.message || 'bad request' }));
+          }
+        });
+      });
+
+      // ── Agent Mesh observability (/api/cortex/agents/mesh) ──
+      // Fleet spec §1: channel taxonomy, ack backlog, dead-letter queue.
+      server.middlewares.use('/api/cortex/agents/mesh', (req: any, res: any, next: any) => {
+        const origin = req.headers.origin;
+        if (!isAllowedOrigin(origin, req.headers.host)) return next();
+        agentCors(req, res);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: true, channels: MESH_CHANNELS, ...meshStats(), deadLetters: deadLetters(50) }));
+      });
+
+      // ── Shared Workspace (/api/cortex/agents/workspace) ──
+      // Fleet spec §2: namespaced KV. Crew/operator is admin (canWrite
+      // bypasses agent ACLs for 'crew'/'cortex'). GET ?ns=&key= reads or
+      // lists; POST {op:read|write|delete|list|archive-mission,...} mutates.
+      server.middlewares.use('/api/cortex/agents/workspace', (req: any, res: any, next: any) => {
+        const origin = req.headers.origin;
+        const isAllowed = isAllowedOrigin(origin, req.headers.host);
+        if (req.method === 'OPTIONS') {
+          res.writeHead(204, { 'Access-Control-Allow-Origin': origin || '*', 'Access-Control-Allow-Methods': 'GET, POST, OPTIONS', 'Access-Control-Allow-Headers': 'Content-Type' });
+          return res.end();
+        }
+        if (!isAllowed) return next();
+        agentCors(req, res);
+        const json = (code: number, body: any) => {
+          res.writeHead(code, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify(body));
+        };
+        if (req.method === 'GET') {
+          try {
+            const url = new URL(req.url || '/', 'http://localhost');
+            const ns = url.searchParams.get('ns') || '';
+            const key = url.searchParams.get('key') || '';
+            if (!isValidNamespace(ns)) return json(400, { ok: false, error: `invalid namespace: ${ns}` });
+            if (key) return json(200, wsRead(ns, key));
+            return json(200, wsList(ns));
+          } catch (e: any) {
+            return json(500, { ok: false, error: e?.message || 'workspace read failed' });
+          }
+        }
+        if (req.method !== 'POST') return next();
+        let body = '';
+        req.on('data', (c: Buffer) => { body += c.toString(); });
+        req.on('end', () => {
+          try {
+            const p = JSON.parse(body || '{}');
+            const op = String(p.op || '');
+            const ns = String(p.ns || '');
+            const key = String(p.key || '');
+            const asAgent = String(p.agentId || 'crew');
+            if (!isValidNamespace(ns)) return json(400, { ok: false, error: `invalid namespace: ${ns}` });
+            if (op === 'write') return json(200, wsWrite(asAgent, ns, key, p.value, { expectVersion: typeof p.expectVersion === 'number' ? p.expectVersion : undefined, ttlMs: typeof p.ttlMs === 'number' ? p.ttlMs : undefined }));
+            if (op === 'delete') return json(200, wsDelete(asAgent, ns, key));
+            if (op === 'read') return json(200, wsRead(ns, key));
+            if (op === 'list') return json(200, wsList(ns));
+            if (op === 'archive-mission') return json(200, archiveMission(asAgent, String(p.missionId || key || ns.split(':')[1] || '')));
+            if (op === 'stats') return json(200, { ok: true, ...workspaceStats() });
+            return json(400, { ok: false, error: `unknown op: ${op}` });
+          } catch (e: any) {
+            return json(400, { ok: false, error: e?.message || 'bad request' });
           }
         });
       });

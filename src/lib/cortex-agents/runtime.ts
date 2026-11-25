@@ -17,6 +17,7 @@ import { ModelSentinel } from './sentinel';
 import { DETERMINISTIC_TASKS } from './lights';
 import { ackMentioned, directivesBlock, markDelivered } from './directives';
 import { consumeMentioned, extractAndSendMessages, markMessagesDelivered, messagesBlock } from './messages';
+import { extractWorkspaceOps, workspaceBlock } from './agent-workspace';
 import { isValidVenture, listVentures } from '../cortex-ventures';
 import type {
   AgentEvent, AgentId, AgentRoutine, AgentState, AgentStatus, AgentTask, AgentsSnapshot, SpawnProposal, SpawnSpec, TaskFailureClass, TaskStatus, TaskTelemetry,
@@ -963,13 +964,14 @@ export class AgentRuntime {
           if (dirBlock) markDelivered(agentId, task.id);
           const msgBlock = messagesBlock(agentId);
           if (msgBlock) markMessagesDelivered(agentId, task.id);
+          const wsBlock = workspaceBlock(agentId);
           // Venture asset contract: any venture-scoped task that produces
           // files should drop them where the console's ASSETS tab reads.
           const vid = (task.input as any)?.ventureId;
           const assetBlock = vid
             ? `VENTURE ASSETS: this task is scoped to venture "${vid}". If you produce files or deliverables (images, exports, docs, renders), save them under .cortex-runtime/venture-assets/${vid}/ — the venture console ASSETS tab lists that directory.`
             : '';
-          const injected = [dirBlock, msgBlock, assetBlock].filter(Boolean).join('\n\n');
+          const injected = [dirBlock, msgBlock, wsBlock, assetBlock].filter(Boolean).join('\n\n');
           const llmT0 = Date.now();
           const r = await this.llmBridge({
             ...opts,
@@ -1018,6 +1020,9 @@ export class AgentRuntime {
             const text = JSON.stringify(result ?? '');
             extractAndSendMessages(agentId, text);
             consumeMentioned(agentId, text);
+            // Shared workspace: fenced ```workspace_op blocks execute under
+            // the agent's ACL; read/list results return next task.
+            extractWorkspaceOps(agentId, text);
           } catch { /* best-effort */ }
           this.transition(task, 'completed', { result, progress: task.progress ?? 1 });
           this.setStatus(agentId, queue.length ? 'working' : 'idle');
