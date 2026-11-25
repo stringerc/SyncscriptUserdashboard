@@ -1174,6 +1174,10 @@ export class AgentRuntime {
   private maybeRetry(task: AgentTask, error: string) {
     const attempt = Number(task.input?.attempt ?? 0);
     const cls = task.telemetry?.failureClass;
+    // Dependency outages (dead chrome session, IP-blocked upstream, logged-out
+    // integrations) are environmental — an immediate retry is a guaranteed
+    // re-fail that triples the noise. The next scheduled run is the retry.
+    if (cls === 'dependency') return;
     const transient = cls === 'provider' || cls === 'timeout';
     const maxAttempts = transient ? AgentRuntime.MAX_TRANSIENT_ATTEMPTS : AgentRuntime.MAX_ATTEMPTS;
     if (attempt + 1 >= maxAttempts) return;

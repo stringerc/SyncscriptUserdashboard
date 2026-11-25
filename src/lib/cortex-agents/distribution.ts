@@ -149,9 +149,13 @@ async function runRedditScan(ctx: AgentContext, payload: Record<string, unknown>
   ctx.progress(0.3);
   const out = await sh(`node tools/reddit-scan.mjs ${subs.map((s) => `'${s.replace(/'/g, '')}'`).join(' ')}`, ctx.telemetry);
   const stdout = String(out?.stdout || '');
+  const stderr = String(out?.stderr || '');
   ctx.progress(1);
+  if (/REDDIT_BLOCKED/.test(stderr)) {
+    throw new Error(`reddit_scan unreachable: reddit network-security block on this IP — log in to reddit in the automation Chrome or use a developer token (${stderr.trim().slice(0, 160)})`);
+  }
   const threads = stdout.split('\n').filter((l) => /^\d+c \|/.test(l)).length;
-  if (!threads) throw new Error(`reddit_scan returned no threads (chrome on :9225 reachable? logged into reddit?)`);
+  if (!threads) throw new Error(`reddit_scan returned no threads (chrome on :9225 reachable? logged into reddit? stderr: ${stderr.trim().slice(0, 160) || 'none'})`);
   return { subs, threads, output: stdout.slice(0, 4000) };
 }
 
