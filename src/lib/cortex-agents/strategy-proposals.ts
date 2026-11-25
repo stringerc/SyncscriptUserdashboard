@@ -117,7 +117,7 @@ export function agentForClass(cls: string): string {
  * Dedupe: same planNote + actionIndex never files twice.
  */
 /** Classes that mutate agent behavior/config — require evalEvidence (P4). */
-export const SELF_MOD_CLASSES = new Set(['prompt', 'code', 'skill', 'tune', 'prompt_patch', 'patch', 'config-self']);
+export const SELF_MOD_CLASSES = new Set(['prompt', 'code', 'skill', 'tune', 'prompt_patch', 'patch', 'config-self', 'mutate', 'tool', 'exec_tool']);
 
 export function fileStrategyProposals(opts: {
   planNote: string | null;

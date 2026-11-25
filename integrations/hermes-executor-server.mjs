@@ -226,6 +226,7 @@ const TOOLS = [
         op: { type: "string", enum: ["status", "diff", "log", "show", "branch", "add", "commit", "push"] },
         args: { type: "array", items: { type: "string" } },
         message: { type: "string", description: "commit message" },
+        confirm: { type: "boolean", description: "required true for push (dangerous class)" },
         dry_run: { type: "boolean" },
       },
     },
@@ -714,6 +715,12 @@ const HANDLERS = {
       push("validate", "error", "not a git repository");
       return { ok: false, error: `not a git repo: ${r.path}` };
     }
+    // Per-op policy: push is dangerous-class — requires confirm or dry_run.
+    // (Registry cls is 'mutate'; op-level danger is enforced here.)
+    if (op === "push" && !dryRun && args?.confirm !== true) {
+      push("policy", "error", "git push requires confirm:true or dry_run:true");
+      return { ok: false, error: "git_op push is dangerous-class — re-invoke with arguments.confirm=true after reviewing a dry_run" };
+    }
     let argv;
     if (op === "commit") {
       const msg = String(args?.message || "").trim();
@@ -790,7 +797,18 @@ async function invokeTool(tool, args, idemKey, authHeader, caller) {
     return finish({ ok: false, error: "Missing Authorization — user JWT required" });
   }
 
-  // Policy gate 2: rate limit
+  // Policy gate 2.5: dangerous-class tools need explicit confirmation —
+  // dry_run previews are always allowed; live execution requires
+  // arguments.confirm === true so a stray invoke can't push/deploy.
+  if (spec.cls === "dangerous" && !dryRun && args?.confirm !== true) {
+    push("policy", "error", "dangerous tool requires confirm:true or dry_run:true");
+    return finish({
+      ok: false,
+      error: `Tool ${tool} is class 'dangerous' — re-invoke with arguments.confirm=true after reviewing a dry_run, or use dry_run to preview`,
+    });
+  }
+
+  // Policy gate 3: rate limit
   if (!rateLimitOk(caller, tool)) {
     push("policy", "error", `rate limit ${RATE_PER_MIN}/min exceeded`);
     return finish({ ok: false, error: `Rate limit exceeded (${RATE_PER_MIN}/min per caller)` });
