@@ -157,58 +157,62 @@ const SOCIAL_SKIP = /^(hi|hey|hello|yo|sup|thanks|thank you|ok|okay|yes|yeah|no|
 // Thinking-style delivery: leading interjection, mid-phrase beat, trailing
 // ellipsis — the hesitation punctuation survives sanitizeForNexusTTS in
 // thinking mode, so these actually SOUND like she's thinking, not reciting.
+// Thinking-style delivery: elongated interjections do the "dragging it
+// out" work — engines lengthen repeated vowels naturally, where '...'
+// alone only buys a beat. Content words stay clean (heavy elongation
+// glitches clone-TTS); the ~6% rate drop in speakSentence adds the rest.
 const FILLER_POOLS: Array<[RegExp, string[]]> = [
   [/\b(status|system info|cpu|memory usage|ram|disk|battery|uptime|specs?|hostname|os version|machine|diagnostic|health)\b/i, [
-    'Hmm, checking the system…',
-    'Uhh, one moment — running a quick check…',
-    'Ooh, good timing — let me look…',
+    'Hmmmm, checking the system…',
+    'Uhhh, one moment — running a quick check…',
+    'Ohh, good timing — let me look…',
   ]],
   [/\b(search|look ?up|google|research|news|weather|find out|who is|what is the latest)\b/i, [
-    'Hmm, let me look that up…',
-    'Uhh, one sec — searching now…',
-    'Ooh, good question — pulling that up…',
+    'Hmmmm, let me look that up…',
+    'Uhhh, one sec — searching now…',
+    'Ohh, good question — pulling that up…',
   ]],
   [/\b(remember|memory|recall|what do you know|forgot|note that|save (this|that)|episodic)\b/i, [
-    'Hmm, digging into memory…',
-    'Uhh, checking what I have stored…',
-    'Ooh, let me think — searching my notes…',
+    'Hmmmm, digging into memory…',
+    'Uhhh, checking what I have stored…',
+    'Ohh, let me think — searching my notes…',
   ]],
   [/\b(file|folder|directory|read|write|document|spreadsheet|code|repo|git|commit|script|\.ts|\.py|\.js)\b/i, [
-    'Hmm, give me a moment…',
-    'Uhh, let me take a look at that…',
-    'Ooh — working through that now…',
+    'Hmmmm, give me a moment…',
+    'Uhhh, let me take a look at that…',
+    'Ohh — working through that now…',
   ]],
   [/\b(open|browse|website|url|tab|chrome|navigate|click|screenshot)\b/i, [
-    'Hmm, opening that up…',
-    'Uhh, one moment — taking you there…',
-    'Ooh, pulling it up now…',
+    'Hmmmm, opening that up…',
+    'Uhhh, one moment — taking you there…',
+    'Ohh, pulling it up now…',
   ]],
   [/\b(call|phone|dial|facetime)\b/i, [
-    'Hmm, getting that call started…',
-    'Uhh, one moment — dialing now…',
+    'Hmmmm, getting that call started…',
+    'Uhhh, one moment — dialing now…',
   ]],
   [/\b(bug|error|fix|heal|escalate|broken|exception|crash|regression|self[- ]heal|patch)\b/i, [
-    'Ooh, good catch — escalating to the IDEs…',
-    'Hmm, diagnosing that with Antigravity and Devin…',
-    'Uhh, let me escalate that and run the gate…',
+    'Ohh, good catch — escalating to the IDEs…',
+    'Hmmmm, diagnosing that with Antigravity and Devin…',
+    'Uhhh, let me escalate that and run the gate…',
   ]],
   [/\b(mission|schedule|remind|calendar|plan|task|todo|goal)\b/i, [
-    'Hmm, let me set that up…',
-    'Uhh, planning that out…',
-    'Ooh, give me a moment to organize it…',
+    'Hmmmm, let me set that up…',
+    'Uhhh, planning that out…',
+    'Ohh, give me a moment to organize it…',
   ]],
   [/\b(run|execute|command|script|install|build|deploy|restart|stop|kill|process)\b/i, [
-    'Hmm, running that now…',
-    'Uhh, executing — give me a sec…',
-    'Ooh, on it…',
+    'Hmmmm, running that now…',
+    'Uhhh, executing — give me a sec…',
+    'Ohh, on it…',
   ]],
 ];
 
 const GENERIC_FILLERS = [
-  'Hmm, let me handle that…',
-  'Uhh, on it — one moment…',
-  'Ooh, give me a sec…',
-  'Hmm, working on it now…',
+  'Hmmmm, let me handle that…',
+  'Uhhh, on it — one moment…',
+  'Ohh, give me a sec…',
+  'Hmmmm, working on it now…',
 ];
 
 // ── Thinking-phase fillers (mid-turn dead-air narration) ──────────────
@@ -218,64 +222,64 @@ const GENERIC_FILLERS = [
 // layer: only narrate work that truly ran, and keep lines speakable.
 
 const TOOL_NARRATION: Array<[RegExp, string[]]> = [
-  [/web_?search|search/i, ['Uhh, running the search…', 'Hmm, searching — one moment…', 'Ooh, pulling results for you…']],
-  [/read_file|list_dir|read/i, ['Hmm, reading through the files…', 'Uhh, looking at the code…', 'Ooh, reading that through…']],
-  [/search_code|grep|code_search/i, ['Uhh, searching the codebase…', 'Hmm, digging through the code…']],
-  [/run_command|exec|command|shell|terminal/i, ['Ooh, running that command…', 'Uhh, executing — should be quick…', 'Hmm, on it…']],
-  [/write_file|edit_file|patch_file|write|edit/i, ['Hmm, making the changes…', 'Uhh, writing that up…', 'Ooh, applying the edit…']],
-  [/memory|recall|remember/i, ['Hmm, checking memory on that…', 'Uhh, searching what I have stored…']],
-  [/map|globe|fly|geocode/i, ['Ooh, moving the map…', 'Uhh, flying you there now…']],
-  [/document|docx|pdf|artifact|surface|chart|table/i, ['Hmm, putting that together…', 'Uhh, compiling it for you…']],
-  [/delegate|handoff|agent|dispatch|spawn|task/i, ['Ooh, dispatching that to the fleet…', 'Uhh, handing it to the right agent…', 'Hmm, routing it now…']],
+  [/web_?search|search/i, ['Uhhh, running the search…', 'Hmmmm, searching — one moment…', 'Ohh, pulling results for you…']],
+  [/read_file|list_dir|read/i, ['Hmmmm, reading through the files…', 'Uhhh, looking at the code…', 'Ohh, reading that through…']],
+  [/search_code|grep|code_search/i, ['Uhhh, searching the codebase…', 'Hmmmm, digging through the code…']],
+  [/run_command|exec|command|shell|terminal/i, ['Ohh, running that command…', 'Uhhh, executing — should be quick…', 'Hmmmm, on it…']],
+  [/write_file|edit_file|patch_file|write|edit/i, ['Hmmmm, making the changes…', 'Uhhh, writing that up…', 'Ohh, applying the edit…']],
+  [/memory|recall|remember/i, ['Hmmmm, checking memory on that…', 'Uhhh, searching what I have stored…']],
+  [/map|globe|fly|geocode/i, ['Ohh, moving the map…', 'Uhhh, flying you there now…']],
+  [/document|docx|pdf|artifact|surface|chart|table/i, ['Hmmmm, putting that together…', 'Uhhh, compiling it for you…']],
+  [/delegate|handoff|agent|dispatch|spawn|task/i, ['Ohh, dispatching that to the fleet…', 'Uhhh, handing it to the right agent…', 'Hmmmm, routing it now…']],
 ];
 
 const THINKING_INTENT: Array<[RegExp, string[]]> = [
   [/\b(status|system info|cpu|memory usage|ram|disk|battery|uptime|specs?|diagnostic|health|fleet|models?)\b/i, [
-    'Hmm, checking the fleet…', 'Uhh, pulling live telemetry — one sec…', 'Ooh, reading system status…',
+    'Hmmmm, checking the fleet…', 'Uhhh, pulling live telemetry — one sec…', 'Ohh, reading system status…',
   ]],
   [/\b(search|look ?up|google|research|news|weather|find out|who is|latest|source)\b/i, [
-    'Hmm, digging into that…', 'Uhh, pulling sources — give me a moment…', 'Ooh, looking into it…',
+    'Hmmmm, digging into that…', 'Uhhh, pulling sources — gimme a moment…', 'Ohh, looking into it…',
   ]],
   [/\b(remember|memory|recall|forgot|note that|save (this|that)|episodic)\b/i, [
-    'Hmm, searching memory…', 'Uhh, checking what I have stored…', 'Ooh, digging into memory…',
+    'Hmmmm, searching memory…', 'Uhhh, checking what I have stored…', 'Ohh, digging into memory…',
   ]],
   [/\b(file|folder|directory|read|write|document|spreadsheet|code|repo|git|commit|script|\.ts|\.py|\.js)\b/i, [
-    'Hmm, reading through that…', 'Uhh, working through the code…', 'Ooh, let me trace through it…',
+    'Hmmmm, reading through that…', 'Uhhh, working through the code…', 'Ohh, let me trace through it…',
   ]],
   [/\b(open|browse|website|url|tab|chrome|navigate|click|screenshot)\b/i, [
-    'Hmm, opening that up…', 'Uhh, pulling it up now…', 'Ooh, on it — one moment…',
+    'Hmmmm, opening that up…', 'Uhhh, pulling it up now…', 'Ohh, on it — one moment…',
   ]],
-  [/\b(call|phone|dial|facetime)\b/i, ['Uhh, getting that started…', 'Hmm, one moment — dialing…']],
+  [/\b(call|phone|dial|facetime)\b/i, ['Uhhh, getting that started…', 'Hmmmm, one moment — dialing…']],
   [/\b(bug|error|fix|heal|escalate|broken|exception|crash|regression|self[- ]heal|patch)\b/i, [
-    'Ooh, diagnosing that now…', 'Uhh, escalating — checking the gate…', 'Hmm, tracing the failure…',
+    'Ohh, diagnosing that now…', 'Uhhh, escalating — checking the gate…', 'Hmmmm, tracing the failure…',
   ]],
   [/\b(mission|schedule|remind|calendar|plan|task|todo|goal)\b/i, [
-    'Hmm, planning that out…', 'Uhh, setting that up — one moment…', 'Ooh, organizing it now…',
+    'Hmmmm, planning that out…', 'Uhhh, setting that up — one moment…', 'Ohh, organizing it now…',
   ]],
   [/\b(run|execute|command|script|install|build|deploy|restart|stop|kill|process)\b/i, [
-    'Uhh, running that now…', 'Hmm, executing — give me a sec…', 'Ooh, on it…',
+    'Uhhh, running that now…', 'Hmmmm, executing — gimme a sec…', 'Ohh, on it…',
   ]],
   [/\b(write|draft|compose|create|generate|make|resume|essay|email|letter|story|report)\b/i, [
-    'Hmm, composing that now…', 'Uhh, drafting it — one moment…', 'Ooh, putting it together…',
+    'Hmmmm, composing that now…', 'Uhhh, drafting it — one moment…', 'Ohh, putting it together…',
   ]],
 ];
 
 const THINKING_GENERIC = [
-  'Hmm, give me a moment…', 'Uhh, still on it…', 'Ooh, one sec — thinking it through…',
-  'Hmm, hang tight, almost there…', 'Uhh, working through it now…',
-  'Ooh, give me a beat to get this right…', 'Hmm, still piecing that together…',
-  'Uhh, just a moment — getting it right…', 'Ooh, bear with me — nearly there…',
+  'Hmmmm, gimme a moment…', 'Uhhh, still on it…', 'Ohh, one sec — thinking it through…',
+  'Hmmmm, hang tight, almoost there…', 'Uhhh, working through it now…',
+  'Oohh, gimme a beat to get this right…', 'Hmmmm, still piecing that together…',
+  'Uhhh, just a seecond — getting it right…', 'Ohh, bear with me — nearly there…',
 ];
 
 // Second dead-air beat (~11s): acknowledge the wait honestly — longer,
-// humbler, still short enough to speak. The hesitation punctuation makes
-// these land as thinking, not announcements.
+// humbler, still short enough to speak. Stretched vowels carry the
+// "she's grinding" quality that '...' beats alone couldn't.
 const THINKING_LONG = [
-  'Hmm… almost there — give me a few more seconds…',
-  'Uhh… still working on it — this one is taking a moment…',
-  'Hmmm… hang tight, getting close now…',
-  'Hmm… still on it — deeper than it looks…',
-  'Uhh… almost—there… few more seconds…',
+  'Hmmmm… almoost there — gimme a few more seconds…',
+  'Uhhh… still working on it — this one is taking a momennt…',
+  'Oohh… hang tight, getting cloooose now…',
+  'Hmmmm… still on it — deeper than it looks…',
+  'Uhhh… almoost—there… few more seconds…',
 ];
 
 function pickLine(pool: string[], avoid?: string): string {
@@ -292,7 +296,7 @@ function thinkingFillerLine(utterance: string, tools: string[], slot: number, av
   if (tools.length) {
     const last = tools[tools.length - 1];
     const pool = TOOL_NARRATION.find(([re]) => re.test(last))?.[1];
-    return pool ? pickLine(pool, avoid) : `Uhh, working through ${last.replace(/_/g, ' ')} — one moment…`;
+    return pool ? pickLine(pool, avoid) : `Uhhh, working through ${last.replace(/_/g, ' ')} — one moment…`;
   }
   const pool = THINKING_INTENT.find(([re]) => re.test(utterance))?.[1] ?? THINKING_GENERIC;
   return pickLine(pool, avoid);
@@ -1117,16 +1121,27 @@ async function streamLLM(history: ChatMsg[], opts: StreamOpts = {}): Promise<str
   let buf = '', content = '', voiceBuf = '';
   const toolCallEvents: any[] = [];
   let tailTimer: ReturnType<typeof setTimeout> | null = null;
-  const dispatch = (sentence: string, isFinal: boolean) => {
-    // Suppress speech if currently inside a tool fence or tool call
-    if (isInsideToolCall(content)) return;
-    if (looksLikeToolOrJson(sentence)) return;
+  const dispatch = (sentence: string, isFinal: boolean, isStreamEnd = false) => {
+    // Suppress speech if currently inside a tool fence or tool call — but at
+    // stream end an UNCLOSED non-tool fence (model emitted ``` and never
+    // closed it) must not permanently mute the reply tail: the leftover is
+    // prose, not args, and looksLikeToolOrJson still guards real JSON.
+    if (!isStreamEnd && isInsideToolCall(content)) {
+      console.info('[speech] suppressed inside tool fence:', sentence.slice(0, 60));
+      return;
+    }
+    if (looksLikeToolOrJson(sentence)) {
+      console.info('[speech] suppressed json-like:', sentence.slice(0, 60));
+      return;
+    }
     // Server agentic loop status markers ("*⚡ web_search…*") are visual
     // progress, not spoken content.
     if (/^\s*\*?⚡/.test(sentence)) return;
     const clean = cleanSpeech(sentence);
     if (clean && !looksLikeToolOrJson(clean)) {
       opts.onSentence?.(clean, isFinal);
+    } else {
+      console.info('[speech] suppressed after clean:', JSON.stringify(sentence.slice(0, 60)), '→', JSON.stringify(clean.slice(0, 60)));
     }
   };
   for (;;) {
@@ -1199,6 +1214,11 @@ async function streamLLM(history: ChatMsg[], opts: StreamOpts = {}): Promise<str
   if (!isInsideToolCall(content)) {
     const tail = cleanSpeech(voiceBuf.trim());
     if (tail && !looksLikeToolOrJson(tail)) dispatch(tail, true);
+  } else {
+    // Unclosed fence at stream end: the tail may be abandoned prose, not
+    // tool args — give it one guarded shot instead of muting the reply.
+    const tail = voiceBuf.trim();
+    if (tail.length >= 8) dispatch(tail, true, true);
   }
   // Native tool-call dialect: some providers stream {"type":"function",...}
   // or a toolCall field instead of text fences. Convert the first event into
@@ -1706,7 +1726,7 @@ MANDATORY: weave a 3-4 sentence spoken "state of being" answer citing at least o
       const aborted = () => cancelled || state.interruptRequested;
       // Geocode + globe fly can take seconds — acknowledge immediately so the
       // turn never feels dead (meta-speech, excluded from transcript).
-      speakSentence(pickFiller(utterance) || 'Uhh, one moment — pulling that up…', false, true);
+      speakSentence(pickFiller(utterance) || 'Uhhh, one moment — pulling that up…', false, true);
       if (cmd.type === 'cctv-place') {
         if (!isGlobeAvailable()) {
           await speakWhole('The live globe isn\'t running — start gods-eye-view on port fifty-one eighty first.');
