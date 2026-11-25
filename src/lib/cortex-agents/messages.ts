@@ -284,6 +284,7 @@ export function messagesBlock(agentId: string): string {
     '## AGENT MESSAGES (typed peer traffic — address in your work; cite message ids in your result to consume them)',
     ...lines,
     'To reply or hand off, emit fenced blocks in your result: ```agent_message\n{"to":"<agent>","type":"handoff|signal|request|ack","channel":"task.delegate|context.share|verdict.request|skill.query|patrol.alert|mesh.direct","payload":"...","correlationId":"<id>","requiresAck":true}\n```',
+    'Need peer review before acting? Emit ```verify_request\n{"subject":"...","claim":"...","evidence":"..."}\n``` — reviewers vote and the verdict returns as a message.',
   ].join('\n');
 }
 

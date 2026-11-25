@@ -15,6 +15,7 @@
  * Storage: agent-workspace skill:{name}/manifest + skill:{name}/stats.
  */
 
+import crypto from 'node:crypto';
 import { wsRead, wsWrite, wsNamespaces } from './agent-workspace';
 
 export interface SkillManifest {
@@ -27,6 +28,10 @@ export interface SkillManifest {
   sandboxProfile?: string;
   trustScore?: number;
   costPerInvocation?: number;
+  /** sha256 of the canonical manifest — tamper evidence, verified on read. */
+  checksum?: string;
+  /** Optional smoke test run on acquisition: {kind, title?, agentId?}. */
+  smokeTest?: { kind: string; title?: string; agentId?: string };
 }
 
 const NAME_RE = /^[a-z0-9][a-z0-9._-]{0,62}$/;
@@ -34,25 +39,43 @@ const MIN_TRUST = 0.4;
 
 function manifestNs(name: string) { return `skill:${name}`; }
 
+/** Canonical checksum: stable-key JSON of the manifest minus checksum. */
+function checksumOf(m: SkillManifest): string {
+  const { checksum: _omit, ...rest } = m;
+  const sortKeys = (v: any): any => Array.isArray(v) ? v.map(sortKeys)
+    : v && typeof v === 'object' ? Object.fromEntries(Object.keys(v).sort().map((k) => [k, sortKeys(v[k])])) : v;
+  return crypto.createHash('sha256').update(JSON.stringify(sortKeys(rest))).digest('hex').slice(0, 16);
+}
+
+/** Runtime hook — set by vite so acquire can fire smoke-test tasks. */
+let skillsRuntime: { submitTask(agentId: any, kind: string, title: string, input?: Record<string, unknown>): { ok: boolean; error?: string } } | null = null;
+export function setSkillsRuntime(rt: typeof skillsRuntime) { skillsRuntime = rt; }
+
 export function registerSkill(agentId: string, manifest: SkillManifest): { ok: boolean; error?: string } {
   if (!NAME_RE.test(manifest.name)) return { ok: false, error: 'invalid skill name' };
   if (!manifest.version || !manifest.description || !Array.isArray(manifest.capabilities)) {
     return { ok: false, error: 'manifest requires version, description, capabilities[]' };
   }
   const score = typeof manifest.trustScore === 'number' ? Math.max(0, Math.min(1, manifest.trustScore)) : 0.5;
-  return wsWrite(agentId, manifestNs(manifest.name), 'manifest', { ...manifest, trustScore: score })
+  const stored: SkillManifest = { ...manifest, trustScore: score };
+  stored.checksum = checksumOf(stored);
+  return wsWrite(agentId, manifestNs(manifest.name), 'manifest', stored)
     .ok ? { ok: true } : { ok: false, error: 'write failed' };
 }
 
 export function getSkill(name: string) {
   const m = wsRead(manifestNs(name), 'manifest');
   if (!m.ok) return null;
+  const manifest = m.value as SkillManifest;
+  // Tamper check: recompute checksum over the stored manifest.
+  const tampered = !!manifest.checksum && checksumOf(manifest) !== manifest.checksum;
   const stats = wsRead(manifestNs(name), 'stats');
   const holders = wsRead(manifestNs(name), 'holders');
   return {
-    manifest: m.value as SkillManifest,
+    manifest: tampered ? { ...manifest, trustScore: 0 } : manifest,
+    tampered: tampered || undefined,
     version: m.version,
-    stats: (stats.ok ? stats.value : null) as { uses?: number; successes?: number; failures?: number } | null,
+    stats: (stats.ok ? stats.value : null) as { uses?: number; successes?: number; failures?: number; smokePending?: number } | null,
     holders: (holders.ok ? holders.value : []) as string[],
   };
 }
@@ -73,6 +96,7 @@ export function listSkills(): { name: string; version: string; trustScore: numbe
 export function acquireSkill(agentId: string, name: string, version?: string): { ok: boolean; manifest?: SkillManifest; error?: string } {
   const s = getSkill(name);
   if (!s) return { ok: false, error: `unknown skill: ${name}` };
+  if (s.tampered) return { ok: false, error: `skill manifest failed checksum — possible tampering` };
   if (version && s.manifest.version !== version) return { ok: false, error: `version mismatch: want ${version}, have ${s.manifest.version}` };
   if ((s.manifest.trustScore ?? 0.5) < MIN_TRUST) return { ok: false, error: `trust score ${(s.manifest.trustScore ?? 0).toFixed(2)} below floor ${MIN_TRUST}` };
 
@@ -89,6 +113,18 @@ export function acquireSkill(agentId: string, name: string, version?: string): {
   // Usage stats (best-effort, non-CAS — stats are approximate by design).
   const stats = { ...(s.stats ?? {}), uses: (s.stats?.uses ?? 0) + 1 };
   wsWrite('cortex', manifestNs(name), 'stats', stats);
+  // Smoke test on acquisition: fire the manifest's test task, best-effort.
+  if (s.manifest.smokeTest?.kind && skillsRuntime) {
+    try {
+      skillsRuntime.submitTask(
+        (s.manifest.smokeTest.agentId ?? agentId) as any,
+        s.manifest.smokeTest.kind,
+        s.manifest.smokeTest.title ?? `Skill smoke test: ${name}`,
+        { skill: name, smokeTest: true },
+      );
+      wsWrite('cortex', manifestNs(name), 'stats', { ...stats, smokePending: (stats.smokePending ?? 0) + 1 });
+    } catch { /* smoke dispatch is best-effort */ }
+  }
   return { ok: true, manifest: s.manifest };
 }
 
@@ -135,7 +171,11 @@ export function recordSkillOutcome(name: string, success: boolean) {
   if (total >= 3) {
     const trust = Math.max(0, Math.min(1, (updated.successes ?? 0) / total));
     const m = wsRead(manifestNs(name), 'manifest');
-    if (m.ok) wsWrite('cortex', manifestNs(name), 'manifest', { ...(m.value as SkillManifest), trustScore: trust });
+    if (m.ok) {
+      const updatedManifest: SkillManifest = { ...(m.value as SkillManifest), trustScore: trust };
+      updatedManifest.checksum = checksumOf(updatedManifest); // keep checksum valid after mutation
+      wsWrite('cortex', manifestNs(name), 'manifest', updatedManifest);
+    }
   }
 }
 

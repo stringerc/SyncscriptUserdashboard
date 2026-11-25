@@ -154,15 +154,21 @@ function resolveOpen(v: Verification) {
   }
 }
 
-/** Resolution observers (patrol heal-gate, mission control). Fired once when
- *  an open verification reaches any terminal status. */
-let onResolvedHook: ((v: Verification) => void) | null = null;
+/** Resolution observers (patrol heal-gate, agent notify, mission control).
+ *  Multiple listeners allowed — fired once when an open verification reaches
+ *  any terminal status. */
+const resolvedListeners = new Set<(v: Verification) => void>();
 export function setOnVerificationResolvedHook(fn: ((v: Verification) => void) | null): void {
-  onResolvedHook = fn;
+  resolvedListeners.clear();
+  if (fn) resolvedListeners.add(fn);
+}
+export function addVerificationResolvedListener(fn: (v: Verification) => void): void {
+  resolvedListeners.add(fn);
 }
 function notifyResolved(v: Verification) {
-  if (!onResolvedHook) return;
-  try { onResolvedHook(v); } catch { /* observers are best-effort */ }
+  for (const fn of resolvedListeners) {
+    try { fn(v); } catch { /* observers are best-effort */ }
+  }
 }
 
 /** Open a peer review and dispatch verdict.request envelopes to verifiers. */
@@ -257,6 +263,30 @@ function onMessageSent(msg: AgentMessage) {
 
 setOnMessageSentHook(onMessageSent);
 
+// Agent-initiated reviews get their verdict delivered back through the bus —
+// the requester learns the outcome on its next task, closing the loop.
+// 'warden' is excluded: patrol-gated verifications are owned by patrols.ts.
+addVerificationResolvedListener((v) => {
+  if (v.requestedBy === 'cortex' || v.requestedBy === 'crew' || v.requestedBy === 'warden') return;
+  const voteSummary = v.votes.map((vote) => `${vote.verifierId}:${vote.verdict}`).join(', ') || 'none';
+  sendMessage({
+    from: 'cortex',
+    to: v.requestedBy,
+    type: 'signal',
+    channel: 'mesh.direct',
+    payload: JSON.stringify({
+      kind: 'verification_result',
+      verificationId: v.id,
+      status: v.status,
+      resolution: v.resolution,
+      subject: v.subject,
+      votes: voteSummary,
+    }),
+    correlationId: v.id,
+    dedupeKey: `verdict-${v.id}`,
+  });
+});
+
 /** Lazily expire open verifications past deadline (called on reads). */
 function sweep(list: Verification[]): boolean {
   let dirty = false;
@@ -290,4 +320,33 @@ export function verificationStats() {
   const byStatus: Record<string, number> = {};
   for (const v of list) byStatus[v.status] = (byStatus[v.status] ?? 0) + 1;
   return { total: list.length, byStatus, open: list.filter((v) => v.status === 'open').length };
+}
+
+const VERIFY_REQUEST_RE = /```verify_request\s*\n([\s\S]*?)```/g;
+
+/**
+ * Agent-initiated peer review: ```verify_request fenced JSON blocks in a task
+ * result open verifications with the agent as requester. The verdict returns
+ * via agent message (see resolved listener above). Cap 3 per result.
+ */
+export function extractVerifyRequests(agentId: string, resultText: string): { opened: number; rejected: number } {
+  let opened = 0, rejected = 0;
+  let m: RegExpExecArray | null;
+  VERIFY_REQUEST_RE.lastIndex = 0;
+  while ((m = VERIFY_REQUEST_RE.exec(resultText))) {
+    if (opened >= 3) { rejected++; continue; }
+    try {
+      const o = JSON.parse(m[1].trim());
+      const r = openVerification({
+        subject: String(o.subject || ''),
+        claim: String(o.claim || ''),
+        evidence: o.evidence ? String(o.evidence) : undefined,
+        requestedBy: agentId,
+        verifierIds: Array.isArray(o.verifierIds) ? o.verifierIds.map(String) : undefined,
+        windowMs: typeof o.windowMs === 'number' ? o.windowMs : undefined,
+      });
+      if (r.ok) opened++; else rejected++;
+    } catch { rejected++; }
+  }
+  return { opened, rejected };
 }

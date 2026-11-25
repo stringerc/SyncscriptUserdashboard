@@ -209,9 +209,10 @@ import { recordIncidentFailure, resolveIncidentsOnSuccess, listIncidents, escala
 import { issueDirective, listDirectives, ackDirective, cancelDirective } from './src/lib/cortex-agents/directives';
 import { listMessages, sendMessage, meshStats, deadLetters, MESH_CHANNELS } from './src/lib/cortex-agents/messages';
 import { wsRead, wsWrite, wsDelete, wsList, workspaceStats, archiveMission, isValidNamespace } from './src/lib/cortex-agents/agent-workspace';
+import { MISSION_CONTROL_HTML } from './src/lib/cortex-agents/mission-control-page';
 import { openVerification, listVerifications, getVerification, verificationStats } from './src/lib/cortex-agents/verification';
 import { listPatrolSpecs, patrolState, startPatrolMesh } from './src/lib/cortex-agents/patrols';
-import { registerSkill, getSkill, listSkills, acquireSkill, releaseSkill, composeSkills, recordSkillOutcome, skillStats } from './src/lib/cortex-agents/skills';
+import { registerSkill, getSkill, listSkills, acquireSkill, releaseSkill, composeSkills, recordSkillOutcome, skillStats, setSkillsRuntime } from './src/lib/cortex-agents/skills';
 import { selectPolicy, policyStats, startLearningLayer, POLICY_ARMS } from './src/lib/cortex-agents/learning';
 import { meshStats as meshBusStats } from './src/lib/cortex-agents/mesh';
 import { workspaceStats as wsStoreStats } from './src/lib/cortex-agents/agent-workspace';
@@ -2115,6 +2116,7 @@ function apiProxyPlugin(): Plugin {
         console.log(`[patrols] mesh armed — ${armed.armed} patrol spec(s) registered, heal gate active`);
         startLearningLayer(agentRuntime);
         console.log('[learning] bandit layer armed — rewards record off task transitions');
+        setSkillsRuntime(agentRuntime);
       } catch (e: any) {
         console.warn('[patrols] mesh failed to arm:', e?.message || e);
       }
@@ -16771,6 +16773,16 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
           res.writeHead(500, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ ok: false, error: e?.message || 'mission-control failed' }));
         }
+      });
+
+      // ── Mission Control page (/api/cortex/mission-control) ──
+      // Fleet spec §7: self-contained dashboard polling the aggregate feed.
+      server.middlewares.use('/api/cortex/mission-control', (req: any, res: any, next: any) => {
+        const origin = req.headers.origin;
+        if (!isAllowedOrigin(origin, req.headers.host)) return next();
+        if (req.method !== 'GET') return next();
+        res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' });
+        res.end(MISSION_CONTROL_HTML);
       });
 
       // ── Venture plan items (/api/cortex/ventures/plan) ──

@@ -19,6 +19,8 @@ import { ackMentioned, directivesBlock, markDelivered } from './directives';
 import { consumeMentioned, extractAndSendMessages, markMessagesDelivered, messagesBlock } from './messages';
 import { extractWorkspaceOps, workspaceBlock } from './agent-workspace';
 import './verification'; // registers the verdict.request vote hook on the message bus
+import { extractVerifyRequests } from './verification';
+import { selectPolicy } from './learning';
 import { isValidVenture, listVentures } from '../cortex-ventures';
 import type {
   AgentEvent, AgentId, AgentRoutine, AgentState, AgentStatus, AgentTask, AgentsSnapshot, SpawnProposal, SpawnSpec, TaskFailureClass, TaskStatus, TaskTelemetry,
@@ -500,6 +502,15 @@ export class AgentRuntime {
     if (this.taskDecorator) {
       try { effectiveInput = this.taskDecorator({ ...input }); } catch { effectiveInput = input; }
     }
+    // Bandit policy stamp: every task carries its sampled arm so rewards
+    // attribute correctly and untiered llm calls adopt the arm's tier.
+    // Explicit caller stamps always win (retries keep their original arm).
+    if (effectiveInput.policyArm === undefined) {
+      try {
+        const pol = selectPolicy(agentId, kind);
+        effectiveInput = { ...effectiveInput, policyArm: pol.arm.id, policyTier: pol.arm.tier, policyTemp: pol.arm.temperature };
+      } catch { /* bandit is advisory — never block a task */ }
+    }
     const task: AgentTask = {
       id: newTaskId(), agentId, kind, title, input: effectiveInput,
       status: 'queued', progress: null, createdAt: Date.now(),
@@ -976,6 +987,9 @@ export class AgentRuntime {
           const llmT0 = Date.now();
           const r = await this.llmBridge({
             ...opts,
+            // Bandit-steered default: untiered calls adopt the task's sampled
+            // arm tier; explicit worker tiers always win.
+            tier: opts.tier ?? ((task.input?.policyTier as 'fast' | 'reason' | 'deep' | undefined) || undefined),
             agentId,
             ventureId: (task.input as any)?.ventureId || opts.ventureId,
             messages: injected
@@ -1024,6 +1038,9 @@ export class AgentRuntime {
             // Shared workspace: fenced ```workspace_op blocks execute under
             // the agent's ACL; read/list results return next task.
             extractWorkspaceOps(agentId, text);
+            // Peer review: fenced ```verify_request blocks open a
+            // verification; the verdict returns via agent message.
+            extractVerifyRequests(agentId, text);
           } catch { /* best-effort */ }
           this.transition(task, 'completed', { result, progress: task.progress ?? 1 });
           this.setStatus(agentId, queue.length ? 'working' : 'idle');
