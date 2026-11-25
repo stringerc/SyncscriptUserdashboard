@@ -28,8 +28,12 @@ export function nexusKokoroVoiceCandidates(primary: string): string[] {
   return [primary, ...rest];
 }
 
-/** Markdown / UI → spoken English (matches landing). */
-export function sanitizeForNexusTTS(raw: string): string {
+/** Markdown / UI → spoken English (matches landing).
+ *  `thinking` mode preserves hesitation punctuation (…/--/—) as audible
+ *  beats instead of flattening it — used for filler/meta utterances where
+ *  a thinking quality is the point. */
+export function sanitizeForNexusTTS(raw: string, opts?: { thinking?: boolean }): string {
+  const thinking = !!opts?.thinking;
   let s = raw;
   // URLs → spoken domain form; emoji/symbols → dropped (Kokoro speaks them
   // as garbage or silence). Bare domains keep their name, path dropped.
@@ -107,8 +111,14 @@ export function sanitizeForNexusTTS(raw: string): string {
   s = s.replace(/\bis not\b/gi, "isn't");
   s = s.replace(/\bare not\b/gi, "aren't");
 
-  s = s.replace(/\s*[—–]\s*/g, ', ');
-  s = s.replace(/\s*--\s*/g, ', ');
+  if (thinking) {
+    // Collapse hesitation marks into a placeholder BEFORE the flattening
+    // rules — restored as '...' at the end so every engine renders an
+    // audible beat rather than a flat period.
+    s = s.replace(/…|\.{2,}/g, '\u0001').replace(/\u0001(?:\s*\u0001)+/g, '\u0001');
+  }
+  s = s.replace(/\s*[—–]\s*/g, thinking ? ' \u0001 ' : ', ');
+  s = s.replace(/\s*--\s*/g, thinking ? ' \u0001 ' : ', ');
   s = s.replace(/\.{2,}/g, '.');
   s = s.replace(/…/g, '.');
   s = s.replace(/;/g, '.');
@@ -126,6 +136,7 @@ export function sanitizeForNexusTTS(raw: string): string {
   s = s.replace(/\bSync Script\b/gi, 'SyncScript');
   s = s.replace(/\bSyncScript\b/gi, 'SyncScript');
   s = s.replace(/\s{2,}/g, ' ');
+  if (thinking) s = s.replace(/\s*(?:\u0001\s*)+/g, '... ');
   s = s.trim();
   return s;
 }

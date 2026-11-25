@@ -154,58 +154,61 @@ RULES:
 // Dispatched to TTS immediately, in parallel with the LLM stream — no dead air.
 const SOCIAL_SKIP = /^(hi|hey|hello|yo|sup|thanks|thank you|ok|okay|yes|yeah|no|nope|sure|cool|nice|great|got it|understood|bye|goodbye|good (morning|afternoon|evening)|what can you do|who are you|help|test|testing|mic check|check|can you hear me|testing 1 2 3|hello cortex)[.!?]*$/i;
 
+// Thinking-style delivery: leading interjection, mid-phrase beat, trailing
+// ellipsis — the hesitation punctuation survives sanitizeForNexusTTS in
+// thinking mode, so these actually SOUND like she's thinking, not reciting.
 const FILLER_POOLS: Array<[RegExp, string[]]> = [
   [/\b(status|system info|cpu|memory usage|ram|disk|battery|uptime|specs?|hostname|os version|machine|diagnostic|health)\b/i, [
-    'Let me check the system.',
-    'One moment — running a quick check.',
-    'Give me a sec, checking system status.',
+    'Hmm, checking the system…',
+    'Uhh, one moment — running a quick check…',
+    'Ooh, good timing — let me look…',
   ]],
   [/\b(search|look ?up|google|research|news|weather|find out|who is|what is the latest)\b/i, [
-    'Let me look that up.',
-    'One sec — searching now.',
-    'Hang on, I\'ll find that for you.',
+    'Hmm, let me look that up…',
+    'Uhh, one sec — searching now…',
+    'Ooh, good question — pulling that up…',
   ]],
   [/\b(remember|memory|recall|what do you know|forgot|note that|save (this|that)|episodic)\b/i, [
-    'Let me dig into memory.',
-    'Checking what I have stored.',
-    'One moment — searching my notes.',
+    'Hmm, digging into memory…',
+    'Uhh, checking what I have stored…',
+    'Ooh, let me think — searching my notes…',
   ]],
   [/\b(file|folder|directory|read|write|document|spreadsheet|code|repo|git|commit|script|\.ts|\.py|\.js)\b/i, [
-    'On it — give me a moment.',
-    'Let me take a look at that.',
-    'Working on it now.',
+    'Hmm, give me a moment…',
+    'Uhh, let me take a look at that…',
+    'Ooh — working through that now…',
   ]],
   [/\b(open|browse|website|url|tab|chrome|navigate|click|screenshot)\b/i, [
-    'Opening that up now.',
-    'One moment — taking you there.',
-    'Let me pull that up.',
+    'Hmm, opening that up…',
+    'Uhh, one moment — taking you there…',
+    'Ooh, pulling it up now…',
   ]],
   [/\b(call|phone|dial|facetime)\b/i, [
-    'Let me get that call started.',
-    'One moment — dialing now.',
+    'Hmm, getting that call started…',
+    'Uhh, one moment — dialing now…',
   ]],
   [/\b(bug|error|fix|heal|escalate|broken|exception|crash|regression|self[- ]heal|patch)\b/i, [
-    'Escalating that to the IDEs now.',
-    'On it — diagnosing the issue with Antigravity and Devin.',
-    'Let me escalate that and run the verification gate.',
+    'Ooh, good catch — escalating to the IDEs…',
+    'Hmm, diagnosing that with Antigravity and Devin…',
+    'Uhh, let me escalate that and run the gate…',
   ]],
   [/\b(mission|schedule|remind|calendar|plan|task|todo|goal)\b/i, [
-    'Let me set that up.',
-    'On it — planning that out.',
-    'Give me a moment to organize that.',
+    'Hmm, let me set that up…',
+    'Uhh, planning that out…',
+    'Ooh, give me a moment to organize it…',
   ]],
   [/\b(run|execute|command|script|install|build|deploy|restart|stop|kill|process)\b/i, [
-    'Running that now.',
-    'On it — executing.',
-    'Let me handle that.',
+    'Hmm, running that now…',
+    'Uhh, executing — give me a sec…',
+    'Ooh, on it…',
   ]],
 ];
 
 const GENERIC_FILLERS = [
-  'Let me handle that.',
-  'On it — one moment.',
-  'Give me a sec.',
-  'Working on it now.',
+  'Hmm, let me handle that…',
+  'Uhh, on it — one moment…',
+  'Ooh, give me a sec…',
+  'Hmm, working on it now…',
 ];
 
 // ── Thinking-phase fillers (mid-turn dead-air narration) ──────────────
@@ -215,62 +218,64 @@ const GENERIC_FILLERS = [
 // layer: only narrate work that truly ran, and keep lines speakable.
 
 const TOOL_NARRATION: Array<[RegExp, string[]]> = [
-  [/web_?search|search/i, ['Running the search now.', 'Searching — one moment.', 'Pulling results for you.']],
-  [/read_file|list_dir|read/i, ['Reading through the files.', 'Looking at the code now.', 'Reading that through.']],
-  [/search_code|grep|code_search/i, ['Searching the codebase.', 'Digging through the code.']],
-  [/run_command|exec|command|shell|terminal/i, ['Running that command.', 'Executing — should be quick.', 'On it.']],
-  [/write_file|edit_file|patch_file|write|edit/i, ['Making the changes now.', 'Writing that up.', 'Applying the edit.']],
-  [/memory|recall|remember/i, ['Checking memory on that.', 'Searching what I have stored.']],
-  [/map|globe|fly|geocode/i, ['Moving the map.', 'Flying you there now.']],
-  [/document|docx|pdf|artifact|surface|chart|table/i, ['Putting that together.', 'Compiling it for you.']],
-  [/delegate|handoff|agent|dispatch|spawn|task/i, ['Dispatching that to the fleet.', 'Handing it to the right agent.', 'Routing it now.']],
+  [/web_?search|search/i, ['Uhh, running the search…', 'Hmm, searching — one moment…', 'Ooh, pulling results for you…']],
+  [/read_file|list_dir|read/i, ['Hmm, reading through the files…', 'Uhh, looking at the code…', 'Ooh, reading that through…']],
+  [/search_code|grep|code_search/i, ['Uhh, searching the codebase…', 'Hmm, digging through the code…']],
+  [/run_command|exec|command|shell|terminal/i, ['Ooh, running that command…', 'Uhh, executing — should be quick…', 'Hmm, on it…']],
+  [/write_file|edit_file|patch_file|write|edit/i, ['Hmm, making the changes…', 'Uhh, writing that up…', 'Ooh, applying the edit…']],
+  [/memory|recall|remember/i, ['Hmm, checking memory on that…', 'Uhh, searching what I have stored…']],
+  [/map|globe|fly|geocode/i, ['Ooh, moving the map…', 'Uhh, flying you there now…']],
+  [/document|docx|pdf|artifact|surface|chart|table/i, ['Hmm, putting that together…', 'Uhh, compiling it for you…']],
+  [/delegate|handoff|agent|dispatch|spawn|task/i, ['Ooh, dispatching that to the fleet…', 'Uhh, handing it to the right agent…', 'Hmm, routing it now…']],
 ];
 
 const THINKING_INTENT: Array<[RegExp, string[]]> = [
   [/\b(status|system info|cpu|memory usage|ram|disk|battery|uptime|specs?|diagnostic|health|fleet|models?)\b/i, [
-    'Checking the fleet now.', 'Pulling live telemetry — one sec.', 'Reading system status.',
+    'Hmm, checking the fleet…', 'Uhh, pulling live telemetry — one sec…', 'Ooh, reading system status…',
   ]],
   [/\b(search|look ?up|google|research|news|weather|find out|who is|latest|source)\b/i, [
-    'Digging into that now.', 'Pulling sources — give me a moment.', 'Looking into it.',
+    'Hmm, digging into that…', 'Uhh, pulling sources — give me a moment…', 'Ooh, looking into it…',
   ]],
   [/\b(remember|memory|recall|forgot|note that|save (this|that)|episodic)\b/i, [
-    'Searching memory.', 'Checking what I have stored.', 'Digging into memory.',
+    'Hmm, searching memory…', 'Uhh, checking what I have stored…', 'Ooh, digging into memory…',
   ]],
   [/\b(file|folder|directory|read|write|document|spreadsheet|code|repo|git|commit|script|\.ts|\.py|\.js)\b/i, [
-    'Reading through that.', 'Working through the code.', 'Let me trace through it.',
+    'Hmm, reading through that…', 'Uhh, working through the code…', 'Ooh, let me trace through it…',
   ]],
   [/\b(open|browse|website|url|tab|chrome|navigate|click|screenshot)\b/i, [
-    'Opening that up.', 'Pulling it up now.', 'On it — one moment.',
+    'Hmm, opening that up…', 'Uhh, pulling it up now…', 'Ooh, on it — one moment…',
   ]],
-  [/\b(call|phone|dial|facetime)\b/i, ['Getting that started.', 'One moment — dialing.']],
+  [/\b(call|phone|dial|facetime)\b/i, ['Uhh, getting that started…', 'Hmm, one moment — dialing…']],
   [/\b(bug|error|fix|heal|escalate|broken|exception|crash|regression|self[- ]heal|patch)\b/i, [
-    'Diagnosing that now.', 'Escalating — checking the gate.', 'Tracing the failure.',
+    'Ooh, diagnosing that now…', 'Uhh, escalating — checking the gate…', 'Hmm, tracing the failure…',
   ]],
   [/\b(mission|schedule|remind|calendar|plan|task|todo|goal)\b/i, [
-    'Planning that out.', 'Setting that up — one moment.', 'Organizing it now.',
+    'Hmm, planning that out…', 'Uhh, setting that up — one moment…', 'Ooh, organizing it now…',
   ]],
   [/\b(run|execute|command|script|install|build|deploy|restart|stop|kill|process)\b/i, [
-    'Running that now.', 'Executing — give me a sec.', 'On it.',
+    'Uhh, running that now…', 'Hmm, executing — give me a sec…', 'Ooh, on it…',
   ]],
   [/\b(write|draft|compose|create|generate|make|resume|essay|email|letter|story|report)\b/i, [
-    'Composing that now.', 'Drafting it — one moment.', 'Putting it together.',
+    'Hmm, composing that now…', 'Uhh, drafting it — one moment…', 'Ooh, putting it together…',
   ]],
 ];
 
 const THINKING_GENERIC = [
-  'Give me a moment.', 'Still on it.', 'One sec — thinking it through.',
-  'Hang tight, almost there.', 'Working through it now.',
-  'Give me a beat to get this right.', 'Still piecing that together.',
-  'Just a moment — getting it right.', 'Bear with me — nearly there.',
+  'Hmm, give me a moment…', 'Uhh, still on it…', 'Ooh, one sec — thinking it through…',
+  'Hmm, hang tight, almost there…', 'Uhh, working through it now…',
+  'Ooh, give me a beat to get this right…', 'Hmm, still piecing that together…',
+  'Uhh, just a moment — getting it right…', 'Ooh, bear with me — nearly there…',
 ];
 
-// Second dead-air beat (~11s): acknowledge the wait honestly instead of
-// repeating a filler — longer, humbler, still short enough to speak.
+// Second dead-air beat (~11s): acknowledge the wait honestly — longer,
+// humbler, still short enough to speak. The hesitation punctuation makes
+// these land as thinking, not announcements.
 const THINKING_LONG = [
-  'Still working on it — this one is taking a moment.',
-  'Almost there — give me a few more seconds.',
-  'Still on it — deeper than it looks.',
-  'Hang tight — getting close now.',
+  'Hmm… almost there — give me a few more seconds…',
+  'Uhh… still working on it — this one is taking a moment…',
+  'Hmmm… hang tight, getting close now…',
+  'Hmm… still on it — deeper than it looks…',
+  'Uhh… almost—there… few more seconds…',
 ];
 
 function pickLine(pool: string[], avoid?: string): string {
@@ -287,7 +292,7 @@ function thinkingFillerLine(utterance: string, tools: string[], slot: number, av
   if (tools.length) {
     const last = tools[tools.length - 1];
     const pool = TOOL_NARRATION.find(([re]) => re.test(last))?.[1];
-    return pool ? pickLine(pool, avoid) : `Working through ${last.replace(/_/g, ' ')} — one moment.`;
+    return pool ? pickLine(pool, avoid) : `Uhh, working through ${last.replace(/_/g, ' ')} — one moment…`;
   }
   const pool = THINKING_INTENT.find(([re]) => re.test(utterance))?.[1] ?? THINKING_GENERIC;
   return pickLine(pool, avoid);
@@ -1384,9 +1389,12 @@ export function useVisualizerVoice(enabled: boolean, onState: (speaking: boolean
       publish({ state: 'listening', level: 0.1, text });
 
     /** Speak one cleaned sentence through the shared gapless TTS queue. */
-    const speakSentence = (text: string, isFinal: boolean, meta = false) => {
+    const speakSentence = (text: string, isFinal: boolean, meta = false, thinking = false) => {
       const clean = cleanSpeech(text);
       if (!clean || cancelled) return;
+      // Thinking delivery: meta/filler utterances keep hesitation punctuation
+      // (… beats) and run ~6% slower — the audible "she's thinking" quality.
+      const think = meta || thinking;
       // Mirror spoken output into the shared chat transcript (live) — unless
       // this is meta-speech (filler ack, pin hint) which must NOT pollute the
       // transcript, persisted chat, or episodic memory.
@@ -1410,17 +1418,18 @@ export function useVisualizerVoice(enabled: boolean, onState: (speaking: boolean
       // Landing-grade normalization at the TTS boundary only — markdown,
       // emoji, $/%/dates are spoken correctly while the transcript keeps
       // the clean (but readable) version.
-      const ttsText = sanitizeForNexusTTS(clean) || clean;
+      const ttsText = sanitizeForNexusTTS(clean, { thinking: think }) || clean;
       // Prosodic mirroring: Cortex's delivery subtly tracks the user's detected
-      // arousal — measured, never theatrical (±6% rate, calm baseline 1.0).
+      // arousal — measured, never theatrical (±9% rate, calm baseline 1.0).
       const emo = turnEmotionRef.current;
       let speechRate = 1.0;
       if (emo && emo.confidence >= 0.45 && emo.primary !== 'neutral') {
-        if (emo.primary === 'stressed' || emo.primary === 'sad' || emo.primary === 'angry') speechRate = 0.95;
-        else if (emo.primary === 'tired') speechRate = 0.93;
-        else if (emo.primary === 'excited' || emo.primary === 'happy') speechRate = Math.min(1.06, 0.97 + emo.arousal * 0.12);
-        else if (emo.primary === 'confused') speechRate = 0.96;
+        if (emo.primary === 'stressed' || emo.primary === 'sad' || emo.primary === 'angry') speechRate = 0.92;
+        else if (emo.primary === 'tired') speechRate = 0.9;
+        else if (emo.primary === 'excited' || emo.primary === 'happy') speechRate = Math.min(1.09, 0.96 + emo.arousal * 0.13);
+        else if (emo.primary === 'confused') speechRate = 0.94;
       }
+      if (think) speechRate = Math.max(0.88, speechRate * 0.94);
       vsRef.current.speakStreamSentence(ttsText, isFinal, { voice: 'cortana', speed: speechRate });
     };
 
@@ -1697,7 +1706,7 @@ MANDATORY: weave a 3-4 sentence spoken "state of being" answer citing at least o
       const aborted = () => cancelled || state.interruptRequested;
       // Geocode + globe fly can take seconds — acknowledge immediately so the
       // turn never feels dead (meta-speech, excluded from transcript).
-      speakSentence(pickFiller(utterance) || 'One moment — pulling that up.', false, true);
+      speakSentence(pickFiller(utterance) || 'Uhh, one moment — pulling that up…', false, true);
       if (cmd.type === 'cctv-place') {
         if (!isGlobeAvailable()) {
           await speakWhole('The live globe isn\'t running — start gods-eye-view on port fifty-one eighty first.');
@@ -2253,7 +2262,7 @@ MANDATORY: weave a 3-4 sentence spoken "state of being" answer citing at least o
           if (vsRef.current.isSpeaking) return; // already talking — no filler needed
           const line = thinkingFillerLine(text, turnTools, slot, lastFillerLine);
           lastFillerLine = line;
-          speakSentence(line, false);
+          speakSentence(line, false, false, true);
         }, delayMs);
       };
       fillerAt(2800, 0);
