@@ -57,6 +57,9 @@ const SHELL_DENY = new RegExp(
 const HTTP_ALLOW = csv("HERMES_HTTP_ALLOWLIST", "kwhnrlzibgfedtxpkbgb.supabase.co,localhost,127.0.0.1");
 const JOURNAL_PATH = process.env.HERMES_JOURNAL_PATH || path.join(process.cwd(), "hermes-journal.jsonl");
 const JOURNAL_MAX = Number(process.env.HERMES_JOURNAL_MAX_BYTES || 20 * 1024 * 1024);
+const SNAP_DIR = process.env.HERMES_SNAPSHOT_DIR || path.join(path.dirname(JOURNAL_PATH), "hermes-snapshots");
+const SNAP_MAX = Number(process.env.HERMES_SNAPSHOT_MAX_BYTES || 1024 * 1024);
+const SNAP_KEEP = Number(process.env.HERMES_SNAPSHOT_KEEP || 200);
 const RATE_PER_MIN = Number(process.env.HERMES_RATE_PER_MIN || 60);
 const MAX_OUT = Number(process.env.HERMES_MAX_OUTPUT || 65536);
 const FS_DENY_NAME = /(^|\/)(\.env($|\.)|[^/]*\.(pem|key|p12|pfx)$|id_rsa|id_ed25519|credentials|secrets?\.|.*token.*\.(json|txt)$)/i;
@@ -192,6 +195,20 @@ const TOOLS = [
         headers: { type: "object" },
         body: { type: "string" },
         timeout_ms: { type: "number" },
+        dry_run: { type: "boolean" },
+      },
+    },
+  },
+  {
+    name: "rollback",
+    description: "Restore a file mutated by fs_write/fs_patch to its pre-run state. Refuses if the file changed since (hash check).",
+    cls: "mutate",
+    serviceOk: true,
+    input_schema: {
+      type: "object",
+      required: ["run_id"],
+      properties: {
+        run_id: { type: "string" },
         dry_run: { type: "boolean" },
       },
     },
@@ -337,6 +354,46 @@ function hostAllowed(urlStr) {
   return { url: u };
 }
 
+// ── Mutation snapshots (rollback substrate) ────────────────────────
+
+/** Persist before-state for a successful fs mutation so `rollback` can
+ *  restore it. Content is stored only when it fits SNAP_MAX; larger files
+ *  record hashes only and rollback refuses honestly. */
+async function snapshotMutation(runId, tool, filePath, beforeExists, beforeContent, beforeHash, afterHash) {
+  if (!runId) return null;
+  try {
+    await fsp.mkdir(SNAP_DIR, { recursive: true });
+    const storeContent = beforeExists && beforeContent != null && Buffer.byteLength(beforeContent) <= SNAP_MAX;
+    const snap = {
+      run_id: runId,
+      tool,
+      path: filePath,
+      ts: new Date().toISOString(),
+      before_exists: beforeExists,
+      before_sha256: beforeHash,
+      after_sha256: afterHash,
+      before_content: storeContent ? beforeContent : null,
+      content_truncated: beforeExists && !storeContent,
+    };
+    await fsp.writeFile(path.join(SNAP_DIR, `${runId}.snap.json`), JSON.stringify(snap));
+    // Bound snapshot count — keep newest SNAP_KEEP.
+    try {
+      const files = (await fsp.readdir(SNAP_DIR)).filter((f) => f.endsWith(".snap.json"));
+      if (files.length > SNAP_KEEP) {
+        const stats = await Promise.all(files.map(async (f) => ({ f, m: (await fsp.stat(path.join(SNAP_DIR, f))).mtimeMs })));
+        stats.sort((a, b) => b.m - a.m);
+        for (const old of stats.slice(SNAP_KEEP)) {
+          await fsp.unlink(path.join(SNAP_DIR, old.f)).catch(() => {});
+        }
+      }
+    } catch { /* prune is best-effort */ }
+    return { snapshot: `${runId}.snap.json`, rollbackable: storeContent || !beforeExists };
+  } catch (e) {
+    console.error("[hermes] snapshot write failed:", e?.message || e);
+    return null;
+  }
+}
+
 // ── Tool handlers ──────────────────────────────────────────────────
 
 async function edgeFetch(pathname, init, authHeader) {
@@ -462,13 +519,19 @@ const HANDLERS = {
     const content = String(args?.content ?? "");
     if (content.length > MAX_OUT * 4) { push("policy", "error", "content too large"); return { ok: false, error: "content exceeds 256KB" }; }
     let beforeHash = null;
-    try { beforeHash = sha256(await fsp.readFile(r.path, "utf8")); } catch { /* new file */ }
+    let beforeContent = null;
+    try {
+      beforeContent = await fsp.readFile(r.path, "utf8");
+      beforeHash = sha256(beforeContent);
+      if (Buffer.byteLength(beforeContent) > SNAP_MAX) beforeContent = null; // too big to snapshot
+    } catch { /* new file */ }
     const afterHash = sha256(content);
     if (dryRun) return { dry_run: true, would_write: { path: r.path, bytes: Buffer.byteLength(content), before_sha256: beforeHash, after_sha256: afterHash } };
     if (args?.create_dirs !== false) await fsp.mkdir(path.dirname(r.path), { recursive: true });
     await fsp.writeFile(r.path, content, "utf8");
     push("fs", "ok", `wrote ${Buffer.byteLength(content)}B to ${r.path}`);
-    return { path: r.path, bytes: Buffer.byteLength(content), before_sha256: beforeHash, after_sha256: afterHash };
+    const snap = await snapshotMutation(ctx.runId, "fs_write", r.path, beforeHash != null, beforeContent, beforeHash, afterHash);
+    return { path: r.path, bytes: Buffer.byteLength(content), before_sha256: beforeHash, after_sha256: afterHash, ...(snap ? { snapshot: snap } : {}) };
   },
 
   async fs_patch(ctx) {
@@ -492,7 +555,8 @@ const HANDLERS = {
     if (dryRun) return { dry_run: true, would_patch: { path: r.path, occurrences, before_sha256: beforeHash, after_sha256: afterHash } };
     await fsp.writeFile(r.path, patched, "utf8");
     push("fs", "ok", `patched ${occurrences} occurrence(s) in ${r.path}`);
-    return { path: r.path, occurrences, before_sha256: beforeHash, after_sha256: afterHash };
+    const snap = await snapshotMutation(ctx.runId, "fs_patch", r.path, true, content, beforeHash, afterHash);
+    return { path: r.path, occurrences, before_sha256: beforeHash, after_sha256: afterHash, ...(snap ? { snapshot: snap } : {}) };
   },
 
   async shell_exec(ctx) {
@@ -569,6 +633,62 @@ const HANDLERS = {
       push("http", "error", String(e?.message || e));
       return { ok: false, error: String(e?.message || e) };
     }
+  },
+
+  async rollback(ctx) {
+    const { args, push, dryRun } = ctx;
+    const runId = String(args?.run_id || "");
+    if (!/^[A-Za-z0-9-]{8,64}$/.test(runId)) {
+      push("validate", "error", "run_id required");
+      return { ok: false, error: "valid run_id required" };
+    }
+    const snapPath = path.join(SNAP_DIR, `${runId}.snap.json`);
+    const snap = await fsp.readFile(snapPath, "utf8").then(JSON.parse).catch(() => null);
+    if (!snap) {
+      push("lookup", "error", `no snapshot for ${runId}`);
+      return { ok: false, error: `no mutation snapshot found for run ${runId} (expired, pruned, or not an fs mutation)` };
+    }
+    if (snap.tool !== "fs_write" && snap.tool !== "fs_patch") {
+      push("policy", "error", `snapshot tool ${snap.tool} not rollbackable`);
+      return { ok: false, error: `run ${runId} was ${snap.tool} — only fs_write/fs_patch are rollbackable` };
+    }
+    // Re-validate the recorded path against CURRENT roots — policy may have tightened.
+    const r = await resolveRootedPath(snap.path, FS_ROOTS);
+    if (r.error) {
+      push("policy", "error", r.error);
+      return { ok: false, error: `snapshot path no longer allowed: ${r.error}` };
+    }
+    const target = r.path;
+    const cur = await fsp.readFile(target).catch(() => null);
+    if (!cur) {
+      push("verify", "error", "target file missing");
+      return { ok: false, error: `target file missing: ${target} — cannot verify state` };
+    }
+    const curHash = sha256(cur.toString("utf8"));
+    if (curHash !== snap.after_sha256) {
+      push("verify", "error", "file changed since run");
+      return {
+        ok: false,
+        error: `file changed since run ${runId} — blind rollback refused`,
+        current_sha256: curHash,
+        expected_sha256: snap.after_sha256,
+      };
+    }
+    if (snap.content_truncated || (snap.before_exists && snap.before_content == null)) {
+      push("policy", "error", "snapshot content not stored (size cap)");
+      return { ok: false, error: `before-content exceeds snapshot cap (${SNAP_MAX}B) — rollback unavailable for ${target}` };
+    }
+    if (dryRun) {
+      return { dry_run: true, would_rollback: { path: target, run_id: runId, original_tool: snap.tool, restores: snap.before_exists ? "prior content" : "file deletion" } };
+    }
+    if (snap.before_exists) {
+      await fsp.writeFile(target, snap.before_content, "utf8");
+      push("rollback", "ok", `restored ${target} from run ${runId}`);
+      return { path: target, run_id: runId, reverted_tool: snap.tool, action: "restored" };
+    }
+    await fsp.unlink(target);
+    push("rollback", "ok", `deleted ${target} (created by run ${runId})`);
+    return { path: target, run_id: runId, reverted_tool: snap.tool, action: "deleted" };
   },
 
   async git_op(ctx) {

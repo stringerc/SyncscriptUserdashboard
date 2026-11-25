@@ -39,6 +39,7 @@ Each tool declares `cls` (read/mutate/dangerous), `serviceOk`, `needsUserJwt`, J
 - `shell_exec` — allowlisted binaries only, no shell, deny-regex, rooted cwd, capped output (mutate)
 - `http_request` — http(s) to HERMES_HTTP_ALLOWLIST hosts only (mutate)
 - `git_op` — status/diff/log/show/branch/add/commit/push inside git roots (read/mutate/dangerous per op)
+- `rollback` — restore fs_write/fs_patch mutations from sidecar snapshots; hash-verified, refuses blind rollback (mutate)
 
 ## Scoping & Safety
 
@@ -65,6 +66,10 @@ During tool invocation, `invokeHermesTool` maps `trace[]` → contract dock even
 - `agent.run.step`
 - `agent.run.completed`
 - `agent.run.failed`
+
+## Snapshots & Rollback
+
+Successful `fs_write`/`fs_patch` mutations write a sidecar snapshot to `HERMES_SNAPSHOT_DIR` (default `<journal-dir>/hermes-snapshots/<run_id>.snap.json`): before-content (≤ `HERMES_SNAPSHOT_MAX_BYTES`, default 1MB), before/after sha256, tool, timestamp. Directory pruned to newest `HERMES_SNAPSHOT_KEEP` (200). `rollback {run_id}` re-validates the path against current roots, verifies the live file still matches `after_sha256` (refuses blind rollback on drift), then restores prior content — or deletes files the run created. Snapshots are content-bearing: secret-file policy still applies, and oversized files record hashes only (rollback honestly unavailable).
 
 ## Journal
 
