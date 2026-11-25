@@ -11,6 +11,8 @@ let ws: typeof import('../cortex-agents/agent-workspace');
 let messages: typeof import('../cortex-agents/messages');
 let mesh: typeof import('../cortex-agents/mesh');
 let verification: typeof import('../cortex-agents/verification');
+let skills: typeof import('../cortex-agents/skills');
+let learning: typeof import('../cortex-agents/learning');
 
 beforeAll(async () => {
   // Seed a registered-agent roster so meshSend's knownAgents() admits them.
@@ -21,6 +23,8 @@ beforeAll(async () => {
   messages = await import('../cortex-agents/messages');
   mesh = await import('../cortex-agents/mesh');
   verification = await import('../cortex-agents/verification');
+  skills = await import('../cortex-agents/skills');
+  learning = await import('../cortex-agents/learning');
 });
 
 describe('agent-workspace', () => {
@@ -174,5 +178,47 @@ describe('verification pipeline', () => {
     const cur = verification.getVerification(v.id);
     expect(cur?.votes).toHaveLength(1);
     expect(cur?.status).toBe('open');
+  });
+});
+
+describe('skill marketplace', () => {
+  it('registers, acquires with trust floor, composes, and records outcomes', () => {
+    const reg = skills.registerSkill('scout', {
+      name: 'graphql-to-trpc', version: '1.0.0', description: 'schema migration',
+      capabilities: ['graphql', 'trpc', 'codemod'], trustScore: 0.9,
+    });
+    expect(reg.ok).toBe(true);
+
+    // Trust floor: a 0.1-trust skill cannot be acquired.
+    skills.registerSkill('scout', { name: 'sketchy', version: '0.1', description: 'x', capabilities: ['x'], trustScore: 0.1 });
+    expect(skills.acquireSkill('builder', 'sketchy').ok).toBe(false);
+
+    const acq = skills.acquireSkill('builder', 'graphql-to-trpc');
+    expect(acq.ok).toBe(true);
+    expect(acq.manifest?.capabilities).toContain('codemod');
+
+    // Unacquired agent cannot compose it.
+    expect(skills.composeSkills('scout', ['graphql-to-trpc']).ok).toBe(false);
+    const comp = skills.composeSkills('builder', ['graphql-to-trpc']);
+    expect(comp.ok).toBe(true);
+    expect(comp.capabilities).toContain('trpc');
+
+    // Outcomes move trustScore after enough samples.
+    for (let i = 0; i < 3; i++) skills.recordSkillOutcome('graphql-to-trpc', true);
+    expect(skills.getSkill('graphql-to-trpc')?.manifest.trustScore).toBe(1);
+  });
+});
+
+describe('learning layer', () => {
+  it('selects arms epsilon-greedily and records rewards', () => {
+    const sel = learning.selectPolicy('builder', 'review');
+    expect(learning.POLICY_ARMS.some((a) => a.id === sel.arm.id)).toBe(true);
+    learning.recordPolicyReward('builder', 'review', sel.arm.id, 1);
+    learning.recordPolicyReward('builder', 'review', sel.arm.id, 0);
+    const stats = learning.policyStats('builder') as any;
+    const bandit = stats['bandit:review'];
+    expect(bandit).toBeDefined();
+    expect(bandit.arms[sel.arm.id].pulls).toBe(2);
+    expect(bandit.arms[sel.arm.id].rewardSum).toBeCloseTo(1);
   });
 });

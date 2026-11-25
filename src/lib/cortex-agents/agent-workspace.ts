@@ -345,6 +345,17 @@ export function workspaceBlock(agentId: string, maxEntries = 12): string {
   ].join('\n');
 }
 
+/** All live namespaces in the store — marketplace/policy enumeration. */
+export function wsNamespaces(): string[] {
+  const store = load();
+  const nss = new Set<string>();
+  for (const fk of Object.keys(store)) {
+    const parsed = parseFullKey(fk);
+    if (parsed && !isExpired(store[fk])) nss.add(parsed.ns);
+  }
+  return [...nss].sort();
+}
+
 /** Stats for Mission Control. */
 export function workspaceStats() {
   const store = load();

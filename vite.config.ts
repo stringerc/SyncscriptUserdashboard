@@ -211,6 +211,10 @@ import { listMessages, sendMessage, meshStats, deadLetters, MESH_CHANNELS } from
 import { wsRead, wsWrite, wsDelete, wsList, workspaceStats, archiveMission, isValidNamespace } from './src/lib/cortex-agents/agent-workspace';
 import { openVerification, listVerifications, getVerification, verificationStats } from './src/lib/cortex-agents/verification';
 import { listPatrolSpecs, patrolState, startPatrolMesh } from './src/lib/cortex-agents/patrols';
+import { registerSkill, getSkill, listSkills, acquireSkill, releaseSkill, composeSkills, recordSkillOutcome, skillStats } from './src/lib/cortex-agents/skills';
+import { selectPolicy, policyStats, startLearningLayer, POLICY_ARMS } from './src/lib/cortex-agents/learning';
+import { meshStats as meshBusStats } from './src/lib/cortex-agents/mesh';
+import { workspaceStats as wsStoreStats } from './src/lib/cortex-agents/agent-workspace';
 import { loadMission, saveMission, upsertGoal, verifyOps, goalProgress, routineYield, suggestCadence, planBlocks, startExperiment, reportExperiments, ventureYieldBreakdown, type OpsItem, type MissionGoal, type CadenceEntry } from './src/lib/cortex-agents/mission';
 import { listVentures, isValidVenture, ventureFromQueueType, updateVenture, dueVentures, markVentureRan, recordVentureCycle, ventureCyclesToday, listPlanItems, upsertPlanItem, deletePlanItem } from './src/lib/cortex-ventures';
 import { maybeFileAdoptionFollowup } from './src/lib/cortex-agents/adoption';
@@ -2109,6 +2113,8 @@ function apiProxyPlugin(): Plugin {
       try {
         const armed = startPatrolMesh(agentRuntime);
         console.log(`[patrols] mesh armed — ${armed.armed} patrol spec(s) registered, heal gate active`);
+        startLearningLayer(agentRuntime);
+        console.log('[learning] bandit layer armed — rewards record off task transitions');
       } catch (e: any) {
         console.warn('[patrols] mesh failed to arm:', e?.message || e);
       }
@@ -16671,6 +16677,100 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
         agentCors(req, res);
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ ok: true, state: patrolState(), specs: listPatrolSpecs() }));
+      });
+
+      // ── Skill Marketplace (/api/cortex/agents/skills) ──
+      // Fleet spec §4: manifest registry in the shared workspace.
+      server.middlewares.use('/api/cortex/agents/skills', (req: any, res: any, next: any) => {
+        const origin = req.headers.origin;
+        const isAllowed = isAllowedOrigin(origin, req.headers.host);
+        if (req.method === 'OPTIONS') {
+          res.writeHead(204, { 'Access-Control-Allow-Origin': origin || '*', 'Access-Control-Allow-Methods': 'GET, POST, OPTIONS', 'Access-Control-Allow-Headers': 'Content-Type' });
+          return res.end();
+        }
+        if (!isAllowed) return next();
+        agentCors(req, res);
+        const json = (code: number, body: any) => {
+          res.writeHead(code, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify(body));
+        };
+        if (req.method === 'GET') {
+          try {
+            const url = new URL(req.url || '/', 'http://localhost');
+            const name = url.searchParams.get('name') || '';
+            if (name) { const s = getSkill(name); return json(s ? 200 : 404, s ? { ok: true, skill: s } : { ok: false, error: 'not found' }); }
+            if (url.searchParams.get('stats')) return json(200, { ok: true, ...skillStats() });
+            return json(200, { ok: true, skills: listSkills() });
+          } catch (e: any) { return json(500, { ok: false, error: e?.message || 'skills read failed' }); }
+        }
+        if (req.method !== 'POST') return next();
+        let body = '';
+        req.on('data', (c: Buffer) => { body += c.toString(); });
+        req.on('end', () => {
+          try {
+            const p = JSON.parse(body || '{}');
+            const op = String(p.op || '');
+            const agentId = String(p.agentId || 'crew');
+            if (op === 'register') return json(200, registerSkill(agentId, p.manifest));
+            if (op === 'acquire') return json(200, acquireSkill(agentId, String(p.name || ''), p.version ? String(p.version) : undefined));
+            if (op === 'release') return json(200, releaseSkill(agentId, String(p.name || '')));
+            if (op === 'compose') return json(200, composeSkills(agentId, Array.isArray(p.names) ? p.names.map(String) : []));
+            if (op === 'outcome') { recordSkillOutcome(String(p.name || ''), p.success === true); return json(200, { ok: true }); }
+            return json(400, { ok: false, error: `unknown op: ${op}` });
+          } catch (e: any) { return json(400, { ok: false, error: e?.message || 'bad request' }); }
+        });
+      });
+
+      // ── Learning layer (/api/cortex/agents/learning) ──
+      // Fleet spec §6: bandit policies per agent+task-class.
+      server.middlewares.use('/api/cortex/agents/learning', (req: any, res: any, next: any) => {
+        const origin = req.headers.origin;
+        if (!isAllowedOrigin(origin, req.headers.host)) return next();
+        agentCors(req, res);
+        const json = (code: number, body: any) => {
+          res.writeHead(code, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify(body));
+        };
+        if (req.method === 'GET') {
+          try {
+            const url = new URL(req.url || '/', 'http://localhost');
+            const agentId = url.searchParams.get('agentId') || '';
+            const kind = url.searchParams.get('kind') || '';
+            if (agentId && kind) return json(200, { ok: true, ...selectPolicy(agentId, kind) });
+            return json(200, { ok: true, arms: POLICY_ARMS, policies: agentId ? policyStats(agentId) : {} });
+          } catch (e: any) { return json(500, { ok: false, error: e?.message || 'learning read failed' }); }
+        }
+        next();
+      });
+
+      // ── Mission Control (/api/cortex/agents/mission-control) ──
+      // Fleet spec §7 backend: one aggregate telemetry feed for the dashboard.
+      server.middlewares.use('/api/cortex/agents/mission-control', (req: any, res: any, next: any) => {
+        const origin = req.headers.origin;
+        if (!isAllowedOrigin(origin, req.headers.host)) return next();
+        agentCors(req, res);
+        try {
+          const snap = agentRuntime.snapshot();
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({
+            ok: true,
+            at: Date.now(),
+            agents: (snap.agents || []).map((a: any) => ({
+              id: a.id, name: a.name, status: a.status,
+              tasksCompleted: a.tasksCompleted, tasksFailed: a.tasksFailed,
+              currentTaskId: a.currentTaskId ?? null,
+            })),
+            tasks: { queued: (snap.tasks || []).filter((t: any) => t.status === 'queued').length, running: (snap.tasks || []).filter((t: any) => t.status === 'running').length },
+            mesh: meshBusStats(),
+            workspace: wsStoreStats(),
+            skills: skillStats(),
+            verifications: verificationStats(),
+            patrols: patrolState(),
+          }));
+        } catch (e: any) {
+          res.writeHead(500, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ ok: false, error: e?.message || 'mission-control failed' }));
+        }
       });
 
       // ── Venture plan items (/api/cortex/ventures/plan) ──
