@@ -2320,4 +2320,106 @@ discordRoutes.get('/provisioning-state', async (c) => {
   }
 });
 
+// ── Cortex remote interactions relay ────────────────────────────────
+// Discord's interactions URL is a public webhook — it cannot reach the
+// local Cortex dev server. This relay is the public edge: verify the
+// Ed25519 signature, ACK Discord with a deferred response inside the 3s
+// window, queue the payload in kv_store, and let the local Cortex
+// poller drain + fulfill via the interaction webhook token (15 min).
+//
+//   POST /discord/cortex-interactions          — Discord → queue (public, sig-verified)
+//   GET  /discord/cortex-interactions/pending  — Cortex poller drain (service token)
+//   POST /discord/cortex-interactions/done     — mark fulfilled (service token)
+
+const CORTEX_INBOX_PREFIX = 'cortex_discord_inbox:';
+const CORTEX_INBOX_MAX_AGE_MS = 14 * 60 * 1000; // interaction tokens die at 15m
+
+function isCortexRelayService(authHeader: string | undefined): boolean {
+  const serviceToken = Deno.env.get('HERMES_SERVICE_TOKEN') || '';
+  if (!serviceToken || !authHeader) return false;
+  const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7).trim() : '';
+  return token.length > 0 && token === serviceToken;
+}
+
+discordRoutes.post('/cortex-interactions', async (c) => {
+  try {
+    const signature = c.req.header('x-signature-ed25519');
+    const timestamp = c.req.header('x-signature-timestamp');
+    const body = await c.req.raw.text();
+
+    if (!(await verifyDiscordSignature(body, signature, timestamp))) {
+      return c.json({ error: 'Invalid request signature' }, 401);
+    }
+
+    const interaction = JSON.parse(body);
+    const interactionType = Number(interaction?.type || 0);
+    if (interactionType === 1) return c.json({ type: 1 }); // PING
+
+    const interactionId = String(interaction?.id || '');
+    if (!interactionId) {
+      return c.json({ type: 4, data: { content: 'Missing interaction id.', flags: 64 } });
+    }
+
+    const inboxKey = `${CORTEX_INBOX_PREFIX}${interactionId}`;
+    const seen = await kv.get(toDiscordInteractionKey(interactionId));
+    if (seen?.processed) {
+      return c.json({ type: 4, data: { content: 'Duplicate interaction ignored.', flags: 64 } });
+    }
+    await kv.set(toDiscordInteractionKey(interactionId), { processed: true, at: new Date().toISOString(), via: 'cortex-relay' });
+
+    await kv.set(inboxKey, {
+      id: interactionId,
+      payload: interaction,
+      receivedAt: Date.now(),
+      done: false,
+    });
+
+    console.log(`[cortex-relay] queued interaction ${interactionId} type=${interactionType}`);
+
+    // Deferred ACK — the local poller fulfills via webhook within 15m.
+    // type 3 (component) → 6 DEFERRED_UPDATE_MESSAGE; else → 5 DEFERRED_CHANNEL_MESSAGE_WITH_SOURCE
+    return c.json({ type: interactionType === 3 ? 6 : 5 });
+  } catch (error: any) {
+    console.error('[cortex-relay] error:', error);
+    return c.json({ type: 4, data: { content: `Relay error: ${String(error?.message || error).slice(0, 140)}`, flags: 64 } });
+  }
+});
+
+discordRoutes.get('/cortex-interactions/pending', async (c) => {
+  if (!isCortexRelayService(c.req.header('Authorization'))) {
+    return c.json({ error: 'unauthorized' }, 401);
+  }
+  try {
+    const cutoff = Date.now() - CORTEX_INBOX_MAX_AGE_MS;
+    const items = await kv.getKeyValueByPrefix(CORTEX_INBOX_PREFIX);
+    const pending = items
+      .map((entry) => entry.value as any)
+      .filter((v) => v && !v.done && typeof v.receivedAt === 'number' && v.receivedAt >= cutoff)
+      .sort((a, b) => a.receivedAt - b.receivedAt)
+      .slice(0, 10);
+    return c.json({ ok: true, pending });
+  } catch (error: any) {
+    return c.json({ ok: false, error: String(error?.message || error) }, 500);
+  }
+});
+
+discordRoutes.post('/cortex-interactions/done', async (c) => {
+  if (!isCortexRelayService(c.req.header('Authorization'))) {
+    return c.json({ error: 'unauthorized' }, 401);
+  }
+  try {
+    const body = await c.req.json().catch(() => ({}));
+    const id = String(body?.id || '');
+    if (!id) return c.json({ ok: false, error: 'missing id' }, 400);
+    const key = `${CORTEX_INBOX_PREFIX}${id}`;
+    const existing = await kv.get(key);
+    if (existing && typeof existing === 'object') {
+      await kv.set(key, { ...existing, done: true, doneAt: Date.now() });
+    }
+    return c.json({ ok: true });
+  } catch (error: any) {
+    return c.json({ ok: false, error: String(error?.message || error) }, 500);
+  }
+});
+
 export default discordRoutes;

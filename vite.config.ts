@@ -18777,6 +18777,56 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
         console.info('[cortex-discord] disabled — DISCORD_BOT_TOKEN/PUBLIC_KEY/OWNER_ID not all set');
       }
 
+      // ── Discord remote-relay drainer ──
+      // Discord's interactions URL can only be a public webhook — it cannot
+      // reach this dev server. When pointed at the Edge relay
+      // (/discord/cortex-interactions), signed payloads are queued in
+      // kv_store after a deferred ACK. This loop drains them every ~4s,
+      // runs the same handler as the local webhook path, and fulfills via
+      // the interaction token's @original webhook — identical semantics,
+      // works from anywhere the dev server is running.
+      const relayToken = dval('HERMES_SERVICE_TOKEN');
+      if (discordReady() && relayToken) {
+        const relayBase = 'https://kwhnrlzibgfedtxpkbgb.supabase.co/functions/v1/make-server-57781ad9/discord/cortex-interactions';
+        const relayHeaders = { 'Content-Type': 'application/json', Authorization: `Bearer ${relayToken}` };
+        const drainDiscordRelay = async () => {
+          try {
+            const r = await fetch(`${relayBase}/pending`, { headers: relayHeaders, signal: AbortSignal.timeout(8000) });
+            if (!r.ok) return;
+            const j: any = await r.json().catch(() => ({}));
+            const pending = Array.isArray(j?.pending) ? j.pending : [];
+            for (const item of pending) {
+              const payload = item?.payload;
+              const iid = String(item?.id || payload?.id || '');
+              if (!payload || !iid) continue;
+              try {
+                const result = await handleDiscordInteraction(payload, discordDeps);
+                const appId = String(payload?.application_id || dval('DISCORD_APPLICATION_ID') || '1468755723587420300');
+                const interactionToken = String(payload?.token || '');
+                if (interactionToken) {
+                  await discordApi('PATCH', `/webhooks/${appId}/${interactionToken}/messages/@original`, {
+                    token: dval('DISCORD_BOT_TOKEN'),
+                    body: {
+                      content: result.data?.content || '',
+                      embeds: result.data?.embeds || [],
+                      components: result.data?.components || [],
+                    },
+                  });
+                }
+                console.info(`[cortex-discord] relay interaction ${iid} → type=${result.type}`);
+              } catch (e) {
+                console.warn('[cortex-discord] relay fulfill error:', String(e).slice(0, 160));
+              } finally {
+                fetch(`${relayBase}/done`, { method: 'POST', headers: relayHeaders, body: JSON.stringify({ id: iid }) }).catch(() => { });
+              }
+            }
+          } catch { /* relay unreachable — local path unaffected */ }
+        };
+        setTimeout(drainDiscordRelay, 10_000);
+        setInterval(drainDiscordRelay, 4_000);
+        console.info('[cortex-discord] remote relay drain enabled — 4s cadence via Edge');
+      }
+
       // POST /api/cortex/agents/llm — matrix-routed chat completion for workers.
       // {tier?, agentId?, model?, messages, maxTokens?, system?}
       // Tries ordered lane candidates with provider failover; records probe
