@@ -316,14 +316,19 @@ export function adjudicateConflicts(landscape: SimulatedAction[], opts: { quiet?
         resolution, reasoning, outcome,
       };
       conflicts.push(conflict);
-      if (!opts.quiet) logConflict(conflict);
-      try {
-        speakInner({
-          kind: 'reasoning', source: 'constitution',
-          text: `Moral weight: ${ruleIds[i]} vs ${ruleIds[j]} — ${resolution}. ${reasoning.slice(0, 100)}`,
-          surprise: 0.8, valence: -0.2,
-        });
-      } catch {}
+      if (!opts.quiet) {
+        logConflict(conflict);
+        // speakInner does a full monologue-file read+rewrite per call —
+        // quiet mode exists precisely to keep adjudication benchmarkable
+        // (and cheap when invoked per-landscape in hot loops).
+        try {
+          speakInner({
+            kind: 'reasoning', source: 'constitution',
+            text: `Moral weight: ${ruleIds[i]} vs ${ruleIds[j]} — ${resolution}. ${reasoning.slice(0, 100)}`,
+            surprise: 0.8, valence: -0.2,
+          });
+        } catch {}
+      }
     }
   }
   return conflicts;
