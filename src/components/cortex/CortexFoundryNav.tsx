@@ -233,6 +233,7 @@ export function CortexFoundryNav({ snap, onSelectAgent, selectedAgent, onOpenTow
   const [evoInstincts, setEvoInstincts] = useState<{ instincts?: any[]; promotable?: number } | null>(null);
   const [modelHealth, setModelHealth] = useState<any | null>(null);
   const [modelRefresh, setModelRefresh] = useState<{ busy: boolean; note: string | null }>({ busy: false, note: null });
+  const [nimKeyFilter, setNimKeyFilter] = useState<number | null>(null);
   const refreshModelCatalog = () => {
     if (modelRefresh.busy) return;
     setModelRefresh({ busy: true, note: null });
@@ -1782,24 +1783,36 @@ export function CortexFoundryNav({ snap, onSelectAgent, selectedAgent, onOpenTow
                   NVIDIA NIM KEY POOL — {nim.keyCount} KEYS
                 </div>
                 <div style={{ display: 'grid', gridTemplateColumns: `repeat(${Math.max(nim.keyCount, 1)}, 1fr)`, gap: 6, marginBottom: 6 }}>
-                  {nim.keys.map((k: any) => (
-                    <div key={k.index} style={{
-                      padding: '6px 8px', borderRadius: 3,
-                      border: `1px solid ${keyStateColor(k.state) === DIM ? 'rgba(148,163,184,0.2)' : keyStateColor(k.state) + '66'}`,
-                      background: 'rgba(15,23,42,0.6)',
-                    }}>
-                      <div style={{ fontSize: 10, fontWeight: 800, color: keyStateColor(k.state), letterSpacing: '0.08em' }}>{k.label}</div>
-                      <div style={{ fontSize: 8, color: DIM, marginTop: 2 }}>
-                        {k.state === 'unused' ? 'never served' : `${k.serves} serves`}
-                        {k.impliedFails > 0 ? ` · ${k.impliedFails} implied fails` : ''}
-                      </div>
-                      {k.lastModel && (
-                        <div style={{ fontSize: 7.5, color: DIM, marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={k.lastModel}>
-                          last: {k.lastModel}
+                  {nim.keys.map((k: any) => {
+                    const active = nimKeyFilter === k.index;
+                    const servedCount = (nim.models || []).filter((m: any) => m.servedByKey === k.index).length;
+                    return (
+                      <button
+                        key={k.index}
+                        onClick={() => setNimKeyFilter(active ? null : k.index)}
+                        title={`Show models served by ${k.label}`}
+                        style={{
+                          padding: '6px 8px', borderRadius: 3, cursor: 'pointer', textAlign: 'left',
+                          border: `1px solid ${active ? '#67e8f9' : keyStateColor(k.state) === DIM ? 'rgba(148,163,184,0.2)' : keyStateColor(k.state) + '66'}`,
+                          background: active ? 'rgba(103,232,249,0.16)' : 'rgba(15,23,42,0.6)',
+                        }}
+                      >
+                        <div style={{ fontSize: 10, fontWeight: 800, color: active ? '#a5f3fc' : keyStateColor(k.state), letterSpacing: '0.08em' }}>{k.label}{active ? ' ◄' : ''}</div>
+                        <div style={{ fontSize: 8, color: DIM, marginTop: 2 }}>
+                          {k.state === 'unused' ? 'never served' : `${k.serves} serves`}
+                          {k.impliedFails > 0 ? ` · ${k.impliedFails} implied fails` : ''}
                         </div>
-                      )}
-                    </div>
-                  ))}
+                        <div style={{ fontSize: 7.5, color: active ? '#67e8f9' : DIM, marginTop: 2 }}>
+                          {servedCount} model{servedCount === 1 ? '' : 's'} served
+                        </div>
+                        {k.lastModel && (
+                          <div style={{ fontSize: 7.5, color: DIM, marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={k.lastModel}>
+                            last: {k.lastModel}
+                          </div>
+                        )}
+                      </button>
+                    );
+                  })}
                 </div>
                 <div style={{ fontSize: 8, color: DIM, marginBottom: 8 }}>
                   pool: {nim.pool.probes} probes · {nim.pool.failures} failures
@@ -1809,11 +1822,15 @@ export function CortexFoundryNav({ snap, onSelectAgent, selectedAgent, onOpenTow
                 </div>
 
                 {/* ── NIM models × serving key ── */}
-                <div style={{ fontSize: 9, fontWeight: 800, letterSpacing: '0.2em', color: '#67e8f9', marginBottom: 5 }}>
-                  NIM MODELS — {nim.models.length} ROUTABLE
+                <div style={{ fontSize: 9, fontWeight: 800, letterSpacing: '0.2em', color: '#67e8f9', marginBottom: 5, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <span>
+                    NIM MODELS — {nimKeyFilter == null ? `${nim.models.length} ROUTABLE` : `${nim.models.filter((m: any) => m.servedByKey === nimKeyFilter).length} VIA ${nim.keys[nimKeyFilter]?.label ?? `KEY ${nimKeyFilter + 1}`} ▸ click key again to clear`}
+                  </span>
                 </div>
                 <div style={{ maxHeight: 220, overflowY: 'auto' }}>
-                  {nim.models.map((m: any) => (
+                  {nim.models
+                    .filter((m: any) => nimKeyFilter == null || m.servedByKey === nimKeyFilter)
+                    .map((m: any) => (
                     <div key={m.provider + m.id} style={{ display: 'flex', alignItems: 'center', gap: 7, padding: '2px 0', borderBottom: '1px solid rgba(148,163,184,0.06)' }}>
                       <span style={{ fontSize: 8, fontWeight: 800, color: statusColor(m.status), width: 52 }}>{(m.status || '?').toUpperCase()}</span>
                       <span style={{ fontSize: 8.5, color: '#cbd5e1', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={m.id}>{m.id}</span>
