@@ -83,6 +83,7 @@ import { getIntegratedInformation } from './integrated-information';
 import { getAttentionSchema } from './attention-schema';
 import { getGenerativeAttentionLoop, peekGenerativeAttentionLoop, type GalHost, type GalSelfSignal } from './consciousness/generative-attention';
 import { getAttentionVetoAgent } from './consciousness/veto-agent';
+import { getAffectiveSystem } from './consciousness/affective-valence';
 import { getPersistentSelfModel } from './consciousness/persistent-self-model';
 import { getStructuralEquationModel } from './structural-equation-model';
 import {
@@ -509,6 +510,9 @@ export class CortexEngine {
     vetoAgent.setVolatilitySignal(
       () => peekGenerativeAttentionLoop()?.getVolitionalDepth().volatility ?? null,
     );
+    vetoAgent.setAffectSignal(() => {
+      try { return getAffectiveSystem().getAffectiveState(); } catch { return null; }
+    });
     workspace.registerSpecialist(vetoAgent);
 
     // Two recurrent passes: pass 2 re-bids after receiveBroadcast updated

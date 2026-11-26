@@ -181,4 +181,30 @@ describe('GenerativeAttentionLoop', () => {
     const sel = gal.deliberate();
     expect(sel.phiRecovery?.attempted).toBe(false);
   });
+
+  it('temporalPhi integrates φ over the specious-present window', () => {
+    const gal = new GenerativeAttentionLoop(makeHost(), { memoryPath: null, experienceModelPath: null });
+    expect(gal.getTemporalPhi()).toBe(0.5); // empty → neutral prior
+    for (let i = 0; i < 10; i++) {
+      gal.deliberate();
+      gal.recordOutcome({ score: 0.8, ignited: true, spread: 0.7, phi: 0.8 });
+    }
+    const tp = gal.getTemporalPhi();
+    expect(tp).toBeGreaterThan(0.6);
+    expect(tp).toBeLessThanOrEqual(1);
+    const depth = gal.getVolitionalDepth();
+    expect(depth.temporalPhi).toBeCloseTo(tp, 2);
+  });
+
+  it('records graded veto margin on candidates and episodes', () => {
+    const gal = new GenerativeAttentionLoop(makeHost(), {
+      memoryPath: null, experienceModelPath: null,
+      attentionVeto: () => ({ shouldVeto: false, vetoScore: 0.3, vetoThreshold: 0.62 }),
+    });
+    const sel = gal.deliberate();
+    const nonSq = sel.candidates.find((c) => c.kind !== 'status_quo');
+    expect(nonSq?.vetoMargin).toBeCloseTo(0.32, 5);
+    const ep = gal.recordOutcome({ score: 0.7, ignited: true, spread: 0.5, phi: 0.5 });
+    expect(ep?.chosenVetoMargin).not.toBeNull();
+  });
 });

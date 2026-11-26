@@ -204,6 +204,7 @@ import { getAgentRuntime } from './src/lib/cortex-agents/runtime';
 import { peekGenerativeAttentionLoop } from './src/lib/consciousness/generative-attention';
 import { peekAttentionVetoAgent } from './src/lib/consciousness/veto-agent';
 import { clusterEpisodeEmbeddings } from './src/lib/consciousness/episode-themes';
+import { describeAttentionMeta } from './src/lib/consciousness/attention-meta';
 import { getConsciousOrchestrator } from './src/lib/consciousness/conscious-orchestrator';
 import { inferWeight } from './src/lib/cortex-agents/registry';
 import { recordAgentOutcome } from './src/lib/cortex-agents/outcomes';
@@ -16033,6 +16034,7 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
             recoveryApplied: e.recoveryApplied === true,
             metaVetoed: e.chosenMetaVetoed === true,
             selfValence: e.selfValence ?? null,
+            vetoMargin: e.chosenVetoMargin ?? null,
             embedding: e.embedding ?? null,
           }));
           const vetoAgent = peekAttentionVetoAgent()?.getStats() ?? null;
@@ -16056,12 +16058,15 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
             const band = vetoAgent.band;
             alerts.push(`VETO RATE OUT OF BAND — ${(vetoAgent.vetoRate * 100).toFixed(1)}% vs Libet ${(band.min * 100).toFixed(0)}–${(band.max * 100).toFixed(0)}% target (threshold regulating)`);
           }
-          const themes = clusterEpisodeEmbeddings(gal.getRecentEpisodes(100));
+          const allEpisodes = gal.getRecentEpisodes(100);
+          const themes = clusterEpisodeEmbeddings(allEpisodes);
+          const metaAttention = describeAttentionMeta(allEpisodes);
           return jsonRes(res, 200, {
             ok: true, active: true,
             depth,
             episodes,
             themes,
+            metaAttention,
             vetoAgent,
             alerts,
             honesty: 'engineering proxies for attention-selection quality — not a measure of experience',

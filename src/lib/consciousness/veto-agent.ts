@@ -95,6 +95,7 @@ export class AttentionVetoAgent implements WorkspaceSpecialist, GalVetoEvaluator
   private broadcasts: WorkspaceBroadcast[] = [];
   private persistPath: string | null;
   private volatilitySignal: (() => number | null) | null = null;
+  private affectSignal: (() => { valence: number } | null) | null = null;
 
   /** Host-injected regime signal: recent outcome volatility [0,1]. When
    *  absent the agent regulates to the fixed Libet band. */
@@ -102,14 +103,40 @@ export class AttentionVetoAgent implements WorkspaceSpecialist, GalVetoEvaluator
     this.volatilitySignal = fn;
   }
 
+  /** Host-injected affective state — grounds vetoes in how the system
+   *  is actually feeling (homeostatic valence), not just predictions.
+   *  explore fits appetitive states, reset fits aversive/cautious ones. */
+  setAffectSignal(fn: () => { valence: number } | null): void {
+    this.affectSignal = fn;
+  }
+
+  /** Affective congruence of an attention kind with current valence.
+   *  Returns null when no affect signal — the term is skipped entirely. */
+  private affectiveFit(kind: string): number | null {
+    const v = this.affectSignal?.()?.valence;
+    if (v == null) return null;
+    const valence = Math.max(-1, Math.min(1, v));
+    switch (kind) {
+      case 'explore': return (valence + 1) / 2;          // novelty fits flourishing
+      case 'reset': return (1 - valence) / 2;            // uniformity fits caution
+      case 'topic_boost': return 0.5 + valence * 0.25;   // mild positive lean
+      default: return 0.5;
+    }
+  }
+
   private band() { return bandFor(this.volatilitySignal?.() ?? null); }
 
-  constructor(persistPath?: string | null, opts?: { initialThreshold?: number; volatilitySignal?: () => number | null }) {
+  constructor(persistPath?: string | null, opts?: {
+    initialThreshold?: number;
+    volatilitySignal?: () => number | null;
+    affectSignal?: () => { valence: number } | null;
+  }) {
     this.persistPath = persistPath === undefined
       ? path.join(process.cwd(), '.cortex-runtime', 'veto-agent.json')
       : persistPath;
     this.threshold = opts?.initialThreshold ?? 0.62;
     this.volatilitySignal = opts?.volatilitySignal ?? null;
+    this.affectSignal = opts?.affectSignal ?? null;
     this.load(); // persisted state (if any) wins over the constructor default
   }
 
@@ -134,11 +161,13 @@ export class AttentionVetoAgent implements WorkspaceSpecialist, GalVetoEvaluator
     const base = this.volition.evaluateVetoSync(intention, ctx);
 
     const disruption = KIND_DISRUPTION[kind] ?? 0.4;
+    const fit = this.affectiveFit(kind);
     const impulse = Math.max(0, Math.min(1,
       0.55 * (1 - predictedScore)
       + 0.20 * disruption
       + 0.15 * (1 - base.valueAlignment)
-      + 0.10 * (1 - base.metacognitiveConfidence),
+      + 0.10 * (1 - base.metacognitiveConfidence)
+      + (fit !== null ? 0.08 * (1 - fit) : 0),
     ));
 
     let shouldVeto = impulse > this.threshold;

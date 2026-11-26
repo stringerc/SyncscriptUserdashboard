@@ -60,6 +60,10 @@ export interface GalCandidate {
   vetoed: boolean;
   vetoScore: number;
   vetoReason?: string;
+  /** distance from the veto boundary: threshold − impulse. Positive =
+   *  safe margin; near-zero = the veto almost fired. Graded volition —
+   *  agency as a continuum, not a switch. */
+  vetoMargin?: number;
   /** true when the veto on this candidate was itself vetoed (depth-1 meta-veto) */
   metaVetoed?: boolean;
 }
@@ -138,6 +142,8 @@ export interface GalEpisode {
   chosenMetaVetoed?: boolean;
   /** self-model valence that biased this deliberation, [-1,1] */
   selfValence?: number;
+  /** chosen candidate's distance from the veto boundary */
+  chosenVetoMargin?: number;
 }
 
 /** Host adapter — the GAL never touches the workspace directly, which
@@ -245,6 +251,7 @@ export class GenerativeAttentionLoop {
     selfSignal?: () => GalSelfSignal | null;
   };
   private episodes: GalEpisode[] = [];
+  private phiTimeline: Array<{ ts: number; phi: number }> = [];
   private cycleSeq = 0;
   private pending: { selection: GalSelection; features: number[]; mlpInput: number[]; ts: number; selfValence?: number } | null = null;
   private phiRecoveryPending = false;
@@ -454,6 +461,7 @@ export class GenerativeAttentionLoop {
         c.vetoed = verdict.shouldVeto;
         c.vetoScore = verdict.vetoScore;
         c.vetoReason = verdict.reason;
+        c.vetoMargin = (verdict.vetoThreshold ?? 0.62) - verdict.vetoScore;
         c.metaVetoed = verdict.metaVetoed === true || undefined;
       } else {
         const veto = this.host.evaluateVeto
@@ -462,6 +470,7 @@ export class GenerativeAttentionLoop {
         c.vetoed = veto.shouldVeto;
         c.vetoScore = veto.vetoScore;
         c.vetoReason = veto.reason;
+        c.vetoMargin = ((veto as { vetoThreshold?: number }).vetoThreshold ?? 0.65) - veto.vetoScore;
       }
       if (c.vetoed) vetoedAny = true;
     }
@@ -546,6 +555,8 @@ export class GenerativeAttentionLoop {
       this.phiRecoveryPending = true;
       this.phiRecoveryCount++;
     }
+    this.phiTimeline.push({ ts: Date.now(), phi: outcome.phi });
+    if (this.phiTimeline.length > 200) this.phiTimeline.shift();
 
     const episode: GalEpisode = {
       ts: Date.now(),
@@ -564,6 +575,8 @@ export class GenerativeAttentionLoop {
       recoveryApplied: selection.phiRecovery?.applied === true || undefined,
       chosenMetaVetoed: selection.chosen.metaVetoed === true || undefined,
       selfValence,
+      chosenVetoMargin: selection.chosen.vetoMargin !== undefined
+        ? Number(selection.chosen.vetoMargin.toFixed(3)) : undefined,
     };
 
     this.episodes.push(episode);
@@ -579,6 +592,34 @@ export class GenerativeAttentionLoop {
   //   vetoBandHealth     — veto rate inside the Libet 5–15% target band
   //   integration        — recent Φ-proxy level (lower-bound approximation)
 
+  /**
+   * Temporal binding — "specious present." Time-weighted integral of the
+   * φ-proxy over a sliding window: each episode contributes phi × the
+   * elapsed time it represents (capped at 2× cadence so gaps don't
+   * dominate). This is the honest lower-bound version of integrating
+   * information over time — sustained integration, not a snapshot.
+   */
+  getTemporalPhi(windowMs = 5 * 60 * 1000): number {
+    const now = Date.now();
+    const inWindow = this.phiTimeline.filter((p) => now - p.ts <= windowMs);
+    if (!inWindow.length) return 0.5;
+    let num = 0, den = 0;
+    let prevTs = inWindow[0].ts;
+    for (let i = 1; i < inWindow.length; i++) {
+      const dt = Math.min(inWindow[i].ts - prevTs, 120000); // cap gap weight
+      num += inWindow[i - 1].phi * Math.max(1, dt);
+      den += Math.max(1, dt);
+      prevTs = inWindow[i].ts;
+    }
+    // tail: last point represents time since it up to now (capped)
+    const tailDt = Math.min(now - prevTs, 120000);
+    if (tailDt > 0) {
+      num += inWindow[inWindow.length - 1].phi * tailDt;
+      den += tailDt;
+    }
+    return den ? Math.max(0, Math.min(1, num / den)) : 0.5;
+  }
+
   getVolitionalDepth(): {
     score: number;
     predictionAccuracy: number;
@@ -593,6 +634,8 @@ export class GenerativeAttentionLoop {
     /** stdev of recent actual scores — regime stability signal consumed
      *  by the VetoAgent's adaptive Libet band. 0 = rock steady. */
     volatility: number;
+    /** time-weighted φ integral over the specious-present window */
+    temporalPhi: number;
   } {
     const recent = this.episodes.slice(-50);
     const withOutcome = recent.filter((e) => e.predictionError !== null);
@@ -637,6 +680,7 @@ export class GenerativeAttentionLoop {
       episodes: this.episodes.length,
       modelUpdates: this.model.updatesCount,
       volatility: Number(volatility.toFixed(4)),
+      temporalPhi: Number(this.getTemporalPhi().toFixed(3)),
     };
   }
 

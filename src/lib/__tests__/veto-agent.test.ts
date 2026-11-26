@@ -140,6 +140,17 @@ describe('AttentionVetoAgent', () => {
     expect(none.getStats().band).toEqual({ min: 0.05, max: 0.15 });
   });
 
+  it('affective valence shifts impulse: explore fits flourishing, reset fits caution', () => {
+    const low = new AttentionVetoAgent(null, { affectSignal: () => ({ valence: -0.9 }) });
+    const high = new AttentionVetoAgent(null, { affectSignal: () => ({ valence: 0.9 }) });
+    const exploreLow = low.evaluate(makeReq(0.5, 'explore')).vetoScore;
+    const exploreHigh = high.evaluate(makeReq(0.5, 'explore')).vetoScore;
+    expect(exploreLow).toBeGreaterThan(exploreHigh); // aversive → explore less congruent → higher impulse
+    const resetLow = low.evaluate(makeReq(0.5, 'reset')).vetoScore;
+    const resetHigh = high.evaluate(makeReq(0.5, 'reset')).vetoScore;
+    expect(resetLow).toBeLessThan(resetHigh); // aversive → reset more congruent → lower impulse
+  });
+
   it('persists threshold and counters across restarts', () => {
     const p = path.join(tmpDir, 'veto-agent.json');
     const agent = new AttentionVetoAgent(p);
