@@ -11,6 +11,9 @@
  * - Premack & Woodruff (1978) / Frith & Frith (2005): Theory of Mind and social cognition
  */
 
+import * as fs from 'node:fs';
+import * as path from 'node:path';
+
 export interface ValueDefinition {
   id: string;
   statement: string;
@@ -146,10 +149,50 @@ export class PersistentSelfModel {
 
   private theoryOfMindMap: Map<string, TheoryOfMindModel> = new Map();
   private relationshipBonds: Map<string, number> = new Map();
+  private persistPath: string | null = null;
+  private persistCounter = 0;
 
   constructor() {
     this.seedFoundationalEpisodes();
     this.relationshipBonds.set('primary_user', 0.95);
+  }
+
+  /**
+   * Disk persistence — without this the "persistent" self-model was
+   * in-memory only and every restart amnesia-wiped the autobiographical
+   * narrative the GAL's selfSignal reads back. Snapshot is the same
+   * SelfModelSnapshot shape used for checkpointing; saves are debounced
+   * (every 5 mutations) since consolidateSession is infrequent anyway.
+   */
+  enableDiskPersistence(p: string): void {
+    this.persistPath = p;
+    try {
+      if (fs.existsSync(p)) {
+        const snap = JSON.parse(fs.readFileSync(p, 'utf8')) as SelfModelSnapshot;
+        if (snap?.narrativeIdentity?.lifeStoryEpisodes) {
+          this.restoreFromSnapshot(snap);
+        }
+      }
+    } catch { /* corrupt snapshot → keep seeded state */ }
+  }
+
+  private persist(): void {
+    if (!this.persistPath) return;
+    this.persistCounter++;
+    if (this.persistCounter % 5 !== 0) return;
+    try {
+      fs.mkdirSync(path.dirname(this.persistPath), { recursive: true });
+      fs.writeFileSync(this.persistPath, JSON.stringify(this.getSnapshot()));
+    } catch { /* persistence best-effort */ }
+  }
+
+  /** Force a snapshot write (shutdown, tests, milestones). */
+  flush(): void {
+    if (!this.persistPath) return;
+    try {
+      fs.mkdirSync(path.dirname(this.persistPath), { recursive: true });
+      fs.writeFileSync(this.persistPath, JSON.stringify(this.getSnapshot()));
+    } catch { }
   }
 
   private seedFoundationalEpisodes(): void {
@@ -206,6 +249,7 @@ export class PersistentSelfModel {
     if (this.lifeStory.length > this.maxEpisodes) {
       this.lifeStory.shift();
     }
+    this.persist();
 
     return episode;
   }
@@ -272,6 +316,7 @@ export class PersistentSelfModel {
     if (this.agencyModel.recentCausalInferences.length > 50) {
       this.agencyModel.recentCausalInferences.shift();
     }
+    this.persist();
 
     return claimed;
   }
@@ -289,6 +334,7 @@ export class PersistentSelfModel {
     };
 
     this.theoryOfMindMap.set(agentId, { ...existing, ...model });
+    this.persist();
   }
 
   getTheoryOfMind(agentId: string): TheoryOfMindModel | undefined {
@@ -399,6 +445,13 @@ let singletonSelfModel: PersistentSelfModel | null = null;
 export function getPersistentSelfModel(): PersistentSelfModel {
   if (!singletonSelfModel) {
     singletonSelfModel = new PersistentSelfModel();
+    // Hermetic under vitest — suites must not read/write the live
+    // autobiographical store.
+    if (!process.env.VITEST) {
+      singletonSelfModel.enableDiskPersistence(
+        path.join(process.cwd(), '.cortex-runtime', 'self-model.json'),
+      );
+    }
   }
   return singletonSelfModel;
 }
