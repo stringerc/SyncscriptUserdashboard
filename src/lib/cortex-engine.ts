@@ -84,6 +84,7 @@ import { getAttentionSchema } from './attention-schema';
 import { getGenerativeAttentionLoop, peekGenerativeAttentionLoop, type GalHost, type GalSelfSignal, type GalVetoRequest } from './consciousness/generative-attention';
 import { getAttentionVetoAgent } from './consciousness/veto-agent';
 import { getAffectiveSystem } from './consciousness/affective-valence';
+import { getInteroceptiveState } from './cortex-agent/interoceptive';
 import { getPersistentSelfModel } from './consciousness/persistent-self-model';
 import { getStructuralEquationModel } from './structural-equation-model';
 import {
@@ -501,6 +502,14 @@ export class CortexEngine {
       ),
       selfSignal: galSelfSignal,
       lookaheadGamma: 0.3,
+      // Interoception: real somatic error (rss/heap/load/mem/lag) enters
+      // deliberation as a conservation drive — the body voting.
+      interoception: () => {
+        try {
+          const s = getInteroceptiveState();
+          return { error: s.error, surprise: s.surprise, capacity: s.capacity };
+        } catch { return null; }
+      },
     });
     const galSelection = gal.deliberate();
     workspace.setTopicMultipliers(galSelection.chosen.multipliers);

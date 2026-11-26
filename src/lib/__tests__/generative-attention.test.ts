@@ -226,6 +226,31 @@ describe('GenerativeAttentionLoop', () => {
     expect(ep?.lookaheadChanged === undefined || typeof ep.lookaheadChanged === 'boolean').toBe(true);
   });
 
+  it('records interoceptive error and the strongest suppressed future', () => {
+    const gal = new GenerativeAttentionLoop(makeHost(), {
+      memoryPath: null, experienceModelPath: null,
+      interoception: () => ({ error: 0.9, surprise: 0.2, capacity: 0.1 }),
+      attentionVeto: () => ({ shouldVeto: true, vetoScore: 0.9 }),
+    });
+    const sel = gal.deliberate();
+    expect(sel.interoError).toBeCloseTo(0.9, 5);
+    // every non-status-quo candidate vetoed → status quo survives
+    expect(sel.chosen.kind).toBe('status_quo');
+    const ep = gal.recordOutcome({ score: 0.5, ignited: false, spread: 0.3, phi: 0.4 });
+    expect(ep?.interoError).toBeCloseTo(0.9, 3);
+    expect(ep?.topVetoed).toBeDefined();
+    expect(ep?.topVetoed?.kind).not.toBe('status_quo');
+    expect(ep?.topVetoed?.vetoScore).toBe(0.9);
+  });
+
+  it('interoception absent → no interoError recorded', () => {
+    const gal = new GenerativeAttentionLoop(makeHost(), {
+      memoryPath: null, experienceModelPath: null,
+    });
+    const sel = gal.deliberate();
+    expect(sel.interoError).toBeUndefined();
+  });
+
   it('records graded veto margin on candidates and episodes', () => {
     const gal = new GenerativeAttentionLoop(makeHost(), {
       memoryPath: null, experienceModelPath: null,

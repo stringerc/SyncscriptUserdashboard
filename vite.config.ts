@@ -205,6 +205,7 @@ import { peekGenerativeAttentionLoop } from './src/lib/consciousness/generative-
 import { peekAttentionVetoAgent } from './src/lib/consciousness/veto-agent';
 import { clusterEpisodeEmbeddings } from './src/lib/consciousness/episode-themes';
 import { describeAttentionMeta } from './src/lib/consciousness/attention-meta';
+import { getInteroceptiveState } from './src/lib/cortex-agent/interoceptive';
 import { getConsciousOrchestrator } from './src/lib/consciousness/conscious-orchestrator';
 import { inferWeight } from './src/lib/cortex-agents/registry';
 import { recordAgentOutcome } from './src/lib/cortex-agents/outcomes';
@@ -16036,6 +16037,8 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
             selfValence: e.selfValence ?? null,
             vetoMargin: e.chosenVetoMargin ?? null,
             lookaheadChanged: e.lookaheadChanged ?? null,
+            interoError: e.interoError ?? null,
+            topVetoed: e.topVetoed ?? null,
             embedding: e.embedding ?? null,
           }));
           const vetoAgent = peekAttentionVetoAgent()?.getStats() ?? null;
@@ -16062,12 +16065,21 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
           const allEpisodes = gal.getRecentEpisodes(100);
           const themes = clusterEpisodeEmbeddings(allEpisodes);
           const metaAttention = describeAttentionMeta(allEpisodes);
+          let interoception = null;
+          try {
+            const s = getInteroceptiveState();
+            interoception = {
+              error: s.error, surprise: s.surprise, capacity: s.capacity,
+              level: s.level, vitals: s.vitals,
+            };
+          } catch { /* interoception optional */ }
           return jsonRes(res, 200, {
             ok: true, active: true,
             depth,
             episodes,
             themes,
             metaAttention,
+            interoception,
             vetoAgent,
             alerts,
             honesty: 'engineering proxies for attention-selection quality — not a measure of experience',

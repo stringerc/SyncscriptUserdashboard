@@ -118,6 +118,8 @@ export interface GalSelection {
   /** Counterfactual lookahead: true when the rollout planner's argmax
    *  differed from the myopic argmax. Only present when enabled + trained. */
   lookahead?: { changed: boolean };
+  /** interoceptive error applied as conservation drive this cycle */
+  interoError?: number;
 }
 
 /** What the broadcast actually did — the learning signal. */
@@ -155,6 +157,10 @@ export interface GalEpisode {
   chosenVetoMargin?: number;
   /** true when the lookahead planner overrode the myopic argmax */
   lookaheadChanged?: boolean;
+  /** interoceptive error that biased this deliberation [0,1] */
+  interoError?: number;
+  /** the strongest suppressed future — highest-vetoScore rejected config */
+  topVetoed?: { kind: string; predictedScore: number; vetoScore?: number };
 }
 
 /** Host adapter — the GAL never touches the workspace directly, which
@@ -175,6 +181,16 @@ export interface GalHost {
 // the model is deliberately tiny so its predictions stay inspectable.
 
 const FEATURE_DIM = 7;
+
+/** Conservation-drive weights: how much each attention kind disrupts
+ *  the schema per unit of interoceptive error. status_quo is exempt —
+ *  maintaining the status quo IS conservation. */
+const INTERO_CONSERVATION: Record<string, number> = {
+  explore: 0.12,
+  reset: 0.10,
+  topic_boost: 0.04,
+  status_quo: 0,
+};
 
 function configFeatures(m: Record<string, number>, focusTopic?: string): number[] {
   const vals = Object.values(m);
@@ -247,6 +263,12 @@ export interface GalConfig {
    *  + γ · bestNextCycleScore(ctx′(c)). Requires a trained experience
    *  model — without one there is no honest transition signal. 0 = off. */
   lookaheadGamma?: number;
+  /** Interoceptive drive — real physiological state (rss/heap/load/
+   *  memory/event-loop-lag prediction error from cortex-agent/
+   *  interoceptive.ts). High error = conservation drive: attention-
+   *  disrupting configs are penalized in proportion to somatic strain.
+   *  This is the body entering deliberation, not a metaphor. */
+  interoception?: () => { error: number; surprise: number; capacity: number } | null;
   /** Optional read-back from the autobiographical self-model. Supplies
    *  the feedback half of the loop: episodes consolidate into the self
    *  model, and its recent valence/agency bias future deliberation. */
@@ -258,12 +280,13 @@ export class GenerativeAttentionLoop {
   private volition: VolitionEngine;
   private model = new AttentionOutcomeModel();
   private experience: ExperienceModel | null = null;
-  private cfg: Required<Omit<GalConfig, 'memoryPath' | 'experienceModelPath' | 'onEpisode' | 'attentionVeto' | 'selfSignal'>> & {
+  private cfg: Required<Omit<GalConfig, 'memoryPath' | 'experienceModelPath' | 'onEpisode' | 'attentionVeto' | 'selfSignal' | 'interoception'>> & {
     memoryPath: string | null;
     experienceModelPath: string | null;
     onEpisode?: (episode: GalEpisode) => void;
     attentionVeto?: GalVetoHook;
     selfSignal?: () => GalSelfSignal | null;
+    interoception?: GalConfig['interoception'];
   };
   private episodes: GalEpisode[] = [];
   private phiTimeline: Array<{ ts: number; phi: number }> = [];
@@ -290,6 +313,7 @@ export class GenerativeAttentionLoop {
       attentionVeto: config.attentionVeto,
       selfSignal: config.selfSignal,
       lookaheadGamma: config.lookaheadGamma ?? 0,
+      interoception: config.interoception,
     };
     if (this.cfg.experienceModelPath !== null) {
       this.experience = new ExperienceModel(this.cfg.experienceModelPath);
@@ -404,6 +428,10 @@ export class GenerativeAttentionLoop {
     // of the loop — outcomes → self-model → future predictions.
     const self = this.cfg.selfSignal?.() ?? null;
     const selfValence = self ? Math.max(-1, Math.min(1, self.recentValence)) : undefined;
+    // Interoceptive drive: real somatic error conserves attention —
+    // strained physiology penalizes disruptive configs below.
+    const intero = this.cfg.interoception?.() ?? null;
+    const interoError = intero ? Math.max(0, Math.min(1, intero.error)) : undefined;
     const mlpInputs = new Map<GalCandidate, number[]>();
     const mlpOutputs = new Map<GalCandidate, number[]>();
     const sameCycleRecovery = this.phiRecoveryPending && this.experience?.isTrained === true;
@@ -427,6 +455,12 @@ export class GenerativeAttentionLoop {
       // signal steers but never overrides the outcome models.
       if (selfValence !== undefined && c.kind === 'explore') {
         pred = Math.max(0, Math.min(1, pred + selfValence * 0.05));
+      }
+      // Conservation drive: somatic strain makes attention-disrupting
+      // kinds less attractive — the body voting with the predictor.
+      if (interoError !== undefined && interoError > 0) {
+        const w = INTERO_CONSERVATION[c.kind] ?? 0;
+        if (w) pred = Math.max(0, Math.min(1, pred - interoError * w));
       }
       c.predictedScore = pred;
       // Φ-recovery fallback: when the experience model isn't trained enough
@@ -583,6 +617,7 @@ export class GenerativeAttentionLoop {
       cycleId: this.cycleSeq,
       phiRecovery: recovery,
       lookahead: lookaheadActive ? { changed: lookaheadChanged } : undefined,
+      interoError,
     };
 
     this.pending = {
@@ -652,6 +687,21 @@ export class GenerativeAttentionLoop {
       // false is recorded too — distinguishes "lookahead ran, kept the
       // myopic pick" from "lookahead inactive" (undefined).
       lookaheadChanged: selection.lookahead?.changed,
+      interoError: selection.interoError !== undefined
+        ? Number(selection.interoError.toFixed(3)) : undefined,
+      topVetoed: (() => {
+        // Veto-imagination: the strongest suppressed future, made legible.
+        const vetoed = selection.candidates.filter(
+          (c) => c.vetoed && c.kind !== 'status_quo');
+        if (!vetoed.length) return undefined;
+        const top = vetoed.reduce((a, b) =>
+          (b.vetoScore ?? 0) > (a.vetoScore ?? 0) ? b : a);
+        return {
+          kind: top.kind,
+          predictedScore: Number(top.predictedScore.toFixed(3)),
+          vetoScore: top.vetoScore,
+        };
+      })(),
     };
 
     this.episodes.push(episode);
