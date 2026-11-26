@@ -172,6 +172,19 @@ export class VolitionEngine {
    * Based on simulated consequences, identity commitment alignment, and metacognitive confidence.
    */
   async evaluateVeto(intention: Intention, context: ConsciousnessState): Promise<VetoEvaluation> {
+    return this.computeVetoEvaluation(intention, context);
+  }
+
+  /**
+   * Synchronous veto evaluation for hot paths where the caller cannot
+   * await (e.g. CortexEngine.evaluate is synchronous). Identical logic —
+   * the async wrapper exists only for API symmetry with other engines.
+   */
+  evaluateVetoSync(intention: Intention, context: ConsciousnessState): VetoEvaluation {
+    return this.computeVetoEvaluation(intention, context);
+  }
+
+  private computeVetoEvaluation(intention: Intention, context: ConsciousnessState): VetoEvaluation {
     // 1. Check value alignment
     const valueAlignment = this.checkValueAlignment(intention, context);
 

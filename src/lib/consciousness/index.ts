@@ -37,3 +37,4 @@ export * from './openclaw-conscious-adapter';
 export * from './hermes-conscious-adapter';
 export * from './conscious-agent';
 export * from './benchmarks';
+export * from './generative-attention';

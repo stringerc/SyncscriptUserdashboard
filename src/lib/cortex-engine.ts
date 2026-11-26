@@ -81,6 +81,7 @@ import { getCausalModel } from './causal-model';
 import { getHGM } from './hierarchical-generative-model';
 import { getIntegratedInformation } from './integrated-information';
 import { getAttentionSchema } from './attention-schema';
+import { getGenerativeAttentionLoop, type GalHost } from './consciousness/generative-attention';
 import { getStructuralEquationModel } from './structural-equation-model';
 import {
   getDecisionSpecialist,
@@ -202,11 +203,47 @@ export interface CortexStatus {
   attentionSchemaAccuracy: number;
   /** Current attentional focus topic */
   attentionFocus: string | null;
+  /** Generative-attention deliberation depth (engineering proxy, NOT a
+   *  consciousness measure) — prediction accuracy + veto band + Φ proxy */
+  volitionalDepth?: {
+    score: number;
+    predictionAccuracy: number;
+    vetoRate: number;
+    vetoBandHealth: number;
+    integration: number;
+    episodes: number;
+    modelUpdates: number;
+  };
   /// Timestamp
   timestamp: number;
 }
 
 // ── CortexEngine ───────────────────────────────────────────────────
+
+/**
+ * Host adapter for the Generative Attention Loop. The GAL simulates
+ * counterfactual attention configs, predicts their broadcast outcome
+ * with an online model trained on its own episodes, vetoes what the
+ * VolitionEngine rejects, and broadcasts the winner. Honest scope: it
+ * improves attention selection; it measures nothing subjective.
+ */
+let galHostInstance: GalHost | null = null;
+function getGalHost(): GalHost {
+  if (!galHostInstance) {
+    galHostInstance = {
+      getBaseMultipliers: () => getAttentionSchema().getCompetitionMultipliers(),
+      getAttentionTopics: () => {
+        const weights = getAttentionSchema().getState().topicWeights;
+        const fromWeights = Object.entries(weights)
+          .sort((a, b) => b[1] - a[1])
+          .map(([t]) => t);
+        const base = Object.keys(getAttentionSchema().getCompetitionMultipliers());
+        return Array.from(new Set([...fromWeights, ...base]));
+      },
+    };
+  }
+  return galHostInstance;
+}
 
 export class CortexEngine {
   private config: {
@@ -401,9 +438,15 @@ export class CortexEngine {
 
     // Attention schema predicts *before* the cycle, then steers it.
     // Without setTopicMultipliers the schema would be a passive log.
+    // The Generative Attention Loop deliberates over counterfactual
+    // configs first: predict → veto → select → broadcast → learn.
     const attentionSchema = getAttentionSchema();
     attentionSchema.predict();
-    workspace.setTopicMultipliers(attentionSchema.getCompetitionMultipliers());
+    const gal = getGenerativeAttentionLoop(getGalHost(), {
+      focusTopic: () => getAttentionSchema().getState().currentFocus ?? undefined,
+    });
+    const galSelection = gal.deliberate();
+    workspace.setTopicMultipliers(galSelection.chosen.multipliers);
 
     for (const specialist of getAllSpecialists()) {
       workspace.registerSpecialist(specialist);
@@ -417,6 +460,13 @@ export class CortexEngine {
       // Schema error correction already applied redirect inside recordOutcome;
       // push the new multipliers so the next evaluate inherits the control.
       workspace.setTopicMultipliers(attentionSchema.getCompetitionMultipliers());
+      const galPhi = workspace.computePhiApproximation();
+      const galSpread = Math.max(0, Math.min(1, broadcast.ignitionSpread ?? 0));
+      const galIgnited = broadcast.ignition?.isIgnition === true;
+      const galScore = Math.max(0, Math.min(1,
+        0.40 * galPhi + 0.35 * (galIgnited ? 1 : 0.35) + 0.25 * galSpread,
+      ));
+      gal.recordOutcome({ score: galScore, ignited: galIgnited, spread: galSpread, phi: galPhi });
     }
 
     // Hierarchical model: predict processing outcomes at each level
@@ -639,6 +689,9 @@ export class CortexEngine {
       brierScore: metaController.getBrierScore(),
       attentionSchemaAccuracy: attentionSchema.getState().schemaAccuracy,
       attentionFocus: attentionSchema.getState().currentFocus,
+      volitionalDepth: galHostInstance
+        ? getGenerativeAttentionLoop(getGalHost()).getVolitionalDepth()
+        : undefined,
       timestamp: Date.now(),
     };
   }
