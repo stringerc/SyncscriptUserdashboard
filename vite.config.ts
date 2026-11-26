@@ -201,7 +201,7 @@ import { recordForecastOutcome, loadCalibration } from './src/lib/cortex-agents/
 import { getAutonomousVigilance } from './src/lib/cortex-autonomous-vigilance';
 import { deriveSomaticState, type SomaticSample } from './src/lib/cortex-somatic';
 import { getAgentRuntime } from './src/lib/cortex-agents/runtime';
-import { peekGenerativeAttentionLoop } from './src/lib/consciousness/generative-attention';
+import { peekGenerativeAttentionLoop, setGalInteroceptionSignal } from './src/lib/consciousness/generative-attention';
 import { peekAttentionVetoAgent } from './src/lib/consciousness/veto-agent';
 import { clusterEpisodeEmbeddings } from './src/lib/consciousness/episode-themes';
 import { describeAttentionMeta } from './src/lib/consciousness/attention-meta';
@@ -1550,6 +1550,18 @@ function apiProxyPlugin(): Plugin {
       }
     },
     configureServer(server) {
+      // Register the interoceptive drive signal for the Consciousness
+      // Breath. This runs in the Node middleware graph where importing
+      // cortex-agent/interoceptive is safe — cortex-engine itself must
+      // not import it (browser bundle reaches engine via the
+      // consciousness barrel and would pull node:child_process in).
+      setGalInteroceptionSignal(() => {
+        try {
+          const s = getInteroceptiveState();
+          return { error: s.error, surprise: s.surprise, capacity: s.capacity };
+        } catch { return null; }
+      });
+
       // ── Event-loop stall watchdog ──
       // This dev server has hung twice in production use (TCP LISTEN alive,
       // zero HTTP responses — classic blocked event loop). Detect sustained

@@ -81,10 +81,9 @@ import { getCausalModel } from './causal-model';
 import { getHGM } from './hierarchical-generative-model';
 import { getIntegratedInformation } from './integrated-information';
 import { getAttentionSchema } from './attention-schema';
-import { getGenerativeAttentionLoop, peekGenerativeAttentionLoop, type GalHost, type GalSelfSignal, type GalVetoRequest } from './consciousness/generative-attention';
+import { getGenerativeAttentionLoop, peekGenerativeAttentionLoop, getGalInteroceptionSignal, type GalHost, type GalSelfSignal, type GalVetoRequest } from './consciousness/generative-attention';
 import { getAttentionVetoAgent } from './consciousness/veto-agent';
 import { getAffectiveSystem } from './consciousness/affective-valence';
-import { getInteroceptiveState } from './cortex-agent/interoceptive';
 import { getPersistentSelfModel } from './consciousness/persistent-self-model';
 import { getStructuralEquationModel } from './structural-equation-model';
 import {
@@ -502,13 +501,15 @@ export class CortexEngine {
       ),
       selfSignal: galSelfSignal,
       lookaheadGamma: 0.3,
-      // Interoception: real somatic error (rss/heap/load/mem/lag) enters
-      // deliberation as a conservation drive — the body voting.
+      // Interoception: real somatic error enters deliberation as a
+      // conservation drive. The signal is registered Node-side by the
+      // vite middleware graph — cortex-engine must not import
+      // cortex-agent/interoceptive (it would pull node:child_process
+      // into the browser bundle via the consciousness barrel).
       interoception: () => {
-        try {
-          const s = getInteroceptiveState();
-          return { error: s.error, surprise: s.surprise, capacity: s.capacity };
-        } catch { return null; }
+        const provider = getGalInteroceptionSignal();
+        if (!provider) return null;
+        try { return provider(); } catch { return null; }
       },
     });
     const galSelection = gal.deliberate();

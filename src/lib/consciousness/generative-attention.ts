@@ -851,6 +851,27 @@ export class GenerativeAttentionLoop {
 
 // ── Singleton + host wiring for cortex-engine ─────────────────────
 
+// ── Interoception signal registry ─────────────────────────────────
+// The host (cortex-engine) must not import cortex-agent/interoceptive
+// directly: this module is reachable from the browser bundle via the
+// consciousness barrel, and interoceptive → cortex-world-state pulls
+// node:child_process into client code. Instead the Node-side host
+// (vite.config middleware graph) registers a signal provider here;
+// deliberate() reads it through cfg.interoception. Browser-safe: this
+// file has no node:-only top-level access beyond fs/path inside methods.
+
+let interoceptionSignal: (() => { error: number; surprise: number; capacity: number } | null) | null = null;
+
+export function setGalInteroceptionSignal(
+  fn: (() => { error: number; surprise: number; capacity: number } | null) | null,
+): void {
+  interoceptionSignal = fn;
+}
+
+export function getGalInteroceptionSignal(): typeof interoceptionSignal {
+  return interoceptionSignal;
+}
+
 let instance: GenerativeAttentionLoop | null = null;
 
 /**
