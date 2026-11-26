@@ -34,6 +34,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { VolitionEngine, type Intention } from './volition';
 import type { ConsciousnessState } from './shared-state';
+import { ExperienceModel, EXPERIENCE_INPUT_DIM } from './experience-model';
 
 // ── Types ──────────────────────────────────────────────────────────
 
@@ -79,6 +80,10 @@ export interface GalEpisode {
   actualScore: number | null;
   predictionError: number | null;
   phi: number | null;
+  /** 32-dim experience embedding from the learned outcome model */
+  embedding?: number[];
+  /** true when this broadcast's Φ-proxy fell below the recovery threshold */
+  phiRecovery?: boolean;
 }
 
 /** Host adapter — the GAL never touches the workspace directly, which
@@ -153,20 +158,33 @@ export interface GalConfig {
   candidateCount?: number;
   /** JSONL memory path; null disables persistence. */
   memoryPath?: string | null;
+  /** Experience-model weights path; null disables the MLP predictor. */
+  experienceModelPath?: string | null;
   /** Max episodes kept in memory / on disk tail. */
   memoryCap?: number;
   /** Focus topic for feature extraction (usually schema currentFocus). */
   focusTopic?: () => string | undefined;
+  /** Φ-proxy below this marks the episode for next-cycle recovery bias. */
+  phiThreshold?: number;
+  /** Called after each closed episode — used for self-model consolidation. */
+  onEpisode?: (episode: GalEpisode) => void;
 }
 
 export class GenerativeAttentionLoop {
   private host: GalHost;
   private volition: VolitionEngine;
   private model = new AttentionOutcomeModel();
-  private cfg: Required<Omit<GalConfig, 'memoryPath'>> & { memoryPath: string | null };
+  private experience: ExperienceModel | null = null;
+  private cfg: Required<Omit<GalConfig, 'memoryPath' | 'experienceModelPath' | 'onEpisode'>> & {
+    memoryPath: string | null;
+    experienceModelPath: string | null;
+    onEpisode?: (episode: GalEpisode) => void;
+  };
   private episodes: GalEpisode[] = [];
   private cycleSeq = 0;
-  private pending: { selection: GalSelection; features: number[]; ts: number } | null = null;
+  private pending: { selection: GalSelection; features: number[]; mlpInput: number[]; ts: number } | null = null;
+  private phiRecoveryPending = false;
+  private phiRecoveryCount = 0;
 
   constructor(host: GalHost, config: GalConfig = {}) {
     this.host = host;
@@ -176,9 +194,17 @@ export class GenerativeAttentionLoop {
       memoryPath: config.memoryPath === undefined
         ? path.join(process.cwd(), '.cortex-runtime', 'attention-memory.jsonl')
         : config.memoryPath,
+      experienceModelPath: config.experienceModelPath === undefined
+        ? path.join(process.cwd(), '.cortex-runtime', 'experience-model.json')
+        : config.experienceModelPath,
       memoryCap: config.memoryCap ?? 500,
       focusTopic: config.focusTopic ?? (() => undefined),
+      phiThreshold: config.phiThreshold ?? 0.35,
+      onEpisode: config.onEpisode,
     };
+    if (this.cfg.experienceModelPath !== null) {
+      this.experience = new ExperienceModel(this.cfg.experienceModelPath);
+    }
     this.loadMemoryTail();
   }
 
@@ -248,15 +274,41 @@ export class GenerativeAttentionLoop {
    * context is minimal — attention configs are low-stakes objects, so
    * only confidence-driven vetoes can realistically fire here.
    */
+  /** 8th MLP input: recent mean actual score — "how things have been going." */
+  private recentMeanScore(): number {
+    const withOutcome = this.episodes.filter((e) => e.actualScore !== null).slice(-50);
+    if (!withOutcome.length) return 0.5;
+    return withOutcome.reduce((a, e) => a + (e.actualScore ?? 0), 0) / withOutcome.length;
+  }
+
   deliberate(): GalSelection {
     this.cycleSeq++;
     const candidates = this.generateCandidates();
     const focus = this.cfg.focusTopic();
+    const ctxScore = this.recentMeanScore();
+    const mlpInputs = new Map<GalCandidate, number[]>();
 
     for (const c of candidates) {
       const features = configFeatures(c.multipliers, focus);
-      c.predictedScore = this.model.predict(features);
+      const linearPred = this.model.predict(features);
+      const mlpInput = [...features, ctxScore].slice(0, EXPERIENCE_INPUT_DIM);
+      mlpInputs.set(c, mlpInput);
+      let pred = linearPred;
+      if (this.experience) {
+        const mlpOut = this.experience.predict(mlpInput).outputs;
+        // Blend: trust the MLP proportionally to its training; the linear
+        // model remains the cold-start prior and regularizer.
+        const trust = this.experience.isTrained ? 0.35 + 0.65 * this.experience.confidence : 0;
+        pred = (1 - trust) * linearPred + trust * mlpOut[0];
+      }
+      c.predictedScore = pred;
+      // Φ-recovery bias: last broadcast integrated poorly → nudge the
+      // explore candidate up one notch. One-shot; cleared on selection.
+      if (this.phiRecoveryPending && c.kind === 'explore') {
+        c.predictedScore = Math.min(1, c.predictedScore + 0.15);
+      }
     }
+    this.phiRecoveryPending = false;
 
     // Veto pass — every candidate is a real Intention through the same
     // VolitionEngine the action path uses. Status quo is never vetoed:
@@ -311,6 +363,7 @@ export class GenerativeAttentionLoop {
     this.pending = {
       selection,
       features: configFeatures(chosen.multipliers, focus),
+      mlpInput: mlpInputs.get(chosen) ?? [...configFeatures(chosen.multipliers, focus), ctxScore].slice(0, EXPERIENCE_INPUT_DIM),
       ts: Date.now(),
     };
     return selection;
@@ -322,12 +375,32 @@ export class GenerativeAttentionLoop {
    */
   recordOutcome(outcome: GalOutcome): GalEpisode | null {
     if (!this.pending) return null;
-    const { selection, features } = this.pending;
+    const { selection, features, mlpInput } = this.pending;
     this.pending = null;
 
     const actual = Math.max(0, Math.min(1, outcome.score));
     const predicted = selection.chosen.predictedScore;
     this.model.update(features, actual);
+
+    // Train the experience model on the full outcome vector. Targets are
+    // the measurable broadcast statistics — nothing subjective.
+    let embedding: number[] | undefined;
+    if (this.experience) {
+      const target = [
+        actual,
+        outcome.ignited ? 1 : 0,
+        Math.max(0, Math.min(1, outcome.spread)),
+        Math.max(0, Math.min(1, outcome.phi)),
+      ];
+      this.experience.update(mlpInput, target);
+      embedding = this.experience.predict(mlpInput).embedding;
+    }
+
+    const phiRecovery = outcome.phi < this.cfg.phiThreshold;
+    if (phiRecovery) {
+      this.phiRecoveryPending = true;
+      this.phiRecoveryCount++;
+    }
 
     const episode: GalEpisode = {
       ts: Date.now(),
@@ -341,11 +414,14 @@ export class GenerativeAttentionLoop {
       actualScore: Number(actual.toFixed(4)),
       predictionError: Number(Math.abs(actual - predicted).toFixed(4)),
       phi: Number(outcome.phi.toFixed(4)),
+      embedding,
+      phiRecovery: phiRecovery || undefined,
     };
 
     this.episodes.push(episode);
     if (this.episodes.length > this.cfg.memoryCap) this.episodes.shift();
     this.appendMemory(episode);
+    this.cfg.onEpisode?.(episode);
     return episode;
   }
 
@@ -361,6 +437,9 @@ export class GenerativeAttentionLoop {
     vetoRate: number;
     vetoBandHealth: number;
     integration: number;
+    phiRecoveryRate: number;
+    experienceUpdates: number;
+    experienceTrained: boolean;
     episodes: number;
     modelUpdates: number;
   } {
@@ -381,6 +460,10 @@ export class GenerativeAttentionLoop {
       ? Math.min(1, recentPhi.reduce((a, b) => a + b, 0) / recentPhi.length)
       : 0.5;
 
+    const phiRecoveryRate = recent.length
+      ? recent.filter((e) => e.phiRecovery).length / recent.length
+      : 0;
+
     const score = Number((
       0.4 * predictionAccuracy + 0.3 * vetoBandHealth + 0.3 * integration
     ).toFixed(3));
@@ -391,6 +474,9 @@ export class GenerativeAttentionLoop {
       vetoRate: Number(vetoRate.toFixed(4)),
       vetoBandHealth: Number(vetoBandHealth.toFixed(3)),
       integration: Number(integration.toFixed(3)),
+      phiRecoveryRate: Number(phiRecoveryRate.toFixed(4)),
+      experienceUpdates: this.experience?.updateCount ?? 0,
+      experienceTrained: this.experience?.isTrained ?? false,
       episodes: this.episodes.length,
       modelUpdates: this.model.updatesCount,
     };
@@ -442,6 +528,11 @@ export function getGenerativeAttentionLoop(host?: GalHost, config?: GalConfig): 
     if (!host) throw new Error('getGenerativeAttentionLoop requires a host on first call');
     instance = new GenerativeAttentionLoop(host, config);
   }
+  return instance;
+}
+
+/** Read-only accessor for status endpoints — never creates the loop. */
+export function peekGenerativeAttentionLoop(): GenerativeAttentionLoop | null {
   return instance;
 }
 

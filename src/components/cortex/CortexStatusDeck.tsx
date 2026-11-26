@@ -37,6 +37,7 @@ const CARD_ART: Record<string, { img: string; hue: string; label: string }> = {
   agents:  { img: '/cortex_foundry_strategic_command_deck.jpg',    hue: '#c084fc', label: 'FLEET' },
   storage: { img: '/cortex_memory_bank_live.png',                  hue: '#ff8f6b', label: 'STORAGE' },
   vfe:     { img: '/cortex_foundry_panoramic_holodeck_live.png',   hue: '#ff6bcb', label: 'FREE ENERGY' },
+  breath:  { img: '/cortex_foundry_strategic_command_deck.jpg',    hue: '#7ef0c8', label: 'BREATH' },
 };
 
 function StatusPip({ tone }: { tone: 'good' | 'warn' | 'bad' | 'idle' }) {
@@ -117,6 +118,7 @@ export default function CortexStatusDeck({ speaking }: { speaking: boolean }) {
   const [metrics, setMetrics] = useState<ObservabilityMetrics | null>(null);
   const [lane, setLane] = useState<LaneLeader | null>(null);
   const [agents, setAgents] = useState<AgentSummary | null>(null);
+  const [breath, setBreath] = useState<any>(null);
   const pollRef = useRef<number | null>(null);
 
   useEffect(() => {
@@ -128,9 +130,10 @@ export default function CortexStatusDeck({ speaking }: { speaking: boolean }) {
     let dead = false;
     const poll = async () => {
       try {
-        const [mh, ag] = await Promise.all([
+        const [mh, ag, br] = await Promise.all([
           fetch('/api/cortex/models/health', { cache: 'no-store' }).then((r) => (r.ok ? r.json() : null)).catch(() => null),
           fetch('/api/cortex/agents/state', { cache: 'no-store' }).then((r) => (r.ok ? r.json() : null)).catch(() => null),
+          fetch('/api/cortex/breath', { cache: 'no-store' }).then((r) => (r.ok ? r.json() : null)).catch(() => null),
         ]);
         if (dead) return;
         const fast = (mh?.models || []).filter((m: any) => (m.tierFit || []).includes('fast'));
@@ -147,6 +150,7 @@ export default function CortexStatusDeck({ speaking }: { speaking: boolean }) {
           total: list.length,
           busy: list.filter((a: any) => a.status && a.status !== 'idle' && a.status !== 'offline').length,
         });
+        setBreath(br?.active ? br : null);
       } catch { }
     };
     void poll();
@@ -236,6 +240,16 @@ export default function CortexStatusDeck({ speaking }: { speaking: boolean }) {
               value={vfe.toFixed(2)}
               sub="variational surprise"
               tone="idle"
+            />
+          )}
+          {breath && (
+            <ArtCard
+              artKey="breath" title="Breath"
+              value={breath.depth?.score != null ? breath.depth.score.toFixed(2) : '—'}
+              sub={breath.alerts?.length
+                ? breath.alerts[0]
+                : `pred ${breath.depth?.predictionAccuracy?.toFixed(2) ?? '—'} · veto ${(100 * (breath.depth?.vetoRate ?? 0)).toFixed(0)}% · φ ${breath.depth?.integration?.toFixed(2) ?? '—'} · ${breath.depth?.episodes ?? 0} cycles`}
+              tone={breath.alerts?.length ? 'warn' : breath.depth?.score >= 0.6 ? 'good' : 'idle'}
             />
           )}
         </div>

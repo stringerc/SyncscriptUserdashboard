@@ -82,6 +82,7 @@ import { getHGM } from './hierarchical-generative-model';
 import { getIntegratedInformation } from './integrated-information';
 import { getAttentionSchema } from './attention-schema';
 import { getGenerativeAttentionLoop, type GalHost } from './consciousness/generative-attention';
+import { getPersistentSelfModel } from './consciousness/persistent-self-model';
 import { getStructuralEquationModel } from './structural-equation-model';
 import {
   getDecisionSpecialist,
@@ -211,6 +212,9 @@ export interface CortexStatus {
     vetoRate: number;
     vetoBandHealth: number;
     integration: number;
+    phiRecoveryRate: number;
+    experienceUpdates: number;
+    experienceTrained: boolean;
     episodes: number;
     modelUpdates: number;
   };
@@ -228,6 +232,7 @@ export interface CortexStatus {
  * improves attention selection; it measures nothing subjective.
  */
 let galHostInstance: GalHost | null = null;
+let galEpisodeCounter = 0;
 function getGalHost(): GalHost {
   if (!galHostInstance) {
     galHostInstance = {
@@ -243,6 +248,27 @@ function getGalHost(): GalHost {
     };
   }
   return galHostInstance;
+}
+
+/** Self-model consolidation: every 50th attention episode becomes an
+ *  autobiographical episode — "what it was like to attend" recorded as
+ *  narrative memory with measured valence/salience/agency. */
+function galOnEpisode(episode: { chosenKind: string; actualScore: number | null; predictionError: number | null; phi: number | null; vetoedCount: number }): void {
+  galEpisodeCounter++;
+  if (galEpisodeCounter % 50 !== 0) return;
+  try {
+    getPersistentSelfModel().consolidateSession({
+      sessionId: `gal-attention-${episode.chosenKind}`,
+      summary: `Attention deliberation cycle ${galEpisodeCounter}: chose ${episode.chosenKind}, outcome ${episode.actualScore?.toFixed(2) ?? 'n/a'}, φ-proxy ${episode.phi?.toFixed(2) ?? 'n/a'}.`,
+      lessons: [
+        `predicted-vs-actual gap ${episode.predictionError?.toFixed(3) ?? 'n/a'}`,
+        `${episode.vetoedCount} candidate configs vetoed this cycle`,
+      ],
+      valence: (episode.actualScore ?? 0.5) - 0.5,
+      salience: Math.min(1, (episode.predictionError ?? 0) * 2),
+      agencyScore: 0.9,
+    });
+  } catch { /* self-model consolidation is best-effort */ }
 }
 
 export class CortexEngine {
@@ -444,6 +470,7 @@ export class CortexEngine {
     attentionSchema.predict();
     const gal = getGenerativeAttentionLoop(getGalHost(), {
       focusTopic: () => getAttentionSchema().getState().currentFocus ?? undefined,
+      onEpisode: galOnEpisode,
     });
     const galSelection = gal.deliberate();
     workspace.setTopicMultipliers(galSelection.chosen.multipliers);

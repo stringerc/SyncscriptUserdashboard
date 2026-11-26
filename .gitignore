@@ -100,6 +100,7 @@ scripts/*
 !scripts/bringup-hermes-tunnel-supabase.sh
 !scripts/hermes-tunnel-supervisor.sh
 !scripts/hermes-doctor.mjs
+!scripts/guard-consciousness-gates.mjs
 !scripts/suggest-compact.mjs
 !scripts/verify-hermes-edge-live.mjs
 !scripts/verify-cortex-resilience.ts

@@ -27,7 +27,7 @@ describe('GenerativeAttentionLoop', () => {
   });
 
   it('generates candidates including status quo and selects one', () => {
-    const gal = new GenerativeAttentionLoop(makeHost(), { memoryPath: null });
+    const gal = new GenerativeAttentionLoop(makeHost(), { memoryPath: null, experienceModelPath: null });
     const sel = gal.deliberate();
     expect(sel.candidates.length).toBeGreaterThanOrEqual(4);
     expect(sel.candidates.some((c) => c.kind === 'status_quo')).toBe(true);
@@ -40,7 +40,7 @@ describe('GenerativeAttentionLoop', () => {
   it('status quo is never vetoed even when veto engine rejects everything', () => {
     const gal = new GenerativeAttentionLoop(makeHost({
       evaluateVeto: () => ({ shouldVeto: true, vetoScore: 0.99, reason: 'test veto' }),
-    }), { memoryPath: null });
+    }), { memoryPath: null, experienceModelPath: null });
     const sel = gal.deliberate();
     expect(sel.chosen.kind).toBe('status_quo');
     expect(sel.allAlternativesVetoed).toBe(true);
@@ -53,14 +53,14 @@ describe('GenerativeAttentionLoop', () => {
         shouldVeto: intention.action.params?.kind === 'topic_boost',
         vetoScore: 0.8,
       }),
-    }), { memoryPath: null });
+    }), { memoryPath: null, experienceModelPath: null });
     const sel = gal.deliberate();
     expect(sel.chosen.kind).not.toBe('topic_boost');
     expect(sel.chosen.vetoed).toBe(false);
   });
 
   it('recordOutcome closes the loop and updates the model', () => {
-    const gal = new GenerativeAttentionLoop(makeHost(), { memoryPath: null });
+    const gal = new GenerativeAttentionLoop(makeHost(), { memoryPath: null, experienceModelPath: null });
     const sel = gal.deliberate();
     const ep = gal.recordOutcome({ score: 0.9, ignited: true, spread: 0.8, phi: 0.7 });
     expect(ep).not.toBeNull();
@@ -73,7 +73,7 @@ describe('GenerativeAttentionLoop', () => {
   });
 
   it('outcome model learns: repeated high outcomes raise predictions', () => {
-    const gal = new GenerativeAttentionLoop(makeHost(), { memoryPath: null });
+    const gal = new GenerativeAttentionLoop(makeHost(), { memoryPath: null, experienceModelPath: null });
     // Run several episodes biased to high scores
     for (let i = 0; i < 15; i++) {
       gal.deliberate();
@@ -90,7 +90,7 @@ describe('GenerativeAttentionLoop', () => {
 
   it('persists episodes to JSONL memory and reloads tail', () => {
     const memPath = path.join(tmpDir, 'attention-memory.jsonl');
-    const gal = new GenerativeAttentionLoop(makeHost(), { memoryPath: memPath });
+    const gal = new GenerativeAttentionLoop(makeHost(), { memoryPath: memPath, experienceModelPath: null });
     gal.deliberate();
     gal.recordOutcome({ score: 0.8, ignited: true, spread: 0.7, phi: 0.6 });
     gal.deliberate();
@@ -101,13 +101,13 @@ describe('GenerativeAttentionLoop', () => {
     const parsed = JSON.parse(raw[0]);
     expect(parsed.actualScore).toBe(0.8);
 
-    const gal2 = new GenerativeAttentionLoop(makeHost(), { memoryPath: memPath });
+    const gal2 = new GenerativeAttentionLoop(makeHost(), { memoryPath: memPath, experienceModelPath: null });
     expect(gal2.episodeCount).toBe(2);
     expect(gal2.getRecentEpisodes(1)[0].actualScore).toBe(0.4);
   });
 
   it('volitionalDepth reports honest components', () => {
-    const gal = new GenerativeAttentionLoop(makeHost(), { memoryPath: null });
+    const gal = new GenerativeAttentionLoop(makeHost(), { memoryPath: null, experienceModelPath: null });
     const depth = gal.getVolitionalDepth();
     expect(depth.score).toBeGreaterThanOrEqual(0);
     expect(depth.score).toBeLessThanOrEqual(1);

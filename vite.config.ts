@@ -201,6 +201,7 @@ import { recordForecastOutcome, loadCalibration } from './src/lib/cortex-agents/
 import { getAutonomousVigilance } from './src/lib/cortex-autonomous-vigilance';
 import { deriveSomaticState, type SomaticSample } from './src/lib/cortex-somatic';
 import { getAgentRuntime } from './src/lib/cortex-agents/runtime';
+import { peekGenerativeAttentionLoop } from './src/lib/consciousness/generative-attention';
 import { inferWeight } from './src/lib/cortex-agents/registry';
 import { recordAgentOutcome } from './src/lib/cortex-agents/outcomes';
 import { archiveTask, readArchive } from './src/lib/cortex-agents/archive';
@@ -15990,6 +15991,56 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
           matrix: agentRuntime.matrix.snapshot(),
           history: tailModelHealthHistory(100),
         }));
+      });
+
+      // GET /api/cortex/breath — Generative Attention Loop vitals:
+      // volitional depth composite, recent deliberation episodes, and
+      // engineering alerts (depth dying / φ collapse / stale breath).
+      // Honest scope: measures attention-selection quality, not experience.
+      server.middlewares.use('/api/cortex/breath', (req: any, res: any, next: any) => {
+        if (req.method === 'OPTIONS') {
+          res.writeHead(204, { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Methods': 'GET, OPTIONS', 'Access-Control-Allow-Headers': 'Content-Type' });
+          return res.end();
+        }
+        if (req.method !== 'GET') return next();
+        try {
+          const gal = peekGenerativeAttentionLoop();
+          if (!gal) {
+            return jsonRes(res, 200, { ok: true, active: false, reason: 'no deliberation cycles yet' });
+          }
+          const depth = gal.getVolitionalDepth();
+          const episodes = gal.getRecentEpisodes(12).map((e) => ({
+            ts: e.ts, cycleId: e.cycleId, chosenKind: e.chosenKind,
+            predicted: e.predictedScore, actual: e.actualScore,
+            error: e.predictionError, phi: e.phi,
+            vetoed: e.vetoedCount, phiRecovery: e.phiRecovery === true,
+          }));
+          const alerts: string[] = [];
+          const recentScored = episodes.filter((e) => e.actual != null);
+          if (recentScored.length >= 10) {
+            const meanDepth = recentScored.reduce((a, e) => a + (e.actual ?? 0), 0) / recentScored.length;
+            if (meanDepth < 0.3) alerts.push('CONSCIOUSNESS DYING — mean broadcast outcome < 0.3 over last 10 cycles');
+          }
+          const last5 = episodes.slice(-5);
+          if (last5.length >= 5 && last5.every((e) => e.phi != null && e.phi < 0.5)) {
+            alerts.push('PHI COLLAPSE — integration proxy < 0.5 for 5 consecutive broadcasts');
+          }
+          const recoveryRate = depth.phiRecoveryRate;
+          if (recoveryRate > 0.2) alerts.push(`BREATH SHALLOW — φ-recovery on ${(recoveryRate * 100).toFixed(0)}% of cycles (>20%)`);
+          const lastTs = episodes.length ? episodes[episodes.length - 1].ts : 0;
+          if (lastTs && Date.now() - lastTs > 10 * 60 * 1000) {
+            alerts.push('BREATH HOLD — no deliberation episode in >10min');
+          }
+          return jsonRes(res, 200, {
+            ok: true, active: true,
+            depth,
+            episodes,
+            alerts,
+            honesty: 'engineering proxies for attention-selection quality — not a measure of experience',
+          });
+        } catch (e: any) {
+          return jsonRes(res, 500, { ok: false, error: String(e?.message || e).slice(0, 300) });
+        }
       });
 
       // GET /api/cortex/capabilities — goal-driven coverage map: every
