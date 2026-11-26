@@ -1689,9 +1689,9 @@ export function CortexFoundryNav({ snap, onSelectAgent, selectedAgent, onOpenTow
   return (
     <>
       {/* Left nav rail */}
-      <div style={{
+      <div className="ambient-scrollbar" style={{
         position: 'absolute', left: 6, top: '50%', transform: 'translateY(-50%)', zIndex: 7,
-        width: 62, display: 'flex', flexDirection: 'column', gap: 4,
+        width: 62, maxHeight: 'calc(100vh - 32px)', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 4,
         fontFamily: MONO,
       }}>
         {NAV_ITEMS.map((n) => {
@@ -1702,7 +1702,7 @@ export function CortexFoundryNav({ snap, onSelectAgent, selectedAgent, onOpenTow
               onClick={() => select(n.id)}
               title={`${n.label} — ${n.hint}`}
               style={{
-                display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2,
+                display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2, flexShrink: 0,
                 padding: '9px 3px', cursor: 'pointer',
                 background: active ? 'rgba(56,189,248,0.14)' : 'rgba(4,8,18,0.72)',
                 border: `1px solid ${active ? 'rgba(56,189,248,0.55)' : 'rgba(103,232,249,0.16)'}`,
