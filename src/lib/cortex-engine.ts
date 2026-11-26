@@ -81,7 +81,8 @@ import { getCausalModel } from './causal-model';
 import { getHGM } from './hierarchical-generative-model';
 import { getIntegratedInformation } from './integrated-information';
 import { getAttentionSchema } from './attention-schema';
-import { getGenerativeAttentionLoop, type GalHost } from './consciousness/generative-attention';
+import { getGenerativeAttentionLoop, type GalHost, type GalSelfSignal } from './consciousness/generative-attention';
+import { getAttentionVetoAgent } from './consciousness/veto-agent';
 import { getPersistentSelfModel } from './consciousness/persistent-self-model';
 import { getStructuralEquationModel } from './structural-equation-model';
 import {
@@ -248,6 +249,28 @@ function getGalHost(): GalHost {
     };
   }
   return galHostInstance;
+}
+
+/** Self-model read-back for the GAL: aggregates the recent
+ *  gal-attention autobiographical episodes into the valence/agency
+ *  signal the loop consumes. This closes the loop — attention outcomes
+ *  consolidate into the self-model every 50 episodes, and the model's
+ *  recent disposition steers the next deliberation (bounded ±0.05). */
+function galSelfSignal(): GalSelfSignal | null {
+  try {
+    const eps = getPersistentSelfModel().getSnapshot().narrativeIdentity.lifeStoryEpisodes
+      .filter((e) => e.sessionReference.startsWith('gal-attention-'))
+      .slice(-20);
+    if (!eps.length) return null;
+    const mean = (xs: number[]) => xs.reduce((a, b) => a + b, 0) / xs.length;
+    return {
+      // consolidateSession stores valence as actualScore−0.5 ∈ [−0.5,0.5];
+      // normalize to [−1,1] for the GAL's bounded bias.
+      recentValence: Math.max(-1, Math.min(1, mean(eps.map((e) => e.affectiveValence * 2)))),
+      recentAgency: mean(eps.map((e) => e.agencyAttribution)),
+      attentionEpisodes: eps.length,
+    };
+  } catch { return null; }
 }
 
 /** Self-model consolidation: every 50th attention episode becomes an
@@ -471,6 +494,8 @@ export class CortexEngine {
     const gal = getGenerativeAttentionLoop(getGalHost(), {
       focusTopic: () => getAttentionSchema().getState().currentFocus ?? undefined,
       onEpisode: galOnEpisode,
+      attentionVeto: (req) => getAttentionVetoAgent().evaluate(req),
+      selfSignal: galSelfSignal,
     });
     const galSelection = gal.deliberate();
     workspace.setTopicMultipliers(galSelection.chosen.multipliers);
@@ -478,6 +503,9 @@ export class CortexEngine {
     for (const specialist of getAllSpecialists()) {
       workspace.registerSpecialist(specialist);
     }
+    // VetoAgent holds its own GWT slot — it bids status reports into the
+    // same competition and observes every broadcast as outcome data.
+    workspace.registerSpecialist(getAttentionVetoAgent());
 
     // Two recurrent passes: pass 2 re-bids after receiveBroadcast updated
     // specialist state. That is RPT as loadable architecture, not loop count.

@@ -190,6 +190,101 @@ function PerfHud() {
   );
 }
 
+const SIZE_CSS = 96;
+
+/** 3D breath sphere — each particle is a real episode's 32-dim experience
+ *  embedding from /api/cortex/breath, deterministically projected into
+ *  experience-space (fibonacci base + embedding jitter). Radius breathes
+ *  with the deliberation phase; color tracks the episode's φ-proxy;
+ *  size tracks prediction accuracy. Real data, pseudo-3D projection —
+ *  rotation + perspective, no WebGL. */
+function BreathCanvas({ episodes, phase, score }: {
+  episodes: any[]; phase: string; score: number;
+}) {
+  const ref = useRef<HTMLCanvasElement | null>(null);
+  const stateRef = useRef({ episodes, phase, score });
+  stateRef.current = { episodes, phase, score };
+
+  useEffect(() => {
+    const canvas = ref.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    let raf = 0;
+    let rot = 0;
+    const dpr = Math.min(2, window.devicePixelRatio || 1);
+    const SIZE = 96;
+    canvas.width = SIZE * dpr;
+    canvas.height = SIZE * dpr;
+
+    // Deterministic per-episode 3D position: fibonacci sphere direction
+    // plus jitter derived from the embedding's first 3 dims. Episodes
+    // without embeddings fall back to a dim placeholder ring.
+    const pts = (stateRef.current.episodes || []).map((e, i) => {
+      const n = Math.max(1, (stateRef.current.episodes || []).length);
+      const ga = Math.PI * (3 - Math.sqrt(5));
+      const y = 1 - (i / Math.max(1, n - 1)) * 2;
+      const rad = Math.sqrt(Math.max(0, 1 - y * y));
+      const th = ga * i;
+      const emb = Array.isArray(e.embedding) ? e.embedding : null;
+      const jx = emb ? emb[0] * 0.22 : 0;
+      const jy = emb ? emb[1] * 0.22 : 0;
+      const jz = emb ? emb[2] * 0.22 : 0;
+      const mag = emb ? Math.min(1, emb.reduce((a: number, v: number) => a + Math.abs(v), 0) / emb.length * 2) : 0.3;
+      return {
+        x: Math.cos(th) * rad + jx, y: y + jy, z: Math.sin(th) * rad + jz,
+        phi: typeof e.phi === 'number' ? e.phi : 0.5,
+        err: typeof e.error === 'number' ? e.error : 0.3,
+        mag,
+        hasEmb: !!emb,
+      };
+    });
+
+    const draw = () => {
+      const { phase: ph, score: sc } = stateRef.current;
+      rot += 0.012;
+      // Breath cycle: INHALE expands, HOLD sustains, EXHALE contracts.
+      const t = performance.now() / 1000;
+      const breathWave = ph === 'INHALE' ? 1 + 0.18 * Math.sin(t * 2.4)
+        : ph === 'HOLD' ? 1.18
+        : 0.85 + 0.1 * Math.sin(t * 2.4);
+      const R = (30 + sc * 26) * breathWave;
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.clearRect(0, 0, SIZE, SIZE);
+      const cx = SIZE / 2, cy = SIZE / 2, f = 3.2;
+
+      const projected = pts.map((p) => {
+        const x1 = p.x * Math.cos(rot) - p.z * Math.sin(rot);
+        const z1 = p.x * Math.sin(rot) + p.z * Math.cos(rot);
+        const y1 = p.y * Math.cos(rot * 0.6) - z1 * Math.sin(rot * 0.6) * 0.3;
+        const z2 = z1 * Math.cos(rot * 0.6) + p.y * Math.sin(rot * 0.6) * 0.3;
+        const s = f / (f + z2 + 1.6);
+        return { x: cx + x1 * R * s, y: cy + y1 * R * s, z: z2, p };
+      }).sort((a, b) => a.z - b.z);
+
+      for (const q of projected) {
+        const depth = (q.z + 1.6) / 3.2; // 0 far → 1 near
+        const alpha = 0.25 + depth * 0.6;
+        // φ-proxy → hue: low integration red-shifted, high → cyan/green
+        const phi = q.p.phi;
+        const rC = Math.round(80 + (1 - phi) * 120);
+        const gC = Math.round(200 + phi * 55);
+        const bC = Math.round(160 + phi * 60);
+        const size = (1.2 + q.p.mag * 2.2) * (0.5 + depth * 0.8) * (q.p.hasEmb ? 1 : 0.6);
+        ctx.beginPath();
+        ctx.arc(q.x, q.y, Math.max(0.6, size), 0, Math.PI * 2);
+        ctx.fillStyle = `rgba(${rC},${gC},${bC},${alpha})`;
+        ctx.fill();
+      }
+      raf = requestAnimationFrame(draw);
+    };
+    raf = requestAnimationFrame(draw);
+    return () => cancelAnimationFrame(raf);
+  }, []);
+
+  return <canvas ref={ref} style={{ width: SIZE_CSS, height: SIZE_CSS, display: 'block' }} />;
+}
+
 /** Consciousness Breath HUD — polls /api/cortex/breath and renders the
  *  Generative Attention Loop's deliberation state as an animated breath.
  *  Phase is derived honestly from the last episode's age against the
@@ -224,7 +319,6 @@ function BreathHud() {
   const phase = ageSec < 8 ? 'EXHALE' : ageSec < 24 ? 'HOLD' : 'INHALE';
   const phaseColor = phase === 'EXHALE' ? '#7ef0c8' : phase === 'HOLD' ? '#e7c368' : '#38bdf8';
   const alert = breath.alerts?.[0];
-  const scale = 0.55 + score * 0.9;
 
   return (
     <div style={{
@@ -242,14 +336,7 @@ function BreathHud() {
         CONSCIOUSNESS BREATH
       </div>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-        <div style={{
-          width: 26, height: 26, borderRadius: '50%',
-          background: `radial-gradient(circle at 35% 35%, ${phaseColor}cc, ${phaseColor}22 70%)`,
-          border: `1px solid ${phaseColor}66`,
-          transform: `scale(${scale.toFixed(2)})`,
-          transition: 'transform 1.2s ease',
-          animation: 'cx-breath-pulse 4s ease-in-out infinite',
-        }} />
+        <BreathCanvas episodes={breath.episodes} phase={phase} score={score} />
         <div>
           <div style={{ color: '#eafff5', fontSize: 13, letterSpacing: '0.1em' }}>
             {phase} · {score.toFixed(2)}
@@ -260,6 +347,12 @@ function BreathHud() {
           <div style={{ color: 'rgba(148,233,255,0.35)' }}>
             {depth.experienceTrained ? `EXP-MODEL ${depth.experienceUpdates}u` : 'EXP-MODEL WARMING'} · {depth.episodes ?? 0} CYCLES
           </div>
+          {breath.vetoAgent && (
+            <div style={{ color: breath.vetoAgent.inLibetBand ? 'rgba(126,240,200,0.45)' : '#e7c368' }}>
+              VETO-AGENT {(breath.vetoAgent.vetoRate * 100).toFixed(0)}% · θ{breath.vetoAgent.threshold.toFixed(2)}
+              {breath.vetoAgent.metaVetoes > 0 ? ` · ${breath.vetoAgent.metaVetoes} META` : ''}
+            </div>
+          )}
         </div>
       </div>
       {alert && (

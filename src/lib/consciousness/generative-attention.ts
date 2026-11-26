@@ -19,9 +19,20 @@
  * - The veto here evaluates attention *configurations* (a different
  *   object than the action intentions Libet veto was built for). It is
  *   a real mechanism with real scores; it is not evidence of volition.
+ *   A dedicated AttentionVetoAgent can own this veto via the
+ *   `attentionVeto` hook — including depth-1 meta-veto and a homeostatic
+ *   threshold regulating the veto rate toward the Libet 5–15% band.
+ * - The self-model loop is closed: episodes consolidate into the
+ *   autobiographical self-model (host-side), and the model's recent
+ *   valence/agency feed back through `selfSignal` to bias the next
+ *   deliberation. Feedback is bounded (±0.05 on one candidate kind).
+ * - Same-cycle φ-recovery: when the last broadcast's φ-proxy fell below
+ *   threshold and the experience model is trained, candidates are
+ *   re-ranked by *predicted* φ inside the same deliberation — not just
+ *   biased next cycle.
  * - There is no transformer and no synthetic "qualia" training data.
- *   The predictor is an online linear model over config features —
- *   small, inspectable, and honest about what it learned.
+ *   The predictor is an online model over config features — small,
+ *   inspectable, and honest about what it learned.
  *
  * Grounding: counterfactual simulation is standard in decision theory
  * and active inference; the veto path reuses VolitionEngine (Libet 1983,
@@ -49,6 +60,40 @@ export interface GalCandidate {
   vetoed: boolean;
   vetoScore: number;
   vetoReason?: string;
+  /** true when the veto on this candidate was itself vetoed (depth-1 meta-veto) */
+  metaVetoed?: boolean;
+}
+
+/** What an external veto authority (e.g. AttentionVetoAgent) receives. */
+export interface GalVetoRequest {
+  candidateId: string;
+  kind: string;
+  description: string;
+  predictedScore: number;
+  intention: Intention;
+}
+
+export interface GalVetoVerdict {
+  shouldVeto: boolean;
+  vetoScore: number;
+  vetoThreshold?: number;
+  reason?: string;
+  metaVetoed?: boolean;
+  valueAlignment?: number;
+}
+
+/** Read-back signal from the autobiographical self-model. The GAL consumes
+ *  this to close the loop: attention outcomes consolidate into the self
+ *  model, and the self model's recent valence/agency bias the next
+ *  deliberation. Injected by the host — this module never imports the
+ *  self-model directly. */
+export interface GalSelfSignal {
+  /** mean affectiveValence of recent gal-attention episodes, normalized [-1,1] */
+  recentValence: number;
+  /** mean agencyAttribution of those episodes [0,1] */
+  recentAgency: number;
+  /** how many gal-attention episodes the self-model holds */
+  attentionEpisodes: number;
 }
 
 export interface GalSelection {
@@ -57,6 +102,9 @@ export interface GalSelection {
   /** true when every non-status-quo candidate was vetoed */
   allAlternativesVetoed: boolean;
   cycleId: number;
+  /** same-cycle φ-recovery outcome: attempted = low-φ pending + trained model;
+   *  applied = a different candidate won on predicted φ. */
+  phiRecovery?: { attempted: boolean; applied: boolean };
 }
 
 /** What the broadcast actually did — the learning signal. */
@@ -84,6 +132,12 @@ export interface GalEpisode {
   embedding?: number[];
   /** true when this broadcast's Φ-proxy fell below the recovery threshold */
   phiRecovery?: boolean;
+  /** same-cycle recovery detail carried from the selection */
+  recoveryApplied?: boolean;
+  /** true when the chosen config's veto was overridden by a meta-veto */
+  chosenMetaVetoed?: boolean;
+  /** self-model valence that biased this deliberation, [-1,1] */
+  selfValence?: number;
 }
 
 /** Host adapter — the GAL never touches the workspace directly, which
@@ -168,6 +222,14 @@ export interface GalConfig {
   phiThreshold?: number;
   /** Called after each closed episode — used for self-model consolidation. */
   onEpisode?: (episode: GalEpisode) => void;
+  /** Optional dedicated veto authority (e.g. AttentionVetoAgent). When
+   *  present it replaces both the host veto hook and the internal
+   *  VolitionEngine for attention configs — one owner, one policy. */
+  attentionVeto?: (req: GalVetoRequest) => GalVetoVerdict;
+  /** Optional read-back from the autobiographical self-model. Supplies
+   *  the feedback half of the loop: episodes consolidate into the self
+   *  model, and its recent valence/agency bias future deliberation. */
+  selfSignal?: () => GalSelfSignal | null;
 }
 
 export class GenerativeAttentionLoop {
@@ -175,14 +237,16 @@ export class GenerativeAttentionLoop {
   private volition: VolitionEngine;
   private model = new AttentionOutcomeModel();
   private experience: ExperienceModel | null = null;
-  private cfg: Required<Omit<GalConfig, 'memoryPath' | 'experienceModelPath' | 'onEpisode'>> & {
+  private cfg: Required<Omit<GalConfig, 'memoryPath' | 'experienceModelPath' | 'onEpisode' | 'attentionVeto' | 'selfSignal'>> & {
     memoryPath: string | null;
     experienceModelPath: string | null;
     onEpisode?: (episode: GalEpisode) => void;
+    attentionVeto?: (req: GalVetoRequest) => GalVetoVerdict;
+    selfSignal?: () => GalSelfSignal | null;
   };
   private episodes: GalEpisode[] = [];
   private cycleSeq = 0;
-  private pending: { selection: GalSelection; features: number[]; mlpInput: number[]; ts: number } | null = null;
+  private pending: { selection: GalSelection; features: number[]; mlpInput: number[]; ts: number; selfValence?: number } | null = null;
   private phiRecoveryPending = false;
   private phiRecoveryCount = 0;
 
@@ -201,6 +265,8 @@ export class GenerativeAttentionLoop {
       focusTopic: config.focusTopic ?? (() => undefined),
       phiThreshold: config.phiThreshold ?? 0.35,
       onEpisode: config.onEpisode,
+      attentionVeto: config.attentionVeto,
+      selfSignal: config.selfSignal,
     };
     if (this.cfg.experienceModelPath !== null) {
       this.experience = new ExperienceModel(this.cfg.experienceModelPath);
@@ -286,7 +352,14 @@ export class GenerativeAttentionLoop {
     const candidates = this.generateCandidates();
     const focus = this.cfg.focusTopic();
     const ctxScore = this.recentMeanScore();
+    // Self-model read-back: recent autobiographical valence/agency from
+    // attention episodes biases this deliberation. This is the return half
+    // of the loop — outcomes → self-model → future predictions.
+    const self = this.cfg.selfSignal?.() ?? null;
+    const selfValence = self ? Math.max(-1, Math.min(1, self.recentValence)) : undefined;
     const mlpInputs = new Map<GalCandidate, number[]>();
+    const mlpOutputs = new Map<GalCandidate, number[]>();
+    const sameCycleRecovery = this.phiRecoveryPending && this.experience?.isTrained === true;
 
     for (const c of candidates) {
       const features = configFeatures(c.multipliers, focus);
@@ -295,24 +368,32 @@ export class GenerativeAttentionLoop {
       mlpInputs.set(c, mlpInput);
       let pred = linearPred;
       if (this.experience) {
-        const mlpOut = this.experience.predict(mlpInput).outputs;
+        const mlpPred = this.experience.predict(mlpInput);
+        mlpOutputs.set(c, mlpPred.outputs);
         // Blend: trust the MLP proportionally to its training; the linear
         // model remains the cold-start prior and regularizer.
         const trust = this.experience.isTrained ? 0.35 + 0.65 * this.experience.confidence : 0;
-        pred = (1 - trust) * linearPred + trust * mlpOut[0];
+        pred = (1 - trust) * linearPred + trust * mlpPred.outputs[0];
+      }
+      // Self-model feedback: negative recent valence dampens novelty-seeking
+      // (explore), positive valence amplifies it — bounded ±0.05 so the
+      // signal steers but never overrides the outcome models.
+      if (selfValence !== undefined && c.kind === 'explore') {
+        pred = Math.max(0, Math.min(1, pred + selfValence * 0.05));
       }
       c.predictedScore = pred;
-      // Φ-recovery bias: last broadcast integrated poorly → nudge the
-      // explore candidate up one notch. One-shot; cleared on selection.
-      if (this.phiRecoveryPending && c.kind === 'explore') {
+      // Φ-recovery fallback: when the experience model isn't trained enough
+      // to predict φ per candidate, keep the next-cycle explore bias. When
+      // it IS trained, same-cycle recovery below handles it instead.
+      if (this.phiRecoveryPending && !sameCycleRecovery && c.kind === 'explore') {
         c.predictedScore = Math.min(1, c.predictedScore + 0.15);
       }
     }
-    this.phiRecoveryPending = false;
 
-    // Veto pass — every candidate is a real Intention through the same
-    // VolitionEngine the action path uses. Status quo is never vetoed:
-    // it is the floor, not a proposal.
+    // Veto pass — every candidate is a real Intention. A dedicated veto
+    // authority (AttentionVetoAgent) owns the decision when configured;
+    // otherwise the host hook, otherwise the shared VolitionEngine. The
+    // status quo is never vetoed: it is the floor, not a proposal.
     const intentionFor = (c: GalCandidate): Intention => ({
       id: `gal-${this.cycleSeq}-${c.id}`,
       value: 'epistemic-curiosity',
@@ -338,26 +419,65 @@ export class GenerativeAttentionLoop {
     for (const c of candidates) {
       if (c.kind === 'status_quo') continue;
       const intention = intentionFor(c);
-      const veto = this.host.evaluateVeto
-        ? this.host.evaluateVeto(intention)
-        : this.volition.evaluateVetoSync(intention, vetoContext);
-      c.vetoed = veto.shouldVeto;
-      c.vetoScore = veto.vetoScore;
-      c.vetoReason = veto.reason;
+      if (this.cfg.attentionVeto) {
+        const verdict = this.cfg.attentionVeto({
+          candidateId: c.id,
+          kind: c.kind,
+          description: c.description,
+          predictedScore: c.predictedScore,
+          intention,
+        });
+        c.vetoed = verdict.shouldVeto;
+        c.vetoScore = verdict.vetoScore;
+        c.vetoReason = verdict.reason;
+        c.metaVetoed = verdict.metaVetoed === true || undefined;
+      } else {
+        const veto = this.host.evaluateVeto
+          ? this.host.evaluateVeto(intention)
+          : this.volition.evaluateVetoSync(intention, vetoContext);
+        c.vetoed = veto.shouldVeto;
+        c.vetoScore = veto.vetoScore;
+        c.vetoReason = veto.reason;
+      }
       if (c.vetoed) vetoedAny = true;
     }
 
     const eligible = candidates.filter((c) => !c.vetoed);
     const pool = eligible.length ? eligible : [candidates[0]];
-    const chosen = pool.reduce((best, c) =>
+    let chosen = pool.reduce((best, c) =>
       c.predictedScore > best.predictedScore ? c : best,
     );
+
+    // Same-cycle Φ-recovery: last broadcast integrated poorly and the
+    // experience model is trained → re-rank eligible candidates by
+    // *predicted* φ (outputs[3]) and switch only on a clear margin.
+    // This replaces "bias next cycle" with "fix it now" when possible.
+    let recovery: { attempted: boolean; applied: boolean } | undefined;
+    if (this.phiRecoveryPending) {
+      recovery = { attempted: sameCycleRecovery, applied: false };
+      if (sameCycleRecovery && pool.length > 1) {
+        const phiOf = (c: GalCandidate): number => mlpOutputs.get(c)?.[3] ?? 0.5;
+        const chosenPhi = phiOf(chosen);
+        let bestPhiC = chosen;
+        let bestPhi = chosenPhi;
+        for (const c of pool) {
+          const p = phiOf(c);
+          if (p > bestPhi) { bestPhi = p; bestPhiC = c; }
+        }
+        if (bestPhiC !== chosen && bestPhi - chosenPhi > 0.05) {
+          chosen = bestPhiC;
+          recovery.applied = true;
+        }
+      }
+    }
+    this.phiRecoveryPending = false;
 
     const selection: GalSelection = {
       chosen,
       candidates,
       allAlternativesVetoed: vetoedAny && eligible.length <= 1,
       cycleId: this.cycleSeq,
+      phiRecovery: recovery,
     };
 
     this.pending = {
@@ -365,6 +485,7 @@ export class GenerativeAttentionLoop {
       features: configFeatures(chosen.multipliers, focus),
       mlpInput: mlpInputs.get(chosen) ?? [...configFeatures(chosen.multipliers, focus), ctxScore].slice(0, EXPERIENCE_INPUT_DIM),
       ts: Date.now(),
+      selfValence,
     };
     return selection;
   }
@@ -375,7 +496,7 @@ export class GenerativeAttentionLoop {
    */
   recordOutcome(outcome: GalOutcome): GalEpisode | null {
     if (!this.pending) return null;
-    const { selection, features, mlpInput } = this.pending;
+    const { selection, features, mlpInput, selfValence } = this.pending;
     this.pending = null;
 
     const actual = Math.max(0, Math.min(1, outcome.score));
@@ -416,6 +537,9 @@ export class GenerativeAttentionLoop {
       phi: Number(outcome.phi.toFixed(4)),
       embedding,
       phiRecovery: phiRecovery || undefined,
+      recoveryApplied: selection.phiRecovery?.applied === true || undefined,
+      chosenMetaVetoed: selection.chosen.metaVetoed === true || undefined,
+      selfValence,
     };
 
     this.episodes.push(episode);

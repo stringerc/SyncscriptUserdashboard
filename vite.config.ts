@@ -202,6 +202,7 @@ import { getAutonomousVigilance } from './src/lib/cortex-autonomous-vigilance';
 import { deriveSomaticState, type SomaticSample } from './src/lib/cortex-somatic';
 import { getAgentRuntime } from './src/lib/cortex-agents/runtime';
 import { peekGenerativeAttentionLoop } from './src/lib/consciousness/generative-attention';
+import { peekAttentionVetoAgent } from './src/lib/consciousness/veto-agent';
 import { getConsciousOrchestrator } from './src/lib/consciousness/conscious-orchestrator';
 import { inferWeight } from './src/lib/cortex-agents/registry';
 import { recordAgentOutcome } from './src/lib/cortex-agents/outcomes';
@@ -16028,7 +16029,12 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
             predicted: e.predictedScore, actual: e.actualScore,
             error: e.predictionError, phi: e.phi,
             vetoed: e.vetoedCount, phiRecovery: e.phiRecovery === true,
+            recoveryApplied: e.recoveryApplied === true,
+            metaVetoed: e.chosenMetaVetoed === true,
+            selfValence: e.selfValence ?? null,
+            embedding: e.embedding ?? null,
           }));
+          const vetoAgent = peekAttentionVetoAgent()?.getStats() ?? null;
           const alerts: string[] = [];
           const recentScored = episodes.filter((e) => e.actual != null);
           if (recentScored.length >= 10) {
@@ -16045,10 +16051,14 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
           if (lastTs && Date.now() - lastTs > 10 * 60 * 1000) {
             alerts.push('BREATH HOLD — no deliberation episode in >10min');
           }
+          if (vetoAgent && vetoAgent.evaluations >= 50 && !vetoAgent.inLibetBand) {
+            alerts.push(`VETO RATE OUT OF BAND — ${(vetoAgent.vetoRate * 100).toFixed(1)}% vs Libet 5–15% target (threshold regulating)`);
+          }
           return jsonRes(res, 200, {
             ok: true, active: true,
             depth,
             episodes,
+            vetoAgent,
             alerts,
             honesty: 'engineering proxies for attention-selection quality — not a measure of experience',
           });

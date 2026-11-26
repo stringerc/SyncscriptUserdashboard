@@ -114,4 +114,71 @@ describe('GenerativeAttentionLoop', () => {
     expect(depth.episodes).toBe(0);
     expect(depth.predictionAccuracy).toBe(0.5); // no data → neutral prior
   });
+
+  it('attentionVeto hook replaces built-in veto and surfaces metaVetoed', () => {
+    const gal = new GenerativeAttentionLoop(makeHost(), {
+      memoryPath: null,
+      experienceModelPath: null,
+      attentionVeto: (req) => req.kind === 'explore'
+        ? { shouldVeto: false, vetoScore: 0.5, metaVetoed: true, reason: 'meta' }
+        : { shouldVeto: req.kind === 'reset', vetoScore: 0.9 },
+    });
+    const sel = gal.deliberate();
+    const explore = sel.candidates.find((c) => c.kind === 'explore');
+    expect(explore?.vetoed).toBe(false);
+    expect(explore?.metaVetoed).toBe(true);
+    const reset = sel.candidates.find((c) => c.kind === 'reset');
+    expect(reset?.vetoed).toBe(true);
+    expect(sel.chosen.vetoed).toBe(false);
+  });
+
+  it('selfSignal valence biases explore predictions (closed self-model loop)', () => {
+    const neg = new GenerativeAttentionLoop(makeHost(), {
+      memoryPath: null, experienceModelPath: null,
+      selfSignal: () => ({ recentValence: -0.8, recentAgency: 0.9, attentionEpisodes: 12 }),
+    });
+    const pos = new GenerativeAttentionLoop(makeHost(), {
+      memoryPath: null, experienceModelPath: null,
+      selfSignal: () => ({ recentValence: 0.8, recentAgency: 0.9, attentionEpisodes: 12 }),
+    });
+    const negExplore = neg.deliberate().candidates.find((c) => c.kind === 'explore');
+    const posExplore = pos.deliberate().candidates.find((c) => c.kind === 'explore');
+    expect(negExplore).toBeDefined();
+    expect(posExplore).toBeDefined();
+    expect(posExplore!.predictedScore).toBeGreaterThan(negExplore!.predictedScore);
+
+    // episode records the self-valence that biased the cycle
+    const ep = pos.recordOutcome({ score: 0.7, ignited: true, spread: 0.5, phi: 0.5 });
+    expect(ep?.selfValence).toBeCloseTo(0.8, 5);
+  });
+
+  it('same-cycle φ-recovery engages when trained and last broadcast integrated poorly', () => {
+    const expPath = path.join(tmpDir, 'exp-model.json');
+    const gal = new GenerativeAttentionLoop(makeHost(), {
+      memoryPath: null, experienceModelPath: expPath,
+    });
+    // Train the experience model past the trust threshold with healthy φ.
+    for (let i = 0; i < 25; i++) {
+      gal.deliberate();
+      gal.recordOutcome({ score: 0.8, ignited: true, spread: 0.7, phi: 0.7 });
+    }
+    // Collapse φ → recovery pending for next deliberation.
+    gal.deliberate();
+    gal.recordOutcome({ score: 0.4, ignited: false, spread: 0.2, phi: 0.05 });
+
+    const sel = gal.deliberate();
+    expect(sel.phiRecovery?.attempted).toBe(true);
+    const ep = gal.recordOutcome({ score: 0.6, ignited: true, spread: 0.5, phi: 0.5 });
+    expect(ep?.recoveryApplied).toBe(sel.phiRecovery?.applied === true || undefined);
+  });
+
+  it('untrained model falls back to next-cycle explore bias, not same-cycle recovery', () => {
+    const gal = new GenerativeAttentionLoop(makeHost(), {
+      memoryPath: null, experienceModelPath: null, // no MLP → cannot predict φ
+    });
+    gal.deliberate();
+    gal.recordOutcome({ score: 0.4, ignited: false, spread: 0.2, phi: 0.05 });
+    const sel = gal.deliberate();
+    expect(sel.phiRecovery?.attempted).toBe(false);
+  });
 });
