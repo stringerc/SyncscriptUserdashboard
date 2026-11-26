@@ -129,6 +129,17 @@ describe('AttentionVetoAgent', () => {
     expect(agent.getStats().recentIgnitionRate).toBe(1);
   });
 
+  it('adaptive band widens when stable and narrows when volatile', () => {
+    const stable = new AttentionVetoAgent(null, { volatilitySignal: () => 0.02 });
+    expect(stable.getStats().band).toEqual({ min: 0.03, max: 0.22 });
+    const volatile = new AttentionVetoAgent(null, { volatilitySignal: () => 0.3 });
+    expect(volatile.getStats().band).toEqual({ min: 0.07, max: 0.12 });
+    const mid = new AttentionVetoAgent(null, { volatilitySignal: () => 0.15 });
+    expect(mid.getStats().band).toEqual({ min: 0.05, max: 0.15 });
+    const none = new AttentionVetoAgent(null);
+    expect(none.getStats().band).toEqual({ min: 0.05, max: 0.15 });
+  });
+
   it('persists threshold and counters across restarts', () => {
     const p = path.join(tmpDir, 'veto-agent.json');
     const agent = new AttentionVetoAgent(p);

@@ -217,31 +217,8 @@ function BreathCanvas({ episodes, phase, score }: {
     canvas.width = SIZE * dpr;
     canvas.height = SIZE * dpr;
 
-    // Deterministic per-episode 3D position: fibonacci sphere direction
-    // plus jitter derived from the embedding's first 3 dims. Episodes
-    // without embeddings fall back to a dim placeholder ring.
-    const pts = (stateRef.current.episodes || []).map((e, i) => {
-      const n = Math.max(1, (stateRef.current.episodes || []).length);
-      const ga = Math.PI * (3 - Math.sqrt(5));
-      const y = 1 - (i / Math.max(1, n - 1)) * 2;
-      const rad = Math.sqrt(Math.max(0, 1 - y * y));
-      const th = ga * i;
-      const emb = Array.isArray(e.embedding) ? e.embedding : null;
-      const jx = emb ? emb[0] * 0.22 : 0;
-      const jy = emb ? emb[1] * 0.22 : 0;
-      const jz = emb ? emb[2] * 0.22 : 0;
-      const mag = emb ? Math.min(1, emb.reduce((a: number, v: number) => a + Math.abs(v), 0) / emb.length * 2) : 0.3;
-      return {
-        x: Math.cos(th) * rad + jx, y: y + jy, z: Math.sin(th) * rad + jz,
-        phi: typeof e.phi === 'number' ? e.phi : 0.5,
-        err: typeof e.error === 'number' ? e.error : 0.3,
-        mag,
-        hasEmb: !!emb,
-      };
-    });
-
     const draw = () => {
-      const { phase: ph, score: sc } = stateRef.current;
+      const { episodes: eps, phase: ph, score: sc } = stateRef.current;
       rot += 0.012;
       // Breath cycle: INHALE expands, HOLD sustains, EXHALE contracts.
       const t = performance.now() / 1000;
@@ -253,14 +230,50 @@ function BreathCanvas({ episodes, phase, score }: {
       ctx.clearRect(0, 0, SIZE, SIZE);
       const cx = SIZE / 2, cy = SIZE / 2, f = 3.2;
 
-      const projected = pts.map((p) => {
+      // Deterministic per-episode 3D position: fibonacci sphere direction
+      // plus jitter derived from the embedding's first 3 dims, recomputed
+      // each frame so new episodes slide into the sphere live.
+      const n = Math.max(1, (eps || []).length);
+      const ga = Math.PI * (3 - Math.sqrt(5));
+      const pts = (eps || []).map((e: any, i: number) => {
+        const y = 1 - (i / Math.max(1, n - 1)) * 2;
+        const rad = Math.sqrt(Math.max(0, 1 - y * y));
+        const th = ga * i;
+        const emb = Array.isArray(e.embedding) ? e.embedding : null;
+        return {
+          x: Math.cos(th) * rad + (emb ? emb[0] * 0.22 : 0),
+          y: y + (emb ? emb[1] * 0.22 : 0),
+          z: Math.sin(th) * rad + (emb ? emb[2] * 0.22 : 0),
+          phi: typeof e.phi === 'number' ? e.phi : 0.5,
+          mag: emb ? Math.min(1, emb.reduce((a: number, v: number) => a + Math.abs(v), 0) / emb.length * 2) : 0.3,
+          hasEmb: !!emb,
+        };
+      });
+
+      const project = (p: any) => {
         const x1 = p.x * Math.cos(rot) - p.z * Math.sin(rot);
         const z1 = p.x * Math.sin(rot) + p.z * Math.cos(rot);
         const y1 = p.y * Math.cos(rot * 0.6) - z1 * Math.sin(rot * 0.6) * 0.3;
         const z2 = z1 * Math.cos(rot * 0.6) + p.y * Math.sin(rot * 0.6) * 0.3;
         const s = f / (f + z2 + 1.6);
         return { x: cx + x1 * R * s, y: cy + y1 * R * s, z: z2, p };
-      }).sort((a, b) => a.z - b.z);
+      };
+      const ordered = pts.map(project); // episode order preserved for trails
+
+      // Temporal trails — faint path each episode took through
+      // experience-space, colored by its φ-proxy.
+      for (let i = 1; i < ordered.length; i++) {
+        const a = ordered[i - 1], b = ordered[i];
+        const phi = b.p.phi;
+        ctx.beginPath();
+        ctx.moveTo(a.x, a.y);
+        ctx.lineTo(b.x, b.y);
+        ctx.strokeStyle = `rgba(${Math.round(80 + (1 - phi) * 100)},${Math.round(200 + phi * 40)},${Math.round(170 + phi * 50)},0.18)`;
+        ctx.lineWidth = 0.7;
+        ctx.stroke();
+      }
+
+      const projected = [...ordered].sort((a, b) => a.z - b.z);
 
       for (const q of projected) {
         const depth = (q.z + 1.6) / 3.2; // 0 far → 1 near

@@ -71,6 +71,15 @@ interface VetoAgentPersist {
   recent: Array<{ vetoed: boolean; metaVetoed: boolean }>;
 }
 
+/** Adaptive band edges — the Libet 5–15% target widens when the system is
+ *  stable (let restraint roam) and narrows when volatile (conserve it). */
+function bandFor(volatility: number | null): { min: number; max: number } {
+  if (volatility == null) return { min: VETO_RATE_MIN, max: VETO_RATE_MAX };
+  if (volatility < 0.08) return { min: 0.03, max: 0.22 };
+  if (volatility > 0.22) return { min: 0.07, max: 0.12 };
+  return { min: VETO_RATE_MIN, max: VETO_RATE_MAX };
+}
+
 // ── The agent ───────────────────────────────────────────────────────
 
 export class AttentionVetoAgent implements WorkspaceSpecialist, GalVetoEvaluator {
@@ -85,12 +94,22 @@ export class AttentionVetoAgent implements WorkspaceSpecialist, GalVetoEvaluator
   private recent: Array<{ vetoed: boolean; metaVetoed: boolean }> = [];
   private broadcasts: WorkspaceBroadcast[] = [];
   private persistPath: string | null;
+  private volatilitySignal: (() => number | null) | null = null;
 
-  constructor(persistPath?: string | null, opts?: { initialThreshold?: number }) {
+  /** Host-injected regime signal: recent outcome volatility [0,1]. When
+   *  absent the agent regulates to the fixed Libet band. */
+  setVolatilitySignal(fn: () => number | null): void {
+    this.volatilitySignal = fn;
+  }
+
+  private band() { return bandFor(this.volatilitySignal?.() ?? null); }
+
+  constructor(persistPath?: string | null, opts?: { initialThreshold?: number; volatilitySignal?: () => number | null }) {
     this.persistPath = persistPath === undefined
       ? path.join(process.cwd(), '.cortex-runtime', 'veto-agent.json')
       : persistPath;
     this.threshold = opts?.initialThreshold ?? 0.62;
+    this.volatilitySignal = opts?.volatilitySignal ?? null;
     this.load(); // persisted state (if any) wins over the constructor default
   }
 
@@ -162,10 +181,11 @@ export class AttentionVetoAgent implements WorkspaceSpecialist, GalVetoEvaluator
     if (vetoed && !metaVetoed) this.vetoes++;
 
     if (this.evaluations % THRESHOLD_ADJUST_EVERY === 0 && this.recent.length >= 20) {
+      const band = this.band();
       const rate = this.recent.filter((r) => r.vetoed && !r.metaVetoed).length / this.recent.length;
-      if (rate < VETO_RATE_MIN) {
+      if (rate < band.min) {
         this.threshold = Math.max(THRESHOLD_MIN, this.threshold * 0.92);
-      } else if (rate > VETO_RATE_MAX) {
+      } else if (rate > band.max) {
         this.threshold = Math.min(THRESHOLD_MAX, this.threshold * 1.08);
       }
       this.save();
@@ -214,13 +234,16 @@ export class AttentionVetoAgent implements WorkspaceSpecialist, GalVetoEvaluator
       : 0;
     const recentIgnitions = this.broadcasts.slice(-20)
       .filter((b) => b.ignition?.isIgnition).length;
+    const band = this.band();
     return {
       evaluations: this.evaluations,
       vetoes: this.vetoes,
       metaVetoes: this.metaVetoes,
       vetoRate: Number(rate.toFixed(4)),
       threshold: Number(this.threshold.toFixed(3)),
-      inLibetBand: rate >= VETO_RATE_MIN && rate <= VETO_RATE_MAX,
+      band: { min: band.min, max: band.max },
+      volatility: this.volatilitySignal?.() ?? null,
+      inLibetBand: rate >= band.min && rate <= band.max,
       broadcastsObserved: this.broadcasts.length,
       recentIgnitionRate: this.broadcasts.length
         ? Number((recentIgnitions / Math.min(20, this.broadcasts.length)).toFixed(3))

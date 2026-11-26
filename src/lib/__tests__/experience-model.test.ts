@@ -46,6 +46,24 @@ describe('ExperienceModel', () => {
     expect(Math.abs(after - target[0])).toBeLessThan(Math.abs(before - target[0]));
   });
 
+  it('rejects weights persisted under a different input dim', () => {
+    const p = path.join(tmpDir, 'stale.json');
+    // Simulate weights trained before the 8→10 dim expansion.
+    const stale = {
+      updates: 50,
+      w: {
+        w1: Array.from({ length: 8 }, () => new Array(32).fill(0.1)),
+        b1: new Array(32).fill(0),
+        w2: Array.from({ length: 32 }, () => new Array(4).fill(0.1)),
+        b2: new Array(4).fill(0.5),
+      },
+    };
+    fs.writeFileSync(p, JSON.stringify(stale));
+    const m = new ExperienceModel(p);
+    expect(m.updateCount).toBe(0); // shape guard → fresh init, no corrupt loads
+    expect(m.isTrained).toBe(false);
+  });
+
   it('persists weights and reloads update count', () => {
     const p = path.join(tmpDir, 'm.json');
     const m = new ExperienceModel(p);

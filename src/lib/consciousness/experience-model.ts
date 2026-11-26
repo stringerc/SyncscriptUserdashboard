@@ -26,9 +26,13 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 
-export const EXPERIENCE_INPUT_DIM = 8;
+export const EXPERIENCE_INPUT_DIM = 10;
 export const EXPERIENCE_HIDDEN_DIM = 32;
 export const EXPERIENCE_OUTPUT_DIM = 4; // [score, ignition, spread, phi]
+
+/** Input layout: [7 config features, ctxScore, recentVetoRate, lastPhi].
+ *  The last two are cycle-context signals — how the veto agent has been
+ *  behaving and how integrated the previous broadcast was. */
 
 export interface ExperiencePrediction {
   /** [score, ignition, spread, phi] each clamped 0..1 */
@@ -163,7 +167,9 @@ export class ExperienceModel {
     if (!this.persistPath || !fs.existsSync(this.persistPath)) return null;
     try {
       const raw = JSON.parse(fs.readFileSync(this.persistPath, 'utf8'));
-      if (raw?.w?.w1 && raw?.w?.w2) {
+      // Shape guard: weights trained under a different input dim are
+      // incompatible — fail safe to re-init rather than corrupt predictions.
+      if (raw?.w?.w1?.length === EXPERIENCE_INPUT_DIM && raw?.w?.w2) {
         this.updates = raw.updates ?? 0;
         return raw.w as Weights;
       }

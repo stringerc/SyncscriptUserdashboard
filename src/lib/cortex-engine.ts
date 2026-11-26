@@ -81,7 +81,7 @@ import { getCausalModel } from './causal-model';
 import { getHGM } from './hierarchical-generative-model';
 import { getIntegratedInformation } from './integrated-information';
 import { getAttentionSchema } from './attention-schema';
-import { getGenerativeAttentionLoop, type GalHost, type GalSelfSignal } from './consciousness/generative-attention';
+import { getGenerativeAttentionLoop, peekGenerativeAttentionLoop, type GalHost, type GalSelfSignal } from './consciousness/generative-attention';
 import { getAttentionVetoAgent } from './consciousness/veto-agent';
 import { getPersistentSelfModel } from './consciousness/persistent-self-model';
 import { getStructuralEquationModel } from './structural-equation-model';
@@ -505,7 +505,11 @@ export class CortexEngine {
     }
     // VetoAgent holds its own GWT slot — it bids status reports into the
     // same competition and observes every broadcast as outcome data.
-    workspace.registerSpecialist(getAttentionVetoAgent());
+    const vetoAgent = getAttentionVetoAgent();
+    vetoAgent.setVolatilitySignal(
+      () => peekGenerativeAttentionLoop()?.getVolitionalDepth().volatility ?? null,
+    );
+    workspace.registerSpecialist(vetoAgent);
 
     // Two recurrent passes: pass 2 re-bids after receiveBroadcast updated
     // specialist state. That is RPT as loadable architecture, not loop count.

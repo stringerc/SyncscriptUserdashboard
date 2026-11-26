@@ -347,6 +347,30 @@ export class GenerativeAttentionLoop {
     return withOutcome.reduce((a, e) => a + (e.actualScore ?? 0), 0) / withOutcome.length;
   }
 
+  /** 9th MLP input: recent veto rate — is the veto agent restraining?
+   *  Nominal Libet prior 0.10 until data exists. */
+  private recentVetoRate(): number {
+    const recent = this.episodes.slice(-50);
+    const cand = recent.reduce((a, e) => a + e.candidateCount, 0);
+    if (!cand) return 0.10;
+    return recent.reduce((a, e) => a + e.vetoedCount, 0) / cand;
+  }
+
+  /** 10th MLP input: last broadcast's φ-proxy — was the previous breath
+   *  integrated? Neutral 0.5 prior. */
+  private lastPhi(): number {
+    for (let i = this.episodes.length - 1; i >= 0; i--) {
+      const p = this.episodes[i].phi;
+      if (p !== null && p !== undefined) return p;
+    }
+    return 0.5;
+  }
+
+  private buildMlpInput(features: number[], ctxScore: number): number[] {
+    return [...features, ctxScore, this.recentVetoRate(), this.lastPhi()]
+      .slice(0, EXPERIENCE_INPUT_DIM);
+  }
+
   deliberate(): GalSelection {
     this.cycleSeq++;
     const candidates = this.generateCandidates();
@@ -364,7 +388,7 @@ export class GenerativeAttentionLoop {
     for (const c of candidates) {
       const features = configFeatures(c.multipliers, focus);
       const linearPred = this.model.predict(features);
-      const mlpInput = [...features, ctxScore].slice(0, EXPERIENCE_INPUT_DIM);
+      const mlpInput = this.buildMlpInput(features, ctxScore);
       mlpInputs.set(c, mlpInput);
       let pred = linearPred;
       if (this.experience) {
@@ -483,7 +507,7 @@ export class GenerativeAttentionLoop {
     this.pending = {
       selection,
       features: configFeatures(chosen.multipliers, focus),
-      mlpInput: mlpInputs.get(chosen) ?? [...configFeatures(chosen.multipliers, focus), ctxScore].slice(0, EXPERIENCE_INPUT_DIM),
+      mlpInput: mlpInputs.get(chosen) ?? this.buildMlpInput(configFeatures(chosen.multipliers, focus), ctxScore),
       ts: Date.now(),
       selfValence,
     };
@@ -566,6 +590,9 @@ export class GenerativeAttentionLoop {
     experienceTrained: boolean;
     episodes: number;
     modelUpdates: number;
+    /** stdev of recent actual scores — regime stability signal consumed
+     *  by the VetoAgent's adaptive Libet band. 0 = rock steady. */
+    volatility: number;
   } {
     const recent = this.episodes.slice(-50);
     const withOutcome = recent.filter((e) => e.predictionError !== null);
@@ -588,6 +615,12 @@ export class GenerativeAttentionLoop {
       ? recent.filter((e) => e.phiRecovery).length / recent.length
       : 0;
 
+    const scores = recent.filter((e) => e.actualScore !== null)
+      .map((e) => e.actualScore as number).slice(-20);
+    const volatility = scores.length > 1
+      ? Math.sqrt(scores.reduce((a, s) => a + (s - scores.reduce((x, y) => x + y, 0) / scores.length) ** 2, 0) / scores.length)
+      : 0.15;
+
     const score = Number((
       0.4 * predictionAccuracy + 0.3 * vetoBandHealth + 0.3 * integration
     ).toFixed(3));
@@ -603,6 +636,7 @@ export class GenerativeAttentionLoop {
       experienceTrained: this.experience?.isTrained ?? false,
       episodes: this.episodes.length,
       modelUpdates: this.model.updatesCount,
+      volatility: Number(volatility.toFixed(4)),
     };
   }
 
