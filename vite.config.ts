@@ -16216,6 +16216,51 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
           });
       });
 
+      // Shared vision call — walks the NIM key pool with failover.
+      const visionAnalyze = async ({ imageB64, prompt, model }: { imageB64: string; prompt?: string; model?: string }) => {
+        const prov = providerFor('nvidia-nim');
+        if (!prov) return { ok: false as const, status: 503, error: 'nvidia-nim provider not configured' };
+        const keyPool = prov.keys && prov.keys.length > 0 ? prov.keys : (prov.backupKey ? [prov.key, prov.backupKey] : [prov.key]);
+        const started = Date.now();
+        let lastStatus: number | string = 0;
+        for (let keyIdx = 0; keyIdx < keyPool.length; keyIdx++) {
+          try {
+            const r = await fetch(prov.url, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${keyPool[keyIdx]}` },
+              body: JSON.stringify({
+                model,
+                messages: [{
+                  role: 'user',
+                  content: [
+                    { type: 'text', text: prompt },
+                    { type: 'image_url', image_url: { url: imageB64 } },
+                  ],
+                }],
+                max_tokens: 300,
+                temperature: 0.2,
+                stream: false,
+              }),
+              signal: AbortSignal.timeout(30000),
+            });
+            if (r.ok) {
+              const j: any = await r.json();
+              const text = j?.choices?.[0]?.message?.content
+                ?? j?.choices?.[0]?.message?.reasoning_content
+                ?? '';
+              return { ok: true as const, status: 200, model, keyIndex: keyIdx, latencyMs: Date.now() - started, text: String(text).slice(0, 4000) };
+            }
+            lastStatus = r.status;
+            try { await r.arrayBuffer(); } catch { /* drain */ }
+            if (![401, 402, 403, 404, 429].includes(r.status) || keyIdx >= keyPool.length - 1) break;
+          } catch {
+            lastStatus = 'error';
+            if (keyIdx >= keyPool.length - 1) break;
+          }
+        }
+        return { ok: false as const, status: 502, error: `vision probe http ${lastStatus}`, model };
+      };
+
       // POST /api/cortex/vision/analyze — send an image to a vision-language
       // model (default nvidia/nemotron-3.5-super-vl-120b-a12b, already the
       // fleet's top route) and get a text answer. Walks the NIM key pool
@@ -16242,49 +16287,69 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
             const dataUrl = b64.startsWith('data:') ? b64 : `data:image/jpeg;base64,${b64}`;
             if (!b64 || b64.length < 100) return send(400, { ok: false, error: 'image (base64 or dataURL, >100 chars) required' });
             if (b64.length > 8 * 1024 * 1024) return send(413, { ok: false, error: 'image too large (max ~6MB binary)' });
-            const prov = providerFor('nvidia-nim');
-            if (!prov) return send(503, { ok: false, error: 'nvidia-nim provider not configured' });
             const model = String(parsed?.model || 'nvidia/nemotron-3.5-super-vl-120b-a12b');
             const prompt = String(parsed?.prompt || 'Describe what you see in this image in 2-3 sentences.');
-            const keyPool = prov.keys && prov.keys.length > 0 ? prov.keys : (prov.backupKey ? [prov.key, prov.backupKey] : [prov.key]);
-            const started = Date.now();
-            let lastStatus: number | string = 0;
-            for (let keyIdx = 0; keyIdx < keyPool.length; keyIdx++) {
+            const result = await visionAnalyze({ imageB64: dataUrl, prompt, model });
+            send(result.status, result);
+          } catch (e: any) {
+            send(400, { ok: false, error: String(e?.message || e).slice(0, 160) });
+          }
+        });
+      });
+
+      // POST /api/cortex/vision/shot — "verify with screenshot" in one call.
+      // Optionally captures a FRESH screenshot of the automation Chrome
+      // (storefront/tools/browser-shot.mjs, optional ?match=<url-substring>
+      // or body.match), then runs it through the VL model.
+      // Body/Query: { match?: string, prompt?: string, fresh?: boolean }
+      // Response adds shotUrl + shotAt so callers know what was seen.
+      server.middlewares.use('/api/cortex/vision/shot', (req: any, res: any, next: any) => {
+        if (req.method === 'OPTIONS') {
+          res.writeHead(204, { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Methods': 'POST, OPTIONS', 'Access-Control-Allow-Headers': 'Content-Type' });
+          return res.end();
+        }
+        if (req.method !== 'POST') return next();
+        agentCors(req, res);
+        const send = (code: number, obj: any) => {
+          res.statusCode = code;
+          res.setHeader('Content-Type', 'application/json');
+          res.end(JSON.stringify(obj));
+        };
+        let body = '';
+        req.on('data', (c: Buffer) => { body += c.toString(); });
+        req.on('end', async () => {
+          try {
+            const parsed = JSON.parse(body || '{}');
+            const shotPath = path.join(process.cwd(), 'storefront', 'browser', 'latest.png');
+            const shotTool = path.join(process.cwd(), 'storefront', 'tools', 'browser-shot.mjs');
+            const match = String(parsed?.match || '');
+            const fresh = parsed?.fresh !== false; // default: always capture fresh
+            let shotUrl: string | null = null;
+            if (fresh || !fsSync.existsSync(shotPath)) {
               try {
-                const r = await fetch(prov.url, {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${keyPool[keyIdx]}` },
-                  body: JSON.stringify({
-                    model,
-                    messages: [{
-                      role: 'user',
-                      content: [
-                        { type: 'text', text: prompt },
-                        { type: 'image_url', image_url: { url: dataUrl } },
-                      ],
-                    }],
-                    max_tokens: 300,
-                    temperature: 0.2,
-                    stream: false,
-                  }),
-                  signal: AbortSignal.timeout(30000),
-                });
-                if (r.ok) {
-                  const j: any = await r.json();
-                  const text = j?.choices?.[0]?.message?.content
-                    ?? j?.choices?.[0]?.message?.reasoning_content
-                    ?? '';
-                  return send(200, { ok: true, model, keyIndex: keyIdx, latencyMs: Date.now() - started, text: String(text).slice(0, 4000) });
-                }
-                lastStatus = r.status;
-                try { await r.arrayBuffer(); } catch { /* drain */ }
-                if (![401, 402, 403, 404, 429].includes(r.status) || keyIdx >= keyPool.length - 1) break;
-              } catch (e) {
-                lastStatus = 'error';
-                if (keyIdx >= keyPool.length - 1) break;
+                const out = execSync(
+                  `node "${shotTool}" ${match ? `'${match.replace(/'/g, '')}'` : ''}`,
+                  { timeout: 30000, encoding: 'utf8' },
+                );
+                const m = /url:\s*(\S+)/.exec(out);
+                if (m) shotUrl = m[1];
+              } catch (e: any) {
+                return send(502, { ok: false, error: `screenshot failed: ${String(e?.message || e).slice(0, 160)}` });
               }
+            } else {
+              try {
+                const meta = fsSync.readFileSync(path.join(process.cwd(), 'storefront', 'browser', 'latest.txt'), 'utf8').trim().split(/\s+/);
+                shotUrl = meta[1] || null;
+              } catch { /* no meta */ }
             }
-            send(502, { ok: false, error: `vision probe http ${lastStatus}`, model });
+            if (!fsSync.existsSync(shotPath)) {
+              return send(404, { ok: false, error: 'no screenshot captured' });
+            }
+            const b64 = fsSync.readFileSync(shotPath).toString('base64');
+            const prompt = String(parsed?.prompt || 'Describe what is shown on this screen. Note any errors, dialogs, or anything that looks broken.');
+            const model = String(parsed?.model || 'nvidia/nemotron-3.5-super-vl-120b-a12b');
+            const result = await visionAnalyze({ imageB64: `data:image/png;base64,${b64}`, prompt, model });
+            send(result.status, { ...result, shotUrl, shotAt: fsSync.statSync(shotPath).mtimeMs });
           } catch (e: any) {
             send(400, { ok: false, error: String(e?.message || e).slice(0, 160) });
           }
