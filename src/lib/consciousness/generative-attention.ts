@@ -86,6 +86,12 @@ export interface GalVetoVerdict {
   valueAlignment?: number;
 }
 
+/** Veto hook: callable for real evaluations, optional `preview` for
+ *  side-effect-free counterfactual checks (the lookahead planner). */
+export type GalVetoHook = ((req: GalVetoRequest) => GalVetoVerdict) & {
+  preview?: (req: GalVetoRequest) => GalVetoVerdict;
+};
+
 /** Read-back signal from the autobiographical self-model. The GAL consumes
  *  this to close the loop: attention outcomes consolidate into the self
  *  model, and the self model's recent valence/agency bias the next
@@ -109,6 +115,9 @@ export interface GalSelection {
   /** same-cycle φ-recovery outcome: attempted = low-φ pending + trained model;
    *  applied = a different candidate won on predicted φ. */
   phiRecovery?: { attempted: boolean; applied: boolean };
+  /** Counterfactual lookahead: true when the rollout planner's argmax
+   *  differed from the myopic argmax. Only present when enabled + trained. */
+  lookahead?: { changed: boolean };
 }
 
 /** What the broadcast actually did — the learning signal. */
@@ -144,6 +153,8 @@ export interface GalEpisode {
   selfValence?: number;
   /** chosen candidate's distance from the veto boundary */
   chosenVetoMargin?: number;
+  /** true when the lookahead planner overrode the myopic argmax */
+  lookaheadChanged?: boolean;
 }
 
 /** Host adapter — the GAL never touches the workspace directly, which
@@ -231,7 +242,11 @@ export interface GalConfig {
   /** Optional dedicated veto authority (e.g. AttentionVetoAgent). When
    *  present it replaces both the host veto hook and the internal
    *  VolitionEngine for attention configs — one owner, one policy. */
-  attentionVeto?: (req: GalVetoRequest) => GalVetoVerdict;
+  attentionVeto?: GalVetoHook;
+  /** Counterfactual lookahead discount γ ∈ (0,1): V(c) = predictedScore(c)
+   *  + γ · bestNextCycleScore(ctx′(c)). Requires a trained experience
+   *  model — without one there is no honest transition signal. 0 = off. */
+  lookaheadGamma?: number;
   /** Optional read-back from the autobiographical self-model. Supplies
    *  the feedback half of the loop: episodes consolidate into the self
    *  model, and its recent valence/agency bias future deliberation. */
@@ -247,7 +262,7 @@ export class GenerativeAttentionLoop {
     memoryPath: string | null;
     experienceModelPath: string | null;
     onEpisode?: (episode: GalEpisode) => void;
-    attentionVeto?: (req: GalVetoRequest) => GalVetoVerdict;
+    attentionVeto?: GalVetoHook;
     selfSignal?: () => GalSelfSignal | null;
   };
   private episodes: GalEpisode[] = [];
@@ -274,6 +289,7 @@ export class GenerativeAttentionLoop {
       onEpisode: config.onEpisode,
       attentionVeto: config.attentionVeto,
       selfSignal: config.selfSignal,
+      lookaheadGamma: config.lookaheadGamma ?? 0,
     };
     if (this.cfg.experienceModelPath !== null) {
       this.experience = new ExperienceModel(this.cfg.experienceModelPath);
@@ -481,6 +497,61 @@ export class GenerativeAttentionLoop {
       c.predictedScore > best.predictedScore ? c : best,
     );
 
+    // Counterfactual lookahead (depth-1): for each eligible candidate,
+    // propagate its predicted outcome into next cycle's context triple
+    // [ctxScore, vetoRate, lastPhi], re-score the imagined field with the
+    // experience model, preview-veto it, and add the best achievable
+    // next-cycle score discounted by γ. Documented approximations:
+    //   - next cycle's candidate *set* is assumed equal to this cycle's
+    //     (kinds recur; focusTopic may differ next cycle)
+    //   - running means move by one episode: (49·mean + new)/50
+    //   - next-cycle veto uses the agent's current threshold via preview()
+    // Requires a trained experience model — without one there is no
+    // honest transition signal, so the myopic argmax stands.
+    const gamma = this.cfg.lookaheadGamma;
+    let lookaheadChanged = false;
+    const lookaheadActive = gamma > 0 && pool.length > 1 && this.experience?.isTrained === true;
+    if (lookaheadActive) {
+      const thisCycleVetoRate = candidates.filter((c) => c.vetoed).length / candidates.length;
+      const baseVetoRate = this.recentVetoRate();
+      const exp = this.experience!;
+      const rolloutValue = (c: GalCandidate): number => {
+        const o = mlpOutputs.get(c);
+        if (!o) return c.predictedScore;
+        const phiNext = Math.max(0, Math.min(1, o[3]));
+        const ctxNext = (49 * ctxScore + Math.max(0, Math.min(1, o[0]))) / 50;
+        const vetoNext = (49 * baseVetoRate + thisCycleVetoRate) / 50;
+        let bestNext = 0;
+        for (const k of pool) {
+          const inp = [
+            ...configFeatures(k.multipliers, focus),
+            ctxNext, vetoNext, phiNext,
+          ].slice(0, EXPERIENCE_INPUT_DIM);
+          let s = exp.predict(inp).outputs[0];
+          if (selfValence !== undefined && k.kind === 'explore') {
+            s = Math.max(0, Math.min(1, s + selfValence * 0.05));
+          }
+          if (k.kind !== 'status_quo' && this.cfg.attentionVeto?.preview) {
+            const verdict = this.cfg.attentionVeto.preview({
+              candidateId: `lookahead-${k.id}`,
+              kind: k.kind,
+              description: k.description,
+              predictedScore: s,
+              intention: intentionFor(k),
+            });
+            if (verdict.shouldVeto) continue;
+          }
+          if (s > bestNext) bestNext = s;
+        }
+        return c.predictedScore + gamma * bestNext;
+      };
+      const byRollout = pool.reduce((best, c) =>
+        rolloutValue(c) > rolloutValue(best) ? c : best,
+      );
+      lookaheadChanged = byRollout !== chosen;
+      if (lookaheadChanged) chosen = byRollout;
+    }
+
     // Same-cycle Φ-recovery: last broadcast integrated poorly and the
     // experience model is trained → re-rank eligible candidates by
     // *predicted* φ (outputs[3]) and switch only on a clear margin.
@@ -511,6 +582,7 @@ export class GenerativeAttentionLoop {
       allAlternativesVetoed: vetoedAny && eligible.length <= 1,
       cycleId: this.cycleSeq,
       phiRecovery: recovery,
+      lookahead: lookaheadActive ? { changed: lookaheadChanged } : undefined,
     };
 
     this.pending = {
@@ -577,6 +649,9 @@ export class GenerativeAttentionLoop {
       selfValence,
       chosenVetoMargin: selection.chosen.vetoMargin !== undefined
         ? Number(selection.chosen.vetoMargin.toFixed(3)) : undefined,
+      // false is recorded too — distinguishes "lookahead ran, kept the
+      // myopic pick" from "lookahead inactive" (undefined).
+      lookaheadChanged: selection.lookahead?.changed,
     };
 
     this.episodes.push(episode);
@@ -710,7 +785,15 @@ export class GenerativeAttentionLoop {
       if (!fs.existsSync(this.cfg.memoryPath)) return;
       const lines = fs.readFileSync(this.cfg.memoryPath, 'utf8').trim().split('\n').filter(Boolean);
       for (const line of lines.slice(-this.cfg.memoryCap)) {
-        try { this.episodes.push(JSON.parse(line)); } catch { }
+        try {
+          const ep = JSON.parse(line) as GalEpisode;
+          this.episodes.push(ep);
+          // Resume the sequence past persisted episodes — otherwise every
+          // restart restamps cycleIds from 1 and the ledger gets duplicates.
+          if (typeof ep.cycleId === 'number' && ep.cycleId > this.cycleSeq) {
+            this.cycleSeq = ep.cycleId;
+          }
+        } catch { }
       }
     } catch { }
   }

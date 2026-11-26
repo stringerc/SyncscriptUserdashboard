@@ -16035,6 +16035,7 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
             metaVetoed: e.chosenMetaVetoed === true,
             selfValence: e.selfValence ?? null,
             vetoMargin: e.chosenVetoMargin ?? null,
+            lookaheadChanged: e.lookaheadChanged ?? null,
             embedding: e.embedding ?? null,
           }));
           const vetoAgent = peekAttentionVetoAgent()?.getStats() ?? null;

@@ -140,6 +140,20 @@ describe('AttentionVetoAgent', () => {
     expect(none.getStats().band).toEqual({ min: 0.05, max: 0.15 });
   });
 
+  it('preview returns the same verdict without mutating stats', () => {
+    const agent = new AttentionVetoAgent(null);
+    const req = makeReq(0.5, 'explore');
+    const before = agent.getStats();
+    const pv = agent.preview(req);
+    const real = agent.evaluate(req);
+    expect(pv.shouldVeto).toBe(real.shouldVeto);
+    expect(pv.vetoScore).toBe(real.vetoScore);
+    const after = agent.getStats();
+    // preview added nothing; evaluate added exactly one evaluation
+    expect(after.evaluations).toBe(before.evaluations + 1);
+    expect(after.vetoes).toBe(before.vetoes + (real.shouldVeto && !real.metaVetoed ? 1 : 0));
+  });
+
   it('affective valence shifts impulse: explore fits flourishing, reset fits caution', () => {
     const low = new AttentionVetoAgent(null, { affectSignal: () => ({ valence: -0.9 }) });
     const high = new AttentionVetoAgent(null, { affectSignal: () => ({ valence: 0.9 }) });

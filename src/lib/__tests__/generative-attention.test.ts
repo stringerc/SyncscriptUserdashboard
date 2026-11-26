@@ -196,6 +196,36 @@ describe('GenerativeAttentionLoop', () => {
     expect(depth.temporalPhi).toBeCloseTo(tp, 2);
   });
 
+  it('lookahead stays off without gamma or without a trained model', () => {
+    const gal = new GenerativeAttentionLoop(makeHost(), {
+      memoryPath: null, experienceModelPath: null, lookaheadGamma: 0.3,
+    });
+    for (let i = 0; i < 25; i++) {
+      gal.deliberate();
+      gal.recordOutcome({ score: 0.8, ignited: true, spread: 0.7, phi: 0.7 });
+    }
+    // experienceModelPath null → no MLP → lookahead cannot engage
+    const sel = gal.deliberate();
+    expect(sel.lookahead).toBeUndefined();
+  });
+
+  it('lookahead engages when trained and reports whether it changed the argmax', () => {
+    const expPath = path.join(tmpDir, 'exp-lookahead.json');
+    const gal = new GenerativeAttentionLoop(makeHost(), {
+      memoryPath: null, experienceModelPath: expPath, lookaheadGamma: 0.3,
+    });
+    for (let i = 0; i < 25; i++) {
+      gal.deliberate();
+      gal.recordOutcome({ score: 0.8, ignited: true, spread: 0.7, phi: 0.7 });
+    }
+    const sel = gal.deliberate();
+    expect(sel.lookahead).toBeDefined();
+    expect(typeof sel.lookahead!.changed).toBe('boolean');
+    const ep = gal.recordOutcome({ score: 0.8, ignited: true, spread: 0.7, phi: 0.7 });
+    // false = lookahead ran and kept the myopic pick; undefined = inactive
+    expect(ep?.lookaheadChanged === undefined || typeof ep.lookaheadChanged === 'boolean').toBe(true);
+  });
+
   it('records graded veto margin on candidates and episodes', () => {
     const gal = new GenerativeAttentionLoop(makeHost(), {
       memoryPath: null, experienceModelPath: null,

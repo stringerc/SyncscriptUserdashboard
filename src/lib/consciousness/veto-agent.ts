@@ -148,6 +148,20 @@ export class AttentionVetoAgent implements WorkspaceSpecialist, GalVetoEvaluator
    * targets a clearly valuable config, the veto itself is vetoed once.
    */
   evaluate(req: GalVetoRequest): GalVetoVerdict {
+    const verdict = this.score(req, true);
+    this.recordEvaluation(verdict.shouldVeto || verdict.metaVetoed === true, verdict.metaVetoed === true);
+    return verdict;
+  }
+
+  /** Side-effect-free verdict for counterfactual simulation: identical
+   *  scoring, but no counters, no persistence, no band adjustment.
+   *  Used by the GAL's lookahead planner to ask "would this imagined
+   *  future config survive the veto?" without polluting the ledger. */
+  preview(req: GalVetoRequest): GalVetoVerdict {
+    return this.score(req, false);
+  }
+
+  private score(req: GalVetoRequest, countMeta: boolean): GalVetoVerdict {
     const { candidateId, kind, predictedScore, intention } = req;
 
     const ctx = {
@@ -182,14 +196,12 @@ export class AttentionVetoAgent implements WorkspaceSpecialist, GalVetoEvaluator
         // Override once — this override is final (depth-1 recursion).
         shouldVeto = false;
         metaVetoed = true;
-        this.metaVetoes++;
+        if (countMeta) this.metaVetoes++;
         reason = `META-VETO: marginal impulse ${impulse.toFixed(2)} on high-value config (${predictedScore.toFixed(2)})`;
       } else {
         reason = `VETOED ${candidateId} ("${kind}"): impulse ${impulse.toFixed(2)} > threshold ${this.threshold.toFixed(2)} (predicted ${predictedScore.toFixed(2)})`;
       }
     }
-
-    this.recordEvaluation(shouldVeto || metaVetoed, metaVetoed);
 
     return {
       shouldVeto,

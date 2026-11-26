@@ -81,7 +81,7 @@ import { getCausalModel } from './causal-model';
 import { getHGM } from './hierarchical-generative-model';
 import { getIntegratedInformation } from './integrated-information';
 import { getAttentionSchema } from './attention-schema';
-import { getGenerativeAttentionLoop, peekGenerativeAttentionLoop, type GalHost, type GalSelfSignal } from './consciousness/generative-attention';
+import { getGenerativeAttentionLoop, peekGenerativeAttentionLoop, type GalHost, type GalSelfSignal, type GalVetoRequest } from './consciousness/generative-attention';
 import { getAttentionVetoAgent } from './consciousness/veto-agent';
 import { getAffectiveSystem } from './consciousness/affective-valence';
 import { getPersistentSelfModel } from './consciousness/persistent-self-model';
@@ -495,8 +495,12 @@ export class CortexEngine {
     const gal = getGenerativeAttentionLoop(getGalHost(), {
       focusTopic: () => getAttentionSchema().getState().currentFocus ?? undefined,
       onEpisode: galOnEpisode,
-      attentionVeto: (req) => getAttentionVetoAgent().evaluate(req),
+      attentionVeto: Object.assign(
+        (req: GalVetoRequest) => getAttentionVetoAgent().evaluate(req),
+        { preview: (req: GalVetoRequest) => getAttentionVetoAgent().preview(req) },
+      ),
       selfSignal: galSelfSignal,
+      lookaheadGamma: 0.3,
     });
     const galSelection = gal.deliberate();
     workspace.setTopicMultipliers(galSelection.chosen.multipliers);
