@@ -16092,6 +16092,28 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
         }));
       });
 
+      // POST /api/cortex/models/refresh — manual catalog re-poll. NIM rotates
+      // models in and out; this forces an immediate /v1/models fetch per
+      // provider source, emits model.discovered for newcomers, and kicks a
+      // probe cycle so fresh entries get vetted now, not on the interval.
+      server.middlewares.use('/api/cortex/models/refresh', (req: any, res: any, next: any) => {
+        if (req.method === 'OPTIONS') {
+          res.writeHead(204, { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Methods': 'POST, OPTIONS', 'Access-Control-Allow-Headers': 'Content-Type' });
+          return res.end();
+        }
+        if (req.method !== 'POST') return next();
+        agentCors(req, res);
+        agentRuntime.refreshCatalogs()
+          .then((r) => {
+            res.setHeader('Content-Type', 'application/json');
+            res.end(JSON.stringify({ ok: true, ...r }));
+          })
+          .catch((err: any) => {
+            res.statusCode = 500;
+            res.end(JSON.stringify({ ok: false, error: err?.message || String(err) }));
+          });
+      });
+
       // GET /api/cortex/breath — Generative Attention Loop vitals:
       // volitional depth composite, recent deliberation episodes, and
       // engineering alerts (depth dying / φ collapse / stale breath).

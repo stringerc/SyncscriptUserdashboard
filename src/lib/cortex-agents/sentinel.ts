@@ -81,6 +81,7 @@ export class ModelSentinel {
   private probing = false;
   private knownCatalogIds = new Set<string>();
   private lastLoggedStatus = new Map<string, string>();
+  lastCatalogScan: { at: number; perProvider: Record<string, { ids: number; discovered: number }> } | null = null;
 
   constructor(
     private matrix: ModelMatrix,
@@ -108,9 +109,12 @@ export class ModelSentinel {
   /** One catalog poll — exported for tests and manual scans. */
   async catalogScan(): Promise<number> {
     let discovered = 0;
+    const perProvider: Record<string, { ids: number; discovered: number }> = {};
     for (const src of this.catalogSources) {
+      const slot = (perProvider[src.provider] = { ids: 0, discovered: 0 });
       try {
         const ids = await src.fetchIds();
+        slot.ids = ids.length;
         for (const id of ids) {
           const isNew = !this.knownCatalogIds.has(`${src.provider}:${id}`);
           this.knownCatalogIds.add(`${src.provider}:${id}`);
@@ -119,6 +123,7 @@ export class ModelSentinel {
             if (h) {
               this.emit({ type: 'model.discovered', model: h, at: Date.now() });
               discovered++;
+              slot.discovered++;
             }
           }
         }
@@ -127,6 +132,7 @@ export class ModelSentinel {
         // the actual routing signal. Sentinel must not die with its sources.
       }
     }
+    this.lastCatalogScan = { at: Date.now(), perProvider };
     return discovered;
   }
 

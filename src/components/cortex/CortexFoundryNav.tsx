@@ -232,6 +232,21 @@ export function CortexFoundryNav({ snap, onSelectAgent, selectedAgent, onOpenTow
   const [evoRuns, setEvoRuns] = useState<any[] | null>(null);
   const [evoInstincts, setEvoInstincts] = useState<{ instincts?: any[]; promotable?: number } | null>(null);
   const [modelHealth, setModelHealth] = useState<any | null>(null);
+  const [modelRefresh, setModelRefresh] = useState<{ busy: boolean; note: string | null }>({ busy: false, note: null });
+  const refreshModelCatalog = () => {
+    if (modelRefresh.busy) return;
+    setModelRefresh({ busy: true, note: null });
+    fetch('/api/cortex/models/refresh', { method: 'POST' })
+      .then((r) => r.json())
+      .then((d) => {
+        const provs = d?.catalog?.perProvider
+          ? Object.entries(d.catalog.perProvider).map(([p, v]: any) => `${p}: ${v.ids}`).join(' · ')
+          : '';
+        setModelRefresh({ busy: false, note: d?.ok ? `scanned ${provs}${d.discovered ? ` · +${d.discovered} new` : ''}` : 'refresh failed' });
+        return fetch('/api/cortex/models/health', { cache: 'no-store' }).then((r) => r.json()).then(setModelHealth);
+      })
+      .catch(() => setModelRefresh({ busy: false, note: 'refresh failed' }));
+  };
   const [newTaskVenture, setNewTaskVenture] = useState<string>('');
   const [, setGoalsTick] = useState(0);
   const goals = getCortexGoals();
@@ -1718,11 +1733,27 @@ export function CortexFoundryNav({ snap, onSelectAgent, selectedAgent, onOpenTow
             title="MODEL CONTROL // FLEET PINS & NIM KEY POOLS"
             onClose={() => setView(null)}
             right={
-              <span style={{ fontSize: 9.5, color: DIM }}>
+              <span style={{ fontSize: 9.5, color: DIM, display: 'flex', gap: 6, alignItems: 'center' }}>
                 {modelHealth ? `${agents.length} AGENTS · ${nim ? `${nim.keyCount} NIM KEYS` : 'NIM —'} · ${nim?.models?.length ?? 0} NIM MODELS` : 'LOADING…'}
+                <button
+                  onClick={refreshModelCatalog}
+                  disabled={modelRefresh.busy}
+                  style={{
+                    fontSize: 8.5, fontWeight: 800, letterSpacing: '0.12em', cursor: 'pointer',
+                    padding: '2px 8px', borderRadius: 3,
+                    border: '1px solid rgba(103,232,249,0.4)',
+                    background: modelRefresh.busy ? 'rgba(103,232,249,0.08)' : 'rgba(103,232,249,0.14)',
+                    color: '#67e8f9', opacity: modelRefresh.busy ? 0.6 : 1,
+                  }}
+                >
+                  {modelRefresh.busy ? 'SCANNING…' : '↻ RESCAN'}
+                </button>
               </span>
             }
           >
+            {modelRefresh.note && (
+              <div style={{ fontSize: 8.5, color: '#67e8f9', marginBottom: 6 }}>{modelRefresh.note}</div>
+            )}
             {/* ── Agent → model pin table ── */}
             <div style={{ fontSize: 9, fontWeight: 800, letterSpacing: '0.2em', color: '#67e8f9', marginBottom: 5 }}>AGENT MODEL PINS</div>
             <div style={{ maxHeight: 180, overflowY: 'auto', marginBottom: 10 }}>

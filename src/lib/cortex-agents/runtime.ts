@@ -457,6 +457,16 @@ export class AgentRuntime {
     this.sentinel.start();
   }
 
+  /** Manual catalog refresh — re-polls every provider's live model list
+   *  (NIM rotates models in/out), then runs one probe cycle so newcomers
+   *  get vetted immediately instead of waiting for the interval. */
+  async refreshCatalogs(): Promise<{ discovered: number; catalog: unknown; probed: boolean }> {
+    if (!this.sentinel) return { discovered: 0, catalog: null, probed: false };
+    const discovered = await this.sentinel.catalogScan();
+    void this.sentinel.probeCycle();
+    return { discovered, catalog: this.sentinel.lastCatalogScan, probed: true };
+  }
+
   start() {
     this.stopped = false;
     if (this.sweeper) return;

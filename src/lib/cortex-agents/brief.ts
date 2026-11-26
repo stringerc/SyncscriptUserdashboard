@@ -159,6 +159,35 @@ async function gatherBriefData(now: number): Promise<{ data: BriefData; raw: Rec
     watchItems.push({ text: `Model lane degraded: ${m.provider || m.id || 'unknown'} (${m.model || ''})`, severity: 'warn' });
   }
 
+  // ── Model catalog refresh: fresh ping of every provider's live model
+  // list each morning (NIM rotates models in/out), then report what the
+  // fleet actually looks like right now — not yesterday's registry file.
+  try {
+    const ref = await fetch(`${BASE}/api/cortex/models/refresh`, { method: 'POST', signal: AbortSignal.timeout(15000) }).then((r) => r.json()).catch(() => null);
+    const health = await fetch(`${BASE}/api/cortex/models/health`, { signal: AbortSignal.timeout(10000) }).then((r) => r.json()).catch(() => null);
+    if (health?.ok) {
+      const probed = health.summary?.probed?.byStatus || {};
+      const nim = health.nim;
+      const catParts: string[] = [];
+      const perProv = ref?.catalog?.perProvider || {};
+      for (const [p, v] of Object.entries<any>(perProv)) catParts.push(`${p} ${v.ids}`);
+      const newCount = ref?.discovered ?? 0;
+      const nimKeys = nim ? nim.keys.filter((k: any) => k.state !== 'ok' && k.state !== 'unused').length : 0;
+      watchItems.unshift({
+        text: `Model fleet: ${probed.healthy ?? 0} healthy / ${probed.degraded ?? 0} degraded / ${probed.down ?? 0} down of ${health.summary?.probed?.total ?? '?'} routable` +
+          (nim ? ` · NIM ${nim.keyCount} keys (${(nim.models || []).filter((m: any) => m.status === 'down').length} models down)` : '') +
+          (catParts.length ? ` · catalogs: ${catParts.join(', ')}` : '') +
+          (newCount ? ` · +${newCount} NEW models discovered` : ' · no new models'),
+        severity: (probed.down ?? 0) > 0 || nimKeys > 0 || newCount > 0 ? 'warn' : 'info',
+      });
+      coverage.push({ source: 'model-catalog', ok: true, note: `${catParts.join(', ') || 'catalogs'}${newCount ? ` · +${newCount} new` : ''}` });
+    } else {
+      coverage.push({ source: 'model-catalog', ok: false, note: 'health endpoint unreachable' });
+    }
+  } catch (e: any) {
+    coverage.push({ source: 'model-catalog', ok: false, note: String(e?.message || 'failed').slice(0, 60) });
+  }
+
   // ── Gmail: waiting-on-you ──
   let gmailNote: string | undefined;
   try {
