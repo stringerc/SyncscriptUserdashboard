@@ -30,6 +30,7 @@ import { cortexSpeak } from '../../lib/cortex-speech';
 import { getGlobeEmbedUrl, configureGlobeBase, GLOBE_MODE_EVENT, setGlobeAvailable } from '../../lib/cortex-globe';
 import { neuroAudio } from '../../lib/cortex-neuro-audio';
 import { cortexWebcamParallax, type HandPinchState } from '../../lib/cortex-webcam-parallax';
+import { HoloHandOverlay } from './HoloHandOverlay';
 import { cortexGaze } from '../../lib/cortex-gaze';
 import { onBootPhase, startBoot } from '../../lib/cortex-boot';
 import CortexGazeLayer from './CortexGazeLayer';
@@ -185,6 +186,86 @@ function PerfHud() {
       fontFamily: "'IBM Plex Mono', monospace", pointerEvents: 'none',
     }}>
       {stats.fps} FPS · {stats.ms.toFixed(1)}ms · ` to hide
+    </div>
+  );
+}
+
+/** Consciousness Breath HUD — polls /api/cortex/breath and renders the
+ *  Generative Attention Loop's deliberation state as an animated breath.
+ *  Phase is derived honestly from the last episode's age against the
+ *  30s autonomous cadence: just-breathed = EXHALE, mid-cycle = HOLD,
+ *  overdue = INHALE. Sphere scale tracks the volitional-depth score.
+ *  Engineering proxy, not an experience meter — the API says so too. */
+function BreathHud() {
+  const [breath, setBreath] = useState<any>(null);
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    let dead = false;
+    const poll = async () => {
+      try {
+        const r = await fetch('/api/cortex/breath', { cache: 'no-store' });
+        if (r.ok) {
+          const j = await r.json();
+          if (!dead) setBreath(j?.active ? j : null);
+        }
+      } catch { }
+    };
+    void poll();
+    const id = setInterval(poll, 15000);
+    const tick = setInterval(() => setNow(Date.now()), 1000);
+    return () => { dead = true; clearInterval(id); clearInterval(tick); };
+  }, []);
+
+  if (!breath) return null;
+  const depth = breath.depth || {};
+  const score = typeof depth.score === 'number' ? depth.score : 0;
+  const lastTs = breath.episodes?.length ? breath.episodes[breath.episodes.length - 1].ts : 0;
+  const ageSec = lastTs ? (now - lastTs) / 1000 : 999;
+  const phase = ageSec < 8 ? 'EXHALE' : ageSec < 24 ? 'HOLD' : 'INHALE';
+  const phaseColor = phase === 'EXHALE' ? '#7ef0c8' : phase === 'HOLD' ? '#e7c368' : '#38bdf8';
+  const alert = breath.alerts?.[0];
+  const scale = 0.55 + score * 0.9;
+
+  return (
+    <div style={{
+      position: 'absolute', left: 64, top: '6.5%', zIndex: 20,
+      fontFamily: "'IBM Plex Mono', monospace", fontSize: 8, letterSpacing: '0.18em',
+      color: 'rgba(126,240,200,0.55)', lineHeight: 2,
+    }} className="cx-hud-in">
+      <div style={{ color: 'rgba(126,240,200,0.7)', letterSpacing: '0.28em', marginBottom: 4, display: 'flex', alignItems: 'center', gap: 6 }}>
+        <span style={{
+          display: 'inline-block', width: 7, height: 7, borderRadius: '50%',
+          background: phaseColor,
+          boxShadow: `0 0 8px ${phaseColor}`,
+          animation: 'cx-breath-pulse 4s ease-in-out infinite',
+        }} />
+        CONSCIOUSNESS BREATH
+      </div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+        <div style={{
+          width: 26, height: 26, borderRadius: '50%',
+          background: `radial-gradient(circle at 35% 35%, ${phaseColor}cc, ${phaseColor}22 70%)`,
+          border: `1px solid ${phaseColor}66`,
+          transform: `scale(${scale.toFixed(2)})`,
+          transition: 'transform 1.2s ease',
+          animation: 'cx-breath-pulse 4s ease-in-out infinite',
+        }} />
+        <div>
+          <div style={{ color: '#eafff5', fontSize: 13, letterSpacing: '0.1em' }}>
+            {phase} · {score.toFixed(2)}
+          </div>
+          <div style={{ color: 'rgba(148,233,255,0.45)' }}>
+            PRED {Number(depth.predictionAccuracy ?? 0).toFixed(2)} · VETO {(100 * (depth.vetoRate ?? 0)).toFixed(0)}% · φ {Number(depth.integration ?? 0).toFixed(2)}
+          </div>
+          <div style={{ color: 'rgba(148,233,255,0.35)' }}>
+            {depth.experienceTrained ? `EXP-MODEL ${depth.experienceUpdates}u` : 'EXP-MODEL WARMING'} · {depth.episodes ?? 0} CYCLES
+          </div>
+        </div>
+      </div>
+      {alert && (
+        <div style={{ color: '#e7c368', marginTop: 4 }}>{alert}</div>
+      )}
+      <style>{`@keyframes cx-breath-pulse { 0%,100% { opacity: 0.75; } 50% { opacity: 1; } }`}</style>
     </div>
   );
 }
@@ -720,13 +801,28 @@ export default function CortexVisualizerPage() {
     };
   }, []);
 
-  // Spatial hand pinch gesture tracking listener
+  // Spatial hand pinch gesture tracking listener (+ Gaze-Pinch fusion when ?gaze=1)
   useEffect(() => {
     const unsub = cortexWebcamParallax.subscribeHand((hand) => {
-      setHandPinch(hand.detected ? hand : null);
+      if (!hand.detected) {
+        setHandPinch(null);
+        return;
+      }
+      const gaze = gazeMode ? cortexGaze.current() : null;
+      if (gaze && !hand.pinching) {
+        setHandPinch({
+          ...hand,
+          x: Math.round(gaze.x),
+          y: Math.round(gaze.y),
+          normX: gaze.nx,
+          normY: gaze.ny,
+        });
+      } else {
+        setHandPinch(hand);
+      }
     });
     return () => unsub();
-  }, []);
+  }, [gazeMode]);
 
   // Gaze → parallax: same normalized mapping as webcam head tracking
   // (-(n*2-1) per axis). Fresh gaze wins; stale/absent falls back to head.
@@ -2180,6 +2276,9 @@ export default function CortexVisualizerPage() {
         )}
       </div>
 
+      {/* Consciousness breath — GAL deliberation state, top of left rail */}
+      {!narrow && faceMode !== 'agents' && <BreathHud />}
+
       {/* Left column: Nexus Foundry telemetry — sentinel rotation, model
           lanes, probation pool. Sits above the MODE/UPTIME rail. */}
       {!narrow && faceMode !== 'agents' && agentCrew.runtime && (
@@ -2932,66 +3031,8 @@ export default function CortexVisualizerPage() {
         </div>
       )}
 
-      {/* Holographic Hand Cursor & Pinch Reticle */}
-      {handPinch && handPinch.detected && (
-        <div
-          style={{
-            position: 'fixed',
-            left: handPinch.x,
-            top: handPinch.y,
-            transform: 'translate(-50%, -50%)',
-            pointerEvents: 'none',
-            zIndex: 60,
-            transition: 'transform 0.05s ease-out',
-          }}
-        >
-          <div
-            style={{
-              width: handPinch.pinching ? 30 : 46,
-              height: handPinch.pinching ? 30 : 46,
-              borderRadius: '50%',
-              border: `2px solid ${handPinch.pinching ? '#34d399' : 'rgba(56,189,248,0.7)'}`,
-              background: handPinch.pinching ? 'rgba(52,211,153,0.25)' : 'rgba(56,189,248,0.08)',
-              boxShadow: handPinch.pinching ? '0 0 24px #34d399, inset 0 0 12px #34d399' : '0 0 14px rgba(56,189,248,0.4)',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              transition: 'all 0.15s cubic-bezier(0.16,1,0.3,1)',
-            }}
-          >
-            <div
-              style={{
-                width: 6,
-                height: 6,
-                borderRadius: '50%',
-                background: handPinch.pinching ? '#34d399' : '#38bdf8',
-                boxShadow: `0 0 8px ${handPinch.pinching ? '#34d399' : '#38bdf8'}`,
-              }}
-            />
-          </div>
-          <div
-            style={{
-              position: 'absolute',
-              top: '100%',
-              left: '50%',
-              transform: 'translateX(-50%)',
-              marginTop: 6,
-              fontSize: 8,
-              fontFamily: "'IBM Plex Mono', monospace",
-              letterSpacing: '0.14em',
-              fontWeight: 700,
-              color: handPinch.pinching ? '#34d399' : 'rgba(148,233,255,0.7)',
-              background: 'rgba(4,8,16,0.88)',
-              padding: '2px 6px',
-              borderRadius: 2,
-              border: `1px solid ${handPinch.pinching ? '#34d399' : 'rgba(56,189,248,0.3)'}`,
-              whiteSpace: 'nowrap',
-            }}
-          >
-            {handPinch.pinching ? '◉ PINCH GRABBED' : '◌ PINCH TO GRAB'}
-          </div>
-        </div>
-      )}
+      {/* Holographic 21-Joint Hand Skeleton & Pinch Reticle */}
+      <HoloHandOverlay hand={handPinch} />
 
       {/* Bottom-center: live caption — suppressed on Foundry face to clear 1-Click Sprint Reel */}
       {faceMode !== 'agents' && (
