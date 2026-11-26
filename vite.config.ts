@@ -16030,8 +16030,45 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
         }
       });
 
+      // NIM full-catalog cache — build.nvidia.com hosts ~95 NIMs but only
+      // ~30 answer the OpenAI-compatible chat API. Fetch both, match by
+      // normalized slug, refresh at most every 10 minutes.
+      const normModel = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, '');
+      let nimCatalogCache: { at: number; entries: { name: string; slug: string; desc: string; chat: boolean }[] } | null = null;
+      const fetchNimCatalog = async (apiKey?: string) => {
+        if (nimCatalogCache && Date.now() - nimCatalogCache.at < 10 * 60_000) return nimCatalogCache;
+        try {
+          const [modelsRes, pageRes] = await Promise.all([
+            apiKey
+              ? fetch('https://integrate.api.nvidia.com/v1/models', { headers: { Authorization: `Bearer ${apiKey}` }, signal: AbortSignal.timeout(10000) }).catch(() => null)
+              : Promise.resolve(null),
+            fetch('https://build.nvidia.com/models.md', { signal: AbortSignal.timeout(15000) }).catch(() => null),
+          ]);
+          const chatIds = new Set<string>();
+          if (modelsRes?.ok) {
+            const j: any = await modelsRes.json().catch(() => null);
+            for (const m of j?.data || []) chatIds.add(normModel(String(m.id || '').split('/').pop() || ''));
+          }
+          const entries: { name: string; slug: string; desc: string; chat: boolean }[] = [];
+          const seen = new Set<string>();
+          if (pageRes?.ok) {
+            const md = await pageRes.text();
+            for (const line of md.split('\n')) {
+              const m = line.match(/^- \[([^\]]+)\]\(([^)\s]+)\)\s*—\s*(.*)$/);
+              if (!m) continue;
+              const slug = (m[2].split('/').pop() || '').replace(/\.md$/, '');
+              if (!slug || seen.has(slug)) continue;
+              seen.add(slug);
+              entries.push({ name: m[1], slug, desc: m[3].slice(0, 140), chat: chatIds.has(normModel(slug)) });
+            }
+          }
+          nimCatalogCache = { at: Date.now(), entries };
+        } catch { /* keep stale cache */ }
+        return nimCatalogCache;
+      };
+
       // GET /api/cortex/models/health — model registry dump.
-      server.middlewares.use('/api/cortex/models/health', (req: any, res: any, next: any) => {
+      server.middlewares.use('/api/cortex/models/health', async (req: any, res: any, next: any) => {
         if (req.method === 'OPTIONS') {
           res.writeHead(204, { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Methods': 'GET, OPTIONS', 'Access-Control-Allow-Headers': 'Content-Type' });
           return res.end();
@@ -16107,8 +16144,11 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
               servedByKey: servedByKey.has(m.id) ? servedByKey.get(m.id) : null,
             }))
             .sort((a: any, b: any) => (a.provider === b.provider ? a.id.localeCompare(b.id) : a.provider.localeCompare(b.provider)));
+          const nimCat = await fetchNimCatalog(nimKeys[0]).catch(() => null);
           nim = {
             keyCount: nimKeys.length,
+            catalogAll: nimCat?.entries ?? null,
+            catalogChatCount: nimCat?.entries?.filter((e) => e.chat).length ?? null,
             keys: keyStats.map((ks, i) => ({
               index: i,
               label: `NIM-${i + 1}`,

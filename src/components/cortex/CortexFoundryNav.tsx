@@ -1875,11 +1875,17 @@ export function CortexFoundryNav({ snap, onSelectAgent, selectedAgent, onOpenTow
                       const kp = nimKeyFilter != null ? nim?.keyProbe?.keys?.[String(nimKeyFilter)]?.results?.[m.id] : null;
                       return (
                     <div key={m.provider + m.id} style={{ display: 'flex', alignItems: 'center', gap: 7, padding: '2px 0', borderBottom: '1px solid rgba(148,163,184,0.06)' }}>
-                      {kp != null && (
-                        <span style={{ fontSize: 8, fontWeight: 800, color: kp.ok ? '#34d399' : '#f87171' }} title={kp.ok ? `serves via this key · ${kp.latencyMs}ms` : `fails via this key${kp.httpStatus ? ` · HTTP ${kp.httpStatus}` : ''}${kp.error ? ` · ${kp.error}` : ''}`}>
-                          {kp.ok ? '✓' : '✗'}
-                        </span>
-                      )}
+                      {kp != null && (() => {
+                        // Classify the failure honestly: 404 on a chat probe
+                        // means the model lives on a different NIM endpoint
+                        // (embed/ASR/vision) — deferred, not dead.
+                        const cls = kp.ok ? { g: '✓', c: '#34d399', t: `serves via this key · ${kp.latencyMs}ms` }
+                          : kp.httpStatus === 404 ? { g: '⇄', c: '#67e8f9', t: 'not a chat-completions model — lives on a different NIM endpoint' }
+                          : kp.httpStatus === 429 ? { g: '⏳', c: '#fbbf24', t: 'rate limited on this key' }
+                          : /abort|timeout/i.test(kp.error || '') ? { g: '…', c: '#fbbf24', t: `probe timeout${kp.error ? ` · ${kp.error}` : ''}` }
+                          : { g: '✗', c: '#f87171', t: `fails via this key${kp.httpStatus ? ` · HTTP ${kp.httpStatus}` : ''}${kp.error ? ` · ${kp.error}` : ''}` };
+                        return <span style={{ fontSize: 8, fontWeight: 800, color: cls.c, width: 12 }} title={cls.t}>{cls.g}</span>;
+                      })()}
                       <span style={{ fontSize: 8, fontWeight: 800, color: statusColor(m.status), width: 52 }}>{(m.status || '?').toUpperCase()}</span>
                       <span style={{ fontSize: 8.5, color: '#cbd5e1', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={m.id}>{m.id}</span>
                       {m.servedByKey != null && (
@@ -1895,6 +1901,24 @@ export function CortexFoundryNav({ snap, onSelectAgent, selectedAgent, onOpenTow
                       );
                     })}
                 </div>
+
+                {/* ── NIM full catalog: every NIM on build.nvidia.com ── */}
+                {nim.catalogAll?.length > 0 && (
+                  <>
+                    <div style={{ fontSize: 9, fontWeight: 800, letterSpacing: '0.2em', color: '#67e8f9', margin: '10px 0 5px' }}>
+                      NIM FULL CATALOG — {nim.catalogAll.length} NIMS · {nim.catalogChatCount ?? '?'} API-EXPOSED
+                    </div>
+                    <div style={{ maxHeight: 200, overflowY: 'auto' }}>
+                      {nim.catalogAll.map((c: any) => (
+                        <div key={c.slug} style={{ display: 'flex', alignItems: 'center', gap: 7, padding: '2px 0', borderBottom: '1px solid rgba(148,163,184,0.05)' }}>
+                          <span style={{ fontSize: 8, fontWeight: 800, color: c.chat ? '#34d399' : DIM, width: 44 }} title={c.chat ? 'served on integrate.api.nvidia.com' : 'build.nvidia.com page only — downloadable/self-host or specialized endpoint'}>{c.chat ? 'API' : 'NIM'}</span>
+                          <span style={{ fontSize: 8.5, color: '#cbd5e1', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={c.desc}>{c.name}</span>
+                          <span style={{ fontSize: 7.5, color: DIM }}>{c.slug}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </>
+                )}
               </>
             )}
             {!nim && modelHealth && (
