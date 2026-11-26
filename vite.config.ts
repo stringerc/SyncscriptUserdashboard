@@ -202,6 +202,7 @@ import { getAutonomousVigilance } from './src/lib/cortex-autonomous-vigilance';
 import { deriveSomaticState, type SomaticSample } from './src/lib/cortex-somatic';
 import { getAgentRuntime } from './src/lib/cortex-agents/runtime';
 import { peekGenerativeAttentionLoop } from './src/lib/consciousness/generative-attention';
+import { getConsciousOrchestrator } from './src/lib/consciousness/conscious-orchestrator';
 import { inferWeight } from './src/lib/cortex-agents/registry';
 import { recordAgentOutcome } from './src/lib/cortex-agents/outcomes';
 import { archiveTask, readArchive } from './src/lib/cortex-agents/archive';
@@ -1609,6 +1610,19 @@ function apiProxyPlugin(): Plugin {
         startSelfRegulation(selfRegPort);
       } catch (e: any) {
         console.warn('[self-regulation] failed to arm:', e?.message || e);
+      }
+      // ── Consciousness autonomous loop: 30s deliberation cadence.
+      // Each cycle runs the full 9-stage pipeline ending in
+      // cortex.evaluate → GAL deliberate + recordOutcome, so the
+      // Generative Attention Loop breathes continuously, not just on
+      // chat turns. Voluntary actions remain motivation-gated and pass
+      // affective valence + action-gate + Hermes policy before exec.
+      // Sleep phases (03-05 deep, 05-07 dream) consolidate instead.
+      try {
+        getConsciousOrchestrator().startAutonomousLoop(30_000);
+        console.info('[consciousness] autonomous loop armed — 30s cadence, GAL deliberates per cycle');
+      } catch (e: any) {
+        console.warn('[consciousness] autonomous loop failed to arm:', e?.message || e);
       }
       // ── Ambient world-state sampler: keeps the blackboard perpetually
       // fresh so every turn reads a sub-ms snapshot instead of paying
