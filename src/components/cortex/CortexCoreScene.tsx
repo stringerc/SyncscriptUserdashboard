@@ -2941,10 +2941,125 @@ function CameraRig({
       }
     };
     window.addEventListener('keydown', onKey);
+
+    // Bimanual 3D hand orbit & spread-to-zoom from Holo-Cam
+    const onHand3D = (e: Event) => {
+      const detail = (e as CustomEvent<{
+        active?: boolean;
+        orbitDeltaX?: number;
+        orbitDeltaY?: number;
+        zoomDelta?: number;
+      }>).detail;
+      if (!detail?.active) return;
+      const orb = orbitState.current;
+      if (chaseActiveRef.current) {
+        if (detail.orbitDeltaX) chaseTheta.current -= detail.orbitDeltaX;
+        if (detail.orbitDeltaY) {
+          chasePhi.current = THREE.MathUtils.clamp(
+            chasePhi.current - detail.orbitDeltaY,
+            0.12,
+            Math.PI - 0.12
+          );
+        }
+        if (detail.zoomDelta) {
+          chaseZoom.current = THREE.MathUtils.clamp(
+            chaseZoom.current + detail.zoomDelta,
+            0.35,
+            10.0
+          );
+        }
+      } else {
+        if (detail.orbitDeltaX) orb.targetTheta -= detail.orbitDeltaX;
+        if (detail.orbitDeltaY) {
+          orb.targetPhi = THREE.MathUtils.clamp(
+            orb.targetPhi - detail.orbitDeltaY,
+            0.15,
+            Math.PI - 0.15
+          );
+        }
+        if (detail.zoomDelta) {
+          orb.targetRadius = THREE.MathUtils.clamp(
+            orb.targetRadius + detail.zoomDelta,
+            1.6,
+            14.0
+          );
+        }
+      }
+    };
+    window.addEventListener('cortex-hand-3d', onHand3D);
+
+    // 3D Pinch-to-Select Raycast + Deictic Hover Tracking
+    let prevPinching3D = false;
+    const onHandPinch3D = (e: Event) => {
+      const hand = (e as CustomEvent<{
+        detected: boolean;
+        normX: number;
+        normY: number;
+        pinching: boolean;
+        clutching?: boolean;
+      }>).detail;
+      if (!hand?.detected || hand.clutching) {
+        prevPinching3D = false;
+        return;
+      }
+
+      const ndcX = hand.normX * 2 - 1;
+      const ndcY = -(hand.normY * 2 - 1);
+      let bestId: string | null = null;
+      let bestKind: 'agent' | 'memory' | null = null;
+      let bestDist = 0.11;
+
+      for (const [id, pos] of Object.entries(agentWorldPositions)) {
+        tmpV.copy(pos).project(camera);
+        if (tmpV.z > 1) continue;
+        const d = Math.hypot(tmpV.x - ndcX, tmpV.y - ndcY);
+        if (d < bestDist) {
+          bestDist = d;
+          bestId = id;
+          bestKind = 'agent';
+        }
+      }
+      for (const [id, pos] of Object.entries(memoryWorldPositions)) {
+        tmpV.copy(pos).project(camera);
+        if (tmpV.z > 1) continue;
+        const d = Math.hypot(tmpV.x - ndcX, tmpV.y - ndcY);
+        if (d < bestDist) {
+          bestDist = d;
+          bestId = id;
+          bestKind = 'memory';
+        }
+      }
+
+      if (bestId && bestKind) {
+        (window as any).__cortexDeicticTarget = {
+          id: bestId,
+          kind: bestKind,
+          at: Date.now(),
+        };
+      }
+
+      const justPinched = hand.pinching && !prevPinching3D;
+      prevPinching3D = hand.pinching;
+      if (justPinched && bestId && bestKind) {
+        if (bestKind === 'agent') {
+          setSelectedMemoryId(null);
+          setSelectedAgentId(bestId);
+          window.dispatchEvent(new CustomEvent('cortex-agent-select', { detail: bestId }));
+        } else {
+          setSelectedAgentId(null);
+          setSelectedMemoryId(bestId);
+          window.dispatchEvent(new CustomEvent('cortex-memory-select', { detail: bestId }));
+        }
+      }
+    };
+    window.addEventListener('cortex-hand-pinch', onHandPinch3D);
+
     return () => {
       window.removeEventListener('cortex-agent-select', onSelect);
       window.removeEventListener('cortex-memory-select', onSelectMem);
       window.removeEventListener('keydown', onKey);
+      window.removeEventListener('cortex-hand-3d', onHand3D);
+      window.removeEventListener('cortex-hand-pinch', onHandPinch3D);
     };
   }, []);
 

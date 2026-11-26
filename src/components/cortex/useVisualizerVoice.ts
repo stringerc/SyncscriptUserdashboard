@@ -1551,7 +1551,12 @@ export function useVisualizerVoice(enabled: boolean, onState: (speaking: boolean
       // World-state header is injected server-side into sysContentFull for
       // every cortex turn — no client fetch needed (saves a serial ~400ms
       // round-trip before the LLM call even starts).
-      let sysSuffix = [emotionGuidanceSuffix(turnEmotionRef.current), turnMemorySuffix, surfaceManifestSuffix()].filter(Boolean).join('\n\n') || undefined;
+      const deictic = typeof window !== 'undefined' ? (window as any).__cortexDeicticTarget : null;
+      const deicticSuffix =
+        deictic && deictic.id && Date.now() - Number(deictic.at || 0) < 5000
+          ? `SPATIAL_DEICTIC_TARGET: The user's hand/gaze is currently pointing at ${deictic.kind} "${deictic.id}". If they say "this", "that", or "here", resolve it to ${deictic.id}.`
+          : '';
+      let sysSuffix = [emotionGuidanceSuffix(turnEmotionRef.current), turnMemorySuffix, surfaceManifestSuffix(), deicticSuffix].filter(Boolean).join('\n\n') || undefined;
       turnMemorySuffix = '';
 
       // State-of-being deterministic orchestration — same contract as the
