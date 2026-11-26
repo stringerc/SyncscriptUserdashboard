@@ -88,7 +88,7 @@ describe('composeBrief', () => {
   it('renders print HTML with all sections', () => {
     const b = composeBrief(baseData());
     expect(b.printHtml).toContain('<!DOCTYPE html>');
-    expect(b.printHtml).toContain('DECISIONS NEEDED');
+    expect(b.printHtml).toContain('DECISIONS DESK');
     expect(b.printHtml).toContain('PERSONAL');
   });
 
@@ -129,6 +129,32 @@ describe('composeBrief', () => {
     const b = composeBrief(baseData({ watchItems: many, radarHits: radar }));
     expect(b.phoneText.length).toBeLessThanOrEqual(3800);
     expect(b.phoneText).toContain('sources OK:');
+  });
+
+  it('renders a newspaper print edition', () => {
+    const b = composeBrief(baseData());
+    expect(b.printHtml).toContain('The Cortex Gazette');
+    expect(b.printHtml).toContain('Edition No.');
+    expect(b.printHtml).toContain('LEAD STORY');
+    expect(b.printHtml).toContain('OVERNIGHT WIRE');
+    expect(b.printHtml).toContain('NEEDS YOUR CALL');
+    expect(b.printHtml).toContain('COLOPHON');
+    expect(b.printHtml).toContain('sources OK:');
+    expect(b.printHtml).not.toContain('■');
+  });
+
+  it('uses shape as lead story when decisions are empty', () => {
+    const b = composeBrief(baseData({ decisions: [] }));
+    expect(b.printHtml).toContain('TODAY');
+    expect(b.printHtml).not.toContain('Decision desk is clear');
+  });
+
+  it('escapes HTML in decision text', () => {
+    const b = composeBrief(baseData({
+      decisions: [{ id: 'd1', text: 'Approve <script>alert(1)</script> & "quote"', source: 'proposal:x' }],
+    }));
+    expect(b.printHtml).not.toContain('<script>alert(1)</script>');
+    expect(b.printHtml).toContain('&lt;script&gt;');
   });
 });
 

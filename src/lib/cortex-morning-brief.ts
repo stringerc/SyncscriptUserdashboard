@@ -365,34 +365,194 @@ function esc(s: string): string {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
+type BriefSection = ComposedBrief['sections'][number];
+
+function dayOfYear(dayKey: string): number {
+  const [y, m, d] = dayKey.split('-').map(Number);
+  if (!y || !m || !d) return 1;
+  return Math.floor((Date.UTC(y, m - 1, d) - Date.UTC(y, 0, 1)) / 86_400_000) + 1;
+}
+
+function generatedTime(d: BriefData): string {
+  return new Date(d.generatedAt).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+}
+
+function cleanNewsLine(line: string): string {
+  let text = line.trim();
+  if (!text) return '';
+  text = text.replace(/^•\s+/, '');
+  if (text.startsWith('✗')) text = `FAILED — ${text.slice(1).trim()}`;
+  return text
+    .replace(/_\((.*?)\)_/g, '($1)')
+    .replace(/\[prep✓\]/g, '· prep')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function cleanNewsItems(sec: BriefSection): string[] {
+  return sec.lines.map(cleanNewsLine).filter(Boolean);
+}
+
+function renderItemList(items: string[]): string {
+  return items
+    .map((item) => item === 'PERSONAL / FAMILY (equal billing):'
+      ? `<li class="subhead">${esc(item)}</li>`
+      : `<li>${esc(item)}</li>`)
+    .join('');
+}
+
+function headlineForSection(sec: BriefSection, d: BriefData): string {
+  switch (sec.key) {
+    case 'decisions': {
+      const n = sec.lines.length;
+      return `${n} decision${n === 1 ? '' : 's'} need${n === 1 ? 's' : ''} the Chief's call`;
+    }
+    case 'shape':
+      return d.energyPeak ? `Peak focus ${d.energyPeak.label}` : `Today's shape is set`;
+    case 'accomplishments':
+      return `${d.stats.completed} completed · ${d.stats.failed} failed overnight`;
+    case 'watch':
+      return `Watch wire: ${sec.lines.length} item${sec.lines.length === 1 ? '' : 's'}`;
+    case 'radar':
+      return `Needs your call: ${sec.lines.length} approval${sec.lines.length === 1 ? '' : 's'}`;
+    case 'prep':
+      return `Prep desk: ${d.prepStatus.ready} ready · ${d.prepStatus.pending} pending`;
+    case 'spotlight':
+      return 'One honest look';
+    case 'signoff':
+      return 'Colophon';
+    default:
+      return sec.title;
+  }
+}
+
+function renderDesk(sec: BriefSection, kicker: string, headline: string, className = ''): string {
+  const items = cleanNewsItems(sec);
+  return `<section class="desk ${className}">
+    <div class="kicker">${esc(kicker)}</div>
+    <h3>${esc(headline)}</h3>
+    ${items.length ? `<ul class="news-list">${renderItemList(items)}</ul>` : ''}
+  </section>`;
+}
+
+function renderWatchDesk(sec: BriefSection, d: BriefData): string {
+  const items = sec.lines.map((line) => {
+    const raw = line.replace(/^•\s*/, '');
+    const match = raw.match(/^\[(info|warn|crit)\]\s*(.*)$/i);
+    const sev = (match?.[1] ?? 'info').toLowerCase();
+    const text = cleanNewsLine(match?.[2] ?? raw);
+    return `<li class="watch-${esc(sev)}"><span class="tag">${esc(sev.toUpperCase())}</span> ${esc(text)}</li>`;
+  }).join('');
+  return `<section class="desk watch">
+    <div class="kicker">WATCH WIRE</div>
+    <h3>${esc(headlineForSection(sec, d))}</h3>
+    <ul class="news-list watch-list">${items}</ul>
+  </section>`;
+}
+
+function renderLeadStory(sec: BriefSection, d: BriefData): string {
+  const items = cleanNewsItems(sec);
+  const [lede, ...rest] = items;
+  const tag = sec.key === 'decisions' ? 'DECISIONS DESK' : sec.title;
+  return `<article class="lead-story ${sec.key}">
+    <div class="kicker">LEAD STORY</div>
+    <div class="section-tag">${esc(tag)}</div>
+    <h2 class="headline">${esc(headlineForSection(sec, d))}</h2>
+    ${lede ? `<p class="lede">${esc(lede)}</p>` : ''}
+    ${rest.length ? `<ul class="news-list">${renderItemList(rest)}</ul>` : ''}
+  </article>`;
+}
+
 function renderPrintHtml(d: BriefData, sections: ComposedBrief['sections'], footer: string): string {
-  const secHtml = sections.map((sec) => `
-    <section class="sec">
-      <h2>${esc(sec.title)}</h2>
-      <ul>${sec.lines.map((l) => `<li>${esc(l)}</li>`).join('')}</ul>
-    </section>`).join('');
+  const byKey = (key: string) => sections.find((sec) => sec.key === key);
+  const decisions = byKey('decisions');
+  const shape = byKey('shape');
+  const prep = byKey('prep');
+  const accomplishments = byKey('accomplishments');
+  const watch = byKey('watch');
+  const radar = byKey('radar');
+  const spotlight = byKey('spotlight');
+  const signoff = byKey('signoff');
+  const lead = decisions ?? shape ?? accomplishments ?? signoff;
+  const leadKey = lead?.key;
+
+  const desk = (sec: BriefSection | undefined, kicker: string, className = '') =>
+    sec && sec.key !== leadKey ? renderDesk(sec, kicker, headlineForSection(sec, d), className) : '';
+
+  const main: string[] = [];
+  const rail: string[] = [];
+  if (lead) main.push(renderLeadStory(lead, d));
+  main.push(desk(shape, 'TODAY', 'today'));
+  main.push(desk(accomplishments, 'OVERNIGHT WIRE', 'overnight'));
+  if (watch && watch.key !== leadKey) main.push(renderWatchDesk(watch, d));
+  rail.push(desk(radar, 'NEEDS YOUR CALL', 'approvals'));
+  rail.push(desk(prep, 'PREP DESK', 'prep'));
+  rail.push(desk(spotlight, 'ONE HONEST LOOK', 'spotlight'));
+
+  const footerText = footer.replace(/^\s*—\s*/, '').trim() || footer.trim();
+  const signoffText = signoff?.lines.map(cleanNewsLine).filter(Boolean).join(' ') || d.greeting;
+  const edition = dayOfYear(d.dayKey);
+  const asOf = generatedTime(d);
+
   return `<!DOCTYPE html>
-<html><head><meta charset="utf-8"><title>Cortex Brief — ${esc(d.longDate)}</title>
+<html><head><meta charset="utf-8"><title>The Cortex Gazette — ${esc(d.longDate)}</title>
 <style>
-  @page { size: letter; margin: 0.65in; }
+  @page { size: letter; margin: 0.55in 0.6in; }
   * { box-sizing: border-box; }
-  body { font-family: -apple-system, 'SF Pro Text', Helvetica, sans-serif; color: #1a1a1a; margin: 0; padding: 0; font-size: 10.5pt; line-height: 1.45; }
-  header { border-bottom: 3px solid #111; padding-bottom: 10px; margin-bottom: 14px; }
-  .greeting { font-size: 15pt; font-weight: 700; letter-spacing: -0.02em; }
-  .dateline { font-size: 9pt; color: #666; text-transform: uppercase; letter-spacing: 0.12em; margin-top: 4px; }
-  .sec { margin-bottom: 12px; page-break-inside: avoid; }
-  h2 { font-size: 8.5pt; text-transform: uppercase; letter-spacing: 0.14em; color: #555; border-bottom: 1px solid #ddd; padding-bottom: 3px; margin: 0 0 6px; }
-  ul { margin: 0; padding-left: 16px; }
-  li { margin-bottom: 3px; }
-  .decisions li { font-weight: 600; }
-  footer { margin-top: 18px; padding-top: 8px; border-top: 1px solid #ddd; font-size: 7.5pt; color: #888; }
+  html { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  body {
+    font-family: Iowan Old Style, Palatino Linotype, Book Antiqua, Palatino, Georgia, serif;
+    color: #17150f; margin: 0; padding: 0; font-size: 9.5pt; line-height: 1.35;
+    background: #fdfbf4;
+  }
+  .kicker, .section-tag, .dateline, .tag {
+    font-family: Helvetica Neue, Helvetica, Arial, sans-serif;
+  }
+  .masthead { text-align: center; border-bottom: 3px double #17150f; padding-bottom: 7px; margin-bottom: 10px; }
+  .above-masthead { font-style: italic; font-size: 8pt; color: #55524a; margin-bottom: 3px; }
+  .masthead h1 {
+    font-size: 30pt; font-weight: 900; letter-spacing: -0.5px; margin: 0;
+    font-family: Old English Text MT, UnifrakturCook, Georgia, serif;
+  }
+  .dateline { font-size: 7pt; text-transform: uppercase; letter-spacing: 1.6px; color: #55524a; margin-top: 4px; }
+  .tagline { font-size: 7.5pt; font-style: italic; color: #55524a; margin-top: 2px; }
+  .front-grid { display: grid; grid-template-columns: 1.9fr 1fr; gap: 14px; align-items: start; }
+  .main-column, .rail { min-width: 0; }
+  .lead-story, .desk { break-inside: avoid; page-break-inside: avoid; }
+  .lead-story { border-bottom: 2px solid #17150f; padding-bottom: 8px; margin-bottom: 10px; }
+  .lead-story .kicker, .desk .kicker { font-size: 6.5pt; font-weight: 700; text-transform: uppercase; letter-spacing: 2px; color: #55524a; }
+  .section-tag { font-size: 6.5pt; font-weight: 700; text-transform: uppercase; letter-spacing: 1.8px; color: #17150f; margin-top: 2px; }
+  .headline { font-size: 15pt; font-weight: 900; line-height: 1.08; margin: 3px 0 5px; letter-spacing: -0.2px; }
+  .lede { font-size: 9.5pt; line-height: 1.4; margin: 0 0 5px; }
+  .desk { margin-bottom: 9px; padding-bottom: 7px; border-bottom: 1px solid #17150f; }
+  .desk h3 { font-size: 10.5pt; font-weight: 800; margin: 2px 0 4px; line-height: 1.15; }
+  .news-list { margin: 0; padding-left: 14px; }
+  .news-list li { margin-bottom: 2.5px; }
+  .news-list li.subhead { list-style: none; margin-left: -14px; font-weight: 800; text-transform: uppercase; font-size: 7pt; letter-spacing: 1.2px; margin-top: 4px; }
+  .watch-list .tag { display: inline-block; min-width: 30px; font-size: 6pt; font-weight: 800; letter-spacing: 1px; border: 0.5px solid #17150f; padding: 0 3px; margin-right: 3px; text-align: center; }
+  .watch-crit .tag, .watch-warn .tag { background: #17150f; color: #fdfbf4; }
+  .colophon { margin-top: 10px; border-top: 3px double #17150f; padding-top: 6px; text-align: center; }
+  .colophon .kicker { font-size: 6.5pt; font-weight: 700; text-transform: uppercase; letter-spacing: 2px; color: #55524a; }
+  .colophon-greeting { font-weight: 700; margin-top: 2px; }
+  .colophon-signoff { font-style: italic; color: #55524a; }
+  .colophon-sources { font-size: 6.5pt; color: #55524a; margin-top: 3px; }
 </style></head><body>
-<header>
-  <div class="greeting">${esc(d.greeting)}</div>
-  <div class="dateline">${esc(d.longDate)} · Cortex Chief's Brief</div>
+<header class="masthead">
+  <div class="above-masthead">Overnight fleet dispatches, verified before press.</div>
+  <h1>The Cortex Gazette</h1>
+  <div class="dateline">${esc(d.longDate)} · Edition No. ${edition} · As of ${esc(asOf)}</div>
+  <div class="tagline">All the fleet news that's fit to print.</div>
 </header>
-${secHtml}
-<footer>${esc(footer)}</footer>
+<main class="front-grid">
+  <div class="main-column">${main.filter(Boolean).join('\n')}</div>
+  <aside class="rail">${rail.filter(Boolean).join('\n')}</aside>
+</main>
+<footer class="colophon">
+  <div class="kicker">COLOPHON</div>
+  <div class="colophon-greeting">${esc(d.greeting)}</div>
+  <div class="colophon-signoff">${esc(signoffText)}</div>
+  <div class="colophon-sources">${esc(footerText)}</div>
+</footer>
 </body></html>`;
 }
 
