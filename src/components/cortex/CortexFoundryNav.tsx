@@ -234,6 +234,27 @@ export function CortexFoundryNav({ snap, onSelectAgent, selectedAgent, onOpenTow
   const [modelHealth, setModelHealth] = useState<any | null>(null);
   const [modelRefresh, setModelRefresh] = useState<{ busy: boolean; note: string | null }>({ busy: false, note: null });
   const [nimKeyFilter, setNimKeyFilter] = useState<number | null>(null);
+  const [keyProbeJobs, setKeyProbeJobs] = useState<Record<string, any>>({});
+  const startKeyProbe = (idx: number) => {
+    fetch('/api/cortex/models/keyprobe', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ key: idx }),
+    }).then((r) => r.json()).then(() => {
+      const poll = setInterval(() => {
+        fetch('/api/cortex/models/keyprobe', { cache: 'no-store' })
+          .then((r) => r.json())
+          .then((d) => {
+            setKeyProbeJobs(d?.jobs || {});
+            const running = Object.values(d?.jobs || {}).some((j: any) => j?.status === 'running');
+            if (!running) {
+              clearInterval(poll);
+              fetch('/api/cortex/models/health', { cache: 'no-store' }).then((r) => r.json()).then(setModelHealth).catch(() => {});
+            }
+          })
+          .catch(() => {});
+      }, 2000);
+    }).catch(() => {});
+  };
   const refreshModelCatalog = () => {
     if (modelRefresh.busy) return;
     setModelRefresh({ busy: true, note: null });
@@ -1805,6 +1826,26 @@ export function CortexFoundryNav({ snap, onSelectAgent, selectedAgent, onOpenTow
                         <div style={{ fontSize: 7.5, color: active ? '#67e8f9' : DIM, marginTop: 2 }}>
                           {servedCount} model{servedCount === 1 ? '' : 's'} served
                         </div>
+                        <div style={{ marginTop: 4 }}>
+                          {(() => {
+                            const job = keyProbeJobs[String(k.index)];
+                            const running = job?.status === 'running';
+                            return (
+                              <button
+                                onClick={(e) => { e.stopPropagation(); if (!running) startKeyProbe(k.index); }}
+                                disabled={running}
+                                style={{
+                                  fontSize: 7.5, fontWeight: 800, letterSpacing: '0.1em', cursor: running ? 'wait' : 'pointer',
+                                  padding: '1px 6px', borderRadius: 2,
+                                  border: '1px solid rgba(52,211,153,0.4)', background: 'rgba(52,211,153,0.1)', color: '#34d399',
+                                  opacity: running ? 0.6 : 1,
+                                }}
+                              >
+                                {running ? `PROBING ${job.done}/${job.total}` : 'PROBE'}
+                              </button>
+                            );
+                          })()}
+                        </div>
                         {k.lastModel && (
                           <div style={{ fontSize: 7.5, color: DIM, marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={k.lastModel}>
                             last: {k.lastModel}
@@ -1830,8 +1871,15 @@ export function CortexFoundryNav({ snap, onSelectAgent, selectedAgent, onOpenTow
                 <div style={{ maxHeight: 220, overflowY: 'auto' }}>
                   {nim.models
                     .filter((m: any) => nimKeyFilter == null || m.servedByKey === nimKeyFilter)
-                    .map((m: any) => (
+                    .map((m: any) => {
+                      const kp = nimKeyFilter != null ? nim?.keyProbe?.keys?.[String(nimKeyFilter)]?.results?.[m.id] : null;
+                      return (
                     <div key={m.provider + m.id} style={{ display: 'flex', alignItems: 'center', gap: 7, padding: '2px 0', borderBottom: '1px solid rgba(148,163,184,0.06)' }}>
+                      {kp != null && (
+                        <span style={{ fontSize: 8, fontWeight: 800, color: kp.ok ? '#34d399' : '#f87171' }} title={kp.ok ? `serves via this key · ${kp.latencyMs}ms` : `fails via this key${kp.httpStatus ? ` · HTTP ${kp.httpStatus}` : ''}${kp.error ? ` · ${kp.error}` : ''}`}>
+                          {kp.ok ? '✓' : '✗'}
+                        </span>
+                      )}
                       <span style={{ fontSize: 8, fontWeight: 800, color: statusColor(m.status), width: 52 }}>{(m.status || '?').toUpperCase()}</span>
                       <span style={{ fontSize: 8.5, color: '#cbd5e1', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={m.id}>{m.id}</span>
                       {m.servedByKey != null && (
@@ -1844,7 +1892,8 @@ export function CortexFoundryNav({ snap, onSelectAgent, selectedAgent, onOpenTow
                         <span style={{ fontSize: 8, color: '#f87171' }}>×{m.consecutiveFailures}</span>
                       )}
                     </div>
-                  ))}
+                      );
+                    })}
                 </div>
               </>
             )}

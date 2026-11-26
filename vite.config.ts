@@ -2243,6 +2243,61 @@ function apiProxyPlugin(): Plugin {
         throw err;
       };
 
+      // ── Per-key NIM probe: true per-key model availability ──
+      // The pool walk tells us WHICH key served a probe, never whether a
+      // specific key COULD serve a specific model. This pins one key and
+      // probes every routable NIM model, persisting a key×model matrix to
+      // .cortex-runtime/nim-key-probe.json for the health endpoint + UI.
+      const NIM_KEY_PROBE_FILE = path.join(process.cwd(), '.cortex-runtime', 'nim-key-probe.json');
+      const keyProbeJobs = new Map<number, { status: string; at: number; done: number; total: number; error?: string }>();
+
+      const runNimKeyProbe = (keyIdx: number) => {
+        const existing = keyProbeJobs.get(keyIdx);
+        if (existing?.status === 'running') return existing;
+        const prov = providerFor('nvidia-nim');
+        if (!prov) return null;
+        const keyPool = prov.keys && prov.keys.length > 0 ? prov.keys : (prov.backupKey ? [prov.key, prov.backupKey] : [prov.key]);
+        const key = keyPool[keyIdx];
+        if (!key) return null;
+        const models = agentRuntime.matrix.allHealth()
+          .filter((m: any) => m.provider === 'nvidia-nim' || m.provider === 'nvidia-nim-550b')
+          .map((m: any) => m.id);
+        const job = { status: 'running', at: Date.now(), done: 0, total: models.length };
+        keyProbeJobs.set(keyIdx, job);
+        void (async () => {
+          const results: Record<string, any> = {};
+          const CONCURRENCY = 3;
+          for (let i = 0; i < models.length; i += CONCURRENCY) {
+            await Promise.all(models.slice(i, i + CONCURRENCY).map(async (model) => {
+              const started = Date.now();
+              try {
+                const r = await fetch(prov.url, {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${key}` },
+                  body: JSON.stringify({ model, messages: [{ role: 'user', content: 'Reply with one word: ok' }], max_tokens: 4, temperature: 0, stream: false }),
+                  // 15s: 600B-1T MoE cold starts (kimi-k3, mistral-large-4,
+                  // step-5) legitimately exceed the sentinel's 8s probe window.
+                  signal: AbortSignal.timeout(15000),
+                });
+                results[model] = { ok: r.ok, latencyMs: Date.now() - started, httpStatus: r.status };
+                if (!r.ok) { try { await r.arrayBuffer(); } catch { /* drain */ } }
+              } catch (e) {
+                results[model] = { ok: false, latencyMs: Date.now() - started, error: String((e as Error)?.message || e).slice(0, 120) };
+              }
+              job.done++;
+            }));
+          }
+          let store: any = { at: Date.now(), keys: {} };
+          try { store = JSON.parse(fsSync.readFileSync(NIM_KEY_PROBE_FILE, 'utf8')); } catch { /* first run */ }
+          store.keys = store.keys || {};
+          store.keys[String(keyIdx)] = { at: Date.now(), results };
+          store.at = Date.now();
+          try { fsSync.writeFileSync(NIM_KEY_PROBE_FILE, JSON.stringify(store)); } catch { /* telemetry */ }
+          job.status = 'done';
+        })().catch((e) => { job.status = 'error'; job.error = String(e?.message || e).slice(0, 160); });
+        return job;
+      };
+
       agentRuntime.attachSentinel(catalogSources, probeFactory);
       agentRuntime.start();
       initEventLog(agentRuntime);
@@ -16070,6 +16125,13 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
             })),
             pool: { probes: poolProbes, failures: poolFailures },
             models: nimModels,
+            // Last per-key probe matrix (POST /api/cortex/models/keyprobe):
+            // keyIndex -> { at, results: { modelId: { ok, latencyMs, httpStatus } } }
+            keyProbe: (() => {
+              try {
+                return JSON.parse(fsSync.readFileSync(path.join(process.cwd(), '.cortex-runtime', 'nim-key-probe.json'), 'utf8'));
+              } catch { return null; }
+            })(),
           };
         } catch { /* nim section optional */ }
 
@@ -16112,6 +16174,46 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
             res.statusCode = 500;
             res.end(JSON.stringify({ ok: false, error: err?.message || String(err) }));
           });
+      });
+
+      // /api/cortex/models/keyprobe — per-key NIM availability matrix.
+      // POST {key: N} starts a pinned-key probe of every routable NIM
+      // model (async job — poll GET for progress). GET returns live job
+      // states plus the persisted last-run matrix.
+      server.middlewares.use('/api/cortex/models/keyprobe', (req: any, res: any, next: any) => {
+        if (req.method === 'OPTIONS') {
+          res.writeHead(204, { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Methods': 'GET, POST, OPTIONS', 'Access-Control-Allow-Headers': 'Content-Type' });
+          return res.end();
+        }
+        agentCors(req, res);
+        const send = (code: number, obj: any) => {
+          res.statusCode = code;
+          res.setHeader('Content-Type', 'application/json');
+          res.end(JSON.stringify(obj));
+        };
+        const payload = () => {
+          let persisted: any = null;
+          try { persisted = JSON.parse(fsSync.readFileSync(path.join(process.cwd(), '.cortex-runtime', 'nim-key-probe.json'), 'utf8')); } catch { /* none yet */ }
+          const jobs: Record<string, any> = {};
+          for (const [k, j] of keyProbeJobs) jobs[String(k)] = j;
+          return { ok: true, jobs, persisted };
+        };
+        if (req.method === 'GET') return send(200, payload());
+        if (req.method !== 'POST') return next();
+        let body = '';
+        req.on('data', (c: Buffer) => { body += c.toString(); });
+        req.on('end', () => {
+          try {
+            const parsed = JSON.parse(body || '{}');
+            const keyIdx = Number(parsed?.key);
+            if (!Number.isInteger(keyIdx) || keyIdx < 0) return send(400, { ok: false, error: 'key (int >= 0) required' });
+            const job = runNimKeyProbe(keyIdx);
+            if (!job) return send(400, { ok: false, error: `no key at index ${keyIdx}` });
+            send(200, { ok: true, job: { key: keyIdx, ...job } });
+          } catch (e: any) {
+            send(400, { ok: false, error: String(e?.message || e).slice(0, 120) });
+          }
+        });
       });
 
       // GET /api/cortex/breath — Generative Attention Loop vitals:
