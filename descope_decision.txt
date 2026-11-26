@@ -1,0 +1,1 @@
+{"timestamp":"2026-11-18T18:55:00.000Z","rationale":"Current ops completion rate of 0.5 ops/week with 8 remaining ops makes meeting 2026-12-31 deadline impossible at current pace. Descope decision recorded per mission constraints.","approver":"ANTIGRAVITY"}
