@@ -27,7 +27,7 @@ const MONO = "'IBM Plex Mono', monospace";
 const INK = '#e0f2fe';
 const DIM = 'rgba(148,163,184,0.55)';
 
-type FoundryView = 'dashboard' | 'tasks' | 'goals' | 'calendar' | 'agents' | 'missions' | 'counsel' | 'simulation' | 'recon' | 'reel' | 'campaigns' | 'inbox' | 'incidents' | 'standup' | 'messages' | 'ventures' | 'evolution' | 'resonance';
+type FoundryView = 'dashboard' | 'tasks' | 'goals' | 'calendar' | 'agents' | 'models' | 'missions' | 'counsel' | 'simulation' | 'recon' | 'reel' | 'campaigns' | 'inbox' | 'incidents' | 'standup' | 'messages' | 'ventures' | 'evolution' | 'resonance';
 
 const NAV_ITEMS: { id: FoundryView; glyph: string; label: string; hint: string }[] = [
   { id: 'dashboard', glyph: '◈', label: 'DASHBOARD', hint: 'Mission Control tower board' },
@@ -38,6 +38,7 @@ const NAV_ITEMS: { id: FoundryView; glyph: string; label: string; hint: string }
   { id: 'goals', glyph: '◎', label: 'GOALS', hint: 'Life-goal model & drift' },
   { id: 'calendar', glyph: '▦', label: 'CALENDAR', hint: 'Upcoming events (48h)' },
   { id: 'agents', glyph: '✦', label: 'AGENTS', hint: 'Mission Control roster' },
+  { id: 'models', glyph: '⬡', label: 'MODELS', hint: 'Agent model pins + NIM key-pool health' },
   { id: 'missions', glyph: '▶', label: 'MISSIONS', hint: 'Deep-work mission log' },
   { id: 'reel', glyph: '🎬', label: 'REEL', hint: 'Sprint briefing + rendered video library' },
   { id: 'campaigns', glyph: '📣', label: 'CAMPAIGNS', hint: 'Launch campaigns — funnel, verified posts & kill-switch' },
@@ -230,6 +231,7 @@ export function CortexFoundryNav({ snap, onSelectAgent, selectedAgent, onOpenTow
   const [evoEvals, setEvoEvals] = useState<any[] | null>(null);
   const [evoRuns, setEvoRuns] = useState<any[] | null>(null);
   const [evoInstincts, setEvoInstincts] = useState<{ instincts?: any[]; promotable?: number } | null>(null);
+  const [modelHealth, setModelHealth] = useState<any | null>(null);
   const [newTaskVenture, setNewTaskVenture] = useState<string>('');
   const [, setGoalsTick] = useState(0);
   const goals = getCortexGoals();
@@ -540,6 +542,12 @@ export function CortexFoundryNav({ snap, onSelectAgent, selectedAgent, onOpenTow
 
   // Lazy-fetch section data when its view opens.
   useEffect(() => {
+    if (view === 'models' && modelHealth === null) {
+      fetch('/api/cortex/models/health', { cache: 'no-store' })
+        .then((r) => r.json())
+        .then(setModelHealth)
+        .catch(() => setModelHealth({ ok: false }));
+    }
     if (view === 'calendar' && calendar === null) {
       try {
         const stored = typeof window !== 'undefined' ? localStorage.getItem('syncscript_calendar_events') : null;
@@ -1694,6 +1702,111 @@ export function CortexFoundryNav({ snap, onSelectAgent, selectedAgent, onOpenTow
       </div>
 
       {/* Section panels */}
+      {view === 'models' && (() => {
+        const nim = modelHealth?.nim || null;
+        const matrix = modelHealth?.matrix || {};
+        const tierHead = (tier?: string) => {
+          const arr = tier ? matrix[tier] : null;
+          return Array.isArray(arr) && arr.length ? String(arr[0]).split(':').slice(1).join(':') : null;
+        };
+        const statusColor = (s?: string) =>
+          s === 'healthy' ? '#34d399' : s === 'down' ? '#f87171' : s === 'degraded' ? '#fbbf24' : DIM;
+        const keyStateColor = (s?: string) =>
+          s === 'ok' ? '#34d399' : s === 'strained' ? '#fbbf24' : s === 'unused' ? DIM : '#f87171';
+        return (
+          <Panel
+            title="MODEL CONTROL // FLEET PINS & NIM KEY POOLS"
+            onClose={() => setView(null)}
+            right={
+              <span style={{ fontSize: 9.5, color: DIM }}>
+                {modelHealth ? `${agents.length} AGENTS · ${nim ? `${nim.keyCount} NIM KEYS` : 'NIM —'} · ${nim?.models?.length ?? 0} NIM MODELS` : 'LOADING…'}
+              </span>
+            }
+          >
+            {/* ── Agent → model pin table ── */}
+            <div style={{ fontSize: 9, fontWeight: 800, letterSpacing: '0.2em', color: '#67e8f9', marginBottom: 5 }}>AGENT MODEL PINS</div>
+            <div style={{ maxHeight: 180, overflowY: 'auto', marginBottom: 10 }}>
+              {agents.map((a: any) => {
+                const pin = a.modelPin || {};
+                const tier = pin.tier || 'default';
+                const routed = tierHead(pin.tier);
+                return (
+                  <div key={a.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '2.5px 0', borderBottom: '1px solid rgba(148,163,184,0.07)' }}>
+                    <Lamp status={a.status === 'running' || a.status === 'active' ? 'running' : 'idle'} />
+                    <span style={{ fontSize: 9.5, fontWeight: 700, color: '#e2e8f0', width: 92, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{String(a.name || a.id).toUpperCase()}</span>
+                    <span style={{ fontSize: 8.5, color: '#38bdf8', width: 52 }}>{tier.toUpperCase()}</span>
+                    <span style={{ fontSize: 8, color: DIM, flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={routed || ''}>
+                      {routed ? `→ ${routed}` : 'tier-routed'}
+                      {pin.excludeProviders?.length ? ` · excl:${pin.excludeProviders.join(',')}` : ''}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* ── NIM key pool ── */}
+            {nim && (
+              <>
+                <div style={{ fontSize: 9, fontWeight: 800, letterSpacing: '0.2em', color: '#67e8f9', marginBottom: 5 }}>
+                  NVIDIA NIM KEY POOL — {nim.keyCount} KEYS
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: `repeat(${Math.max(nim.keyCount, 1)}, 1fr)`, gap: 6, marginBottom: 6 }}>
+                  {nim.keys.map((k: any) => (
+                    <div key={k.index} style={{
+                      padding: '6px 8px', borderRadius: 3,
+                      border: `1px solid ${keyStateColor(k.state) === DIM ? 'rgba(148,163,184,0.2)' : keyStateColor(k.state) + '66'}`,
+                      background: 'rgba(15,23,42,0.6)',
+                    }}>
+                      <div style={{ fontSize: 10, fontWeight: 800, color: keyStateColor(k.state), letterSpacing: '0.08em' }}>{k.label}</div>
+                      <div style={{ fontSize: 8, color: DIM, marginTop: 2 }}>
+                        {k.state === 'unused' ? 'never served' : `${k.serves} serves`}
+                        {k.impliedFails > 0 ? ` · ${k.impliedFails} implied fails` : ''}
+                      </div>
+                      {k.lastModel && (
+                        <div style={{ fontSize: 7.5, color: DIM, marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={k.lastModel}>
+                          last: {k.lastModel}
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+                <div style={{ fontSize: 8, color: DIM, marginBottom: 8 }}>
+                  pool: {nim.pool.probes} probes · {nim.pool.failures} failures
+                  {nim.keys.some((k: any) => k.state !== 'ok' && k.state !== 'unused') && (
+                    <span style={{ color: '#fbbf24' }}> — strained keys reduce effective pool depth</span>
+                  )}
+                </div>
+
+                {/* ── NIM models × serving key ── */}
+                <div style={{ fontSize: 9, fontWeight: 800, letterSpacing: '0.2em', color: '#67e8f9', marginBottom: 5 }}>
+                  NIM MODELS — {nim.models.length} ROUTABLE
+                </div>
+                <div style={{ maxHeight: 220, overflowY: 'auto' }}>
+                  {nim.models.map((m: any) => (
+                    <div key={m.provider + m.id} style={{ display: 'flex', alignItems: 'center', gap: 7, padding: '2px 0', borderBottom: '1px solid rgba(148,163,184,0.06)' }}>
+                      <span style={{ fontSize: 8, fontWeight: 800, color: statusColor(m.status), width: 52 }}>{(m.status || '?').toUpperCase()}</span>
+                      <span style={{ fontSize: 8.5, color: '#cbd5e1', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={m.id}>{m.id}</span>
+                      {m.servedByKey != null && (
+                        <span style={{ fontSize: 8, fontWeight: 800, color: '#67e8f9' }}>KEY {m.servedByKey + 1}</span>
+                      )}
+                      {m.latencyMsP50 != null && (
+                        <span style={{ fontSize: 8, color: DIM }}>{Math.round(m.latencyMsP50)}ms</span>
+                      )}
+                      {(m.consecutiveFailures ?? 0) > 0 && (
+                        <span style={{ fontSize: 8, color: '#f87171' }}>×{m.consecutiveFailures}</span>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </>
+            )}
+            {!nim && modelHealth && (
+              <div style={{ fontSize: 9.5, color: DIM }}>NIM telemetry unavailable — endpoint returned no nim section.</div>
+            )}
+          </Panel>
+        );
+      })()}
+
       {view === 'tasks' && (
         <Panel title="TASK LEDGER" onClose={() => setView(null)} right={
           <span style={{ display: 'flex', gap: 4, alignItems: 'center', flexWrap: 'wrap', justifyContent: 'flex-end' }}>

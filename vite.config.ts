@@ -16005,10 +16005,79 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
         const probedTotal = models.length - catalogTotal;
         const headline = `${byStatusProbed.healthy ?? 0} healthy, ${byStatusProbed.degraded ?? 0} degraded, ${byStatusProbed.down ?? 0} down, ${byStatusProbed.unknown ?? 0} unprobed of ${probedTotal} routable models` +
           (catalogTotal ? ` (+${catalogTotal} catalog probation: ${catalogTotal - catalogProbed} never probed — 'unknown' means unprobed, not unhealthy; do NOT count the ${models.length}-entry models array as fleet health)` : '');
+        // ── NVIDIA NIM key-pool visibility ──
+        // The fleet runs up to 4 NIM keys behind one provider pool; probes
+        // walk the pool in order and record which keyIndex served each
+        // success. Failures record no keyIndex — but a success at index k
+        // implies keys 0..k-1 failed that probe. Surface per-key stats so
+        // a dying account is visible before it 402s the whole pool.
+        let nim = null;
+        try {
+          const nimProv = aiProviders.find((p) => p.name === 'nvidia-nim') || null;
+          const nimKeys = nimProv?.keys?.length
+            ? nimProv.keys
+            : (nimProv ? [nimProv.key, ...(nimProv.backupKey ? [nimProv.backupKey] : [])] : []);
+          const histPath = path.join(process.cwd(), '.cortex-runtime', 'model-health-history.jsonl');
+          const keyStats: Array<{
+            serves: number; impliedFails: number; lastTs: number | null;
+            lastModel: string | null; lastLatencyMs: number | null;
+          }> = nimKeys.map(() => ({ serves: 0, impliedFails: 0, lastTs: null, lastModel: null, lastLatencyMs: null }));
+          let poolFailures = 0, poolProbes = 0;
+          const servedByKey = new Map<string, number>(); // modelId -> last keyIndex
+          if (fsSync.existsSync(histPath) && nimKeys.length) {
+            const lines = fsSync.readFileSync(histPath, 'utf8').trim().split('\n');
+            for (const line of lines.slice(-8000)) {
+              let rec: any;
+              try { rec = JSON.parse(line); } catch { continue; }
+              if (rec.provider !== 'nvidia-nim' && rec.provider !== 'nvidia-nim-550b') continue;
+              poolProbes++;
+              if (rec.ok && typeof rec.keyIndex === 'number' && rec.keyIndex < keyStats.length) {
+                const ks = keyStats[rec.keyIndex];
+                ks.serves++;
+                for (let i = 0; i < rec.keyIndex; i++) keyStats[i].impliedFails++;
+                ks.lastTs = rec.ts; ks.lastModel = rec.model; ks.lastLatencyMs = rec.latencyMs ?? null;
+                servedByKey.set(rec.model, rec.keyIndex);
+              } else if (!rec.ok) {
+                poolFailures++;
+              }
+            }
+          }
+          const nimModels = models
+            .filter((m: any) => m.provider === 'nvidia-nim' || m.provider === 'nvidia-nim-550b')
+            .map((m: any) => ({
+              id: m.id, provider: m.provider, status: m.status,
+              latencyMsP50: m.latencyMsP50 ?? null,
+              consecutiveFailures: m.consecutiveFailures ?? 0,
+              cooldownUntil: m.cooldownUntil ?? null,
+              servedByKey: servedByKey.has(m.id) ? servedByKey.get(m.id) : null,
+            }))
+            .sort((a: any, b: any) => (a.provider === b.provider ? a.id.localeCompare(b.id) : a.provider.localeCompare(b.provider)));
+          nim = {
+            keyCount: nimKeys.length,
+            keys: keyStats.map((ks, i) => ({
+              index: i,
+              label: `NIM-${i + 1}`,
+              serves: ks.serves,
+              impliedFails: ks.impliedFails,
+              lastTs: ks.lastTs,
+              lastModel: ks.lastModel,
+              lastLatencyMs: ks.lastLatencyMs,
+              // healthy = serving recently with few implied failures;
+              // exhausted = long fail streak implied by later keys serving.
+              state: ks.serves === 0 ? 'unused'
+                : ks.impliedFails > ks.serves * 2 ? 'strained'
+                : 'ok',
+            })),
+            pool: { probes: poolProbes, failures: poolFailures },
+            models: nimModels,
+          };
+        } catch { /* nim section optional */ }
+
         res.end(JSON.stringify({
           ok: true,
           headline,
           models,
+          nim,
           summary: {
             total: models.length,
             byStatus,
