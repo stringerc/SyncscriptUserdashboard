@@ -16216,6 +16216,81 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
           });
       });
 
+      // POST /api/cortex/vision/analyze — send an image to a vision-language
+      // model (default nvidia/nemotron-3.5-super-vl-120b-a12b, already the
+      // fleet's top route) and get a text answer. Walks the NIM key pool
+      // like probeFactory so a dead key fails over transparently.
+      // Body: { image: '<base64|dataURL>', prompt?: string, model?: string }
+      server.middlewares.use('/api/cortex/vision/analyze', (req: any, res: any, next: any) => {
+        if (req.method === 'OPTIONS') {
+          res.writeHead(204, { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Methods': 'POST, OPTIONS', 'Access-Control-Allow-Headers': 'Content-Type' });
+          return res.end();
+        }
+        if (req.method !== 'POST') return next();
+        agentCors(req, res);
+        const send = (code: number, obj: any) => {
+          res.statusCode = code;
+          res.setHeader('Content-Type', 'application/json');
+          res.end(JSON.stringify(obj));
+        };
+        let body = '';
+        req.on('data', (c: Buffer) => { body += c.toString(); });
+        req.on('end', async () => {
+          try {
+            const parsed = JSON.parse(body || '{}');
+            const b64 = String(parsed?.image || '');
+            const dataUrl = b64.startsWith('data:') ? b64 : `data:image/jpeg;base64,${b64}`;
+            if (!b64 || b64.length < 100) return send(400, { ok: false, error: 'image (base64 or dataURL, >100 chars) required' });
+            if (b64.length > 8 * 1024 * 1024) return send(413, { ok: false, error: 'image too large (max ~6MB binary)' });
+            const prov = providerFor('nvidia-nim');
+            if (!prov) return send(503, { ok: false, error: 'nvidia-nim provider not configured' });
+            const model = String(parsed?.model || 'nvidia/nemotron-3.5-super-vl-120b-a12b');
+            const prompt = String(parsed?.prompt || 'Describe what you see in this image in 2-3 sentences.');
+            const keyPool = prov.keys && prov.keys.length > 0 ? prov.keys : (prov.backupKey ? [prov.key, prov.backupKey] : [prov.key]);
+            const started = Date.now();
+            let lastStatus: number | string = 0;
+            for (let keyIdx = 0; keyIdx < keyPool.length; keyIdx++) {
+              try {
+                const r = await fetch(prov.url, {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${keyPool[keyIdx]}` },
+                  body: JSON.stringify({
+                    model,
+                    messages: [{
+                      role: 'user',
+                      content: [
+                        { type: 'text', text: prompt },
+                        { type: 'image_url', image_url: { url: dataUrl } },
+                      ],
+                    }],
+                    max_tokens: 300,
+                    temperature: 0.2,
+                    stream: false,
+                  }),
+                  signal: AbortSignal.timeout(30000),
+                });
+                if (r.ok) {
+                  const j: any = await r.json();
+                  const text = j?.choices?.[0]?.message?.content
+                    ?? j?.choices?.[0]?.message?.reasoning_content
+                    ?? '';
+                  return send(200, { ok: true, model, keyIndex: keyIdx, latencyMs: Date.now() - started, text: String(text).slice(0, 4000) });
+                }
+                lastStatus = r.status;
+                try { await r.arrayBuffer(); } catch { /* drain */ }
+                if (![401, 402, 403, 404, 429].includes(r.status) || keyIdx >= keyPool.length - 1) break;
+              } catch (e) {
+                lastStatus = 'error';
+                if (keyIdx >= keyPool.length - 1) break;
+              }
+            }
+            send(502, { ok: false, error: `vision probe http ${lastStatus}`, model });
+          } catch (e: any) {
+            send(400, { ok: false, error: String(e?.message || e).slice(0, 160) });
+          }
+        });
+      });
+
       // /api/cortex/models/keyprobe — per-key NIM availability matrix.
       // POST {key: N} starts a pinned-key probe of every routable NIM
       // model (async job — poll GET for progress). GET returns live job
