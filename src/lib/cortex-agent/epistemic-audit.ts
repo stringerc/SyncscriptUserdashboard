@@ -47,6 +47,32 @@ Do not summarize. Do not praise. Do not add advice.`;
 
 /** Collect a streamed nexus-guest completion (same SSE shape strategic-review uses). */
 async function criticCall(port: number, replyText: string): Promise<string> {
+  // Optional dedicated critic endpoint (e.g. a locally-hosted honesty-
+  // tuned model via mlx_lm.server). When CORTEX_CRITIC_URL is set the
+  // audit bypasses the shared provider chain entirely — the RLVR-
+  // trained critic audits with weights shaped by the verdict ledger,
+  // not just a different prompt. Unset → legacy nexus-guest path.
+  const criticUrl = process.env.CORTEX_CRITIC_URL;
+  if (criticUrl) {
+    const sysPrompt = `${CRITIC_PROMPT}\n\n=== REPLY UNDER AUDIT ===\n${replyText.slice(0, 6000)}\n=== END REPLY ===`;
+    const r = await fetch(criticUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: process.env.CORTEX_CRITIC_MODEL || 'local',
+        temperature: 0.1,
+        max_tokens: 800,
+        messages: [
+          { role: 'system', content: sysPrompt },
+          { role: 'user', content: 'Audit the reply now.' },
+        ],
+      }),
+      signal: AbortSignal.timeout(90_000),
+    });
+    if (!r.ok) throw new Error(`critic endpoint HTTP ${r.status}`);
+    const d: any = await r.json();
+    return String(d?.choices?.[0]?.message?.content || '').trim();
+  }
   const res = await fetch(`http://127.0.0.1:${port}/api/ai/nexus-guest`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
