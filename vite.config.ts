@@ -220,6 +220,7 @@ import { openVerification, listVerifications, getVerification, verificationStats
 import { listPatrolSpecs, patrolState, startPatrolMesh } from './src/lib/cortex-agents/patrols';
 import { registerSkill, getSkill, listSkills, acquireSkill, releaseSkill, composeSkills, recordSkillOutcome, skillStats, setSkillsRuntime } from './src/lib/cortex-agents/skills';
 import { selectPolicy, policyStats, startLearningLayer, POLICY_ARMS } from './src/lib/cortex-agents/learning';
+import { SocialToMLayer } from './src/lib/consciousness/social-tom';
 import { meshStats as meshBusStats } from './src/lib/cortex-agents/mesh';
 import { workspaceStats as wsStoreStats } from './src/lib/cortex-agents/agent-workspace';
 import { loadMission, saveMission, upsertGoal, verifyOps, goalProgress, routineYield, suggestCadence, planBlocks, startExperiment, reportExperiments, ventureYieldBreakdown, type OpsItem, type MissionGoal, type CadenceEntry } from './src/lib/cortex-agents/mission';
@@ -2004,11 +2005,22 @@ function apiProxyPlugin(): Plugin {
       const agentRuntime = getAgentRuntime();
       registerAgentWorkers(agentRuntime);
       agentRuntime.setSpawnWorkerFactory(makeEphemeralWorker);
+      // Social ToM (depth-1): per-agent outcome predictors trained online
+      // on terminal-task telemetry. Bootstrap replays the archive tail so
+      // models aren't cold; observe() rides the finished-task hook.
+      const socialToM = new SocialToMLayer();
+      try {
+        const bootRows = readArchive({ limit: 500 })
+          .filter((r: any) => ['completed', 'failed', 'vetoed', 'cancelled'].includes(r.status))
+          .reverse(); // readArchive returns newest-first; bootstrap wants oldest→newest
+        socialToM.bootstrap(bootRows);
+      } catch { /* bootstrap best-effort */ }
       // Durable evidence layer: every terminal task (completed/failed/vetoed/
       // cancelled) appends to task-archive.jsonl so research briefs and
       // failure evidence survive the 200-task in-memory eviction window.
       agentRuntime.setTaskFinishedHook((task, agent) => {
         archiveTask(task, agent?.name);
+        try { socialToM.observe(task as any); } catch {}
         // Corrective-mission verification: a task carrying
         // input.correctiveFor just resolved — mark its goal+kind for
         // drift re-check (completed) or escalate immediately (failed).
@@ -16465,6 +16477,7 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
             themes,
             metaAttention,
             interoception,
+            socialToM: (() => { try { return socialToM.summary(); } catch { return null; } })(),
             vetoAgent,
             alerts,
             honesty: 'engineering proxies for attention-selection quality — not a measure of experience',
