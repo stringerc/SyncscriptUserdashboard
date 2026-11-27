@@ -181,15 +181,53 @@ export function commitsTowardGoal(goalId: string, sinceMs: number): CommitAttrib
 }
 
 /**
- * Task attribution — stamp input.goalId with the primary goal when the
- * caller didn't set one. Wired into agentRuntime.setTaskDecorator so EVERY
- * dispatch path (cortex_agents tool, routines, retries, scheduler fires,
- * requeues) carries the strategic objective. Explicit goalId always wins —
- * a task aimed at a different goal keeps its own attribution.
+ * Topic signatures per goal family. resolvePrimaryGoal picks ONE goal
+ * for unattributed work — without topic matching, custody/legal fleet
+ * work gets laundered into launch attribution (493 vs 7 tasks/24h was
+ * exactly this bug). First matching topic wins; explicit goalId always
+ * wins over both.
+ */
+const GOAL_TOPIC_SIGNATURES: { goalRe: RegExp; topicRe: RegExp }[] = [
+  {
+    goalRe: /custody|daughter|child/i,
+    topicRe: /custody|hearing|court|attorney|lawyer|paralegal|filing|docket|bench.?trial|continuance|exhibit|affidavit|visitation|child.?support|guardian|Anders|Stringer|25-A-05494|oath|subpoena|deposition|arraignment|incarcerat|probation|sentenc/i,
+  },
+  {
+    goalRe: /launch|syncscript|paying|customer|revenue|sale/i,
+    topicRe: /syncscript|launch|gumroad|product|paying|customer|revenue|pinterest|reddit|distribution|marketing|landing.?page|first.?sale|content.?pack|pin\b/i,
+  },
+];
+
+/** Best-effort goal match from task text — null when nothing matches. */
+export function matchGoalForTaskText(text: string): LifeGoal | null {
+  try {
+    const active = getCortexGoals().list('active');
+    if (!active.length) return null;
+    for (const sig of GOAL_TOPIC_SIGNATURES) {
+      if (!sig.topicRe.test(text)) continue;
+      const goal = active.find((g) => sig.goalRe.test(g.title));
+      if (goal) return goal;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Task attribution — stamp input.goalId with the topic-matched goal when
+ * the caller didn't set one, falling back to the primary goal. Wired into
+ * agentRuntime.setTaskDecorator so EVERY dispatch path (cortex_agents
+ * tool, routines, retries, scheduler fires, requeues) carries the
+ * strategic objective. Explicit goalId always wins — a task aimed at a
+ * different goal keeps its own attribution.
  */
 export function stampTaskGoal(input: Record<string, unknown>): Record<string, unknown> {
   if (input.goalId) return input;
-  const goal = resolvePrimaryGoal();
+  const text = [input.kind, input.title, input.prompt, input.task, input.description]
+    .filter((v) => typeof v === 'string').join(' ');
+  const matched = text ? matchGoalForTaskText(text) : null;
+  const goal = matched || resolvePrimaryGoal();
   if (!goal) return input;
   return { ...input, goalId: goal.id, goalTitle: goal.title };
 }
