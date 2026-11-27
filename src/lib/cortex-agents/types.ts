@@ -121,6 +121,9 @@ export interface ModelHealth {
   latencyMsP50: number | null;
   lastCheckAt: number | null;
   consecutiveFailures: number;
+  /** Successful probes in a row — hysteresis input: a proven-healthy
+   *  model shouldn't lose its label on a single transient failure. */
+  consecutiveSuccesses?: number;
   cooldownUntil: number | null;
   /** Where this entry came from: seed matrix, NIM catalog, or probe discovery. */
   source: 'matrix' | 'catalog' | 'probe';

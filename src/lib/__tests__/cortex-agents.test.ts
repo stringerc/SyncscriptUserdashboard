@@ -62,14 +62,24 @@ describe('ModelMatrix', () => {
     expect(after).toContain('openrouter:some/random-unvetted-model-70b');
   });
 
-  it('recordProbe degrades then recovers health status', () => {
+  it('recordProbe hysteresis: first failure keeps label, second degrades, success recovers', () => {
     const m = new ModelMatrix();
     const c = SEED_MATRIX.fast[0];
+    // Probe once successfully so the model earns 'healthy'.
+    m.recordProbe(c.provider, c.model, true, 120);
+    // One transient failure must NOT demote — cooldown sidelines it,
+    // the label survives (fleet-flap fix).
     const h1 = m.recordProbe(c.provider, c.model, false);
-    expect(['degraded', 'down']).toContain(h1.status);
-    const h2 = m.recordProbe(c.provider, c.model, true, 120);
-    expect(h2.status).toBe('healthy');
-    expect(h2.latencyMsP50).not.toBeNull();
+    expect(h1.status).toBe('healthy');
+    expect(h1.consecutiveFailures).toBe(1);
+    // Second consecutive failure earns 'degraded'.
+    const h2 = m.recordProbe(c.provider, c.model, false);
+    expect(h2.status).toBe('degraded');
+    // Recovery is immediate on success.
+    const h3 = m.recordProbe(c.provider, c.model, true, 120);
+    expect(h3.status).toBe('healthy');
+    expect(h3.consecutiveSuccesses).toBe(1);
+    expect(h3.latencyMsP50).not.toBeNull();
   });
 
   it('permanent failures cool down far longer than transient ones', () => {

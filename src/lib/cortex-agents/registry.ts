@@ -122,6 +122,7 @@ export class ModelMatrix {
         latencyMsP50: null,
         lastCheckAt: null,
         consecutiveFailures: 0,
+        consecutiveSuccesses: 0,
         cooldownUntil: null,
         source,
       };
@@ -180,6 +181,7 @@ export class ModelMatrix {
     h.lastCheckAt = Date.now();
     if (ok) {
       h.consecutiveFailures = 0;
+      h.consecutiveSuccesses = (h.consecutiveSuccesses || 0) + 1;
       h.cooldownUntil = null;
       h.status = 'healthy';
       if (typeof latencyMs === 'number' && latencyMs >= 0) {
@@ -195,7 +197,15 @@ export class ModelMatrix {
       }
     } else {
       h.consecutiveFailures += 1;
-      h.status = h.consecutiveFailures >= 3 ? 'down' : 'degraded';
+      h.consecutiveSuccesses = 0;
+      // Hysteresis: one transient failure keeps the prior label — the
+      // cooldown already sidelines the model; demoting on a single miss
+      // made healthy↔degraded flap every probe cycle and churned lane
+      // ordering (the "fleet status inconsistency" Cortex reported).
+      // Second consecutive failure earns 'degraded'; third 'down'.
+      h.status = h.consecutiveFailures >= 3 ? 'down'
+        : h.consecutiveFailures >= 2 ? 'degraded'
+        : (h.status === 'down' ? 'degraded' : h.status);
       // Permanent failures (auth/billing: 401/402/403) can't self-heal in
       // seconds — cool down hard so the lane stops hammering a dead key.
       // Transient failures (429/5xx/timeouts) keep the short backoff.
