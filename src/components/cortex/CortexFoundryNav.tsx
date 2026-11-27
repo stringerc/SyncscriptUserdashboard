@@ -2004,6 +2004,18 @@ export function CortexFoundryNav({ snap, onSelectAgent, selectedAgent, onOpenTow
                       <Lamp status={t.status} />
                       <span style={{ color: 'rgba(165,243,252,0.85)', minWidth: 70 }}>{t.agentId.toUpperCase()}</span>
                       <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{t.title}</span>
+                      {(() => {
+                        const fc: any = (t as any).input?.tomForecast;
+                        if (!fc?.trained) return null;
+                        const p = Number(fc.successProb);
+                        const color = fc.risk === 'high' ? '#f87171' : p >= 0.6 ? '#6ee7b7' : '#fbbf24';
+                        return (
+                          <span
+                            title={`ToM forecast: ${Math.round(p * 100)}% success · ~${Math.round((fc.expectedDurationMs || 0) / 60000)}min · ${fc.updates} updates · confidence ${fc.confidence}`}
+                            style={{ color, fontSize: 8, minWidth: 30, textAlign: 'right' }}
+                          >{Math.round(p * 100)}%</span>
+                        );
+                      })()}
                       <span style={{ color: DIM, fontSize: 8 }}>{t.createdAt ? new Date(t.createdAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : '—'}</span>
                       <span style={{ color: STATUS_COLOR[t.status] || DIM, fontSize: 8 }}>{t.status.toUpperCase()}</span>
                     </Row>

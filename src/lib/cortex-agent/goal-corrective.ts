@@ -21,6 +21,7 @@
  */
 
 import { syncProposals as ledgerSyncProposals } from '../cortex-initiative-ledger';
+import { forecastOutcome } from '../consciousness/social-tom';
 import type { DriftFinding } from './goal-drift';
 
 export interface CorrectiveDraft {
@@ -30,6 +31,13 @@ export interface CorrectiveDraft {
   input: Record<string, unknown>;
   doneCriteria: string;
   rationale: string;
+  /** ToM layer's prediction for this agent+kind at draft time —
+   *  weights the proposal's confidence and annotates the human's
+   *  ACCEPT decision. Null when the agent is unmodeled. */
+  forecast?: {
+    successProb: number; expectedDurationMs: number;
+    confidence: number; trained: boolean; updates: number;
+  } | null;
 }
 
 function clip(s: string, n: number): string {
@@ -43,8 +51,9 @@ function clip(s: string, n: number): string {
  */
 export function draftCorrectiveMission(f: DriftFinding): CorrectiveDraft | null {
   const goalTitle = clip(f.goalTitle, 70);
+  let draft: CorrectiveDraft | null = null;
   if (f.kind === 'stall') {
-    return {
+    draft = {
       agentId: 'antigravity',
       kind: 'orchestrate',
       title: `Corrective: break the stall on "${goalTitle}"`,
@@ -66,7 +75,7 @@ export function draftCorrectiveMission(f: DriftFinding): CorrectiveDraft | null 
     };
   }
   if (f.kind === 'diversion') {
-    return {
+    draft = {
       agentId: 'scout',
       kind: 'research',
       title: `Corrective: audit effort diversion from "${goalTitle}"`,
@@ -88,7 +97,10 @@ export function draftCorrectiveMission(f: DriftFinding): CorrectiveDraft | null 
       rationale: 'diversion needs diagnosis before action — Scout researches whether the absorbing work is justified; Devin stays reserved for code-shaped findings',
     };
   }
-  return null; // decay is advisory-only by design
+  // ToM weighting: stamp the breath's forecast for the chosen agent+kind
+  // so proposal confidence and the human's ACCEPT decision see it.
+  if (draft) draft.forecast = forecastOutcome(draft.agentId, draft.kind) ?? null;
+  return draft; // decay is advisory-only by design
 }
 
 /**
@@ -100,6 +112,18 @@ export function draftCorrectiveMission(f: DriftFinding): CorrectiveDraft | null 
 export function proposeCorrectiveMission(f: DriftFinding): { proposed: boolean } {
   const draft = draftCorrectiveMission(f);
   if (!draft) return { proposed: false };
+  // Forecast-weighted confidence: the ToM layer's predicted success for
+  // this agent+kind scales the proposal's confidence toward its forecast
+  // (untrained/absent forecasts keep the base 0.75). High-risk trained
+  // forecasts also get an explicit caution line for the ACCEPT decision.
+  const fc = draft.forecast;
+  const risk = fc?.trained ? (fc.successProb < 0.35 ? 'high' : fc.successProb < 0.6 ? 'moderate' : 'low') : 'untrained';
+  const confidence = fc?.trained
+    ? Number(Math.min(0.9, Math.max(0.3, 0.75 * (0.6 + 0.4 * fc.successProb))).toFixed(2))
+    : 0.75;
+  const forecastLine = fc
+    ? `ToM forecast: ${Math.round(fc.successProb * 100)}% predicted success${fc.trained ? '' : ' (untrained)'} (~${Math.round(fc.expectedDurationMs / 60000)}min expected, ${fc.updates} updates) — risk: ${risk}.`
+    : 'ToM forecast: no model for this agent yet.';
   try {
     ledgerSyncProposals([{
       id: `goalcorrective:${f.goalId}:${f.kind}`,
@@ -109,11 +133,12 @@ export function proposeCorrectiveMission(f: DriftFinding): { proposed: boolean }
         `Corrective mission drafted → ${draft.agentId} (${draft.kind}).`,
         `Done criteria: ${draft.doneCriteria}.`,
         `Why this agent: ${draft.rationale}.`,
+        forecastLine + (risk === 'high' ? ' Caution: the breath expects this agent to likely fail — weigh an alternate assignment or descope before ACCEPT.' : ''),
         `Accept dispatches the task with goal attribution + finish notification; veto logs the deviation only.`,
       ].join(' '),
       category: 'goal_drift_corrective',
       urgency: f.severity === 'high' ? 'high' : 'medium',
-      confidence: 0.75,
+      confidence,
       rationale: `auto-drafted by the drift watch (${f.kind} finding on "${clip(f.goalTitle, 50)}")`,
       suggestedTool: 'cortex_agents',
       suggestedArgs: {

@@ -220,7 +220,7 @@ import { openVerification, listVerifications, getVerification, verificationStats
 import { listPatrolSpecs, patrolState, startPatrolMesh } from './src/lib/cortex-agents/patrols';
 import { registerSkill, getSkill, listSkills, acquireSkill, releaseSkill, composeSkills, recordSkillOutcome, skillStats, setSkillsRuntime } from './src/lib/cortex-agents/skills';
 import { selectPolicy, policyStats, startLearningLayer, POLICY_ARMS } from './src/lib/cortex-agents/learning';
-import { SocialToMLayer } from './src/lib/consciousness/social-tom';
+import { SocialToMLayer, registerActiveSocialToM } from './src/lib/consciousness/social-tom';
 import { meshStats as meshBusStats } from './src/lib/cortex-agents/mesh';
 import { workspaceStats as wsStoreStats } from './src/lib/cortex-agents/agent-workspace';
 import { loadMission, saveMission, upsertGoal, verifyOps, goalProgress, routineYield, suggestCadence, planBlocks, startExperiment, reportExperiments, ventureYieldBreakdown, type OpsItem, type MissionGoal, type CadenceEntry } from './src/lib/cortex-agents/mission';
@@ -2009,6 +2009,7 @@ function apiProxyPlugin(): Plugin {
       // on terminal-task telemetry. Bootstrap replays the archive tail so
       // models aren't cold; observe() rides the finished-task hook.
       const socialToM = new SocialToMLayer();
+      registerActiveSocialToM(socialToM);
       try {
         const bootRows = readArchive({ limit: 500 })
           .filter((r: any) => ['completed', 'failed', 'vetoed', 'cancelled'].includes(r.status))

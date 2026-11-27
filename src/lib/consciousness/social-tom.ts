@@ -37,6 +37,22 @@ interface AgentHistory {
 const HISTORY_WINDOW = 20;
 const FEATURE_NOW = () => Date.now();
 
+// ── Active-layer registry ──────────────────────────────────────────
+// The composition root (vite.config) constructs the live layer at boot
+// and registers it here so other modules (goal-corrective, runtime
+// forecaster wiring) can query forecasts without holding the instance.
+let activeLayer: SocialToMLayer | null = null;
+
+export function registerActiveSocialToM(layer: SocialToMLayer): void {
+  activeLayer = layer;
+}
+
+/** Depth-1 forecast for agent+kind — null when no layer is registered
+ *  or the agent has no model yet. Advisory; never throws. */
+export function forecastOutcome(agentId: string, kind: string) {
+  try { return activeLayer?.predict(agentId, kind) ?? null; } catch { return null; }
+}
+
 export class SocialToMLayer {
   private models = new Map<string, AgentOutcomeModel>();
   private histories = new Map<string, AgentHistory>();
