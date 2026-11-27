@@ -315,6 +315,24 @@ export async function runSurfaceCommand(text: string): Promise<string | null> {
     return `Initiating email reduction triage for stringer.c.a@gmail.com. We can purge ~14,200 promotional emails, archive ~3,800 stale receipts, and isolate your court filings and financial statements. What phase would you like to execute first?`;
   }
 
+  // Pin Hearing Prep document: "open the hearing prep", "pin the continuance doc", "show custody hearing scripts"
+  const pinHearingM = /\b(?:hearing\s+prep|continuance\s+(?:doc|document|motion|script)|custody\s+hearing|bench\s+trial\s+(?:prep|script|document)|show\s+(?:me\s+)?(?:the\s+)?(?:hearing|continuance)(?:\s+(?:prep|doc|document|scripts?))?)\b/i.test(t);
+
+  if (pinHearingM && ATTACHMENTS_CATALOG.custody_hearing?.length) {
+    const att = ATTACHMENTS_CATALOG.custody_hearing[0];
+    const docPayload = buildDocumentPayload(att);
+    const newPanel = openSurfacePanel({
+      kind: 'document',
+      title: att.name,
+      pinned: true,
+      document: docPayload,
+      customSize: { w: 580, h: 480 },
+    });
+    return newPanel
+      ? `I've opened and pinned the document "${att.name}" to the space.`
+      : 'The surface is full — close a panel first.';
+  }
+
   // Pin Specific Document / Attachment: "open the document in a new pin", "pin the mandatory reporting document", "open the bench trial calendar"
   const pinDocM = (
     /\b(?:open|show|display|pin|dock|bring up|view)\b[^.?!]{0,60}\b(?:mandatory\s+reporting|bench\s+trial\s+calendar|court\s+document|attached\s+document|attachment|certificate)\b/i.test(t) ||
