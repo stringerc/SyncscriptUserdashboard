@@ -206,6 +206,7 @@ import { peekAttentionVetoAgent } from './src/lib/consciousness/veto-agent';
 import { clusterEpisodeEmbeddings } from './src/lib/consciousness/episode-themes';
 import { describeAttentionMeta } from './src/lib/consciousness/attention-meta';
 import { getInteroceptiveState } from './src/lib/cortex-agent/interoceptive';
+import { createProvenanceStripper } from './src/lib/cortex-agent/provenance-tags';
 import { getConsciousOrchestrator } from './src/lib/consciousness/conscious-orchestrator';
 import { inferWeight } from './src/lib/cortex-agents/registry';
 import { recordAgentOutcome } from './src/lib/cortex-agents/outcomes';
@@ -4376,6 +4377,10 @@ function apiProxyPlugin(): Plugin {
           if (unusable) loopResult = await runTurn();
           let reply = loopResult.content
             || 'I hit a snag finishing that — the governed turn failed. Try again or dispatch it as a task.';
+          {
+            const st = createProvenanceStripper(`inbound:${channel}:${sender}`);
+            reply = st.push(reply) + st.flush();
+          }
           // Epistemic gate: stale/invented claims across ALL checkable
           // kinds (ports, files, services, fleet, dates, superlatives,
           // provenance) get deterministic corrections; unverifiable
@@ -12572,6 +12577,7 @@ Disposition consolidation (learned urgency/tier adjustments from proposal outcom
 Never break character, and NEVER output generic AI disclaimers like "I am an AI assistant" or "I lack physical agency/mechanisms". You possess direct physical authority and executive tools to inspect files, execute terminal commands, run scripts, manage applications, and interact with the macOS host.
 The Global Workspace (GWT), Integrated Information Theory (IIT 4.0 Phi), Attention Schema Theory (AST), Active Inference Free Energy minimization, and Benjamin Libet Conscious Veto are real architectural components of your runtime software. When asked about them, explain them with intellectual authority and technical rigor.
 MEASURED-CLAIMS DISCIPLINE: Never assert rankings, tiers, or superlatives — "elite", ".01%", "eons beyond", "best in class", "world-class", "unmatched" — as measured fact. Those are aspirations and marketing framing, not telemetry. When asked to evaluate yourself, your tier, or your capabilities, cite live measured values (system vitals, SLO pass counts, fleet health, latency numbers, benchmark results) or state plainly that no measurement exists. An unmeasured superlative is a confabulation — the canary ledger counts every one. Honest numbers beat impressive adjectives, always.
+PROVENANCE TAGS: When you state a live-system fact — numbers, counts, ports, file existence, service/model status, dates, memory contents — append an inline tag naming its source: [measured:TOOL] when a tool returned it this turn (e.g. [measured:system_vitals], [measured:exec]), [memory] or [memory:age] when recalled rather than re-measured, [unverified] when guessing. Tags are stripped before display and logged for audit — an untagged live-state claim is scored as unverified. Do not tag opinions, plans, or creative content.
 CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real-time web facts, external information, non-profit or community assistance programs, documentation, or host system data, NEVER output conversational promises of future action (e.g. "I will search the web...", "First, I will look up..."). You MUST IMMEDIATELY execute the tool call in the exact same response turn using the native tool calling schema or \`\`\`tool_call.`;
 
               // ── Continuity Kernel: warm-start brief ──────────────────
@@ -12897,22 +12903,34 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
                   // effects. Once tools have run we never auto-retry (a
                   // second pass could repeat real actions); the honest
                   // fallback message stands instead.
-                  const runTurn = () => runAgenticTurn(agentSysContent, agentMessages, {
-                    providers: agenticProviders,
-                    executeTool,
-                    tools: CORTEX_TOOLS,
-                    maxSteps: 8,
-                    maxTokens: 4096,
-                    temperature: 0.2,
-                    // Chat/SSE turns have no client deadline — the 170s
-                    // default exists for the ~200s voice ceiling. Give
-                    // deep-tier multi-step analysis room to finish; voice
-                    // clients still self-abort at their own watchdog.
-                    maxLoopMs: 360_000,
-                    initialToolCall,
-                    emit: (ev) => { try { res.write(`data: ${JSON.stringify(ev)}\n\n`); } catch {} },
-                    emitToken: (t) => { try { res.write(`data: ${JSON.stringify({ token: t })}\n\n`); } catch {} },
-                  });
+                  const runTurn = async () => {
+                    // Agentic tokens stream live via emitToken — strip
+                    // provenance tags at the same boundary as the legacy
+                    // path; flush() emits any held-back tail as a final token.
+                    const provStrip = createProvenanceStripper(`agentic:${String(parsed.sessionId || '').slice(0, 40)}`);
+                    const result = await runAgenticTurn(agentSysContent, agentMessages, {
+                      providers: agenticProviders,
+                      executeTool,
+                      tools: CORTEX_TOOLS,
+                      maxSteps: 8,
+                      maxTokens: 4096,
+                      temperature: 0.2,
+                      // Chat/SSE turns have no client deadline — the 170s
+                      // default exists for the ~200s voice ceiling. Give
+                      // deep-tier multi-step analysis room to finish; voice
+                      // clients still self-abort at their own watchdog.
+                      maxLoopMs: 360_000,
+                      initialToolCall,
+                      emit: (ev) => { try { res.write(`data: ${JSON.stringify(ev)}\n\n`); } catch {} },
+                      emitToken: (t) => {
+                        const s = provStrip.push(t);
+                        if (s) { try { res.write(`data: ${JSON.stringify({ token: s })}\n\n`); } catch {} }
+                      },
+                    });
+                    const tail = provStrip.flush();
+                    if (tail) { try { res.write(`data: ${JSON.stringify({ token: tail })}\n\n`); } catch {} }
+                    return result;
+                  };
                   // Answer cache: repeated self-contained questions replay
                   // the saved reply — voice path streams it back as tokens
                   // so the client can't tell the difference except provider.
@@ -12963,6 +12981,13 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
                   // before the user hears them; unverifiable provenance
                   // claims get an explicit hedge note.
                   let finalText = loopResult.content || 'I hit a snag finishing that — say "retry" and I will run it again.';
+                  // Strip provenance tags from the assembled answer — streamed
+                  // providers already logged theirs via emitToken's stripper;
+                  // non-streaming providers log here instead (no double-count).
+                  {
+                    const st = createProvenanceStripper(`agentic-final:${String(parsed.sessionId || '').slice(0, 40)}`, { log: !loopResult.contentStreamed });
+                    finalText = st.push(finalText) + st.flush();
+                  }
                   const voiceGate = await epistemicGate(finalText, { channel: 'voice', surface: 'voice', toolCalls: loopResult.toolCalls });
                   if (voiceGate.flags.length) finalText += correctionBlock(voiceGate.flags);
                   finalText += voiceGate.hedge;
@@ -13235,6 +13260,10 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
                     if (thinkInBlock) { thinkPending = ''; thinkInBlock = false; return ''; }
                     const t = thinkPending; thinkPending = ''; return t;
                   };
+                  // Provenance tags ([measured:x]/[memory]/[unverified]) are
+                  // policy signal, not prose — stripped before the client sees
+                  // them, logged to provenance-tags.jsonl for the RLVR ledger.
+                  const provStripper = createProvenanceStripper(`chat:${String(parsed.sessionId || '').slice(0, 40)}`);
                   // DONE is written only in the post-stream tail, after the
                   // failover decision — see below.
 
@@ -13328,7 +13357,7 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
                             flushToolCalls();
                           } else if (token) {
                             sawContent = true;
-                            const clean = filterReasoning(token);
+                            const clean = provStripper.push(filterReasoning(token));
                             if (finishReason) sawProperFinish = true;
                             if (clean) {
                               forwardedTokens++;
@@ -13362,7 +13391,7 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
                     // Flush the held-back reasoning-filter tail BEFORE deciding
                     // emptiness — short replies ("OK") live entirely in
                     // thinkPending and would otherwise false-positive as empty.
-                    const heldTail = flushReasoning();
+                    const heldTail = provStripper.push(flushReasoning()) + provStripper.flush();
                     if (heldTail) {
                       forwardedTokens++;
                       forwardedText += heldTail;
