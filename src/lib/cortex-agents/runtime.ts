@@ -372,6 +372,7 @@ export class AgentRuntime {
    *  goalId) on EVERY submitTask path — tool calls, routines, retries,
    *  scheduler fires — so attribution can't be bypassed by the caller. */
   private taskDecorator: ((input: Record<string, unknown>) => Record<string, unknown>) | null = null;
+  private taskForecaster: ((agentId: AgentId, kind: string) => Record<string, unknown> | null) | null = null;
   /** vite wires goal progress here: suffix appended to resolution notices
    *  so 'X reports: … — PASSED' carries its strategic delta. */
   private resolutionAnnotator: ((task: AgentTask) => string) | null = null;
@@ -444,6 +445,13 @@ export class AgentRuntime {
    *  path uniformly. Must be cheap and never throw. */
   setTaskDecorator(fn: (input: Record<string, unknown>) => Record<string, unknown>) {
     this.taskDecorator = fn;
+  }
+
+  /** Advisory outcome forecast stamped onto every admitted task — the
+   *  consciousness layer's prediction of how this agent will do on this
+   *  kind of work. Never blocks dispatch; rides input.tomForecast. */
+  setTaskForecaster(fn: (agentId: AgentId, kind: string) => Record<string, unknown> | null) {
+    this.taskForecaster = fn;
   }
 
   /** Resolution annotator — returns a short suffix (e.g. goal progress
@@ -574,6 +582,13 @@ export class AgentRuntime {
         effectiveInput = { ...effectiveInput, policyArm: pol.arm.id, policyTier: pol.arm.tier, policyTemp: pol.arm.temperature };
       } catch { /* bandit is advisory — never block a task */ }
     }
+    // ToM forecast: the breath predicts this agent's outcome on this kind
+    // before the work is accepted. Advisory stamp only — workers, HUD,
+    // and the archive see what the system expected vs. what happened.
+    try {
+      const fc = this.taskForecaster?.(agentId, kind);
+      if (fc) effectiveInput = { ...effectiveInput, tomForecast: fc };
+    } catch { /* forecaster advisory — never block a task */ }
     const task: AgentTask = {
       id: newTaskId(), agentId, kind, title, input: effectiveInput,
       status: 'queued', progress: null, createdAt: Date.now(),

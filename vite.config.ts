@@ -2015,6 +2015,25 @@ function apiProxyPlugin(): Plugin {
           .reverse(); // readArchive returns newest-first; bootstrap wants oldest→newest
         socialToM.bootstrap(bootRows);
       } catch { /* bootstrap best-effort */ }
+      // Dispatch consumes the breath: every admitted task is stamped with
+      // the ToM layer's forecast for this agent+kind — the loop where the
+      // system's model of its agents constrains what it accepts. Advisory
+      // only; input.tomForecast rides the task into the archive so
+      // predicted-vs-actual calibration is measurable after the fact.
+      agentRuntime.setTaskForecaster((agentId: string, kind: string) => {
+        try {
+          const p = socialToM.predict(agentId, kind);
+          if (!p) return null;
+          return {
+            successProb: Number(p.successProb.toFixed(3)),
+            expectedDurationMs: p.expectedDurationMs,
+            confidence: Number(p.confidence.toFixed(3)),
+            trained: p.trained,
+            updates: p.updates,
+            risk: p.trained && p.successProb < 0.35 ? 'high' : 'normal',
+          };
+        } catch { return null; }
+      });
       // Durable evidence layer: every terminal task (completed/failed/vetoed/
       // cancelled) appends to task-archive.jsonl so research briefs and
       // failure evidence survive the 200-task in-memory eviction window.
