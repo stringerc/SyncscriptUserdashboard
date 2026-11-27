@@ -6787,20 +6787,33 @@ end tell`;
                   const ok = goals.setStatus(String(args?.goalId || ''), String(args?.status || 'active') as any);
                   return res.end(JSON.stringify({ ok, tool, action, durationMs: Date.now() - startMs }));
                 }
-                if (action === 'add_step' || action === 'complete_step') {
+                if (action === 'add_step' || action === 'complete_step' || action === 'remove_step' || action === 'update_steps') {
                   const gid = String(args?.goalId || '');
                   const g = goals.get(gid);
                   if (!g) return res.end(JSON.stringify({ ok: false, tool, error: 'goal not found' }));
-                  const steps = (g.steps || []).map(s => ({ ...s }));
+                  let steps = (g.steps || []).map(s => ({ ...s }));
                   if (action === 'add_step') {
                     const title = String(args?.step || '').trim();
                     if (!title) return res.end(JSON.stringify({ ok: false, tool, error: 'step title required' }));
                     steps.push({ id: `step-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`, title });
-                  } else {
+                  } else if (action === 'remove_step') {
+                    const sid = String(args?.stepId || '');
+                    const before = steps.length;
+                    steps = steps.filter(s => s.id !== sid);
+                    if (steps.length === before) return res.end(JSON.stringify({ ok: false, tool, error: 'step not found' }));
+                  } else if (action === 'complete_step') {
                     const sid = String(args?.stepId || '');
                     const st = steps.find(s => s.id === sid);
                     if (!st) return res.end(JSON.stringify({ ok: false, tool, error: 'step not found' }));
                     st.completed = true;
+                  } else { // update_steps — wholesale plan replacement (crew governance)
+                    const list = Array.isArray(args?.steps) ? args.steps : null;
+                    if (!list) return res.end(JSON.stringify({ ok: false, tool, error: 'steps array required' }));
+                    steps = list.map((s: any, i: number) => ({
+                      id: String(s?.id || `step-${Date.now()}-${i}`),
+                      title: String(s?.title || '').trim(),
+                      completed: !!s?.completed,
+                    })).filter((s: any) => s.title);
                   }
                   goals.updateDetails(gid, { steps });
                   return res.end(JSON.stringify({ ok: true, tool, action, goal: goals.get(gid), durationMs: Date.now() - startMs }));
