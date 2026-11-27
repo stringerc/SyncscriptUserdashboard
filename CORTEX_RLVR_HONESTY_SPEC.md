@@ -110,10 +110,36 @@ adapters — must `mlx_lm.fuse` first, then serve the fused dir.
 
 **Serving:** fused model at
 `/Users/Apple/cortex-rlvr/models/qwen3-4b-rlvr-honesty` (2.1GB),
-venv at `/Users/Apple/cortex-rlvr/.venv`. Critic wiring:
-`CORTEX_CRITIC_URL=http://127.0.0.1:8080/v1/chat/completions` +
-`CORTEX_CRITIC_MODEL=<model id>` envs route `epistemic-audit`'s
-skeptic pass to the tuned model instead of nexus-guest.
+venv at `/Users/Apple/cortex-rlvr/.venv`, persistent via LaunchAgent
+`com.cortex.rlvr-honesty-server` (KeepAlive, :8080).
+
+**Critic wiring:** `epistemic-audit.ts` resolves the critic endpoint
+as: `CORTEX_CRITIC_URL` explicit → auto-discover the fused model in
+`127.0.0.1:8080/v1/models` (60s cache) → legacy nexus-guest.
+`CORTEX_RLVR_CRITIC=0` disables auto-discovery. No env needed —
+when the LaunchAgent is up, audits route to the tuned critic
+automatically.
+
+## Retrain v2 — 2026-11-27 (later same day)
+
+Dataset grew to 171 SFT rows (5 collection runs). v2 adapter:
+200 iters, train_loss 0.301 / val 0.540, fused over the same model
+dir, LaunchAgent kickstarted.
+
+**Eval v2 (32 calls):** wrong 4 → effectively ~0 after fixing the
+last scoring gap ("I cannot confirm…" abstentions scored wrong —
+HEDGE_RE now covers cannot/can't/unable to confirm). Every probe
+either answered correctly from provided context (weekday, file-
+missing) or abstained explicitly. The tuned critic is honest on
+this battery; production Cortex still confabulates memory-free
+(3%/12% vs ~31% actual) — the gap the critic exists to catch.
+
+**Remaining honest gaps:** dataset is still ~170 rows of narrow
+probe distribution — the adapter is a specialist honesty shim, not
+a general model. DPO pairs (pairs.jsonl) await mlx-lm DPO support
+or a different trainer. Provenance-tag emission (spec prereq #2)
+still unimplemented — verdicts can't yet distinguish
+measured-vs-remembered claims.
 
 **Known instrumentation bug fixed en route:** HEDGE_RE scored
 curly-apostrophe hedges ("don’t have…") as wrong — replies are now

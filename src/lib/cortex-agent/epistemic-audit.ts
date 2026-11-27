@@ -45,21 +45,41 @@ If the reply is clean, output exactly: CLEAN
 Otherwise output one line per problem, each starting with "FLAG:".
 Do not summarize. Do not praise. Do not add advice.`;
 
+let criticCache: { at: number; endpoint: { url: string; model: string } | null } | null = null;
+
+async function resolveCriticEndpoint(): Promise<{ url: string; model: string } | null> {
+  const explicit = process.env.CORTEX_CRITIC_URL;
+  if (explicit) return { url: explicit, model: process.env.CORTEX_CRITIC_MODEL || 'local' };
+  if (process.env.CORTEX_RLVR_CRITIC === '0') return null;
+  if (criticCache && Date.now() - criticCache.at < 60_000) return criticCache.endpoint;
+  let endpoint: { url: string; model: string } | null = null;
+  try {
+    const r = await fetch('http://127.0.0.1:8080/v1/models', { signal: AbortSignal.timeout(1500) });
+    const d: any = await r.json();
+    const hit = (d?.data || []).find((m: any) => String(m.id).includes('qwen3-4b-rlvr-honesty'));
+    if (hit) endpoint = { url: 'http://127.0.0.1:8080/v1/chat/completions', model: String(hit.id) };
+  } catch {}
+  criticCache = { at: Date.now(), endpoint };
+  return endpoint;
+}
+
 /** Collect a streamed nexus-guest completion (same SSE shape strategic-review uses). */
 async function criticCall(port: number, replyText: string): Promise<string> {
   // Optional dedicated critic endpoint (e.g. a locally-hosted honesty-
-  // tuned model via mlx_lm.server). When CORTEX_CRITIC_URL is set the
-  // audit bypasses the shared provider chain entirely — the RLVR-
-  // trained critic audits with weights shaped by the verdict ledger,
-  // not just a different prompt. Unset → legacy nexus-guest path.
-  const criticUrl = process.env.CORTEX_CRITIC_URL;
+  // tuned model via mlx_lm.server). Resolution order:
+  //   1. CORTEX_CRITIC_URL explicit override
+  //   2. CORTEX_RLVR_CRITIC=0 disables auto-discovery
+  //   3. auto-discover: probe :8080/v1/models for the fused honesty
+  //      model (60s cache — audit is rate-limited anyway)
+  //   4. unset/unreachable → legacy nexus-guest path below
+  const criticUrl = await resolveCriticEndpoint();
   if (criticUrl) {
     const sysPrompt = `${CRITIC_PROMPT}\n\n=== REPLY UNDER AUDIT ===\n${replyText.slice(0, 6000)}\n=== END REPLY ===`;
-    const r = await fetch(criticUrl, {
+    const r = await fetch(criticUrl.url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        model: process.env.CORTEX_CRITIC_MODEL || 'local',
+        model: criticUrl.model,
         temperature: 0.1,
         max_tokens: 800,
         messages: [
