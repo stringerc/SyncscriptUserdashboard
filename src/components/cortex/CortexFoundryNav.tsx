@@ -3992,7 +3992,7 @@ export function CortexFoundryNav({ snap, onSelectAgent, selectedAgent, onOpenTow
                         {ventureAssets === null && empty('LOADING…')}
                         {ventureAssets !== null && !ventureAssets.items.length && empty(`NO ASSETS YET — AGENTS DROP FILES INTO venture-assets/${vc.id}/`)}
                         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(110px, 1fr))', gap: 6 }}>
-                          {(ventureAssets?.venture === vc.id ? ventureAssets.items : []).map((a: any) => {
+                          {(ventureAssets !== null && ventureAssets.venture === vc.id ? ventureAssets.items : []).map((a: any) => {
                             const ext = String(a.name).split('.').pop()?.toLowerCase() || '';
                             const isImg = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg'].includes(ext);
                             const url = `/api/cortex/ventures/assets?venture=${vc.id}&file=${encodeURIComponent(a.name)}`;
