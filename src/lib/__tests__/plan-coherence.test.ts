@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { strategyClassOf } from '../consciousness/social-tom';
-import { planGate, planContextFor, type GoalCoherence, type PlanCoherenceReport } from '../cortex-agent/plan-coherence';
+import { planGate, planContextFor, matchPlanNode, scoreLabelCoverage, type GoalCoherence, type PlanCoherenceReport } from '../cortex-agent/plan-coherence';
 
 describe('strategyClassOf', () => {
   it('classifies kinds by approach', () => {
@@ -19,7 +19,7 @@ describe('strategyClassOf', () => {
 function rep(level: GoalCoherence['level'], over: Partial<GoalCoherence> = {}): PlanCoherenceReport {
   const g: GoalCoherence = {
     goalId: 'g1', goalTitle: 'Test goal', nodes: 4, done: 1, pending: 3,
-    stale: 0, tasks24h: 0, oldestPendingH: 72, score: 0.2, level, ...over,
+    stale: 0, tasks24h: 0, oldestPendingH: 72, nodeActivity: [], score: 0.2, level, ...over,
   };
   return { computedAt: Date.now(), primaryGoalId: 'g1', goals: [g], level, score: g.score };
 }
@@ -55,5 +55,30 @@ describe('planContextFor', () => {
   it('returns null without a goalId', () => {
     expect(planContextFor({})).toBeNull();
     expect(planContextFor({ goalId: 42 })).toBeNull();
+  });
+});
+
+describe('scoreLabelCoverage', () => {
+  const tt = (s: string) => new Set(s.toLowerCase().split(/[^a-z0-9]+/).filter((t) => t.length >= 3));
+
+  it('matches when most label tokens appear in task text', () => {
+    const m = scoreLabelCoverage('Publish products on Gumroad', tt('publish gumroad products storefront'));
+    expect(m).not.toBeNull();
+    expect(m!.score).toBeGreaterThanOrEqual(0.5);
+  });
+
+  it('rejects single-token overlap', () => {
+    expect(scoreLabelCoverage('Post Pinterest pins daily', tt('post the announcement'))).toBeNull();
+  });
+
+  it('rejects below-threshold coverage', () => {
+    expect(scoreLabelCoverage('Burn expiring Dreamina credits on pin variants', tt('dreamina credits research'))).toBeNull();
+  });
+});
+
+describe('matchPlanNode', () => {
+  it('returns null for unknown goal or empty text', () => {
+    expect(matchPlanNode('goal-does-not-exist', 'publish products')).toBeNull();
+    expect(matchPlanNode('g1', 'x')).toBeNull();
   });
 });

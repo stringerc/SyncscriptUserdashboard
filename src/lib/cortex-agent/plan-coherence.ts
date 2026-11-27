@@ -40,6 +40,13 @@ export interface PlanNodeView {
   ageH: number;
 }
 
+export interface NodeActivity {
+  nodeId: string;
+  label: string;
+  tasks24h: number;
+  lastTaskAt: number | null;
+}
+
 export interface GoalCoherence {
   goalId: string;
   goalTitle: string;
@@ -51,6 +58,9 @@ export interface GoalCoherence {
   tasks24h: number;
   /** Oldest still-pending node age in hours. */
   oldestPendingH: number | null;
+  /** Per-node execution attention — which plan nodes attracted stamped
+   *  work in 24h. Empty nodes absent = plan nodes nobody is serving. */
+  nodeActivity: NodeActivity[];
   /** 0..1 — 0.5·node coverage + 0.5·momentum (≥3 goal tasks/day = full). */
   score: number;
   level: 'coherent' | 'drifting' | 'stalled' | 'empty';
@@ -98,6 +108,37 @@ function goalTasksLast24h(goalId: string, now: number): number {
   }
 }
 
+/** Node-level attention: archive rows whose planContext.nodeId names a
+ *  node of this goal, bucketed to 24h counts + last-seen. This is the
+ *  "which plan step is actually executing" answer the goal-level
+ *  counters can't give. */
+function nodeActivityFor(goalId: string, nodes: OpsItem[], now: number): NodeActivity[] {
+  try {
+    const byId = new Map(nodes.map((n) => [n.id, n.label]));
+    const rows = readArchive({ limit: 800 }) as any[];
+    const since = now - DAY;
+    const acc = new Map<string, { tasks: number; last: number }>();
+    for (const r of rows) {
+      const pc = r?.input?.planContext;
+      if (!pc || pc.goalId !== goalId) continue;
+      const nid = pc.nodeId;
+      if (!nid || !byId.has(nid)) continue;
+      const t = r.finishedAt ?? r.createdAt ?? 0;
+      if (t < since || !['completed', 'failed', 'vetoed', 'cancelled'].includes(r.status)) continue;
+      const cur = acc.get(nid) || { tasks: 0, last: 0 };
+      cur.tasks++;
+      cur.last = Math.max(cur.last, t);
+      acc.set(nid, cur);
+    }
+    return [...acc.entries()]
+      .map(([nodeId, v]) => ({ nodeId, label: clip(byId.get(nodeId) || nodeId, 48), tasks24h: v.tasks, lastTaskAt: v.last || null }))
+      .sort((a, b) => b.tasks24h - a.tasks24h)
+      .slice(0, 6);
+  } catch {
+    return [];
+  }
+}
+
 function coherenceForGoal(goal: LifeGoal, now: number): GoalCoherence {
   const nodes = nodesForGoal(goal.id);
   const total = nodes.length;
@@ -121,7 +162,8 @@ function coherenceForGoal(goal: LifeGoal, now: number): GoalCoherence {
   return {
     goalId: goal.id, goalTitle: goal.title,
     nodes: total, done, pending, stale, tasks24h,
-    oldestPendingH, score, level,
+    oldestPendingH, nodeActivity: nodeActivityFor(goal.id, nodes, now),
+    score, level,
   };
 }
 
@@ -146,8 +188,65 @@ export function planCoherence(now: number = Date.now()): PlanCoherenceReport {
   };
 }
 
+export interface PlanNodeMatch {
+  nodeId: string;
+  label: string;
+  /** Token-coverage score 0..1 — ≥0.5 with ≥2 hits counts as a match. */
+  score: number;
+}
+
+const STOPWORDS = new Set(['the', 'and', 'for', 'with', 'your', 'you', 'our', 'are', 'was', 'were', 'will', 'would', 'should', 'could', 'this', 'that', 'from', 'into', 'onto', 'per', 'via', 'all', 'any', 'new', 'get', 'got']);
+
+function tokens(s: string): Set<string> {
+  return new Set((s || '').toLowerCase().split(/[^a-z0-9]+/).filter((t) => t.length >= 3 && !STOPWORDS.has(t)));
+}
+
+/** Pure label↔text coverage scorer — exported for tests. Requires
+ *  ≥2 token hits and ≥0.5 coverage; returns null below threshold. */
+export function scoreLabelCoverage(label: string, textTokens: Set<string>): { score: number } | null {
+  const labelTokens = tokens(label);
+  if (labelTokens.size < 2) return null;
+  let hits = 0;
+  for (const t of labelTokens) if (textTokens.has(t)) hits++;
+  const coverage = hits / labelTokens.size;
+  if (hits < 2 || coverage < 0.5) return null;
+  return { score: Math.round(coverage * 100) / 100 };
+}
+
+/**
+ * Fuzzy-match task text to a pending plan node for a goal. Coverage
+ * scoring: fraction of the node's label tokens present in the task
+ * text. Explicit input.planNodeId always wins (validated against the
+ * goal's opsItems); fuzzy match requires ≥0.5 coverage and ≥2 hits so
+ * single-word accidents ("post", "review") don't false-attach work.
+ */
+export function matchPlanNode(goalId: string, text: string, explicitNodeId?: string): PlanNodeMatch | null {
+  try {
+    const nodes = nodesForGoal(goalId).filter((n) => !n.done);
+    if (!nodes.length) return null;
+    if (explicitNodeId) {
+      const hit = nodes.find((n) => n.id === explicitNodeId);
+      if (hit) return { nodeId: hit.id, label: hit.label, score: 1 };
+    }
+    const textTokens = tokens(text);
+    if (textTokens.size < 2) return null;
+    let best: PlanNodeMatch | null = null;
+    for (const n of nodes) {
+      const m = scoreLabelCoverage(n.label, textTokens);
+      if (m && (!best || m.score > best.score)) {
+        best = { nodeId: n.id, label: n.label, score: m.score };
+      }
+    }
+    return best;
+  } catch {
+    return null;
+  }
+}
+
 /** Compact plan snapshot stamped onto task input — the plan state the
- *  dispatch was accepted under. Null when no goal resolves. */
+ *  dispatch was accepted under, now node-resolved: which specific
+ *  pending node this work serves (explicit planNodeId or fuzzy match).
+ *  Null when no goal resolves. */
 export function planContextFor(input: Record<string, unknown>): Record<string, unknown> | null {
   const gid = typeof input.goalId === 'string' ? input.goalId : null;
   if (!gid) return null;
@@ -157,6 +256,10 @@ export function planContextFor(input: Record<string, unknown>): Record<string, u
     const rep = planCoherence();
     const g = rep.goals.find((x) => x.goalId === gid);
     const title = typeof input.goalTitle === 'string' ? input.goalTitle : g?.goalTitle || '';
+    const nodeText = [input.kind, input.title, input.prompt, input.task, input.description]
+      .filter((v) => typeof v === 'string').join(' ');
+    const nodeMatch = matchPlanNode(gid, nodeText,
+      typeof input.planNodeId === 'string' ? input.planNodeId : undefined);
     return {
       goalId: gid,
       goalTitle: clip(title, 60),
@@ -164,6 +267,9 @@ export function planContextFor(input: Record<string, unknown>): Record<string, u
       done: nodes.length - pending.length,
       pending: pending.length,
       coherence: g?.score ?? null,
+      nodeId: nodeMatch?.nodeId ?? null,
+      nodeLabel: nodeMatch ? clip(nodeMatch.label, 48) : null,
+      nodeMatchScore: nodeMatch?.score ?? null,
       topPending: pending.slice(0, 4).map((n) => clip(n.label, 48)),
     };
   } catch {
