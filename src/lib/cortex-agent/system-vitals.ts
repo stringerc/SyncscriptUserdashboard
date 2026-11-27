@@ -72,7 +72,13 @@ function modelVitals(): Record<string, unknown> {
         probedBy[st] = (probedBy[st] || 0) + 1;
       }
     }
-    return { total: models.length, byStatus: by, probed: { total: probedTotal, byStatus: probedBy }, catalogProbation: { total: catalogTotal, probed: catalogProbed }, savedAt: r?.savedAt ?? null };
+    // Unambiguous headline — JSON consumers (chat path, agents) cite
+    // this verbatim instead of doing arithmetic on total/byStatus and
+    // inflating catalog probation into "fleet healthy" claims.
+    const pcounts = Object.entries(probedBy).map(([k, n]) => `${n} ${k}`).join(', ') || 'none probed';
+    const catUnprobed = catalogTotal - catalogProbed;
+    const headline = `${probedTotal} routable: ${pcounts}${catUnprobed > 0 ? ` (+${catUnprobed} catalog-unprobed, not fleet)` : ''}`;
+    return { total: models.length, byStatus: by, probed: { total: probedTotal, byStatus: probedBy }, catalogProbation: { total: catalogTotal, probed: catalogProbed }, headline, savedAt: r?.savedAt ?? null };
   } catch {
     return { error: 'no model registry — sentinel has not run yet' };
   }
