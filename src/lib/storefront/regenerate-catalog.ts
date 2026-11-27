@@ -102,13 +102,19 @@ function calculateEditionCounts(
   };
 }
 
-function sliceCategories(categories: Category[], editionId: EditionId): Category[] {
+function sliceCategories(categories: Category[], editionId: EditionId): Product['categories'] {
   const ed = EDITIONS[editionId];
-  return categories.map(cat => ({
-    ...cat,
-    script_count: Math.max(1, Math.round(cat.script_count * ed.scriptRatio)),
-    scripts: cat.scripts.slice(0, Math.max(1, Math.round(cat.scripts.length * ed.scriptRatio))),
-  }));
+  return categories.map(cat => {
+    // Source rows carry a legacy `count` field that isn't in the
+    // Product.categories contract — emit only the declared shape.
+    const { count: _legacyCount, ...rest } = cat as Category & { count?: number };
+    return {
+      name: rest.name,
+      slug: rest.slug,
+      script_count: Math.max(1, Math.round(rest.script_count * ed.scriptRatio)),
+      scripts: rest.scripts.slice(0, Math.max(1, Math.round(rest.scripts.length * ed.scriptRatio))),
+    };
+  });
 }
 
 function sliceArray<T>(arr: T[], ratio: number, min: number = 0): T[] {
@@ -201,7 +207,7 @@ for (const [baseTopic, products] of topicGroups) {
       tier,
       price_cents: price * 100,
       price_usd: price,
-      currency: 'usd',
+      currency: 'USD',
       script_count: counts.scripts,
       category_count: rep.category_count,
       verifier_count: counts.verifiers,
@@ -261,7 +267,7 @@ const output = `// AUTO-GENERATED — DO NOT EDIT MANUALLY
 // Run: npx tsx src/lib/storefront/regenerate-catalog.ts
 // Generated: ${new Date().toISOString()}
 
-import type { Product, Category } from './product-catalog';
+import type { Product } from './product-catalog';
 
 export const PRODUCT_CATALOG: Product[] = ${JSON.stringify(newProducts, null, 2)};
 
