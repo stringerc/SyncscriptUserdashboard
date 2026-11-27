@@ -1299,7 +1299,7 @@ const librarianWorker: WorkerHandler = async (ctx) => {
       maxTokens: 500,
       messages: [
         { role: 'system', content: 'You are LIBRARIAN, Cortex\'s memory keeper. Answer from the retrieved memories only. If nothing relevant exists, say so plainly.' + rulesBlock(query, 'constraints learned from accepted agent outcomes — follow unless they conflict with the recall task') },
-        { role: 'user', content: `QUERY: ${query}\n\nMEMORY RESULTS:\n${JSON.stringify(mem).slice(0, 6000)}` },
+        { role: 'user', content: `QUERY: ${query}\n\nACTIVE PLAN: ${JSON.stringify(ctx.task.input?.planContext ?? null)}\n\nMEMORY RESULTS:\n${JSON.stringify(mem).slice(0, 6000)}` },
       ],
     });
     ctx.progress(1);

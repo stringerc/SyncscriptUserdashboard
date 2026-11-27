@@ -24,6 +24,7 @@ import { listStrategyProposals } from './strategy-proposals';
 import { getCortexEnergySpineBridge } from '../cortex-energy-spine';
 import { ensureMorningFleetStandup } from './standup';
 import { readJsonlTail } from '../jsonl-tail';
+import { planCoherence } from '../cortex-agent/plan-coherence';
 
 const RUNTIME_DIR = process.env.CORTEX_AGENTS_STATE_DIR || path.join(process.cwd(), '.cortex-runtime');
 const BRIEFS_DIR = path.join(RUNTIME_DIR, 'briefs');
@@ -186,6 +187,22 @@ async function gatherBriefData(now: number): Promise<{ data: BriefData; raw: Rec
     }
   } catch (e: any) {
     coverage.push({ source: 'model-catalog', ok: false, note: String(e?.message || 'failed').slice(0, 60) });
+  }
+
+  // ── Strategic coherence: is the fleet executing the plan or just
+  // busy? Node coverage + 24h goal momentum per active goal.
+  try {
+    const pc = planCoherence();
+    const summary = pc.goals.length
+      ? pc.goals.map((g) => `${g.goalTitle.slice(0, 28)}: ${g.done}/${g.nodes} nodes, ${g.tasks24h} tasks/24h (${g.level})`).join(' · ')
+      : 'no active goals';
+    watchItems.unshift({
+      text: `Plan coherence ${Math.round(pc.score * 100)}% (${pc.level}): ${summary}`,
+      severity: pc.level === 'stalled' ? 'warn' : pc.level === 'drifting' ? 'info' : 'info',
+    });
+    coverage.push({ source: 'plan-coherence', ok: pc.level !== 'stalled', note: `${pc.goals.length} goals · worst=${pc.level}` });
+  } catch {
+    coverage.push({ source: 'plan-coherence', ok: false, note: 'unavailable' });
   }
 
   // ── Gmail: waiting-on-you ──

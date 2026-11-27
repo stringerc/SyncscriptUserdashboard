@@ -37,6 +37,28 @@ interface AgentHistory {
 const HISTORY_WINDOW = 20;
 const FEATURE_NOW = () => Date.now();
 
+/** Strategy-class classifier — groups task kinds by *approach* so the
+ *  layer learns which strategies work, not just which agents do.
+ *  Order matters: first matching class wins. */
+const STRATEGY_CLASS_RULES: [RegExp, string][] = [
+  [/patrol|status|watch|heartbeat|probe|health|catalog|sentinel|sweep/i, 'watch'],
+  [/research|scan|search|trend|repo_|social_|github|web_|recon/i, 'research'],
+  [/recall|distill|memory|vault|learn|graph_|episodic|instinct/i, 'memory'],
+  [/comm|message|handoff|notify|mail|email|post_message/i, 'comms'],
+  [/verify|review|audit|eval|gate|critique|test/i, 'verify'],
+  [/forecast|plan|strategy|goal|cluster|manifest|debrief|brief|premortem|drift/i, 'strategy'],
+  [/distribut|reddit|post|draft|launch|venture|sales|pricing|gumption|customer/i, 'distribution'],
+  [/build|code|devin|orchestrate|sprint|task|worker|generate|image|video|cli|exec|refactor|deep|implement|fix|ship/i, 'build'],
+];
+
+export function strategyClassOf(kind: string): string {
+  const k = String(kind || '');
+  for (const [re, cls] of STRATEGY_CLASS_RULES) if (re.test(k)) return cls;
+  return 'general';
+}
+
+interface ClassStat { trials: number; successes: number; durationSum: number }
+
 // ── Active-layer registry ──────────────────────────────────────────
 // The composition root (vite.config) constructs the live layer at boot
 // and registers it here so other modules (goal-corrective, runtime
@@ -60,6 +82,9 @@ export class SocialToMLayer {
   /** Prediction log for tomPredictionAccuracy measurement: last N
    *  {agentId, predicted, actual} pairs. */
   private predictionLog: { agentId: string; predicted: number; actual: number; at: number }[] = [];
+  /** Cross-agent strategy-class outcomes — which *approaches* work.
+   *  Rebuilt by bootstrap replay; in-memory only (archive is durable). */
+  private classStats = new Map<string, ClassStat>();
 
   constructor(persistDir?: string | null) {
     this.persistDir = persistDir === undefined
@@ -140,6 +165,16 @@ export class SocialToMLayer {
 
     model.update(x, y);
 
+    // Strategy-class accounting: the same outcome feeds the
+    // approach-level statistics — "does decomposition-then-build
+    // work?" answered across every agent that tried it.
+    const cls = strategyClassOf(kind);
+    const cs = this.classStats.get(cls) ?? { trials: 0, successes: 0, durationSum: 0 };
+    cs.trials++;
+    if (success) cs.successes++;
+    cs.durationSum += durationNorm;
+    this.classStats.set(cls, cs);
+
     const h = this.historyFor(agentId);
     h.recent.push({ success, durationNorm, at: now, kind, status: task.status });
     h.total++;
@@ -152,18 +187,32 @@ export class SocialToMLayer {
   predict(agentId: string, kind?: string): {
     successProb: number; expectedDurationMs: number;
     confidence: number; updates: number; trained: boolean;
+    strategyClass: string;
+    /** Cross-agent outcome stats for this kind's strategy class —
+     *  the approach-level prior. trials=0 → no data yet. */
+    classPrior: { successRate: number | null; trials: number; meanDurationNorm: number | null };
   } | null {
     const model = this.models.get(agentId);
     if (!model) return null;
     const now = FEATURE_NOW();
     const x = this.features(agentId, kind ?? '', now);
     const p = model.predict(x);
+    const cls = strategyClassOf(kind ?? '');
+    const cs = this.classStats.get(cls);
     return {
       successProb: p.successProb,
       expectedDurationMs: Math.round(p.durationNorm * 300_000),
       confidence: model.confidence,
       updates: model.updateCount,
       trained: model.isTrained,
+      strategyClass: cls,
+      classPrior: cs
+        ? {
+            successRate: cs.trials ? Number((cs.successes / cs.trials).toFixed(3)) : null,
+            trials: cs.trials,
+            meanDurationNorm: cs.trials ? Number((cs.durationSum / cs.trials).toFixed(3)) : null,
+          }
+        : { successRate: null, trials: 0, meanDurationNorm: null },
     };
   }
 
@@ -200,7 +249,14 @@ export class SocialToMLayer {
       };
     }
     const acc = this.predictionAccuracy();
-    return { agents: out, accuracy: acc, modeledAgents: this.models.size };
+    const byClass: Record<string, { trials: number; successRate: number | null }> = {};
+    for (const [cls, cs] of this.classStats) {
+      byClass[cls] = {
+        trials: cs.trials,
+        successRate: cs.trials ? Number((cs.successes / cs.trials).toFixed(3)) : null,
+      };
+    }
+    return { agents: out, accuracy: acc, byClass, modeledAgents: this.models.size };
   }
 
   flush(): void {

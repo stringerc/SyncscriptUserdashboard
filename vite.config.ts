@@ -221,6 +221,7 @@ import { listPatrolSpecs, patrolState, startPatrolMesh } from './src/lib/cortex-
 import { registerSkill, getSkill, listSkills, acquireSkill, releaseSkill, composeSkills, recordSkillOutcome, skillStats, setSkillsRuntime } from './src/lib/cortex-agents/skills';
 import { selectPolicy, policyStats, startLearningLayer, POLICY_ARMS } from './src/lib/cortex-agents/learning';
 import { SocialToMLayer, registerActiveSocialToM } from './src/lib/consciousness/social-tom';
+import { planCoherence, planContextFor, planGate } from './src/lib/cortex-agent/plan-coherence';
 import { meshStats as meshBusStats } from './src/lib/cortex-agents/mesh';
 import { workspaceStats as wsStoreStats } from './src/lib/cortex-agents/agent-workspace';
 import { loadMission, saveMission, upsertGoal, verifyOps, goalProgress, routineYield, suggestCadence, planBlocks, startExperiment, reportExperiments, ventureYieldBreakdown, type OpsItem, type MissionGoal, type CadenceEntry } from './src/lib/cortex-agents/mission';
@@ -1851,7 +1852,15 @@ function apiProxyPlugin(): Plugin {
       // goal's live progress line to "X reports: …" notices.
       try {
         const rt = getAgentRuntime();
-        rt.setTaskDecorator(stampTaskGoal);
+        // Goal attribution + live plan snapshot: every task carries
+        // input.planContext (pending/done node counts, top pending
+        // labels, coherence score) — the plan state it was accepted
+        // under, archived for predicted-vs-actual audit.
+        rt.setTaskDecorator((input) => {
+          const stamped = stampTaskGoal(input);
+          const pc = planContextFor(stamped);
+          return pc ? { ...stamped, planContext: pc } : stamped;
+        });
         rt.setResolutionAnnotator((task) => goalProgressDelta(task));
       } catch (e: any) {
         console.warn('[goal-attribution] failed to wire:', e?.message || e);
@@ -2031,6 +2040,8 @@ function apiProxyPlugin(): Plugin {
             confidence: Number(p.confidence.toFixed(3)),
             trained: p.trained,
             updates: p.updates,
+            strategyClass: p.strategyClass,
+            classPrior: p.classPrior,
             risk: p.trained && p.successProb < 0.35 ? 'high' : 'normal',
           };
         } catch { return null; }
@@ -7029,7 +7040,22 @@ end tell`;
                 }
                 cortexObsidianMemory.ensureVaultInitialized();
                 const terms = rq.toLowerCase().split(/[^a-z0-9]+/).filter(t => t.length > 2);
-                const scored: Array<{ title: string; path: string; score: number; snippet: string; recordedAt?: string; age_days?: number }> = [];
+                // Strategy-conditioned recall: memories that mention the
+                // active plan (goal title + pending node labels) get a
+                // ranking boost — recall surfaces plan-relevant context,
+                // not just query-relevant context.
+                const planTerms = new Set<string>();
+                try {
+                  const pc = planCoherence();
+                  const goalTxt = [pc.goals.find((g) => g.goalId === pc.primaryGoalId)?.goalTitle || '', ...pc.goals.flatMap((g) => g.goalTitle.split(/[^a-z0-9]+/))].join(' ');
+                  for (const t of goalTxt.toLowerCase().split(/[^a-z0-9]+/)) if (t.length > 4) planTerms.add(t);
+                  try {
+                    for (const item of loadMission().opsItems.filter((o) => !o.done).slice(0, 12)) {
+                      for (const t of item.label.toLowerCase().split(/[^a-z0-9]+/)) if (t.length > 4) planTerms.add(t);
+                    }
+                  } catch {}
+                } catch {}
+                const scored: Array<{ title: string; path: string; score: number; snippet: string; recordedAt?: string; age_days?: number; planBoost?: number }> = [];
                 const vaultRoot = (cortexObsidianMemory as any).vaultPath as string | undefined;
                 const scanRoots: Array<{ dir: string; prefix: string }> = [];
                 if (vaultRoot) scanRoots.push({ dir: vaultRoot, prefix: '' });
@@ -7054,6 +7080,14 @@ end tell`;
                           const matches = lower.split(t).length - 1;
                           score += Math.min(matches, 10);
                         }
+                        let planBoost = 0;
+                        if (planTerms.size && score > 0) {
+                          for (const t of planTerms) {
+                            if (lower.includes(t)) planBoost += 2;
+                            if (planBoost >= 12) break;
+                          }
+                          score += planBoost;
+                        }
                         if (score > 0) {
                           const rel = prefix ? `${prefix}/${ent.name}` : ent.name;
                           const idx = lower.indexOf(terms[0]);
@@ -7061,6 +7095,7 @@ end tell`;
                             title: ent.name.replace(/\.md$/, ''),
                             path: rel,
                             score,
+                            planBoost: planBoost || undefined,
                             recordedAt: stat.mtime.toISOString(),
                             age_days: Math.round(((Date.now() - stat.mtime.getTime()) / 86400000) * 10) / 10,
                             snippet: text.slice(Math.max(0, idx - 80), idx + 320).replace(/\s+/g, ' ').trim(),
@@ -16498,6 +16533,7 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
             metaAttention,
             interoception,
             socialToM: (() => { try { return socialToM.summary(); } catch { return null; } })(),
+            planCoherence: (() => { try { return planCoherence(); } catch { return null; } })(),
             vetoAgent,
             alerts,
             honesty: 'engineering proxies for attention-selection quality — not a measure of experience',
@@ -16570,6 +16606,17 @@ CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real
               return res.end(JSON.stringify({ ok: false, error: iGate.reason, interoceptive: { level: iGate.level, capacity: iGate.capacity } }));
             }
             input.interoceptiveCapacity = iGate.capacity;
+            // Strategic-coherence gate: when the plan is stalled, heavy
+            // work with no explicit goalId defers — busywork stops
+            // compounding drift. Correctives carry goalId → always pass.
+            const pGate = planGate(kind, title, Boolean(input.goalId));
+            if (!pGate.allow) {
+              try {
+                speakInner({ kind: 'reasoning', source: 'plan-coherence-gate', text: `Deferring ${agentId}/${kind}: "${title.slice(0, 60)}" — ${pGate.reason}`, surprise: 0.5, valence: -0.4 });
+              } catch {}
+              agentCors(req, res);
+              return res.end(JSON.stringify({ ok: false, error: pGate.reason, planCoherence: { level: pGate.level, score: pGate.score } }));
+            }
             const result = agentRuntime.submitTask(agentId as any, kind, title.slice(0, 200), input);
             if (result.ok && result.task && (input.commitment || input.dueAt)) {
               try {
