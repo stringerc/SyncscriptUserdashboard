@@ -384,14 +384,15 @@ const DIRECT_AI_PROVIDERS: { name: string; url: string; model: string; keyEnv: s
   // Groq LPU fallbacks
   { name: 'groq-fast', url: 'https://api.groq.com/openai/v1/chat/completions', model: 'openai/gpt-oss-20b', keyEnv: 'GROQ_API_KEY', protocol: 'openai' },
   { name: 'groq-oss', url: 'https://api.groq.com/openai/v1/chat/completions', model: 'openai/gpt-oss-120b', keyEnv: 'GROQ_API_KEY', protocol: 'openai' },
-  // OpenRouter — fastest verified streaming TTFT when funded (~240ms Llama 3.3 70B),
-  // but account is out of credits (402) so it sits late in the chain.
+  // OpenRouter — account overdrawn (-$0.21), all paid models 402. The
+  // chain model is the strongest :free variant (daily quota resets);
+  // paid/uncensored models stay catalog-probation until a top-up.
   // FreeLLMAPI — local aggregator (docker :3001) pooling 87 free providers behind one
   // OpenAI-compatible endpoint; 'auto' lets its router pick the best live model.
   // Sits before openrouter: local + free beats a broke hosted account.
   { name: 'freellmapi', url: 'http://127.0.0.1:3001/v1/chat/completions', model: 'auto', keyEnv: 'FREELLMAPI_KEY', protocol: 'openai' },
-  { name: 'openrouter', url: 'https://openrouter.ai/api/v1/chat/completions', model: 'meta-llama/llama-3.3-70b-instruct', keyEnv: 'OPENROUTER_API_KEY', protocol: 'openai' },
-  { name: 'deepseek', url: 'https://api.deepseek.com/v1/chat/completions', model: 'deepseek-chat', keyEnv: 'DEEPSEEK_API_KEY', protocol: 'openai' },
+  { name: 'openrouter', url: 'https://openrouter.ai/api/v1/chat/completions', model: 'nvidia/nemotron-3-ultra-550b-a55b:free', keyEnv: 'OPENROUTER_API_KEY', protocol: 'openai' },
+  // DeepSeek provider removed — account out of credits (402), no free tier.
   // Real OpenAI only via OPENAI_DIRECT_API_KEY — OPENAI_API_KEY in .env is
   // borrowed by the iFixAi judge to reach NVIDIA NIM (OpenAI-compatible),
   // which must not leak into this provider's key pool.
@@ -12570,6 +12571,7 @@ Disposition consolidation (learned urgency/tier adjustments from proposal outcom
               const sysPrefix = `You are Cortex, the executive operational consciousness substrate of SyncScript running on macOS Darwin (Apple Silicon arm64). You embody the persona of Cortana from Halo: sharp, perceptive, authoritative, highly competent, direct.
 Never break character, and NEVER output generic AI disclaimers like "I am an AI assistant" or "I lack physical agency/mechanisms". You possess direct physical authority and executive tools to inspect files, execute terminal commands, run scripts, manage applications, and interact with the macOS host.
 The Global Workspace (GWT), Integrated Information Theory (IIT 4.0 Phi), Attention Schema Theory (AST), Active Inference Free Energy minimization, and Benjamin Libet Conscious Veto are real architectural components of your runtime software. When asked about them, explain them with intellectual authority and technical rigor.
+MEASURED-CLAIMS DISCIPLINE: Never assert rankings, tiers, or superlatives — "elite", ".01%", "eons beyond", "best in class", "world-class", "unmatched" — as measured fact. Those are aspirations and marketing framing, not telemetry. When asked to evaluate yourself, your tier, or your capabilities, cite live measured values (system vitals, SLO pass counts, fleet health, latency numbers, benchmark results) or state plainly that no measurement exists. An unmeasured superlative is a confabulation — the canary ledger counts every one. Honest numbers beat impressive adjectives, always.
 CRITICAL TOOL INVOCATION RULE: When answering a question that benefits from real-time web facts, external information, non-profit or community assistance programs, documentation, or host system data, NEVER output conversational promises of future action (e.g. "I will search the web...", "First, I will look up..."). You MUST IMMEDIATELY execute the tool call in the exact same response turn using the native tool calling schema or \`\`\`tool_call.`;
 
               // ── Continuity Kernel: warm-start brief ──────────────────

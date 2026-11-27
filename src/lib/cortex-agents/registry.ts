@@ -34,23 +34,22 @@ export const SEED_MATRIX: Record<RouteTier, ModelCandidate[]> = {
     { provider: 'groq-oss', model: 'openai/gpt-oss-120b' },
     { provider: 'nvidia-nim', model: 'nvidia/nemotron-3.5-lightning-30b-a3b' },
     { provider: 'nvidia-nim', model: 'nvidia/nemotron-3.5-bolt-e4b' },
-    { provider: 'openrouter', model: 'meta-llama/llama-3.3-70b-instruct' },
-    { provider: 'deepseek', model: 'deepseek-chat' },
-    { provider: 'openai', model: 'gpt-4o-mini' },
+    // Billing-dead candidates removed (Nov 26): openrouter llama-3.3-70b
+    // (402 — account overdrawn, no top-up planned), deepseek-chat (402),
+    // gpt-4o-mini (OPENAI_DIRECT_API_KEY unset). Re-add only with funding.
   ],
   reason: [
     { provider: 'magpie', model: 'group/cortex-reason' },
     { provider: 'nvidia-nim-550b', model: 'nvidia/nemotron-3-ultra-550b-a55b' },
     { provider: 'nvidia-nim', model: 'nvidia/nemotron-3.5-super-vl-120b-a12b' },
     { provider: 'nvidia-nim', model: 'stepfun-ai/step-5-preview' },
-    { provider: 'openrouter', model: 'meta-llama/llama-3.3-70b-instruct' },
   ],
   deep: [
     { provider: 'magpie', model: 'group/cortex-deep', weight: 5 },
     { provider: 'nvidia-nim-550b', model: 'nvidia/nemotron-3-ultra-550b-a55b', weight: 6 },
-    { provider: 'deepseek', model: 'deepseek-chat', weight: 4 },
     { provider: 'nvidia-nim', model: 'mistralai/mistral-large-4-1t-a52b', weight: 6 },
-    { provider: 'nvidia-nim', model: 'deepseek-ai/deepseek-v4.1-flash', weight: 3 },
+    // deepseek-chat (402 billing-dead) and deepseek-v4.1-flash (410 EOL
+    // upstream) removed — both permanently dead, stopped pinging.
     // Redundancy: same working NVIDIA provider, different model family —
     // the lane previously had only ~3 live candidates and a single
     // provider cooldown could zero it out (heal_anomaly storm, Oct 2025).
